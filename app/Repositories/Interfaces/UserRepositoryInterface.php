@@ -70,4 +70,10 @@ interface UserRepositoryInterface{
      * @return mixed
      */
     public function getUserById($id): mixed;
+
+     /**
+     * @param int $id
+     * @return mixed
+     */
+    public function DeleteUserData($id): mixed;
 }

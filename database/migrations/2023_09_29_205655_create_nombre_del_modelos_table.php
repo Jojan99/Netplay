@@ -11,13 +11,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('internet_plan', function (Blueprint $table) {
+        Schema::create('nombre_del_modelos', function (Blueprint $table) {
             $table->id();
-            $table->string('plan_name');
-            $table->string('download_speed');
-            $table->string('upload_speed');
-            $table->float('monthly_price');
-            $table->string('description');
+            $table->timestamps();
         });
     }
 
@@ -26,6 +22,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('internet_plan');
+        Schema::dropIfExists('nombre_del_modelos');
     }
 };

@@ -16,5 +16,11 @@ interface GeneratePdfRepositoryInterface{
      * @param int $sponsor_id
      * @return mixed
      */
-    public function generatePdf(): mixed;
+    public function generatePdf($id): mixed;
+
+       /**
+     * @param int $user_id
+     * @return mixed
+     */
+    public function generatePdfById($user_id): mixed;
 }

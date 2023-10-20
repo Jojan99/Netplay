@@ -33,7 +33,7 @@ class GetUserAllUseCase implements GetUserAllUseCaseInterface
     {
         
         try {
-            if(getSessionUserProfileId() == 1){
+            if(true){
                 $userAll = $this->userRepository->getUserAll();
             }else{
                 return [

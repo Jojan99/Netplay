@@ -30,7 +30,7 @@ class CreateUserdataTable extends Migration
             $table->unsignedBigInteger('dni_id')
                 ->index()
                 ->nullable();
-            $table->unsignedBigInteger('plan_internet_id')
+            $table->unsignedBigInteger('internet_plans_id')
                 ->index()
                 ->nullable();
             $table->unsignedBigInteger('status_internet_id')
@@ -62,9 +62,9 @@ class CreateUserdataTable extends Migration
             $table->foreign('dni_id')
                 ->references('id')
                 ->on('dnis');
-            $table->foreign('plan_internet_id')
+            $table->foreign('internet_plans_id')
                 ->references('id')
-                ->on('internet_plan');
+                ->on('internet_plans');
             $table->foreign('status_internet_id')
                 ->references('id')
                 ->on('internet_status');

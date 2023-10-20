@@ -3,18 +3,11 @@
 namespace App\UseCases\User;
 
 use App\Constants\ApiResponseConstants;
-use App\Constants\EncryptionKeyConstants;
 use App\Http\Requests\User\CreateUserDataRequest;
-use App\Repositories\Interfaces\CountryRepositoryInterface;
-use App\Repositories\Interfaces\DniRepositoryInterface;
-use App\Repositories\Interfaces\GenderRepositoryInterface;
-use App\Repositories\Interfaces\NotificationRepositoryInterface;
-use App\Repositories\Interfaces\TypeCurrencisRepositoryInterface;
 use App\Repositories\Interfaces\UserRepositoryInterface;
-use App\UseCases\EmailSend\SendMailUseCase;
+use App\Repositories\Interfaces\FacturationRepositoryInterface;
 use App\UseCases\User\Interfaces\CreateUserDataUseCaseInterface;
 use Illuminate\Database\QueryException;
-use Illuminate\Support\Facades\Crypt;
 
 
 
@@ -32,11 +25,13 @@ class CreateUserDataUseCase implements CreateUserDataUseCaseInterface
      * Constructor de la clase
      *
      * @param UserRepositoryInterface $userRepository
+     * @param FacturationRepositoryInterface $facturationRepositoryInterface
 
      */
 
     public function __construct(
         private UserRepositoryInterface $userRepository,
+        private FacturationRepositoryInterface $FacturationRepositoryInterface
 
     ) {
     }
@@ -56,6 +51,7 @@ class CreateUserDataUseCase implements CreateUserDataUseCaseInterface
             if ($user) {
                 $data['userId'] = $user['id'];
                 $this->userRepository->createUserData($data);
+                $this->FacturationRepositoryInterface->createCabFacturation($user['id']);
             } else {
                 return ['message' => 'Error creating user', 'data' => 9, 'status' => 1];
             }

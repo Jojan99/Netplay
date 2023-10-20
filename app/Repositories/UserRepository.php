@@ -67,12 +67,12 @@ class UserRepository implements UserRepositoryInterface{
             'user_id' => $data['userId'],
             'gender_id' => $data['genderId'],
             'dni_id' => $data['dniId'],
-            'plan_internet_id' => 1,
+            'internet_plans' => $data['planInternet'],
             'country_id' => $data['countryId'],
             'dni' => $data['dni'],
             'email' => $data['email'],
             'phone' => $data['phone'],
-            'birthday' => $data['birthday']
+            'birthday' => $data['birthday'],
         ]);
     }
 
@@ -89,12 +89,27 @@ class UserRepository implements UserRepositoryInterface{
     }
 
      /**
+      * @param int $id
+     * @return mixed
+     */
+    public function DeleteUserData($id): mixed
+    {
+        $user = UserData::where('user_id', $id)->first();
+        if ($user) $user->update(['active' => 0]);
+
+        return true;
+    }
+
+     /**
      * @return mixed
      */
     public function getUserAll(): mixed
     {
 
-        $data = User::where('active', 1)->get();
+        $data = User::select('users.id','user_data.names','user_data.lastname','user_data.address','user_data.dni','user_data.email','user_data.phone')
+        ->join('user_data', 'users.id', 'user_data.user_id')
+        ->where('user_data.active' ,1)
+        ->get();
         return $data;
     }
       /**

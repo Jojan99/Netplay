@@ -14,7 +14,9 @@ use App\Repositories\Interfaces\{
     RequestWithdrawalsRepositoryInterface,
     TypeCurrencisRepositoryInterface,
     UserRepositoryInterface,
-    GeneratePdfRepositoryInterface
+    GeneratePdfRepositoryInterface,
+    FacturationRepositoryInterface
+    
 };
 use App\Repositories\{
     CabDocumentVerificationRequestRepository,
@@ -27,7 +29,8 @@ use App\Repositories\{
     RequestWithdrawalsRepository,
     TypeCurrencisRepository,
     UserRepository,
-    GeneratePdfRepository
+    GeneratePdfRepository,
+    FacturationRepository
 };
 
 /**
@@ -72,6 +75,7 @@ class RepositoryServiceProvider extends ServiceProvider
         [CabDocumentVerificationRequestRepositoryInterface::class, CabDocumentVerificationRequestRepository::class],
         [RequestWithdrawalsRepositoryInterface::class, RequestWithdrawalsRepository::class],
         [GeneratePdfRepositoryInterface::class, GeneratePdfRepository::class],
+        [FacturationRepositoryInterface::class, FacturationRepository::class],
         
     ];
 

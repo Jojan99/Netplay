@@ -17,7 +17,7 @@ use App\UseCases\User\GetUserByIdUseCase;
 use App\UseCases\User\GetUserIdAllByUseCase;
 use App\UseCases\User\GetUserIdAllUseCase;
 use App\UseCases\User\GetUserProfileUseCase;
-use App\UseCases\User\GeneratePdfUseCase;
+use App\UseCases\GeneratePdf\GeneratePdfUseCase;
 use App\UseCases\User\Interfaces\CreateUserDataUseCaseInterface;
 use App\UseCases\User\Interfaces\CreateWalletUseCaseInterface;
 use App\UseCases\User\Interfaces\GetDataHomeUseCaseInterface;
@@ -30,11 +30,18 @@ use App\UseCases\User\Interfaces\GetUserProfileUseCaseInterface;
 use App\UseCases\User\Interfaces\GetUserUseCaseInterface;
 use App\UseCases\User\Interfaces\NetworkGoldeUseCaseInterface;
 use App\UseCases\User\Interfaces\ValidateTokenWalletUseCaseInterface;
-use App\UseCases\User\Interfaces\GeneratePdfUseCaseInterface;
+use App\UseCases\GeneratePdf\Interfaces\GeneratePdfUseCaseInterface;
 use App\UseCases\User\NetworkGoldeUseCase;
 use App\UseCases\User\ValidateTokenWalletUseCase;
 use Illuminate\Support\ServiceProvider;
-
+use App\UseCases\Facturation\CreateDetFacturationUseCase;
+use App\UseCases\Facturation\Interfaces\CreateDetFacturationUseCaseInterface;
+use App\UseCases\GeneratePdf\GeneratePdfByIdUseCase;
+use App\UseCases\GeneratePdf\Interfaces\GeneratePdfByIdUseCaseInterface;
+use App\UseCases\User\DeleteUserDatabyIdUseCase;
+use App\UseCases\User\Interfaces\DeleteUserDatabyIdUseCaseInterface;
+use App\UseCases\Facturation\GetDateFacturePendingUseCase;
+use App\UseCases\Facturation\Interfaces\GetDateFacturePendingUseCaseInterface;
 /**
  * Clase proveedora de casos de usos
  *
@@ -111,6 +118,14 @@ class UseCaseServiceProvider extends ServiceProvider
         [GetUserAllUseCaseInterface::class, GetUserAllUseCase::class],
         [updateUserDataUseCaseInterface::class, updateUserDataUseCase::class],
         [GeneratePdfUseCaseInterface::class, GeneratePdfUseCase::class],
+        [CreateDetFacturationUseCaseInterface::class, CreateDetFacturationUseCase::class],
+        [GeneratePdfByIdUseCaseInterface::class, GeneratePdfByIdUseCase::class],
+        [DeleteUserDatabyIdUseCaseInterface::class, DeleteUserDatabyIdUseCase::class],
+        [GetDateFacturePendingUseCaseInterface::class, GetDateFacturePendingUseCase::class],
+
+        
+        
+        
     ];
 
     /**

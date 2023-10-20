@@ -40,7 +40,7 @@ class GetUserByIdUseCase implements GetUserByIdUseCaseInterface
                 return [
                     'message' => 'Accion no permitida',
                     'status' => 1,
-                    'data' => getSessionUserProfileId()
+                    'data' => ApiResponseConstants::DATA_NULL
                 ];
             }
         } catch (QueryException $err) {

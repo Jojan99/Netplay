@@ -40,6 +40,7 @@ class CreateUserDataRequest extends FormRequest
             'phone' => 'required|string',
             'birthday' => 'required|string',
             'password' => 'required|string',
+            'planInternet' => 'required|int',
         ];
     }
 
@@ -64,6 +65,7 @@ class CreateUserDataRequest extends FormRequest
             'birthday' => 'Fecha nacimiento',
             'password' => 'Contraseña',
             'confirPassword' => 'Confirmar contraseña',
+            'planInternet' => 'Plan internet',
         ];
     }
 }
