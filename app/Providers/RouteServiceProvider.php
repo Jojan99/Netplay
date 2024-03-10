@@ -36,6 +36,10 @@ class RouteServiceProvider extends ServiceProvider
                     require base_path('routes/api/oauthRoutes.php');
                     require base_path('routes/api/facturationRoutes.php');
                     require base_path('routes/api/generatePdfRoutes.php');
+                    require base_path('routes/api/genderRoutes.php');
+                    require base_path('routes/api/infoInternetRoutes.php');
+                    require base_path('routes/api/locationRoutes.php');
+                    require base_path('routes/api/dniRoutes.php');
                 });
 
             Route::middleware('web')

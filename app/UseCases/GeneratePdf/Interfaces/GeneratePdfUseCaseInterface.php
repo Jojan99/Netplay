@@ -13,6 +13,6 @@ interface GeneratePdfUseCaseInterface
      * Método encargado de generar pdf masivo .zip
      * @return mixed
      */
-    public function generatePdf($data): mixed;
+    public function generatePdf($Periodo): mixed;
 
 }

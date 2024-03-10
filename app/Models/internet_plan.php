@@ -9,6 +9,7 @@ class internet_plan extends Model
 {
     use HasFactory;
     protected $fillable = [
+        'id',
         'plan_name',
         'download_speed',
         'upload_speed',

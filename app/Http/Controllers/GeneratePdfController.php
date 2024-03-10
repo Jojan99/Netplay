@@ -23,9 +23,10 @@ class GeneratePdfController extends Controller
     ): object {
         try {
 
-            $data = $request->validate([
-                'ids' => 'required|array',
-            ]);
+            
+            $data = [
+                'ids' => [3]
+            ];
 
             $response = $generatePdfUseCaseInterface->generatePdf($data);
 
@@ -59,10 +60,8 @@ class GeneratePdfController extends Controller
      * @return object
      */
     public function generatePdfbyId(
-        GeneratePdfUseCaseInterface $generatePdfUseCaseInterface,
         GeneratePdfByIdUseCaseInterface $generatePdfByIdUseCaseInterface,
         $user_id
-        
     ): object {
         try {
             $response = $generatePdfByIdUseCaseInterface->generatePdfById($user_id);

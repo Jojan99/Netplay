@@ -19,4 +19,7 @@ interface CreateDetFacturationUseCaseInterface
      * @return mixed
      */
     public function createDetFacturation(CreateFacturationRequest $data): mixed;
+
+
+    public function createProcesoDetFacturation(CreateFacturationRequest $data): mixed;
 }

@@ -35,9 +35,10 @@ class CreateFacturationRequest extends FormRequest
             'price_total' => 'numeric',
             'price_abone' => 'numeric',
             'price_discount' => 'numeric',
+            'days_facture' => 'numeric',
+            'porcentage_discount' => 'numeric',
             'total' => 'bool',
-            'abone' => 'bool',
-            'boolean' => 'bool'
+            'discount' => 'bool'
         ];
     }
 

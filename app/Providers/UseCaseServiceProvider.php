@@ -2,8 +2,8 @@
 
 namespace App\Providers;
 
-
-
+use App\IManagerConection\IManagerConection\IManagerConection;
+use App\ManagerConection\ManagerConection;
 use App\UseCases\User\GetUserUseCase;
 use App\UseCases\User\UpdateUserDataUseCase;
 use App\UseCases\Oauth\Interfaces\SignInUseCaseInterface;
@@ -42,6 +42,16 @@ use App\UseCases\User\DeleteUserDatabyIdUseCase;
 use App\UseCases\User\Interfaces\DeleteUserDatabyIdUseCaseInterface;
 use App\UseCases\Facturation\GetDateFacturePendingUseCase;
 use App\UseCases\Facturation\Interfaces\GetDateFacturePendingUseCaseInterface;
+use App\UseCases\Gender\Interfaces\GetGenderUseCaseInterface;
+use App\UseCases\Gender\GetGenderUseCase;
+use App\UseCases\InfoInternet\GetInternetPlanUseCase;
+use App\UseCases\InfoInternet\Interfaces\GetInternetPlanUseCaseInterface;
+use App\UseCases\Location\LocationUseCase;
+use App\UseCases\Location\Interfaces\LocationUseCaseInterface;
+use App\UseCases\Dni\GetDniUseCase;
+use App\UseCases\Dni\Interfaces\GetDniUseCaseInterface;
+use App\UseCases\Facturation\Interfaces\GetDataInfoPenddingFactureUseCaseInterface;
+use App\UseCases\Facturation\GetDataInfoPenddingFactureUseCase;
 /**
  * Clase proveedora de casos de usos
  *
@@ -73,48 +83,15 @@ class UseCaseServiceProvider extends ServiceProvider
      * @const array [interfaz, clase]
      */
     const SERVICES = [
-        [SignInUseCaseInterface::class, SignInUseCase::class],
-        [CreateTransactionUseCaseInterface::class, CreateTransactionUseCase::class],
-        [InfoTransactionUseCaseInterface::class, InfoTransactionUseCase::class],
-        [CreateWithdrawalUseCaseInterface::class, CreateWithdrawalUseCase::class],
-        [infoWithdrawalUseCaseInterface::class, infoWithdrawalUseCase::class],
-        [GetPriceCryptoCurrenciesUseCaseInterface::class, GetPriceCryptoCurrenciesUseCase::class],
+      
         [GetUserUseCaseInterface::class, GetUserUseCase::class],
         [CreateUserDataUseCaseInterface::class, CreateUserDataUseCase::class],
         [GetGenderUseCaseInterface::class, GetGenderUseCase::class],
         [GetDniUseCaseInterface::class, GetDniUseCase::class],
-        [GetCountryUseCaseInterface::class, GetCountryUseCase::class],
-        [GetUserProfileUseCaseInterface::class, GetUserProfileUseCase::class],
-        [SendMailUseCaseInterface::class, SendMailUseCase::class],
-        [ValidateTokenUseCaseInterface::class, ValidateTokenUseCase::class],
-        [CreateWalletUseCaseInterface::class, CreateWalletUseCase::class],
-        [ValidateTokenWalletUseCaseInterface::class, ValidateTokenWalletUseCase::class],
-        [GetNotificationUseCaseInterface::class, GetNotificationUseCase::class],
-        [SeeAllNotificationsUseCaseInterface::class, SeeAllNotificationsUseCase::class],
-        [UpdateViewedNotificationUseCaseInterface::class, UpdateViewedNotificationUseCaseI::class],
-        [CreateDocumentVerificationRequestUseCaseInterface::class, CreateDocumentVerificationRequestUseCase::class],
-        [GetRequestDocumentByUseIdUseCaseInterface::class, GetRequestDocumentByUseIdUseCase::class],
-        [GetRequestDocumentAllUseCaseInterface::class, GetRequestDocumentAllUseCase::class],
-        [GetDocumentRequestIdUseCaseInterface::class, GetDocumentRequestIdUseCase::class],
-        [VerificationDocumenUseCaseInterface::class, VerificationDocumenUseCase::class],
+        [GetDataInfoPenddingFactureUseCaseInterface::class, GetDataInfoPenddingFactureUseCase::class],
+     
         [GetUserByIdUseCaseInterface::class, GetUserByIdUseCase::class],
-        [UpdateCabRequestUseCaseInterface::class, UpdateCabRequestUseCase::class],
-        [NetworkGoldeUseCaseInterface::class, NetworkGoldeUseCase::class],
-        [RequestPurchaseAllUseCaseInterface::class, RequestPurchaseAllUseCase::class],
-        [RequestPurchaseIdUseCaseInterface::class, RequestPurchaseIdUseCase::class],
-        [HistoryRequestPurchaseUseCaseInterface::class, HistoryRequestPurchaseUseCase::class],
-        [GetUserIdAllUseCaseInterface::class, GetUserIdAllUseCase::class],
-        [GetUserIdAllByUseCaseInterface::class, GetUserIdAllByUseCase::class],
-        [GetDataHomeUseCaseInterface::class, GetDataHomeUseCase::class],
-        [DenyInvestmentRequestUseCaseInterface::class, DenyInvestmentRequestUseCase::class],
-        [RequestWithdrawalsUseCaseInterface::class, RequestWithdrawalsUseCase::class],
-        [RequestWithdrawalsUseIdCaseInterface::class, RequestWithdrawalsIdUseCase::class],
-        [CreateConvertCurrencieUseCaseInterface::class, CreateConvertCurrencieUseCase::class],
-        [GetWithdrawlsByIdUseCaseInterface::class, GetWithdrawlsByIdUseCase::class],
-        [GetWhithdrawlsRequestUseCaseInterface::class, GetWhithdrawlsRequestUseCase::class],
-        [DenyWhithdrawalsRequestUseCaseInterface::class, DenyWhithdrawalsRequestUseCase::class],
-        [AproveedWithdrawlsRequestUseCaseInterface::class, AproveedWithdrawlsRequestUseCase::class],
-        [AproveedInvestmentRequestUseCaseInterface::class, AproveedInvestmentRequestUseCase::class],
+    
         [GetUserAllUseCaseInterface::class, GetUserAllUseCase::class],
         [updateUserDataUseCaseInterface::class, updateUserDataUseCase::class],
         [GeneratePdfUseCaseInterface::class, GeneratePdfUseCase::class],
@@ -122,10 +99,10 @@ class UseCaseServiceProvider extends ServiceProvider
         [GeneratePdfByIdUseCaseInterface::class, GeneratePdfByIdUseCase::class],
         [DeleteUserDatabyIdUseCaseInterface::class, DeleteUserDatabyIdUseCase::class],
         [GetDateFacturePendingUseCaseInterface::class, GetDateFacturePendingUseCase::class],
-
-        
-        
-        
+        [GetGenderUseCaseInterface::class, GetGenderUseCase::class],
+        [GetInternetPlanUseCaseInterface::class, GetInternetPlanUseCase::class],
+        [LocationUseCaseInterface::class, LocationUseCase::class],
+        [GetDniUseCaseInterface::class, GetDniUseCase::class],
     ];
 
     /**

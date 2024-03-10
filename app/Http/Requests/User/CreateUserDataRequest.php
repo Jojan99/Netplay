@@ -40,7 +40,10 @@ class CreateUserDataRequest extends FormRequest
             'phone' => 'required|string',
             'birthday' => 'required|string',
             'password' => 'required|string',
+            // 'cutoffDate' => 'required|string',
             'planInternet' => 'required|int',
+            
+
         ];
     }
 

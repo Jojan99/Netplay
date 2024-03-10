@@ -23,4 +23,6 @@ interface GeneratePdfRepositoryInterface{
      * @return mixed
      */
     public function generatePdfById($user_id): mixed;
+
+    public function getUserPeriode1($Periodo): mixed;
 }

@@ -45,7 +45,7 @@ class GetUserByIdUseCase implements GetUserByIdUseCaseInterface
             }
         } catch (QueryException $err) {
             return [
-                'message' => 'Ocurrio un error al consultar los generos disponibles',
+                'message' => 'Ocurrio un error al consultar el usuario',
                 'status' => 1,
                 'data' => ApiResponseConstants::DATA_NULL
             ];

@@ -31,21 +31,34 @@ class GeneratePdfRepository implements GeneratePdfRepositoryInterface
     
     // }
 
+     /**
+     * @return mixed
+     */
+    public function getUserPeriode1($Periodo): mixed
+    {
+        $data = UserData::select('user_id')
+        ->where('active' ,1)
+        ->where('Periode_facture' ,$Periodo)
+        ->get();
+        error_log($data);
+
+        return $data;
+    }
+
     public function generatePdf($data): mixed
     {
-        $ids = $data['ids'];
-
         $select = [];
 
-        foreach ($ids as $id) {
+        foreach ($data as $data) {
 
             $result = User::select('user_data.names', 'user_data.lastname',
             'user_data.dni','internet_plans.plan_name','internet_plans.monthly_price',
-            'user_data.address','user_data.phone','user_data.email','cab_facturations.date_init_facturation')
+            'user_data.address','user_data.phone','user_data.email','cab_facturations.date_init_facturation','det_facturations.price_discount','det_facturations.number_facture')
             ->join('user_data', 'users.id', '=', 'user_data.user_id')
             ->join('internet_plans', 'internet_plans.id', '=', 'user_data.internet_plans_id')
             ->join('cab_facturations', 'cab_facturations.user_id', '=', 'user_data.user_id')
-            ->where('user_data.user_id', $id)
+            ->join('det_facturations', 'det_facturations.cab_id', '=', 'cab_facturations.id')
+            ->where('user_data.user_id', $data['user_id'])
             ->get();
 
             $select = array_merge($select, $result->toArray());
@@ -58,11 +71,12 @@ class GeneratePdfRepository implements GeneratePdfRepositoryInterface
     public function generatePdfById($id): mixed{
         return User::select('user_data.names', 'user_data.lastname',
         'user_data.dni','internet_plans.plan_name','internet_plans.monthly_price',
-        'user_data.address','user_data.phone','user_data.email','cab_facturations.date_init_facturation')
+        'user_data.address','user_data.phone','user_data.email','cab_facturations.date_init_facturation','det_facturations.price_discount','det_facturations.number_facture')
         ->join('user_data', 'users.id', '=', 'user_data.user_id')
         ->join('internet_plans', 'internet_plans.id', '=', 'user_data.internet_plans_id')
         ->join('cab_facturations', 'cab_facturations.user_id', '=', 'user_data.user_id')
-        ->where('user_data.user_id', $id)
+        ->join('det_facturations', 'det_facturations.cab_id', '=', 'cab_facturations.id')
+        ->where('det_facturations.number_facture', $id)
         ->first();
     }
 }

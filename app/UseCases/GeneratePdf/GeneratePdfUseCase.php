@@ -31,17 +31,24 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
      * Método encargado de generar pdf masivo .zip
      * @return mixed
      */
-    public function generatePdf($data): mixed
+    public function generatePdf($Periodo): mixed
     {
         try {
 
             if (true) {
+               
+                $getUserPeriode1 = $this->generatePdfRepository->getUserPeriode1($Periodo);
 
-                $generatePdf = $this->generatePdfRepository->generatePdf($data);
+                error_log(json_encode($getUserPeriode1));
+
+                $generatePdf = $this->generatePdfRepository->generatePdf($getUserPeriode1);
+
 
                 error_log(json_encode($generatePdf));
 
                 foreach ($generatePdf as $user) {
+
+                error_log(json_encode($user));
 
                     // Genera el PDF individual y almacénalo en el array junto con su nombre de archivo
                     $nombreArchivo = 'Sr o Sra ' . $user['dni'] . ' ' . $user['names'] . ' ' . $user['lastname'] . '.pdf';
@@ -65,7 +72,12 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
                 $response->header('Content-Type', 'application/zip');
                 $response->header('Content-Disposition', 'attachment; filename="archivos.zip"');
                 $response->setContent(file_get_contents($zipFileName));
-                unlink($zipFileName);
+
+                $zipContent = file_get_contents($zipFileName);
+                $response->setContent($zipContent);
+
+                $filePath = storage_path('app/archivos.zip');
+                file_put_contents($filePath, $zipContent);
 
                 return $response;
             } else {
@@ -84,192 +96,246 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
     private function generateIndividualPdf($user)
     {
 
+        $fechaInit = substr($user['date_init_facturation'], 0, 10);
+        $fechaNueva = date('Y-m-d', strtotime($fechaInit . ' -1 month'));
+        $fechaActual = date('Y-m-d');
+        $fechaVence = date('Y-m-d',strtotime($fechaActual . ' +3 days'));
 
+
+        $Porcentage = 0;
+
+        $valorDescuento = $user['price_discount'];
+
+        $saldoTotal = $user['monthly_price'] - $user['price_discount'];
 
         // Crea un PDF individual y devuelve su contenido
         // Aquí puedes usar Dompdf, TCPDF, o cualquier otra biblioteca de tu elección
         $options = new Options();
         $options->set('isHtml5ParserEnabled', true);
         $options->set('isPhpEnabled', true);
+        $logoPath = "https://i.ibb.co/wQyTjTy/NET-PLAY-LOGO-Mesa-de-trabajo-1.jpg";
 
+        $imagenBase64 = "data:image/png;base64," . base64_encode(file_get_contents($logoPath));
         // Crea una instancia de Dompdf, TCPDF u otra biblioteca
         $pdf = new Dompdf($options);
 
         $html = '
-    <!DOCTYPE html>
+        <!DOCTYPE html>
 <html>
+
 <head>
-    <meta charset="UTF-8">
-    <title>Factura</title>
-    <style>
+  <meta charset="UTF-8">
+  <title>Factura</title>
+  <style>
     body {
-        font-family: Arial, sans-serif;
-        margin: 0;
-        padding: 0;
+      font-family: Arial, sans-serif;
     }
 
     /* Estilos para el encabezado */
     #header {
-        background-color: #5ebad3;
-        text-align: center;
+      text-align: center;
     }
 
-    #logo {
-        width: 100px;
-        height: auto;
-    }
-
-    /* Contenedor principal */
-    .container {
-        padding: 20px;
-    }
 
     /* Estilos para las columnas de la izquierda */
     .left-column {
-        float: left;
-        width: 45%;
+      float: left;
+      width: 33.33%;
     }
 
-    .left-column p {
-        margin: 5px 0;
+    .center-column {
+      float: left;
+      width: 33.33%;
+      font-size: 15px;
     }
 
     /* Estilos para la tabla */
     table {
-        width: 100%;
-        border-collapse: collapse;
-        margin-top: 15px;
-        border: 1px solid #ddd; /* Añadido para los bordes de la tabla */
+      width: 100%;
+      /* Añadido para los bordes de la tabla */
+      text-align: center;
+      padding-bottom: 15%;
     }
 
-    th, td {
-        padding: 10px;
-        text-align: left;
+    th {
+      background-color: #f2f2f2;
+      text-align: center;
+      border-radius: 8px; 
     }
+
 
     /* Estilos para las columnas de la derecha */
     .right-column {
-        float: right;
-        width: 45%;
+      float: right;
+      width: 33.33%;
     }
 
-    .right-column p {
-        margin: 5px 0;
+    .right-column-center {
+      position: absolute;
+      right: 10%;
+      /* Ajusta este valor según tus preferencias */
+    }
+
+    .left-column-center {
+      position: absolute;
+
     }
 
     /* Línea divisoria */
     .linea-divisoria {
-        border: 1px solid #ccc;
-        margin: 20px 0;
-        clear: both;
+      border: 1px solid black;
+      clear: both;
+
     }
 
     /* Estilos para el campo adicional */
     .additional-field {
-        text-align: right;
-        margin-top: 10%;
-    }
-    .tr{
-        background-color: #5ebad3;
+      text-align: right;
+      margin-top: 10%;
     }
 
     .additional-field p {
-        margin: 5px 0;
     }
 
     /* Estilos para la parte inferior */
     .bottom-section {
-        text-align: right;
-        margin-top: 15px;
-        padding: 10px;
-        border-top: 1px solid #ccc;
-        background-color: #f0f0f0;
+      text-align: right;
+      margin-top: 15px;
+      padding: 10px;
+      border-top: 1px solid #ccc;
+      background-color: #f0f0f0;
     }
 
     /* Estilos para los colores de texto */
     .iva {
-        color: #e74c3c; /* Rojo para IVA */
+      color: #e74c3c;
+      /* Rojo para IVA */
     }
 
     .descuento {
-        color: #3498db; /* Azul para Descuento */
+      color: #3498db;
+      /* Azul para Descuento */
     }
 
     .total {
-        color: #27ae60; /* Verde para Total */
+      color: #27ae60;
+      /* Verde para Total */
     }
-    </style>
+
+    .container {
+      position: relative;
+    }
+    .containerlogo {
+      position: relative;
+
+    }
+
+    .container1 {
+      position: relative;
+      padding-bottom: 100px;
+    }
+
+    .title {
+      position: absolute;
+      left: 70%;
+      /* Ajusta este valor según tus preferencias */
+      /* Otros estilos según tus preferencias */
+    }
+
+
+    .logo img {
+      width: 20%; /* Ajusta el ancho al 100% del contenedor */
+      height: 10%; /* Ajusta la altura al 100% del contenedor */
+      left: 20%;
+
+      object-fit: contain; /* Puedes probar otras opciones como "cover", "fill", "contain", etc. */
+    }
+  </style>
+
+
 </head>
+
 <body>
-    <div id="header">
-        <h1>NetPlay</h1>
-    </div>
-    <h2>Factura de Venta</h2>
 
-    <div class="container">
-        <div class="left-column">
-            <p><strong>Razon Social</strong>: NJG TELECOMUNICACIONES</p>
-            <p><strong>Identificación</strong>: 
-                1193033331-7</p>
-            <p><strong>Teléfono</strong>:
-            3022042294</p>
-            <p><strong>Dirección</strong>:
-            Soledad, Atlantico,
-           COLOMBIA.</p>
-            <p><strong>Condición IVA: No Aplica</strong></p>
-        </div>
-        <div class="right-column">
-            <p><strong>Fecha:</strong></p>
-            <p><strong>Fecha Vto.:</strong></p>
-            <p><strong>Forma de pago:</strong></p>
-        </div>
+
+<div class="containerlogo">
+    <div class="title">FACTURA DE VENTA</div>
+    <div class="logo"><img src="'.$imagenBase64.'" alt="Logo"></div>
     </div>
 
-    <hr class="linea-divisoria">
-    <div class="container">
-        <div class="left-column">
-        
-            <p>Sr. (es):' . $user['names'] . '</p>
-            <p>Dirección: ' . $user['address'] . '</p>
-            <p>Municipio: Colombia</p>
-        </div>
-        <div class="right-column">
-            <p>CC: ' . $user['dni'] . '</p>
-            <p>Teléfono: ' . $user['phone'] . '</p>
-        </div>
+  <div class="container">
+    <div class="left-column"">
+      <a><strong>Actividad Económica:</strong></a>
+      <a>6110 - Actividades de
+        telecomunicaciones alámbricas</a>
+
     </div>
-    <hr class="linea-divisoria">
-    <table>
-        <thead>
-            <tr class="tr">
-            <th>Nombre</th>
-            <th>Fecha Facturada</th>
-            <th class="iva">IVA%</th>
-            <th>Precio</th>
-            <th class="descuento">% Dto.</th>
-            <th class="total">Total</th>
-            </tr>
-        </thead>
-        <tbody>
-            <tr>
-                <td>' . $user['plan_name'] . '</td>
-                <td>2023/08/27' . "/" . '2023/09/27</td>
-                <td class="iva">0%</td>
-                <td>' . $user['monthly_price'] . '</td>
-                <td class="descuento">0%</td>
-                <td>' . $user['monthly_price'] . '</td>
-            </tr>
-        </tbody>
-    </table>
-    <div class="additional-field">
-    <p><strong>Subtotal:</strong> 149,000.00</p>
-    <p><strong>Descuento:</strong> 0.00</p>
-    <p><strong>Total Bruto:</strong> 149,000.00</p>
-</div>
-<div class="bottom-section">
-    <p><strong>Valor a Pagar: $149,000.00</strong></p>
-</div>
+    <div class=" center-column">
+      <a><strong>Razon Social</strong>: NJG TELECOMUNICACIONES</a>
+      <a><strong>Identificación</strong>:
+        1193033331-7</a>
+      <a><strong>Teléfono</strong>:
+        3022042294</a>
+      <p><strong>Dirección</strong>:
+        Soledad, Atlantico,
+        COLOMBIA.</p>
+      <a><strong>Condición IVA: No Aplica</strong></a>
+    </div>
+    <div class="right-column">
+    <a><strong>Numero: </strong>' . $user['number_facture'] . '</a>
+      <p><strong>Fecha: </strong>' . $fechaActual . '</p>
+      <p><strong>Fecha Vto: </strong>' . $fechaVence . '</p>
+      <a><strong>Forma de pago: </strong>Efectivo</a>
+    </div>
+  </div>
+
+  <hr class="linea-divisoria">
+  <div class="container1">
+    <div class="left-column-center">
+      <a><strong>Sr. (es): </strong>' . $user['names'] . '</a>
+      <p><strong>Dirección: </strong>' . $user['address'] . '</p>
+      <a><strong>Municipio: </strong>Soledad</a>
+
+    </div>
+    <div class="right-column-center">
+      <a><strong>CC: </strong> ' . $user['dni'] . '</a>
+      <p><strong>Telefono: </strong> ' . $user['phone'] . '</p>
+    </div>
+  </div>
+  <hr class="linea-divisoria">
+  <a><strong>Moneda: </strong>Pesos Colombianos</a>
+  <table>
+    <thead>
+      <tr class="tr">
+        <th>Nombre</th>
+        <th>Fecha Facturada</th>
+        <th class="iva">IVA%</th>
+        <th>Precio</th>
+        <th class="descuento">% Dto.</th>
+        <th class="total">Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>' . $user['plan_name'] . '</td>
+        <td>' . $fechaNueva . ' - ' . $fechaInit . ' </td>
+        <td class="iva">0%</td>
+        <td>' . $user['monthly_price'] . '</td>
+        <td class="descuento">' . $Porcentage . '</td>
+        <td>' . $saldoTotal . '</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="additional-field">
+    <p><strong>Subtotal:</strong> ' . $user['monthly_price'] . '</p>
+    <p><strong>Descuento:</strong> ' . $valorDescuento . '</p>
+    <p><strong>Total Bruto:</strong> ' . $saldoTotal . '</p>
+  </div>
+  <div class="bottom-section">
+    <p><strong>Valor a Pagar: ' . $saldoTotal . '</strong></p>
+  </div>
 </body>
+
 </html>
 ';
         // Agrega contenido al PDF personalizado (por ejemplo, el nombre del usuario)

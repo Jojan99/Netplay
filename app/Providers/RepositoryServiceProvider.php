@@ -15,7 +15,10 @@ use App\Repositories\Interfaces\{
     TypeCurrencisRepositoryInterface,
     UserRepositoryInterface,
     GeneratePdfRepositoryInterface,
-    FacturationRepositoryInterface
+    FacturationRepositoryInterface,
+    InternetInfoRepositoryInterface,
+    LocationRepositoryInterface,
+    
     
 };
 use App\Repositories\{
@@ -30,7 +33,9 @@ use App\Repositories\{
     TypeCurrencisRepository,
     UserRepository,
     GeneratePdfRepository,
-    FacturationRepository
+    FacturationRepository,
+    InternetInfoRepository,
+    LocationRepository
 };
 
 /**
@@ -76,6 +81,8 @@ class RepositoryServiceProvider extends ServiceProvider
         [RequestWithdrawalsRepositoryInterface::class, RequestWithdrawalsRepository::class],
         [GeneratePdfRepositoryInterface::class, GeneratePdfRepository::class],
         [FacturationRepositoryInterface::class, FacturationRepository::class],
+        [InternetInfoRepositoryInterface::class, InternetInfoRepository::class],
+        [LocationRepositoryInterface::class, LocationRepository::class],
         
     ];
 

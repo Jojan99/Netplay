@@ -11,8 +11,40 @@ use App\Http\Requests\Facturation\CreateFacturationRequest;
  * @author Network Golden <sa.networkgolden@gmail.com>
  * @copyright 2022/06/9
  */
-interface FacturationRepositoryInterface{
-/**
+interface FacturationRepositoryInterface
+{
+  /**
+   * Método encargado de obtener los datos de un usuario por medio del nombre
+   * de usuario
+   *
+     /**
+   * @param string $id_user
+   * @return mixed
+   */
+  public function getCabUserFacturation(string $id_user): mixed;
+
+  /**
+   * @param CreateFacturationRequest $data
+   * @return mixed
+   */
+  public function createDetFacturation(CreateFacturationRequest $data): mixed;
+  /**
+   * @param string $id_user
+   * @return mixed
+   */
+  public function createCabFacturation(string $id_user, string $cutoffDate): mixed;
+
+  /**
+   * Método encargado de obtener los datos de un usuario por medio del nombre
+   * de usuario
+   *
+     /**
+   * @param string $id_user
+   * @return mixed
+   */
+  public function getPricePlan(string $id_user): mixed;
+
+   /**
      * Método encargado de obtener los datos de un usuario por medio del nombre
      * de usuario
      *
@@ -20,26 +52,28 @@ interface FacturationRepositoryInterface{
      * @param string $id_user
      * @return mixed
      */
-    public function getCabUserFacturation(string $id_user): mixed;
+    public function getDataInfoPenddingFacture() : mixed;
 
-      /**
-     * @param CreateFacturationRequest $data
-     * @return mixed
-     */
-    public function createDetFacturation(CreateFacturationRequest $data): mixed;
-    /**
-     * @param string $id_user
-     * @return mixed
-     */
-    public function createCabFacturation(string $id_user): mixed;
-
-    /**
-     * Método encargado de obtener los datos de un usuario por medio del nombre
-     * de usuario
-     *
+  /**
+   * Método encargado de obtener los datos de un usuario por medio del nombre
+   * de usuario
+   *
      /**
-     * @param string $id_user
-     * @return mixed
-     */
-    public function getDateFacturePending(): mixed;
+   * @param string $id_user
+   * @return mixed
+   */
+  public function getDateLast(string $id_user): mixed;
+
+  /**
+   * Método encargado de obtener los datos de un usuario por medio del nombre
+   * de usuario
+   *
+     /**
+   * @param string $id_user
+   * @return mixed
+   */
+  public function getDateFacturePending(): mixed;
+
+
+  public function getuserFacture1(): mixed;
 }

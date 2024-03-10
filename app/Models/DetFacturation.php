@@ -17,9 +17,12 @@ class DetFacturation extends Authenticatable
         'total',
         'price_total',
         'abone',
-        'price_abone',
+        'days_facture',
         'discount',
-        'price_discount'
+        'price_discount',
+        'porcentage_discount',
+        'paid'
+
     ];
 
     /**

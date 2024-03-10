@@ -24,10 +24,11 @@ return new class extends Migration
             $table->string('date_create_facturation');
             $table->boolean('total');
             $table->float('price_total');
-            $table->boolean('abone');
-            $table->float('price_abone');
+            $table->float('porcentage_discount');
+            $table->integer('days_facture');
             $table->boolean('discount');
             $table->float('price_discount');
+            $table->boolean('paid');
             $table->timestamps();
             $table->foreign('cab_id')
                 ->references('id')

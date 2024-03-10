@@ -42,6 +42,7 @@ class CreateUserDataUseCase implements CreateUserDataUseCaseInterface
      */
     public function createUserData(CreateUserDataRequest $data): mixed
     {
+
         try {
             if ($data['password'] != $data['confirPassword']) return ['message' => 'Check confirm Password does not match', 'data' => 8, 'status' => 1];
             if ($this->userRepository->validateUserEmail($data['email'])) return ['message' => 'The email already exists', 'data' => 4, 'status' => 1];
@@ -50,8 +51,9 @@ class CreateUserDataUseCase implements CreateUserDataUseCaseInterface
             $user = $this->userRepository->createUser($data);
             if ($user) {
                 $data['userId'] = $user['id'];
+                $cutoffDate = '2024-03-15';
                 $this->userRepository->createUserData($data);
-                $this->FacturationRepositoryInterface->createCabFacturation($user['id']);
+                $this->FacturationRepositoryInterface->createCabFacturation($user['id'],$cutoffDate);
             } else {
                 return ['message' => 'Error creating user', 'data' => 9, 'status' => 1];
             }
