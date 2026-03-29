@@ -14,7 +14,10 @@ use App\UseCases\User\Interfaces\GetUserAllUseCaseInterface;
 use App\UseCases\User\Interfaces\GetUserUseCaseInterface;
 use App\UseCases\User\Interfaces\GetUserByIdUseCaseInterface;
 use App\UseCases\User\Interfaces\DeleteUserDatabyIdUseCaseInterface;
-
+use App\UseCases\User\Interfaces\GetCountUserUseCaseInterface;
+use App\UseCases\User\Interfaces\GetTotalPriceMonthUseCaseInterface;
+use App\UseCases\User\Interfaces\GetTotalClientRegisterMonthUseCaseInterface;
+use App\UseCases\User\Interfaces\GetTrazaFactureUseCaseInterface;
 
 class UserController extends Controller
 {
@@ -74,6 +77,7 @@ class UserController extends Controller
             JsonResponse::HTTP_OK
         );
     }
+    
 
     /**
      * @param CreateUserDataRequest $createUserDataRequest
@@ -199,5 +203,152 @@ class UserController extends Controller
         );
     }
 
+     /**
+     * @param GetUserByIdUseCaseInterface $getUserByIdUseCaseInterface
+     * @return object
+     */
+    public function getUserByIdBost(
+        string $id,
+        GetUserByIdUseCaseInterface $GetUserByIdUseCaseInterface
+    ): object {
+        if (!$id) {
+            return standardApiReponse(
+                'id parameter cannot be empty: ',
+                ApiResponseConstants::DATA_NULL,
+                ApiResponseConstants::ERROR,
+                JsonResponse::HTTP_OK
+            );
+        }
+        try {
+            $getUser = $GetUserByIdUseCaseInterface->getUserByIdBost($id);
+        } catch (JWTException $e) {
+            // Respuesta en caso de excepción
+            return standardApiReponse(
+                'Currency rates could not be queried: ' . $e->getMessage(),
+                ApiResponseConstants::DATA_NULL,
+                ApiResponseConstants::ERROR,
+                JsonResponse::HTTP_INTERNAL_SERVER_ERROR
+            );
+        }
+
+        return standardApiReponse(
+            $getUser['message'],
+            $getUser['data'],
+            $getUser['status'],
+            JsonResponse::HTTP_OK
+        );
+    }
+
+
+     /**
+     * @param GetCountUserUseCaseInterface $getCountUserUseCaseInterface
+     * @return object
+     */
+    public function getCountUser(
+        GetCountUserUseCaseInterface $getCountUserUseCaseInterface
+    ): object {
+        try {
+            $result = $getCountUserUseCaseInterface->getCountUser();
+        } catch (JWTException $e) {
+            // Respuesta en caso de excepción
+            return standardApiReponse(
+                'Currency rates could not be queried: ' . $e->getMessage(),
+                ApiResponseConstants::DATA_NULL,
+                ApiResponseConstants::ERROR,
+                JsonResponse::HTTP_INTERNAL_SERVER_ERROR
+            );
+        }
+
+        return standardApiReponse(
+            $result['message'],
+            $result['data'],
+            $result['status'],
+            JsonResponse::HTTP_OK
+        );
+    }
+
+     /**
+     * @param GetTotalClientRegisterMonthUseCaseInterface $getTotalClientRegisterMonthUseCaseInterface
+     * @return object
+     */
+    public function GetTotalClientRegisterMonth(
+        GetTotalClientRegisterMonthUseCaseInterface $getTotalClientRegisterMonthUseCaseInterface
+    ): object {
+        try {
+            $result = $getTotalClientRegisterMonthUseCaseInterface->GetTotalClientRegisterMonth();
+        } catch (JWTException $e) {
+            // Respuesta en caso de excepción
+            return standardApiReponse(
+                'Currency rates could not be queried: ' . $e->getMessage(),
+                ApiResponseConstants::DATA_NULL,
+                ApiResponseConstants::ERROR,
+                JsonResponse::HTTP_INTERNAL_SERVER_ERROR
+            );
+        }
+
+        return standardApiReponse(
+            $result['message'],
+            $result['data'],
+            $result['status'],
+            JsonResponse::HTTP_OK
+        );
+    }
    
+
+   
+
+        /**
+     * @param GetTotalPriceMonthUseCaseInterface $getTotalPriceMonthUseCaseInterface
+     * @return object
+     */
+    public function getTotalPriceMonth(
+        GetTotalPriceMonthUseCaseInterface $getTotalPriceMonthUseCaseInterface
+    ): object {
+        try {
+            $result = $getTotalPriceMonthUseCaseInterface->getTotalPriceMonth();
+        } catch (JWTException $e) {
+            // Respuesta en caso de excepción
+            return standardApiReponse(
+                'Currency rates could not be queried: ' . $e->getMessage(),
+                ApiResponseConstants::DATA_NULL,
+                ApiResponseConstants::ERROR,
+                JsonResponse::HTTP_INTERNAL_SERVER_ERROR
+            );
+        }
+
+        return standardApiReponse(
+            $result['message'],
+            $result['data'],
+            $result['status'],
+            JsonResponse::HTTP_OK
+        );
+    }
+
+
+     /**
+     * @param GetTotalPriceMonthUseCaseInterface $getTotalPriceMonthUseCaseInterface
+     * @return object
+     */
+    public function getTrazaFacture(
+        GetTrazaFactureUseCaseInterface $getTrazaFactureUseCaseInterface
+    ): object {
+        try {
+            $result = $getTrazaFactureUseCaseInterface->getTrazaFacture();
+        } catch (JWTException $e) {
+            // Respuesta en caso de excepción
+            return standardApiReponse(
+                'Currency rates could not be queried: ' . $e->getMessage(),
+                ApiResponseConstants::DATA_NULL,
+                ApiResponseConstants::ERROR,
+                JsonResponse::HTTP_INTERNAL_SERVER_ERROR
+            );
+        }
+
+        return standardApiReponse(
+            $result['message'],
+            $result['data'],
+            $result['status'],
+            JsonResponse::HTTP_OK
+        );
+    }
 }

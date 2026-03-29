@@ -8,7 +8,10 @@ use App\Repositories\Interfaces\GeneratePdfRepositoryInterface;
 use App\UseCases\GeneratePdf\Interfaces\GeneratePdfUseCaseInterface;
 use Illuminate\Database\QueryException;
 use App\Constants\ApiResponseConstants;
-
+use Carbon\Carbon;
+use App\Resources\Templates\TemplatesPdf;
+use App\Services\WhatsAppService;
+use Illuminate\Support\Facades\Log;
 /**
  *
  * @package App\UseCases\GeneratePdf
@@ -31,82 +34,335 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
      * Método encargado de generar pdf masivo .zip
      * @return mixed
      */
-    public function generatePdf($Periodo): mixed
-    {
-        try {
+   public function generatePdf($Periodo): mixed
+{
+    set_time_limit(0);
+    ini_set('max_execution_time', 0);
+    try {
+        if (true) {
+            $getUserPeriode1 = $this->generatePdfRepository->getUserPeriode1($Periodo);
+            $generatePdf     = $this->generatePdfRepository->generatePdf($getUserPeriode1);
+            $fecha           = date('Y-m-d', strtotime('+0 days'));
+            $zipFileName     = storage_path('app/archivos.zip');
 
-            if (true) {
-               
-                $getUserPeriode1 = $this->generatePdfRepository->getUserPeriode1($Periodo);
+            if (file_exists($zipFileName)) unlink($zipFileName);
 
-                error_log(json_encode($getUserPeriode1));
-
-                $generatePdf = $this->generatePdfRepository->generatePdf($getUserPeriode1);
-
-
-                error_log(json_encode($generatePdf));
-
-                foreach ($generatePdf as $user) {
-
-                error_log(json_encode($user));
-
-                    // Genera el PDF individual y almacénalo en el array junto con su nombre de archivo
-                    $nombreArchivo = 'Sr o Sra ' . $user['dni'] . ' ' . $user['names'] . ' ' . $user['lastname'] . '.pdf';
-                    $pdfFiles[] = [
-                        'nombre_archivo' => $nombreArchivo,
-                        'contenido' => $this->generateIndividualPdf($user),
-                    ];
-                }
-
-                $zip = new \ZipArchive();
-                $zipFileName = storage_path('app/archivos.zip');
-
-                if ($zip->open($zipFileName, \ZipArchive::CREATE) === true) {
-                    foreach ($pdfFiles as $pdfFile) {
-                        $zip->addFromString($pdfFile['nombre_archivo'], $pdfFile['contenido']);
-                    }
-                    $zip->close();
-                }
-                // Prepara una respuesta HTTP con el archivo ZIP
-                $response = new \Illuminate\Http\Response();
-                $response->header('Content-Type', 'application/zip');
-                $response->header('Content-Disposition', 'attachment; filename="archivos.zip"');
-                $response->setContent(file_get_contents($zipFileName));
-
-                $zipContent = file_get_contents($zipFileName);
-                $response->setContent($zipContent);
-
-                $filePath = storage_path('app/archivos.zip');
-                file_put_contents($filePath, $zipContent);
-
-                return $response;
-            } else {
-                return ['message' => 'No puedes realizar esta accion', 'status' => 0];
+            $zip = new \ZipArchive();
+            if ($zip->open($zipFileName, \ZipArchive::CREATE) !== true) {
+                throw new \Exception('No se pudo crear el archivo ZIP.');
             }
-        } catch (QueryException $err) {
-            return [
-                'message' => 'Ha ocurrido un error al geerar el pdf',
-                'status' => 1,
-                'data' => ApiResponseConstants::DATA_NULL
+
+            $storagePath = storage_path('app/public/pdf');
+            if (!file_exists($storagePath)) {
+                mkdir($storagePath, 0775, true);
+            } else {
+                foreach (glob($storagePath . '/*') as $file) {
+                    if (is_file($file)) unlink($file);
+                }
+            }
+
+            $emojisHola  = ['👋', '😊', '🙌', '✨', '💬'];
+            $emojisFactura = ['📄', '📋', '🧾', '📑', '💼'];
+            $emojisGracias = ['🙏', '💚', '✅', '⭐', '😊'];
+            $emojisPago  = ['💳', '🏦', '💰', '📲', '✅'];
+
+            $saludos = [
+                "¡Hola", "Buenas", "Hola", "Cordial saludo", "Estimado(a)"
             ];
+
+            $cierres = [
+                "Gracias por preferir Soluciones NetPlay",
+                "Gracias por confiar en Soluciones NetPlay",
+                "Quedamos atentos a cualquier consulta. Soluciones NetPlay",
+                "Estamos para servirte. Soluciones NetPlay",
+                "Un gusto atenderte. Soluciones NetPlay"
+            ];
+
+            $disponibilidad = [
+                "tu factura del servicio de internet ya está disponible",
+                "tu factura de internet ya fue generada",
+                "tu factura del mes ya se encuentra lista",
+                "hemos generado tu factura de internet",
+                "tu factura ya está lista para consultar"
+            ];
+
+            $mensajesComprobante = [
+                "Le solicitamos amablemente enviar el comprobante de pago por este mismo canal para validar su transacción.",
+                "Por favor compártenos el comprobante de pago a través de este medio para realizar la verificación.",
+                "Agradecemos enviar el comprobante de pago por esta misma conversación para confirmar su transacción.",
+                "Para completar la validación, por favor envíe el comprobante por este mismo medio.",
+                "Le agradecemos compartir el comprobante por este canal para proceder con la validación.",
+                "Una vez realizado el pago, envíenos el comprobante por esta conversación.",
+                "Por favor envíanos el comprobante por este medio para confirmar tu pago.",
+                "Recuerda enviarnos el comprobante por esta conversación para validar tu pago."
+            ];
+
+            // ✅ Contadores para el log
+            $totalEnviados = 0;
+            $totalFallidos = 0;
+            $fallidos      = [];
+
+            foreach ($generatePdf as $user) {
+
+                $Cab = $this->generatePdfRepository->getSaldoAnt($user['id'], $user['number_facture']);
+                $Cab = $Cab === null ? 0 : $Cab;
+
+                $pdfContent    = $this->generateIndividualPdf($user, $Cab);
+                $nombreArchivo = 'Sr_o_Sra_' . $user['dni'] . '_' . $user['names'] . '_' . $user['lastname'] . '.pdf';
+                $nombreArchivo = str_replace(' ', '_', $nombreArchivo);
+                $nombreArchivo = preg_replace('/[^A-Za-z0-9_\-.]/', '', $nombreArchivo);
+                $nombrMensaje  = mb_convert_encoding($user['names'] . ' ' . $user['lastname'], 'UTF-8', 'auto');
+
+                $zip->addFromString($nombreArchivo, $pdfContent);
+
+                $pdfFilePath = $storagePath . DIRECTORY_SEPARATOR . $nombreArchivo;
+                file_put_contents($pdfFilePath, $pdfContent);
+
+                $ruta = "https://netplay.com.co/storage/pdf/$nombreArchivo";
+
+                // Variantes aleatorias
+                $emojiHola    = $emojisHola[array_rand($emojisHola)];
+                $emojiFactura = $emojisFactura[array_rand($emojisFactura)];
+                $emojiGracias = $emojisGracias[array_rand($emojisGracias)];
+                $emojiPago    = $emojisPago[array_rand($emojisPago)];
+                $saludo       = $saludos[array_rand($saludos)];
+                $cierre       = $cierres[array_rand($cierres)];
+                $disponible   = $disponibilidad[array_rand($disponibilidad)];
+                $mensageQr    = $mensajesComprobante[array_rand($mensajesComprobante)];
+
+                if ($user['billing_electronic'] != 1) {
+                    $mensage = "{$saludo} {$nombrMensaje} {$emojiHola}
+
+{$emojiFactura} {$disponible}.
+La fecha límite de pago es *{$fecha}*.
+
+{$emojiPago} Puedes realizar tu pago en:
+- BANCOLOMBIA CTA AHO 47800013328
+- DAVIPLATA 3022042294
+- NEQUI 3022042294 (Hum Gom)
+- NEQUI 3245127869 (Joj Pom)
+
+{$mensajesComprobante[array_rand($mensajesComprobante)]}
+
+{$emojiGracias} {$cierre}.";
+                } else {
+                    $mensage = "{$saludo} {$nombrMensaje} {$emojiHola}
+
+{$emojiFactura} {$disponible}.
+La fecha límite de pago es *{$fecha}*.
+
+{$emojiPago} Puedes realizar tu pago en:
+- BANCOLOMBIA CTA AHO 44200009784
+  Soluciones Netplay SAS
+
+{$mensajesComprobante[array_rand($mensajesComprobante)]}
+
+{$emojiGracias} {$cierre}.";
+                }
+
+                // ✅ Enviar WhatsApp con try/catch individual
+                $phone = trim($user['phone']);
+
+                if (!empty($phone)) {
+                    $whatsapp = new WhatsAppService();
+
+                    // Enviar documento
+                    try {
+                        $whatsapp->sendDocument($phone, $ruta, $nombreArchivo, $mensage);
+                        $totalEnviados++;
+                        Log::info('[FACTURA ENVIADA]', [
+                            'dni'   => $user['dni'],
+                            'phone' => $phone,
+                        ]);
+                    } catch (\Exception $e) {
+                        $totalFallidos++;
+                        $fallidos[] = ['dni' => $user['dni'], 'phone' => $phone, 'error' => $e->getMessage()];
+                        Log::warning('[FACTURA FALLIDA]', [
+                            'dni'   => $user['dni'],
+                            'phone' => $phone,
+                            'error' => $e->getMessage(),
+                        ]);
+                        // ✅ Continúa con el siguiente cliente
+                        continue;
+                    }
+
+                    // Enviar imagen QR solo si es factura electrónica
+                    if ($user['billing_electronic'] == 1) {
+                        try {
+                            $whatsapp->sendImage(
+                                $phone,
+                                "https://netplay.com.co/storage/Qr/QrNetplay.jpeg",
+                                $mensageQr
+                            );
+                        } catch (\Exception $e) {
+                            Log::warning('[QR IMAGE FALLIDA]', [
+                                'dni'   => $user['dni'],
+                                'phone' => $phone,
+                                'error' => $e->getMessage(),
+                            ]);
+                            // No interrumpir — el documento ya se envió
+                        }
+                    }
+                }
+                //$delay = rand(60, 90);
+                Log::info("[DELAY] Cliente {$user['dni']} procesado. Esperando {$delay}s...");
+                sleep($delay);
+            }
+
+            $zip->close();
+
+            Log::info('[PROCESO COMPLETADO]', [
+                'enviados' => $totalEnviados,
+                'fallidos' => $totalFallidos,
+                'detalle_fallidos' => $fallidos,
+            ]);
+
+            return [
+                'message'  => "PDF generado. Enviados: {$totalEnviados}, Fallidos: {$totalFallidos}",
+                'status'   => 0,
+                'enviados' => $totalEnviados,
+                'fallidos' => $totalFallidos,
+                'detalle_fallidos' => $fallidos,
+            ];
+
+        } else {
+            return ['message' => 'No puedes realizar esta acción', 'status' => 0];
         }
-        return ['message' => 'Pdf generado con exito', 'status' => 0];
+    } catch (QueryException $err) {
+        return [
+            'message' => 'Ha ocurrido un error al generar el PDF',
+            'status'  => 1,
+            'data'    => ApiResponseConstants::DATA_NULL
+        ];
     }
 
-    private function generateIndividualPdf($user)
+    return ['message' => 'PDF generado con éxito', 'status' => 0];
+}
+
+public function generatePdfMeta($Periodo): mixed
+{
+    try {
+
+        $getUserPeriode1 = $this->generatePdfRepository->getUserPeriode1($Periodo);
+        $users           = $this->generatePdfRepository->generatePdf($getUserPeriode1);
+
+        $fecha = date('Y-m-d');
+
+        $totalEnviados = 0;
+        $totalFallidos = 0;
+        $fallidos      = [];
+
+        $watchchimp = new \App\Services\WatchChimpService();
+
+        foreach ($users as $user) {
+
+            $phone = trim($user['phone'] ?? '');
+
+            if (empty($phone)) {
+                continue;
+            }
+
+            try {
+
+                // 🔥 Obtener saldo anterior
+                $Cab = $this->generatePdfRepository->getSaldoAnt(
+                    $user['id'], 
+                    $user['number_facture']
+                );
+
+                $Cab = $Cab ?? 0;
+
+                // 🔥 Total (sirve para deuda o no)
+                $total = $Cab > 0 
+                    ? $Cab + ($user['total'] ?? 0)
+                    : ($user['total'] ?? 0);
+
+                // 🔥 Variables (ORDEN IMPORTANTE)
+                $variables = [
+                    'names' => $user['names'] ?? '',
+                    'last_names' => $user['lastname'] ?? '',
+                    'number_bill' => $user['number_facture'] ?? '',
+                    'monthly_price' => number_format($total, 0, ',', '.'),
+                    'date_finish_bill' => $fecha,
+                ];
+
+                // 🚀 Enviar template
+                $response = $watchchimp->sendTemplate(
+                    $phone,
+                    "333320", // TU TEMPLATE ID
+                    $variables
+                );
+
+                if (($response['status'] ?? 0) != 1) {
+                    throw new \Exception(json_encode($response));
+                }
+
+                $totalEnviados++;
+
+                Log::info('[TEMPLATE ENVIADO]', [
+                    'dni'   => $user['dni'],
+                    'phone' => $phone,
+                ]);
+
+            } catch (\Exception $e) {
+
+                $totalFallidos++;
+
+                $fallidos[] = [
+                    'dni'   => $user['dni'],
+                    'phone' => $phone,
+                    'error' => $e->getMessage()
+                ];
+
+                Log::warning('[TEMPLATE FALLIDO]', [
+                    'dni'   => $user['dni'],
+                    'phone' => $phone,
+                    'error' => $e->getMessage(),
+                ]);
+
+                continue;
+            }
+        }
+
+        Log::info('[PROCESO COMPLETADO]', [
+            'enviados' => $totalEnviados,
+            'fallidos' => $totalFallidos,
+            'detalle_fallidos' => $fallidos,
+        ]);
+
+        return [
+            'message'  => "Proceso completado. Enviados: {$totalEnviados}, Fallidos: {$totalFallidos}",
+            'status'   => 0,
+            'enviados' => $totalEnviados,
+            'fallidos' => $totalFallidos,
+            'detalle_fallidos' => $fallidos,
+        ];
+
+    } catch (\Exception $err) {
+
+        return [
+            'message' => 'Error en el proceso',
+            'status'  => 1,
+            'error'   => $err->getMessage()
+        ];
+    }
+}
+
+
+    private function generateIndividualPdf($user,$Cab)
     {
 
-        $fechaInit = substr($user['date_init_facturation'], 0, 10);
-        $fechaNueva = date('Y-m-d', strtotime($fechaInit . ' -1 month'));
-        $fechaActual = date('Y-m-d');
-        $fechaVence = date('Y-m-d',strtotime($fechaActual . ' +3 days'));
+        // $fechaInit = substr($user['date_init_facturation'], 0, 10);
+        // $fechaNueva = date('Y-m-d', strtotime($fechaInit . ' -1 month'));
+        // $fechaActual = date('Y-m-d');
+        // $fechaVence = date('Y-m-d',strtotime($fechaActual . ' +3 days'));
 
 
-        $Porcentage = 0;
+        // $Porcentage = 0;
 
-        $valorDescuento = $user['price_discount'];
+        // $valorDescuento = $user['price_discount'];
 
-        $saldoTotal = $user['monthly_price'] - $user['price_discount'];
+        // $saldoTotal = $user['monthly_price'] - $user['price_discount'];
 
         // Crea un PDF individual y devuelve su contenido
         // Aquí puedes usar Dompdf, TCPDF, o cualquier otra biblioteca de tu elección
@@ -115,236 +371,22 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
         $options->set('isPhpEnabled', true);
         $logoPath = "https://i.ibb.co/wQyTjTy/NET-PLAY-LOGO-Mesa-de-trabajo-1.jpg";
 
-        $imagenBase64 = "data:image/png;base64," . base64_encode(file_get_contents($logoPath));
+        // $imagenBase64 = "data:image/png;base64," . base64_encode(file_get_contents($logoPath));
         // Crea una instancia de Dompdf, TCPDF u otra biblioteca
+         $pdfT = new TemplatesPdf();
+        
         $pdf = new Dompdf($options);
+       
 
-        $html = '
-        <!DOCTYPE html>
-<html>
+        $html = $pdfT->PdfFacturas($user,$Cab);
+          // Agrega contenido al PDF personalizado (por ejemplo, el nombre del usuario)
+          $pdf->loadHtml($html);
 
-<head>
-  <meta charset="UTF-8">
-  <title>Factura</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-    }
-
-    /* Estilos para el encabezado */
-    #header {
-      text-align: center;
-    }
+          // Renderiza el PDF
+          $pdf->render();
 
 
-    /* Estilos para las columnas de la izquierda */
-    .left-column {
-      float: left;
-      width: 33.33%;
-    }
-
-    .center-column {
-      float: left;
-      width: 33.33%;
-      font-size: 15px;
-    }
-
-    /* Estilos para la tabla */
-    table {
-      width: 100%;
-      /* Añadido para los bordes de la tabla */
-      text-align: center;
-      padding-bottom: 15%;
-    }
-
-    th {
-      background-color: #f2f2f2;
-      text-align: center;
-      border-radius: 8px; 
-    }
-
-
-    /* Estilos para las columnas de la derecha */
-    .right-column {
-      float: right;
-      width: 33.33%;
-    }
-
-    .right-column-center {
-      position: absolute;
-      right: 10%;
-      /* Ajusta este valor según tus preferencias */
-    }
-
-    .left-column-center {
-      position: absolute;
-
-    }
-
-    /* Línea divisoria */
-    .linea-divisoria {
-      border: 1px solid black;
-      clear: both;
-
-    }
-
-    /* Estilos para el campo adicional */
-    .additional-field {
-      text-align: right;
-      margin-top: 10%;
-    }
-
-    .additional-field p {
-    }
-
-    /* Estilos para la parte inferior */
-    .bottom-section {
-      text-align: right;
-      margin-top: 15px;
-      padding: 10px;
-      border-top: 1px solid #ccc;
-      background-color: #f0f0f0;
-    }
-
-    /* Estilos para los colores de texto */
-    .iva {
-      color: #e74c3c;
-      /* Rojo para IVA */
-    }
-
-    .descuento {
-      color: #3498db;
-      /* Azul para Descuento */
-    }
-
-    .total {
-      color: #27ae60;
-      /* Verde para Total */
-    }
-
-    .container {
-      position: relative;
-    }
-    .containerlogo {
-      position: relative;
-
-    }
-
-    .container1 {
-      position: relative;
-      padding-bottom: 100px;
-    }
-
-    .title {
-      position: absolute;
-      left: 70%;
-      /* Ajusta este valor según tus preferencias */
-      /* Otros estilos según tus preferencias */
-    }
-
-
-    .logo img {
-      width: 20%; /* Ajusta el ancho al 100% del contenedor */
-      height: 10%; /* Ajusta la altura al 100% del contenedor */
-      left: 20%;
-
-      object-fit: contain; /* Puedes probar otras opciones como "cover", "fill", "contain", etc. */
-    }
-  </style>
-
-
-</head>
-
-<body>
-
-
-<div class="containerlogo">
-    <div class="title">FACTURA DE VENTA</div>
-    <div class="logo"><img src="'.$imagenBase64.'" alt="Logo"></div>
-    </div>
-
-  <div class="container">
-    <div class="left-column"">
-      <a><strong>Actividad Económica:</strong></a>
-      <a>6110 - Actividades de
-        telecomunicaciones alámbricas</a>
-
-    </div>
-    <div class=" center-column">
-      <a><strong>Razon Social</strong>: NJG TELECOMUNICACIONES</a>
-      <a><strong>Identificación</strong>:
-        1193033331-7</a>
-      <a><strong>Teléfono</strong>:
-        3022042294</a>
-      <p><strong>Dirección</strong>:
-        Soledad, Atlantico,
-        COLOMBIA.</p>
-      <a><strong>Condición IVA: No Aplica</strong></a>
-    </div>
-    <div class="right-column">
-    <a><strong>Numero: </strong>' . $user['number_facture'] . '</a>
-      <p><strong>Fecha: </strong>' . $fechaActual . '</p>
-      <p><strong>Fecha Vto: </strong>' . $fechaVence . '</p>
-      <a><strong>Forma de pago: </strong>Efectivo</a>
-    </div>
-  </div>
-
-  <hr class="linea-divisoria">
-  <div class="container1">
-    <div class="left-column-center">
-      <a><strong>Sr. (es): </strong>' . $user['names'] . '</a>
-      <p><strong>Dirección: </strong>' . $user['address'] . '</p>
-      <a><strong>Municipio: </strong>Soledad</a>
-
-    </div>
-    <div class="right-column-center">
-      <a><strong>CC: </strong> ' . $user['dni'] . '</a>
-      <p><strong>Telefono: </strong> ' . $user['phone'] . '</p>
-    </div>
-  </div>
-  <hr class="linea-divisoria">
-  <a><strong>Moneda: </strong>Pesos Colombianos</a>
-  <table>
-    <thead>
-      <tr class="tr">
-        <th>Nombre</th>
-        <th>Fecha Facturada</th>
-        <th class="iva">IVA%</th>
-        <th>Precio</th>
-        <th class="descuento">% Dto.</th>
-        <th class="total">Total</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td>' . $user['plan_name'] . '</td>
-        <td>' . $fechaNueva . ' - ' . $fechaInit . ' </td>
-        <td class="iva">0%</td>
-        <td>' . $user['monthly_price'] . '</td>
-        <td class="descuento">' . $Porcentage . '</td>
-        <td>' . $saldoTotal . '</td>
-      </tr>
-    </tbody>
-  </table>
-  <div class="additional-field">
-    <p><strong>Subtotal:</strong> ' . $user['monthly_price'] . '</p>
-    <p><strong>Descuento:</strong> ' . $valorDescuento . '</p>
-    <p><strong>Total Bruto:</strong> ' . $saldoTotal . '</p>
-  </div>
-  <div class="bottom-section">
-    <p><strong>Valor a Pagar: ' . $saldoTotal . '</strong></p>
-  </div>
-</body>
-
-</html>
-';
-        // Agrega contenido al PDF personalizado (por ejemplo, el nombre del usuario)
-        $pdf->loadHtml($html);
-
-        // Renderiza el PDF
-        $pdf->render();
-
-        // Devuelve el contenido del PDF generado
-        return $pdf->output();
-    }
+          // Devuelve el contenido del PDF generado
+          return $pdf->output();
+      }
 }

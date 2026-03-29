@@ -76,4 +76,31 @@ interface UserRepositoryInterface{
      * @return mixed
      */
     public function DeleteUserData($id): mixed;
+
+    public function getUserByIdBost($dni): mixed;
+
+    /**
+     * @param int $id
+     * @return mixed
+     */
+    public function getCountUser(): mixed;
+
+    /**
+     * @param int $id
+     * @return mixed
+     */
+    public function getTotalPriceMonth($year): mixed;
+
+    /**
+     * @param int $id
+     * @return mixed
+     */
+    public function getTotalClientRegisterMonth($year): mixed;
+
+    /**
+     * @return mixed
+     */
+    public function getTrazaFacture(): mixed;
+
+   
 }

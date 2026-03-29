@@ -1,5 +1,6 @@
 <?php
 
+use App\Providers\ManagerServiceProvider;
 use Illuminate\Support\Facades\Facade;
 use Illuminate\Support\ServiceProvider;
 
@@ -69,8 +70,8 @@ return [
     | ahead and set this to a sensible default for you out of the box.
     |
     */
+'timezone' => 'America/Bogota',
 
-    'timezone' => 'UTC',
 
     /*
     |--------------------------------------------------------------------------
@@ -192,9 +193,10 @@ return [
          */
         App\Providers\AppServiceProvider::class,
         App\Providers\AuthServiceProvider::class,
-        // App\Providers\BroadcastServiceProvider::class,
+        App\Providers\BroadcastServiceProvider::class,
         App\Providers\EventServiceProvider::class,
         App\Providers\RouteServiceProvider::class,
+        App\Providers\ManagerServiceProvider::class,
         App\Providers\RepositoryServiceProvider::class,
         App\Providers\UseCaseServiceProvider::class,
         Barryvdh\DomPDF\ServiceProvider::class

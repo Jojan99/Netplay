@@ -1,0 +1,4 @@
+[24-Jan-2026 14:34:50 UTC] PHP Fatal error:  Uncaught Error: Class "Illuminate\Foundation\Http\Kernel" not found in /home/onetplao3/public_html/netplay/app/Http/Kernel.php:7
+Stack trace:
+#0 {main}
+  thrown in /home/onetplao3/public_html/netplay/app/Http/Kernel.php on line 7

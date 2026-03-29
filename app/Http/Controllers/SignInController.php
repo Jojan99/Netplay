@@ -58,19 +58,20 @@ class SignInController extends Controller
             );
         }
 
-        //Se consulta los datos del usuario
-        // $user = $SignInUseCaseInterface->getDataUserByUserName($request->user);
+        $authenticatedUser = JWTAuth::user();
 
         // Respuesta en caso de éxito
         return standardApiReponse(
             'The token has been created successfully',
             [
                 'access_token' => $token,
-                'userId' => 1,
-                'expires_in' => config("jwt.ttl") * 60,
+                'userId'       => $authenticatedUser->id,
+                'company_id'   => $authenticatedUser->company_id,
+                'profile_id'   => $authenticatedUser->profile_id,
+                'expires_in'   => config("jwt.ttl") * 60,
                 'user' => [
-                    'user' => $request->user,
-                    'email' => "johndoe@example.com",
+                    'user'  => $request->user,
+                    'email' => $authenticatedUser->email,
                 ]
             ],
             ApiResponseConstants::SUCCESS

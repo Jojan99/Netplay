@@ -16,6 +16,7 @@ class Kernel extends ConsoleKernel
         // $schedule->command("NombreDelComando")->emailOutputTo('jojanemece@gmail.com');
         $schedule->command('post:create')->everyMinute();
         // $schedule->command('app:generate-pdf')->everyMinute();
+        
     }
 
     /**

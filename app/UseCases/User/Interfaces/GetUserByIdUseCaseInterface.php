@@ -17,4 +17,6 @@ interface GetUserByIdUseCaseInterface
      * @return mixed
      */
     public function getUserById($id): mixed;
+
+    public function getUserByIdBost($dni): mixed;
 }

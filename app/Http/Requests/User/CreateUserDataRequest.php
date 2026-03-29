@@ -31,18 +31,16 @@ class CreateUserDataRequest extends FormRequest
             'names' => 'required|string',
             'lastname' => 'required|string',
             'address' => 'required|string',
-            'genderId' => 'required|int',
-            'dniId' => 'required|int',
-            'countryId' => 'required|int',
+            'countryId' => 'required|string',
             'dni' => 'required|string',
-            'username' => 'required|string',
             'email' => 'required|string',
             'phone' => 'required|string',
-            'birthday' => 'required|string',
-            'password' => 'required|string',
-            // 'cutoffDate' => 'required|string',
             'planInternet' => 'required|int',
-            
+            'ip_assignment_id' => 'required|string',
+            'group' => 'required|int',
+              // 'genderId' => 'required|int',
+            // 'dniId' => 'required|int',
+            // 'birthday' => 'required|string',
 
         ];
     }
@@ -62,12 +60,9 @@ class CreateUserDataRequest extends FormRequest
             'dniId' => 'Tipo Identificacion de usuario',
             'countryId' => 'Pais',
             'dni' => 'Identificacion de usuario',
-            'username' => 'Username',
             'email' => 'Correo',
             'phone' => 'Telefono',
             'birthday' => 'Fecha nacimiento',
-            'password' => 'Contraseña',
-            'confirPassword' => 'Confirmar contraseña',
             'planInternet' => 'Plan internet',
         ];
     }

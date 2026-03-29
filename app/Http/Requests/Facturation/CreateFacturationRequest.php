@@ -28,6 +28,7 @@ class CreateFacturationRequest extends FormRequest
     {
         return [
             'id_user' => 'int',
+            'id_facture' => 'int',
             'cab_id' => 'int',
             'date_facturation' => 'string',
             'number_facture' => 'string',
@@ -36,6 +37,7 @@ class CreateFacturationRequest extends FormRequest
             'price_abone' => 'numeric',
             'price_discount' => 'numeric',
             'days_facture' => 'numeric',
+            'create_facture_manual' => 'numeric',
             'porcentage_discount' => 'numeric',
             'total' => 'bool',
             'discount' => 'bool'

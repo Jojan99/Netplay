@@ -12,6 +12,7 @@ class CabFacturation extends Authenticatable
     protected $fillable = [
         'user_id',
         'date_init_facturation',
+        'group',
     ];
 
     /**

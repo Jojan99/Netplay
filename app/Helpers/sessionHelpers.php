@@ -29,6 +29,18 @@ if (!function_exists('getSessionUserName')) {
     }
 }
 
+if (!function_exists('getSessionCompanyId')) {
+    /**
+     * Retorna el company_id del usuario autenticado en sesión
+     *
+     * @return int|null
+     */
+    function getSessionCompanyId()
+    {
+        return (session()->has('user') && isset(session()->get('user')->company_id)) ? session()->get('user')->company_id : null;
+    }
+}
+
 if (!function_exists('getSessionUserProfileId')) {
     /**
      * Función encargada de establecer la respuesta estandar para una solicitud 

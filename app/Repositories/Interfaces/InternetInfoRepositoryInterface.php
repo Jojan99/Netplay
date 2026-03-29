@@ -2,6 +2,7 @@
 
 namespace App\Repositories\Interfaces;
 
+use App\Http\Requests\Internet\InternetIpRequest;
 
 /**
  * Clase interfaz encargada de administrar el repositorio de usuarios
@@ -17,4 +18,21 @@ interface InternetInfoRepositoryInterface
      * @return mixed
      */
     public function getInternetPlanAll(): mixed;
+
+
+     /**
+     * @return mixed
+     */
+    public function getDataCorteAll(): mixed;
+
+     /**
+     * @return mixed
+     */
+    public function getIpAllByIdZone(InternetIpRequest $data): mixed;
+
+/**
+ * @return int
+ */
+public function AssignemetIpUser($id, $id_user): int;
+    
 }

@@ -33,15 +33,14 @@ class GetDataInfoPenddingFactureUseCase implements GetDataInfoPenddingFactureUse
     ) {
     }
 
-    /**
-x     * @return mixed
+    /*
+x   * @return mixed
      */
     public function getDataInfoPenddingFacture(): mixed
     {
-        error_log("LLEGAAAAA");
 
         try {
-            if (true) {
+            if (getSessionUserProfileId() == 2) {
                 $getDateFacturea =  $this->facturationRepository->getDataInfoPenddingFacture();
             } else {
                 return [

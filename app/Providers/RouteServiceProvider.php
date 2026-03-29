@@ -40,6 +40,11 @@ class RouteServiceProvider extends ServiceProvider
                     require base_path('routes/api/infoInternetRoutes.php');
                     require base_path('routes/api/locationRoutes.php');
                     require base_path('routes/api/dniRoutes.php');
+                    require base_path('routes/api/shearchRoutes.php');
+                    require base_path('routes/api/managementRouterRoutes.php');
+                    require base_path('routes/api/egresosRoutes.php');
+                    require base_path('routes/api/ticketRoutes.php');
+                    require base_path('routes/api/broadcastingRoutes.php');
                 });
 
             Route::middleware('web')
@@ -54,7 +59,7 @@ class RouteServiceProvider extends ServiceProvider
     protected function configureRateLimiting()
     {
         RateLimiter::for('api', function (Request $request) {
-            return Limit::perMinute(60)->by(optional($request->user())->id ?: $request->ip());
+            return Limit::perMinute(30)->by(optional($request->user())->id ?: $request->ip());
         });
     }
 }

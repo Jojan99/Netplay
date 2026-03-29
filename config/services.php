@@ -31,4 +31,25 @@ return [
         'region' => env('AWS_DEFAULT_REGION', 'us-east-1'),
     ],
 
+    'whatsapp' => [
+    'enabled'  => env('WHATSAPP_ENABLED', false),
+    'token'    => env('ULTRAMSG_TOKEN'),
+    'instance' => env('ULTRAMSG_INSTANCE'),
+
+    
+],
+
+'netplay_whatsapp' => [
+    'enabled'     => env('NETPLAY_WS_ENABLED', true),
+    'api_key'     => env('NETPLAY_WS_API_KEY'),
+    'instance_id' => env('NETPLAY_WS_INSTANCE_ID'),
+    'base_url'    => env('NETPLAY_WS_URL', 'http://181.48.150.43:3001/crm'),
+],
+'whatchimp' => [
+    'token' => env('WATCHCHIMP_TOKEN'),
+    'phone_id' => env('WATCHCHIMP_PHONE_ID'),
+],
+
+
+
 ];
