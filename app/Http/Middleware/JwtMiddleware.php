@@ -29,6 +29,8 @@ class JwtMiddleware
                 return $this->responseJwt('The token is invalid');
             } else if ($e instanceof \Tymon\JWTAuth\Exceptions\TokenExpiredException) {
                 return $this->responseJwt('Session has expired');
+            } else if ($e instanceof \Tymon\JWTAuth\Exceptions\JWTException && session()->has('user')) {
+                // Sin token en el header pero sesión activa — permitir continuar
             } else {
                 return $this->responseJwt('The token is not authorized' . $e->getMessage());
             }

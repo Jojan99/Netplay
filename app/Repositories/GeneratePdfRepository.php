@@ -31,9 +31,11 @@ class GeneratePdfRepository implements GeneratePdfRepositoryInterface
      /**
      * @return mixed
      */
-    public function getUserPeriode1($Periodo): mixed
+    public function getUserPeriode1($Periodo, int $companyId): mixed
     {
-        return CabFacturation::where('group', $Periodo)->get();
+        return CabFacturation::where('group', $Periodo)
+            ->where('company_id', $companyId)
+            ->get();
     }
 
      /**

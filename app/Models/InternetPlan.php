@@ -10,11 +10,12 @@ class InternetPlan extends Model
     use HasFactory;
     protected $fillable = [
         'id',
+        'company_id',
         'plan_name',
         'download_speed',
         'upload_speed',
         'monthly_price',
-        'description'
+        'description',
     ];
 
     /**

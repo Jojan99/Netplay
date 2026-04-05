@@ -131,107 +131,63 @@ class CreateDetFacturationUseCase implements CreateDetFacturationUseCaseInterfac
         return ['message' => 'Factura generada con éxito', 'status' => 0, 'data' => ApiResponseConstants::DATA_NULL];
     }
 
- public function createProcesoDetFacturation(CreateFacturationRequest $data): mixed
-{
-    try {
+    public function createProcesoDetFacturation(
+        CreateFacturationRequest $data,
+        int $periodo,
+        int $companyId,
+        int $billingDay,
+        int $billingMonth,
+        int $billingYear
+    ): mixed {
+        try {
+            // Fecha de factura = día configurado del grupo, en el mes/año indicado
+            $daysInMonth = cal_days_in_month(CAL_GREGORIAN, $billingMonth, $billingYear);
+            $safeDay     = min($billingDay, $daysInMonth);
+            $data_fecha  = sprintf('%04d-%02d-%02d', $billingYear, $billingMonth, $safeDay);
 
-        if (true) {
+            // Fecha límite para el cálculo del prorrateo (mismo día de factura)
+            $fechaCorte = Carbon::create($billingYear, $billingMonth, $safeDay);
 
-            $fechaActual = Carbon::now();
-            $diaDelMes = $fechaActual->day;
+            $clientes = $this->facturationRepository->getuserFacture1($periodo, $companyId);
 
-            $resultado = ($diaDelMes > 20) ? 2 : 1;
-
-            $fechaObjeto = new DateTime($data['date_facturation']);
-
-            if ($diaDelMes <= 20) {
-
-                $fechaObjeto->setDate(
-                    $fechaObjeto->format('Y'),
-                    $fechaObjeto->format('m'),
-                    15
-                );
-
-                // 🔥 CORRECCIÓN IMPORTANTE
-                $fechaActualDiff = Carbon::create(
-                    $fechaObjeto->format('Y'),
-                    $fechaObjeto->format('m'),
-                    30
-                );
-
-            } else {
-
-                $anio = $fechaObjeto->format('Y');
-                $mes = $fechaObjeto->format('m');
-
-                if ($mes == 2) {
-                    $ultimoDia = cal_days_in_month(CAL_GREGORIAN, $mes, $anio);
-                } else {
-                    $ultimoDia = 30;
-                }
-
-                $fechaObjeto->setDate($anio, $mes, $ultimoDia);
-
-                // 🔥 CORRECCIÓN IMPORTANTE
-                $fechaActualDiff = Carbon::create($anio, $mes, $ultimoDia);
-            }
-
-            $data_fecha = $fechaObjeto->format('Y-m-d');
-
-            $data1 = $this->facturationRepository->getuserFacture1($resultado);
-
-            foreach ($data1 as $value) {
-
-                // Aseguramos que created_at sea Carbon
+            foreach ($clientes as $value) {
+                // Si el cliente fue creado hace menos de 20 días respecto al corte, se prorratea o se omite
                 $fechaCreacion = Carbon::parse($value['created_at']);
+                $diasDesdeCreacion = $fechaCreacion->diffInDays($fechaCorte);
 
-                $diferencia = $fechaCreacion->diff($fechaActualDiff);
-
-                // 👇 TU IF SE QUEDA IGUAL
-                if ($diferencia->days < 20) {
-
-                    // Aquí va tu lógica de prorrateo si la quieres activar
-
+                if ($diasDesdeCreacion < 20) {
+                    // Prorrateo: días proporcionales
+                    $prorrateo = round(($value['monthly_price'] / 30) * $diasDesdeCreacion);
+                    if ($prorrateo <= 0) continue;
+                    $precioFinal = $prorrateo;
                 } else {
-
-                    $data['cab_id'] = $value['id'];
-                    $data['date_facturation'] = $data_fecha;
-                    $data['date_create_facturation'] = $data_fecha;
-                    $data['price_total'] = $value['monthly_price'];
-                    $data['total'] = 1;
-                    $data['porcentage_discount'] = 0;
-                    $data['days_facture'] = 30;
-                    $data['discount'] = 0;
-                    $data['price_discount'] = 0;
-                    $data['paid'] = 0;
-                    $data['create_facture_manual'] = 0;
-
-                    $this->facturationRepository->createDetFacturation($data);
+                    $precioFinal = $value['monthly_price'];
                 }
+
+                $data['cab_id']                  = $value['id'];
+                $data['date_facturation']         = $data_fecha;
+                $data['date_create_facturation']  = $data_fecha;
+                $data['price_total']              = $precioFinal;
+                $data['total']                    = 1;
+                $data['porcentage_discount']      = 0;
+                $data['days_facture']             = ($diasDesdeCreacion < 20) ? $diasDesdeCreacion : 30;
+                $data['discount']                 = 0;
+                $data['price_discount']           = 0;
+                $data['paid']                     = 0;
+                $data['create_facture_manual']    = 0;
+
+                $this->facturationRepository->createDetFacturation($data);
             }
 
-        } else {
+        } catch (QueryException $err) {
             return [
-                'message' => 'No tienes esta accion permitida',
-                'data' => 9,
-                'status' => 1
+                'message' => 'Error al generar facturas: ' . $err->getMessage(),
+                'data'    => ApiResponseConstants::DATA_NULL,
+                'status'  => 1,
             ];
         }
 
-    } catch (QueryException $err) {
-
-        return [
-            'message' => 'An error occurred while creating the user: ' . $err->getMessage(),
-            'data' => ApiResponseConstants::DATA_NULL,
-            'status' => 1
-        ];
+        return ['message' => 'Factura generada con éxito', 'status' => 0, 'data' => ApiResponseConstants::DATA_NULL];
     }
-
-    return [
-        'message' => 'Factura generada con éxito',
-        'status' => 0,
-        'data' => ApiResponseConstants::DATA_NULL
-    ];
-}
 
 }

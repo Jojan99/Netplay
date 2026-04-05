@@ -5,44 +5,23 @@ namespace App\Repositories\Interfaces;
 use App\Http\Requests\Ticket\CreateTicketRequest;
 use App\Http\Requests\Ticket\TicketRequest;
 
-/**
- * Clase interfaz encargada de administrar el repositorio de usuarios
- *
- * @package App\Repositories\Interfaces
- * @author Netplay <sa.networkgolden@gmail.com>
- * @copyright 2023/06/9
- */
 interface TicketRepositoryInterface
 {
-    /**
-     * @return mixed
-     */
     public function getTypePriorityAll(): mixed;
-
-      /**
-     * @return mixed
-     */
     public function getTypeServiceAll(): mixed;
-
-     /**
-     * @return mixed
-     */
     public function getTechnicaAll(): mixed;
-
-    /**
-     * @param CreateTicketRequest $data
-     * @return mixed
-     */
     public function createTicket(CreateTicketRequest $data): int;
-
-    /**
-     * @param TicketRequest $data
-     * @return mixed
-     */
     public function updateTicket(TicketRequest $data): mixed;
-
-     /**
-     * @return mixed
-     */
     public function getTicketInProgressAll($status): mixed;
+    public function getTicketsByUser(int $userId): mixed;
+    public function getAllTickets(array $filters): mixed;
+    public function getTicketById(int $id): mixed;
+    public function addNote(int $ticketId, int $userId, string $note, array $photos, ?string $audioPath): mixed;
+    public function getNotesByTicket(int $ticketId): mixed;
+    public function reopenTicket(int $ticketId, string $reason): bool;
+    public function reassignTicket(int $ticketId, int $techId): bool;
+    public function getStats(): mixed;
+    public function closeTicket(int $id, string $description): bool;
+    public function deleteTicket(int $id): bool;
+    public function getTicketsSince(string $since): mixed;
 }

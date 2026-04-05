@@ -3,12 +3,12 @@
 namespace App\Repositories;
 
 use App\Http\Requests\Search\SearchRequest;
+use Illuminate\Support\Facades\DB;
 use App\Models\User;
 use App\Models\UserData;
 use App\Models\DetFacturation;
 use App\Models\CabFacturation;
 use App\Repositories\Interfaces\SearchRepositoryInterface;
-use Illuminate\Support\Facades\DB;
 
 class SearchRepository implements SearchRepositoryInterface
 {
@@ -21,14 +21,16 @@ class SearchRepository implements SearchRepositoryInterface
 
         return User::select('users.id','user_data.names','user_data.lastname','user_data.address','user_data.dni','user_data.email','user_data.phone'
         ,'internet_status.name as internet_status','internet_plans.plan_name',
-        //'tabla_ips.name as ip',
+        DB::raw("COALESCE(tabla_ips.ip, '') AS ip"),
+        'users.username as alias',
         'cab_facturations.id as id_cab')
         ->join('user_data', 'users.id', 'user_data.user_id')
         ->join('internet_status', 'user_data.status_internet_id', 'internet_status.id')
         ->join('internet_plans', 'user_data.internet_plans_id', 'internet_plans.id')
-        //->join('tabla_ips', 'user_data.ip_assignment_id', 'tabla_ips.id')
+        ->leftJoin('tabla_ips', 'user_data.ip_assignment_id', 'tabla_ips.id')
         ->join('cab_facturations', 'users.id', 'cab_facturations.user_id')
         ->where('user_data.active', 1)
+        ->where('users.company_id', getSessionCompanyId())
         ->where(function ($query) use ($keyword) {
             $query->where('user_data.email', 'like', '%'.$keyword.'%')
                   ->orWhere('user_data.dni', 'like', '%'.$keyword.'%')
@@ -48,7 +50,9 @@ class SearchRepository implements SearchRepositoryInterface
             $resultados = DB::table('user_data as us')
                 ->join('cab_facturations as cb', 'cb.user_id', '=', 'us.user_id')
                 ->join('det_facturations as dt', 'cb.id', '=', 'dt.cab_id')
+                ->join('users', 'users.id', '=', 'us.user_id')
                 ->where('dt.paid', 0)
+                ->where('users.company_id', getSessionCompanyId())
                 ->select([
                     'cb.date_init_facturation',
                     'us.names',

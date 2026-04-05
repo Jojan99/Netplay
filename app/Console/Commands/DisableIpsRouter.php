@@ -46,12 +46,20 @@ class DisableIpsRouter extends Command
             return Command::SUCCESS;
         }
 
-        // 3️⃣ Conexión al MikroTik (UNA SOLA VEZ)
+        // 3️⃣ Conexión al MikroTik — una conexión por empresa
         $routerRepository = new RouterRepository();
         $connection = new ConectionRouterManager($routerRepository);
-        $client = $connection->conection('b5c2f0e8-7e82-4a5c-a7d7-0ee8b2d7b905');
 
-        $this->info('🔌 Conectado al MikroTik');
+        // Agrupar IPs por empresa para reutilizar la conexión
+        $ipsByCompany = [];
+        foreach ($ips as $ip) {
+            $companyId = $ip['company_id'] ?? null;
+            if ($companyId) {
+                $ipsByCompany[$companyId][] = $ip;
+            }
+        }
+
+        $this->info('🔌 Procesando por empresa');
 
         file_put_contents(
             $logFile,
@@ -63,8 +71,17 @@ class DisableIpsRouter extends Command
         $notFound = 0;
         $errors = 0;
 
-        // 4️⃣ Iterar IPs
-        foreach ($ips as $ip) {
+        // 4️⃣ Iterar por empresa
+        foreach ($ipsByCompany as $companyId => $companyIps) {
+            $routerToken = $routerRepository->getTokenByCompany($companyId);
+            if (!$routerToken) {
+                $this->warn("⚠️ Sin router configurado para empresa {$companyId}, se omite");
+                continue;
+            }
+            $client = $connection->conection($routerToken);
+            $this->info("🔌 Conectado al router de empresa {$companyId}");
+
+        foreach ($companyIps as $ip) {
             try {
                 // 🔍 Buscar IP en ARP
                 $query = (new Query('/ip/arp/print'))
@@ -145,6 +162,7 @@ class DisableIpsRouter extends Command
             // ⏱️ Pausa para no saturar el router
             usleep(100000); // 0.1s
         }
+        } // fin foreach empresa
 
         // 5️⃣ Resumen final
         $this->info('==========================');

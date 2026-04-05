@@ -27,16 +27,17 @@ class CreateUserDataRequest extends FormRequest
     public function rules()
     {
         return [
-            'id' => 'int',
+            'id' => 'nullable|int',
+            'id_user' => 'nullable|int',
             'names' => 'required|string',
             'lastname' => 'required|string',
             'address' => 'required|string',
-            'countryId' => 'required|string',
+            'countryId' => 'string',
             'dni' => 'required|string',
             'email' => 'required|string',
             'phone' => 'required|string',
             'planInternet' => 'required|int',
-            'ip_assignment_id' => 'required|string',
+            'ip_assignment_id' => 'string',
             'group' => 'required|int',
               // 'genderId' => 'required|int',
             // 'dniId' => 'required|int',

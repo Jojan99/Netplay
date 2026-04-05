@@ -6,6 +6,9 @@ use App\Repositories\Interfaces\ConversationRepositoryInterface;
 use Illuminate\Support\Facades\DB;
 use App\Models\CrmMessage;
 use App\Models\CrmAgent;
+use App\Models\CrmNote;
+use App\Models\CrmLabel;
+use App\Models\CrmSticker;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
@@ -50,6 +53,7 @@ class ConversationRepository implements ConversationRepositoryInterface
             })
             // Datos de agente (si quieres mostrar nombre del agente desde user_data)
             ->leftJoin('user_data as ud', 'ud.user_id', '=', 'c.assigned_user_id')
+            ->where('c.company_id', getSessionCompanyId())
             ->select([
                 'c.id',
                 'c.status',
@@ -90,22 +94,12 @@ class ConversationRepository implements ConversationRepositoryInterface
                         ->orWhere('cu.phone', 'like', $s);
                 });
             })
-            ->when($userId && $status !== 'all', function ($qq) use ($userId, $status) {
-
-                // 🆕 NEW → visibles para todos
-                if ($status === 'new') {
-                    return;
-                }
-
-                // 🔄 IN PROGRESS → solo asignadas
-                if ($status === 'in_progress') {
-                    $qq->where('c.assigned_user_id', $userId);
-                }
-
-                // CLOSED → visibles para todos
-                if ($status === 'closed') {
-                    return;
-                }
+            // Solo filtrar por agente cuando se pide explícitamente 'mine'
+            ->when(!empty($filters['mine']) && $userId, function ($qq) use ($userId) {
+                $qq->where(function ($w) use ($userId) {
+                    $w->where('c.assigned_user_id', $userId)
+                      ->orWhereNull('c.assigned_user_id');
+                });
             })
 
 
@@ -509,5 +503,328 @@ DB::table('crm_conversations')
                 'updated_at' => now(),
                 'status' => 'in_progress'
             ]);
+    }
+
+    /* =====================================================================
+     * NOTAS INTERNAS
+     * =================================================================== */
+    public function getNotes(int $conversationId): array
+    {
+        return DB::table('crm_notes as n')
+            ->leftJoin('user_data as ud', 'ud.user_id', '=', 'n.user_id')
+            ->where('n.conversation_id', $conversationId)
+            ->orderBy('n.created_at', 'asc')
+            ->select([
+                'n.id',
+                'n.content',
+                'n.created_at',
+                'n.user_id',
+                DB::raw("CONCAT(COALESCE(ud.names,''), ' ', COALESCE(ud.lastname,'')) as agent_name"),
+            ])
+            ->get()
+            ->map(fn($r) => [
+                'id'         => (int)$r->id,
+                'content'    => $r->content,
+                'agent_name' => trim($r->agent_name) ?: 'Agente',
+                'created_at' => $r->created_at,
+            ])
+            ->toArray();
+    }
+
+    public function addNote(int $conversationId, int $userId, string $content): array
+    {
+        $id = DB::table('crm_notes')->insertGetId([
+            'conversation_id' => $conversationId,
+            'user_id'         => $userId,
+            'content'         => $content,
+            'created_at'      => now(),
+            'updated_at'      => now(),
+        ]);
+
+        $name = DB::table('user_data')->where('user_id', $userId)
+            ->selectRaw("CONCAT(COALESCE(names,''), ' ', COALESCE(lastname,'')) as n")
+            ->value('n');
+
+        return [
+            'id'         => $id,
+            'content'    => $content,
+            'agent_name' => trim($name ?? '') ?: 'Agente',
+            'created_at' => now()->toDateTimeString(),
+        ];
+    }
+
+    public function deleteNote(int $noteId): void
+    {
+        DB::table('crm_notes')->where('id', $noteId)->delete();
+    }
+
+    /* =====================================================================
+     * ETIQUETAS
+     * =================================================================== */
+    public function getLabels(int $companyId): array
+    {
+        return DB::table('crm_labels')
+            ->where('company_id', $companyId)
+            ->orderBy('name')
+            ->get()
+            ->map(fn($r) => [
+                'id'    => (int)$r->id,
+                'name'  => $r->name,
+                'color' => $r->color,
+            ])
+            ->toArray();
+    }
+
+    public function createLabel(int $companyId, string $name, string $color): array
+    {
+        $id = DB::table('crm_labels')->insertGetId([
+            'company_id' => $companyId,
+            'name'       => $name,
+            'color'      => $color,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        return ['id' => $id, 'name' => $name, 'color' => $color];
+    }
+
+    public function deleteLabel(int $labelId): void
+    {
+        DB::table('crm_conversation_labels')->where('label_id', $labelId)->delete();
+        DB::table('crm_labels')->where('id', $labelId)->delete();
+    }
+
+    public function getConversationLabels(int $conversationId): array
+    {
+        return DB::table('crm_conversation_labels as cl')
+            ->join('crm_labels as l', 'l.id', '=', 'cl.label_id')
+            ->where('cl.conversation_id', $conversationId)
+            ->select(['l.id', 'l.name', 'l.color'])
+            ->get()
+            ->map(fn($r) => ['id' => (int)$r->id, 'name' => $r->name, 'color' => $r->color])
+            ->toArray();
+    }
+
+    public function addConversationLabel(int $conversationId, int $labelId): void
+    {
+        DB::table('crm_conversation_labels')->insertOrIgnore([
+            'conversation_id' => $conversationId,
+            'label_id'        => $labelId,
+            'created_at'      => now(),
+            'updated_at'      => now(),
+        ]);
+    }
+
+    public function removeConversationLabel(int $conversationId, int $labelId): void
+    {
+        DB::table('crm_conversation_labels')
+            ->where('conversation_id', $conversationId)
+            ->where('label_id', $labelId)
+            ->delete();
+    }
+
+    /* =====================================================================
+     * PRIORIDAD
+     * =================================================================== */
+    public function updatePriority(int $conversationId, string $priority): void
+    {
+        DB::table('crm_conversations')
+            ->where('id', $conversationId)
+            ->update(['priority' => $priority, 'updated_at' => now()]);
+    }
+
+    /* =====================================================================
+     * DASHBOARD MÉTRICAS
+     * =================================================================== */
+    public function getDashboardMetrics(int $companyId): array
+    {
+        $total      = DB::table('crm_conversations')->where('company_id', $companyId)->count();
+        $byStatus   = DB::table('crm_conversations')->where('company_id', $companyId)
+            ->selectRaw('status, COUNT(*) as total')->groupBy('status')->get()
+            ->pluck('total', 'status')->toArray();
+
+        $today      = DB::table('crm_conversations')
+            ->where('company_id', $companyId)
+            ->whereDate('created_at', today())->count();
+
+        $byPriority = DB::table('crm_conversations')->where('company_id', $companyId)
+            ->selectRaw('priority, COUNT(*) as total')->groupBy('priority')->get()
+            ->pluck('total', 'priority')->toArray();
+
+        // Conversaciones por agente
+        $byAgent = DB::table('crm_conversations as c')
+            ->join('user_data as ud', 'ud.user_id', '=', 'c.assigned_user_id')
+            ->where('c.company_id', $companyId)
+            ->whereIn('c.status', ['new', 'in_progress'])
+            ->selectRaw("CONCAT(COALESCE(ud.names,''), ' ', COALESCE(ud.lastname,'')) as agent_name, COUNT(*) as total")
+            ->groupBy('c.assigned_user_id', 'ud.names', 'ud.lastname')
+            ->orderByDesc('total')
+            ->limit(10)
+            ->get()
+            ->map(fn($r) => ['agent' => trim($r->agent_name), 'total' => (int)$r->total])
+            ->toArray();
+
+        // Promedio tiempo respuesta (entre primer mensaje cliente y primer respuesta agente) en minutos
+        $avgResponse = DB::table('crm_conversations as c')
+            ->join('crm_messages as m1', function ($j) {
+                $j->on('m1.conversation_id', '=', 'c.id')
+                  ->where('m1.sender_type', '=', 'customer');
+            })
+            ->join('crm_messages as m2', function ($j) {
+                $j->on('m2.conversation_id', '=', 'c.id')
+                  ->where('m2.sender_type', '=', 'agent');
+            })
+            ->where('c.company_id', $companyId)
+            ->whereRaw('m1.id = (SELECT MIN(id) FROM crm_messages WHERE conversation_id = c.id AND sender_type = "customer")')
+            ->whereRaw('m2.id = (SELECT MIN(id) FROM crm_messages WHERE conversation_id = c.id AND sender_type = "agent")')
+            ->selectRaw('AVG(TIMESTAMPDIFF(MINUTE, m1.created_at, m2.created_at)) as avg_minutes')
+            ->value('avg_minutes');
+
+        // Últimos 7 días
+        $last7days = [];
+        for ($i = 6; $i >= 0; $i--) {
+            $date = Carbon::today()->subDays($i);
+            $count = DB::table('crm_conversations')
+                ->where('company_id', $companyId)
+                ->whereDate('created_at', $date)
+                ->count();
+            $last7days[] = [
+                'date'  => $date->format('d/m'),
+                'total' => $count
+            ];
+        }
+
+        return [
+            'total'           => $total,
+            'today'           => $today,
+            'by_status'       => $byStatus,
+            'by_priority'     => $byPriority,
+            'by_agent'        => $byAgent,
+            'avg_response_minutes' => round((float)($avgResponse ?? 0), 1),
+            'last_7_days'     => $last7days,
+        ];
+    }
+
+    /* =====================================================================
+     * BROADCAST
+     * =================================================================== */
+    public function getCustomersForBroadcast(int $companyId): array
+    {
+        return DB::table('crm_customers')
+            ->where('company_id', $companyId)
+            ->orderBy('name')
+            ->select(['id', 'phone', 'name'])
+            ->get()
+            ->map(fn($r) => ['id' => (int)$r->id, 'phone' => $r->phone, 'name' => $r->name])
+            ->toArray();
+    }
+
+    /* =====================================================================
+     * NUEVA CONVERSACIÓN DESDE TELÉFONO
+     * =================================================================== */
+    public function createConversationFromPhone(string $phone, string $name, int $companyId): int
+    {
+        // limpiar teléfono
+        $phone = preg_replace('/[^0-9+]/', '', $phone);
+
+        // buscar o crear cliente
+        $customer = DB::table('crm_customers')
+            ->where('phone', $phone)
+            ->where('company_id', $companyId)
+            ->first();
+
+        if (!$customer) {
+            $customerId = DB::table('crm_customers')->insertGetId([
+                'company_id' => $companyId,
+                'phone'      => $phone,
+                'name'       => $name ?: $phone,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        } else {
+            $customerId = $customer->id;
+        }
+
+        // crear conversación nueva
+        return (int) DB::table('crm_conversations')->insertGetId([
+            'company_id'     => $companyId,
+            'customer_id'    => $customerId,
+            'status'         => 'new',
+            'priority'       => 'normal',
+            'last_message_at'=> now(),
+            'created_at'     => now(),
+            'updated_at'     => now(),
+        ]);
+    }
+
+    /* =====================================================================
+     * ESTADO DE SERVICIO DEL CLIENTE
+     * =================================================================== */
+    public function getServiceStatusByPhone(string $phone): ?array
+    {
+        // limpiar teléfono (últimos 10 dígitos para buscar en user_data)
+        $clean = preg_replace('/[^0-9]/', '', $phone);
+        $last10 = substr($clean, -10);
+
+        $user = DB::table('user_data as ud')
+            ->leftJoin('conection_routers as cr', 'cr.user_id', '=', 'ud.user_id')
+            ->leftJoin('internet_plans as ip', 'ip.id', '=', 'cr.plan_id')
+            ->leftJoin('internet_status as ist', 'ist.id', '=', 'cr.status_id')
+            ->where(function ($q) use ($clean, $last10) {
+                $q->where('ud.phone', 'like', '%' . $last10)
+                  ->orWhere('ud.phone', $clean);
+            })
+            ->select([
+                'ud.names',
+                'ud.lastname',
+                'ud.address',
+                'cr.ip',
+                DB::raw("COALESCE(ip.name, 'Sin plan') as plan_name"),
+                DB::raw("COALESCE(ist.name, 'Desconocido') as service_status"),
+            ])
+            ->first();
+
+        if (!$user) return null;
+
+        return [
+            'name'           => trim(($user->names ?? '') . ' ' . ($user->lastname ?? '')),
+            'address'        => $user->address ?? null,
+            'ip'             => $user->ip ?? null,
+            'plan'           => $user->plan_name,
+            'service_status' => $user->service_status,
+        ];
+    }
+
+    /* =====================================================================
+     * STICKERS
+     * =================================================================== */
+    public function getStickers(int $companyId): array
+    {
+        return DB::table('crm_stickers')
+            ->where('company_id', $companyId)
+            ->orderByDesc('created_at')
+            ->get()
+            ->map(fn($r) => [
+                'id'        => (int)$r->id,
+                'media_url' => $r->media_url,
+                'name'      => $r->name,
+            ])
+            ->toArray();
+    }
+
+    public function saveSticker(int $companyId, string $mediaUrl, ?string $name): array
+    {
+        $id = DB::table('crm_stickers')->insertGetId([
+            'company_id' => $companyId,
+            'media_url'  => $mediaUrl,
+            'name'       => $name,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        return ['id' => $id, 'media_url' => $mediaUrl, 'name' => $name];
+    }
+
+    public function deleteSticker(int $stickerId): void
+    {
+        DB::table('crm_stickers')->where('id', $stickerId)->delete();
     }
 }

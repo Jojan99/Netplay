@@ -8,8 +8,10 @@ use App\Http\Requests\Gestions\OltDataRequest;
 use App\Managers\Interfaces\SSHConnectionManagerInterface;
 use App\Services\SSHConnectionService;
 use App\UseCases\ManagementRouter\Interfaces\GetIpAvaliblesUseCaseInterface;
+use App\UseCases\ManagementRouter\Interfaces\MikrotikInfoUseCaseInterface;
 use App\UseCases\ManagementRouter\Interfaces\UpdateStatusUserUseCaseInterface;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use phpseclib3\Exception\ConnectionClosedException;
 use phpseclib3\Net\SSH2;
 use SSHConnectionManager;
@@ -17,31 +19,6 @@ use Tymon\JWTAuth\Exceptions\JWTException;
 
 class ManagementRouterController extends Controller
 {
-    public function updateStatus(
-        UpdateStatusUserUseCaseInterface $updateStatusUserUseCaseInterface,
-        GestionUserRequest $gestionUserRequest
-    ): object {
-        try {
-            $result = $updateStatusUserUseCaseInterface->updateStatus($gestionUserRequest);
-        } catch (JWTException $e) {
-            return standardApiReponse(
-                'No se pudieron consultar las tasas de cambio: ' . $e->getMessage(),
-                ApiResponseConstants::DATA_NULL,
-                ApiResponseConstants::ERROR,
-                JsonResponse::HTTP_INTERNAL_SERVER_ERROR
-            );
-        }
-
-        return standardApiReponse(
-            $result['message'],
-            $result['data'],
-            $result['status'],
-            JsonResponse::HTTP_OK
-        );
-    }
-
-
-
 public function getLanSegments(
         GetIpAvaliblesUseCaseInterface $getIpAvaliblesUseCaseInterface,
         GestionUserRequest $gestionUserRequest
@@ -109,6 +86,76 @@ public function getLanSegments(
             $result['status'],
             JsonResponse::HTTP_OK
         );
+    }
+
+    public function getRouterConfig(MikrotikInfoUseCaseInterface $uc): object
+    {
+        $result = $uc->getRouterConfig();
+        return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
+    }
+
+    public function saveRouterConfig(Request $request, MikrotikInfoUseCaseInterface $uc): object
+    {
+        $data = $request->only(['host', 'user', 'pass', 'port']);
+        if (empty($data['host']) || empty($data['user']) || empty($data['pass'])) {
+            return standardApiReponse('host, user y pass son requeridos', null, 1, JsonResponse::HTTP_UNPROCESSABLE_ENTITY);
+        }
+        $result = $uc->saveRouterConfig($data);
+        return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
+    }
+
+    public function getRouterInfo(MikrotikInfoUseCaseInterface $uc): object
+    {
+        $result = $uc->getRouterInfo();
+        return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
+    }
+
+    public function getConnectedClients(MikrotikInfoUseCaseInterface $uc): object
+    {
+        $result = $uc->getConnectedClients();
+        return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
+    }
+
+    public function getQueues(MikrotikInfoUseCaseInterface $uc): object
+    {
+        $result = $uc->getQueues();
+        return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
+    }
+
+    public function createQueue(Request $request, MikrotikInfoUseCaseInterface $uc): object
+    {
+        $result = $uc->createQueue($request->all());
+        return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
+    }
+
+    public function updateQueue(Request $request, string $id, MikrotikInfoUseCaseInterface $uc): object
+    {
+        $result = $uc->updateQueue($id, $request->all());
+        return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
+    }
+
+    public function deleteQueue(string $id, MikrotikInfoUseCaseInterface $uc): object
+    {
+        $result = $uc->deleteQueue($id);
+        return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
+    }
+
+    public function suspendBulk(Request $request, MikrotikInfoUseCaseInterface $uc): object
+    {
+        $userIds = $request->input('user_ids', []);
+        if (empty($userIds) || !is_array($userIds)) {
+            return standardApiReponse('user_ids requerido', null, 1, JsonResponse::HTTP_UNPROCESSABLE_ENTITY);
+        }
+        $result = $uc->suspendBulk($userIds);
+        return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
+    }
+
+    public function UpdateStatus(
+        UpdateStatusUserUseCaseInterface $updateStatusUserUseCaseInterface,
+        GestionUserRequest $gestionUserRequest
+    ): object {
+        $result = $updateStatusUserUseCaseInterface->UpdateStatus($gestionUserRequest);
+        return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }
 
     public function getCpuStatus()

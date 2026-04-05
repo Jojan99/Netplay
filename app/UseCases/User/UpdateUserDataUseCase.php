@@ -39,19 +39,15 @@ class UpdateUserDataUseCase implements UpdateUserDataUseCaseInterface
      */
     public function UpdateUserData(CreateUserDataRequest $data): mixed
     {
-        if(getSessionUserProfileId() == 2){
-            try {
-                $this->userRepository->UpdateUserData($data);
-            } catch (QueryException $err) {
-                return [
-                    'message' => 'Ha ocurrido un error al actualizar los datos',
-                    'status' => 1,
-                    'data' => ApiResponseConstants::DATA_NULL
-                ];
-            }
-            return ['message' => 'Usuario Actualizado con éxito', 'status' => 0, 'data' => ApiResponseConstants::DATA_NULL];
-        }else{
-            return ['message' => 'Accion no permitida', 'status' => 1, 'data' => ApiResponseConstants::DATA_NULL];
+        try {
+            $this->userRepository->UpdateUserData($data);
+        } catch (QueryException $err) {
+            return [
+                'message' => 'Ha ocurrido un error al actualizar los datos: ' . $err->getMessage(),
+                'status' => 1,
+                'data' => ApiResponseConstants::DATA_NULL
+            ];
         }
+        return ['message' => 'Cliente actualizado con éxito', 'status' => 0, 'data' => ApiResponseConstants::DATA_NULL];
     }
 }

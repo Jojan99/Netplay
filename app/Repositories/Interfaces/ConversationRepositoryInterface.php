@@ -41,4 +41,37 @@ public function isFirstMessage(int $conversationId): bool;
         int $conversationId,
         int $userId
     ): void;
+
+    // ── Notas ──────────────────────────────────────────────────────────────
+    public function getNotes(int $conversationId): array;
+    public function addNote(int $conversationId, int $userId, string $content): array;
+    public function deleteNote(int $noteId): void;
+
+    // ── Etiquetas ──────────────────────────────────────────────────────────
+    public function getLabels(int $companyId): array;
+    public function createLabel(int $companyId, string $name, string $color): array;
+    public function deleteLabel(int $labelId): void;
+    public function getConversationLabels(int $conversationId): array;
+    public function addConversationLabel(int $conversationId, int $labelId): void;
+    public function removeConversationLabel(int $conversationId, int $labelId): void;
+
+    // ── Prioridad ──────────────────────────────────────────────────────────
+    public function updatePriority(int $conversationId, string $priority): void;
+
+    // ── Dashboard métricas ─────────────────────────────────────────────────
+    public function getDashboardMetrics(int $companyId): array;
+
+    // ── Broadcast ──────────────────────────────────────────────────────────
+    public function getCustomersForBroadcast(int $companyId): array;
+
+    // ── Contacto / nueva conversación ─────────────────────────────────────
+    public function createConversationFromPhone(string $phone, string $name, int $companyId): int;
+
+    // ── Estado de servicio del cliente ────────────────────────────────────
+    public function getServiceStatusByPhone(string $phone): ?array;
+
+    // ── Stickers ──────────────────────────────────────────────────────────
+    public function getStickers(int $companyId): array;
+    public function saveSticker(int $companyId, string $mediaUrl, ?string $name): array;
+    public function deleteSticker(int $stickerId): void;
 }

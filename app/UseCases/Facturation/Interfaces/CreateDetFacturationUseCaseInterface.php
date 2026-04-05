@@ -27,5 +27,5 @@ interface CreateDetFacturationUseCaseInterface
     public function updateDetFacturation(CreateFacturationRequest $data): mixed;
 
 
-    public function createProcesoDetFacturation(CreateFacturationRequest $data): mixed;
+    public function createProcesoDetFacturation(CreateFacturationRequest $data, int $periodo, int $companyId, int $billingDay, int $billingMonth, int $billingYear): mixed;
 }

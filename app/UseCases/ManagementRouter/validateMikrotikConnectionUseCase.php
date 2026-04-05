@@ -32,9 +32,23 @@ class validateMikrotikConnectionUseCase implements validateMikrotikConnectionUse
 
     public function __construct(
         private ManagementRouterRepositoryInterface $managementRouterRepositoryInterface,
-        private ConectionRouterManagerInterface $conectionRouterManagerInterface
+        private ConectionRouterManagerInterface $conectionRouterManagerInterface,
+        private \App\Repositories\Interfaces\RouterRepositoryInterface $routerRepositoryInterface,
     ) {
         $this->connection = $conectionRouterManagerInterface;
+    }
+
+    private function getCompanyRouterId(): string
+    {
+        $companyId = getSessionCompanyId();
+        if (!$companyId) {
+            throw new \RuntimeException('Sesión sin empresa asociada');
+        }
+        $token = $this->routerRepositoryInterface->getTokenByCompany($companyId);
+        if (!$token) {
+            throw new \RuntimeException('No hay router configurado para esta empresa');
+        }
+        return $token;
     }
 
     /**
@@ -45,7 +59,7 @@ class validateMikrotikConnectionUseCase implements validateMikrotikConnectionUse
 {
     try {
         // Intentar establecer una conexión con MikroTik
-        $connection = $this->connection->conection('b5c2f0e8-7e82-4a5c-a7d7-0ee8b2d7b905');
+        $connection = $this->connection->conection($this->getCompanyRouterId());
         
         // Realizar una consulta de prueba
         $query = new Query('/system/resource/print');

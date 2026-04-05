@@ -25,7 +25,9 @@ class DetFacturation extends Authenticatable
         'create_facture_manual',
         'paid',
         'price_abone',
-        'log_id'
+        'log_id',
+        'paid_at',
+        'paid_by_user_id',
     ];
 
     /**

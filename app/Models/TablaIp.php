@@ -10,6 +10,7 @@ class TablaIp extends Model
     use HasFactory;
     protected $fillable = [
         'id',
+        'company_id',
         'name',
         'id_user',
         'mac',

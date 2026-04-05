@@ -40,6 +40,10 @@ class GeneratePdfByIdFacturesUseCase implements GeneratePdfByIdFacturesUseCaseIn
         // Obtener los datos del usuario y generar el PDF
         $generatePdf = $this->generatePdfRepository->generatePdfById($userFacture);
 
+        if (!$generatePdf) {
+            return response()->json(['message' => 'Factura no encontrada', 'status' => 1], 404);
+        }
+
         $Cab = $this->generatePdfRepository->getSaldoAnt($generatePdf['id'],$generatePdf['number_facture']);
         
 

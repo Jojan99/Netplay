@@ -5,6 +5,7 @@ namespace App\UseCases\GeneratePdf;
 use Dompdf\Dompdf;
 use Dompdf\Options;
 use App\Repositories\Interfaces\GeneratePdfRepositoryInterface;
+use App\Repositories\Interfaces\FacturationRepositoryInterface;
 use App\UseCases\GeneratePdf\Interfaces\GeneratePdfUseCaseInterface;
 use Illuminate\Database\QueryException;
 use App\Constants\ApiResponseConstants;
@@ -26,7 +27,8 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
      * @param GeneratePdfRepositoryInterface $generatePdfRepository
      */
     public function __construct(
-        private GeneratePdfRepositoryInterface $generatePdfRepository
+        private GeneratePdfRepositoryInterface $generatePdfRepository,
+        private ?FacturationRepositoryInterface $facturationRepository = null,
     ) {
     }
 
@@ -34,15 +36,22 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
      * Método encargado de generar pdf masivo .zip
      * @return mixed
      */
-   public function generatePdf($Periodo): mixed
+   public function generatePdf($Periodo, int $companyId = 0, int $billingDay = 0): mixed
 {
     set_time_limit(0);
     ini_set('max_execution_time', 0);
     try {
         if (true) {
-            $getUserPeriode1 = $this->generatePdfRepository->getUserPeriode1($Periodo);
+            $getUserPeriode1 = $this->generatePdfRepository->getUserPeriode1($Periodo, $companyId);
             $generatePdf     = $this->generatePdfRepository->generatePdf($getUserPeriode1);
-            $fecha           = date('Y-m-d', strtotime('+0 days'));
+
+            // Usar el día de corte configurado, no el día actual
+            if ($billingDay > 0) {
+                $fechaCarbon = Carbon::now()->setDay(min($billingDay, Carbon::now()->daysInMonth));
+            } else {
+                $fechaCarbon = Carbon::now();
+            }
+            $fecha = $fechaCarbon->format('Y-m-d');
             $zipFileName     = storage_path('app/archivos.zip');
 
             if (file_exists($zipFileName)) unlink($zipFileName);
@@ -239,14 +248,18 @@ La fecha límite de pago es *{$fecha}*.
     return ['message' => 'PDF generado con éxito', 'status' => 0];
 }
 
-public function generatePdfMeta($Periodo): mixed
+public function generatePdfMeta($Periodo, int $companyId = 0, int $billingDay = 0): mixed
 {
     try {
 
-        $getUserPeriode1 = $this->generatePdfRepository->getUserPeriode1($Periodo);
+        $getUserPeriode1 = $this->generatePdfRepository->getUserPeriode1($Periodo, $companyId);
         $users           = $this->generatePdfRepository->generatePdf($getUserPeriode1);
 
-        $fecha = date('Y-m-d');
+        if ($billingDay > 0) {
+            $fecha = Carbon::now()->setDay(min($billingDay, Carbon::now()->daysInMonth))->format('Y-m-d');
+        } else {
+            $fecha = Carbon::now()->format('Y-m-d');
+        }
 
         $totalEnviados = 0;
         $totalFallidos = 0;

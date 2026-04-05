@@ -10,6 +10,7 @@ class Ticket extends Model
     use HasFactory;
     
     protected $fillable = [
+        'company_id',
         'user_id',
         'address',
         'date',
@@ -23,7 +24,8 @@ class Ticket extends Model
         'user_created_id',
         'started_at',
         'finished_at',
-
+        'reopened_count',
+        'closed_at',
     ];
 
     /**

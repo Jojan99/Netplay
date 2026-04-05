@@ -22,7 +22,7 @@ class HolaMundo extends Command
      *
      * @var string
      */
-    protected $signature = 'post:create';
+    protected $signature = 'post:create {company_id : ID de la empresa} {periodo : Grupo a procesar (1-4)} {billing_day : Día del mes al que corresponde la factura} {billing_month? : Mes (1-12), por defecto el actual} {billing_year? : Año, por defecto el actual}';
 
     /**
      * The console command description.
@@ -38,35 +38,35 @@ class HolaMundo extends Command
     {
         $this->info('Iniciando el proceso.');
 
-        $whatsapp = new WhatsAppService('u99eyqpz5jwn5h4w', 'instance106490');
+        $companyId    = (int) $this->argument('company_id');
+        $resultado    = (int) $this->argument('periodo');
+        $billingDay   = (int) $this->argument('billing_day');
+        $billingMonth = $this->argument('billing_month') ? (int) $this->argument('billing_month') : Carbon::now()->month;
+        $billingYear  = $this->argument('billing_year')  ? (int) $this->argument('billing_year')  : Carbon::now()->year;
 
-        
-        
-                $hora = Carbon::now()->toDateTimeString();
-                // Mensaje de error
-                $message = "⚠️ *Se inicia Proceso*, .'$hora'.";
+        $this->info("Empresa ID: {$companyId} | Periodo: {$resultado} | Fecha factura: {$billingYear}-{$billingMonth}-{$billingDay}");
 
-             
-                    
-                    $response = $whatsapp->mensajeInformativo('3245127869', $message);
-                    $this->info("Mensaje enviado a: - Respuesta: $response");
-        $fechaActual = Carbon::now();
-        // Obtener el día del mes de la fecha actual
-        $diaDelMes = $fechaActual->day;
+        $whatsapp = new WhatsAppService($companyId);
+        $hora     = Carbon::now()->toDateTimeString();
 
-        $resultado = ($diaDelMes > 20) ? 1 : 1;
-        $this->info('aca.');
-        
-        $FacturationRepository = new FacturationRepository();
-        $CreateDetFacturationUseCase = new CreateDetFacturationUseCase($FacturationRepository);
-        $CreateFacturationRequest = new CreateFacturationRequest();
-        $GeneratePdfRepository = new GeneratePdfRepository();
-        $GeneratePdfUseCase = new GeneratePdfUseCase($GeneratePdfRepository,$FacturationRepository);
-        //$CreateDetFacturationUseCase->createProcesoDetFacturation($CreateFacturationRequest,$resultado);
-        $GeneratePdfUseCase->generatePdf($resultado);
-        $this->info('aca abajo.');
-        $message = "⚠️ *Se Finaliza Proceso*, .'$hora'.";
-        $response = $whatsapp->mensajeInformativo('3245127869', $message);
-        $this->info("Mensaje enviado a: - Respuesta: $response");
+        try {
+            $whatsapp->mensajeInformativo('3245127869', "⚠️ *Se inicia Proceso* '{$hora}'.");
+        } catch (\Throwable) {}
+
+        $FacturationRepository        = new FacturationRepository();
+        $CreateDetFacturationUseCase  = new CreateDetFacturationUseCase($FacturationRepository);
+        $CreateFacturationRequest     = new CreateFacturationRequest();
+        $GeneratePdfRepository        = new GeneratePdfRepository();
+        $GeneratePdfUseCase           = new GeneratePdfUseCase($GeneratePdfRepository, $FacturationRepository);
+
+        $CreateDetFacturationUseCase->createProcesoDetFacturation(
+            $CreateFacturationRequest, $resultado, $companyId, $billingDay, $billingMonth, $billingYear
+        );
+        $GeneratePdfUseCase->generatePdf($resultado, $companyId, $billingDay);
+
+        $this->info('Proceso finalizado.');
+        try {
+            $whatsapp->mensajeInformativo('3245127869', "✅ *Se Finaliza Proceso* '{$hora}'.");
+        } catch (\Throwable) {}
     }
 }

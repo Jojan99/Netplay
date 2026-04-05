@@ -29,4 +29,15 @@ interface EgresosRepositoryInterface
      * @return mixed
      */
     public function getPriceEgresseAll(): mixed;
+
+    public function getPriceEgresseByRange(?string $from, ?string $to): mixed;
+
+    public function getIngresosDetailed(?string $from, ?string $to): mixed;
+
+    // ── Egresos v2 ──────────────────────────────────────────────────────────
+    public function getEgresosPaginated(?string $search, ?string $from, ?string $to, ?string $category, int $page, int $perPage): object;
+    public function createEgresoV2(array $data): mixed;
+    public function updateEgreso(int $id, array $data): bool;
+    public function deleteEgreso(int $id): bool;
+    public function exportEgresos(?string $from, ?string $to): array;
 }

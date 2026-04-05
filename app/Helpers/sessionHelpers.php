@@ -4,7 +4,7 @@ use Tymon\JWTAuth\Facades\JWTAuth;
 
 if (!function_exists('getSessionUserId')) {
     /**
-     * Función encargada de establecer la respuesta estandar para una solicitud 
+     * Función encargada de establecer la respuesta estandar para una solicitud
      * api
      *
      * @return int|null

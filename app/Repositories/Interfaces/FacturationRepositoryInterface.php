@@ -97,4 +97,13 @@ interface FacturationRepositoryInterface
 
   public function getuserFactureCreate($periodo): mixed;
 
+  // ── Finance v2 ─────────────────────────────────────────────────────────
+  public function getClientsPaginated(?string $search, int $page, int $perPage): object;
+  public function getClientInvoices(int $cabId): array;
+  public function payInvoice(int $detId, string $clientName): bool;
+  public function abonarInvoice(int $detId, float $amount, string $clientName): bool;
+  public function updateInvoice(int $detId, array $data): bool;
+  public function exportPayments(?string $from, ?string $to, ?int $cabId): array;
+  public function getPaymentLogsPaginated(?string $search, ?string $from, ?string $to, int $page, int $perPage): object;
+
 }

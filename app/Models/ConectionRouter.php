@@ -10,9 +10,11 @@ class ConectionRouter extends Model
     use HasFactory;
     protected $fillable = [
         'user_id',
+        'company_id',
         'host',
         'user',
         'pass',
         'port',
+        'token',
     ];
 }

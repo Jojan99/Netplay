@@ -11,6 +11,7 @@ use App\Repositories\Interfaces\TicketRepositoryInterface;
 use App\Repositories\Interfaces\UserRepositoryInterface;
 use App\Resources\TemplatesEmail\TemplateEmailPay;
 use App\Services\WhatsAppService;
+use App\Services\NotificationRouterService;
 use App\UseCases\Facturation\Interfaces\CreatePaidFacturationUseCaseInterface;
 use App\UseCases\GeneratePdf\Interfaces\GeneratePdfReceiptByIdUseCaseInterface;
 use App\UseCases\Ticket\Interfaces\CreateTicketUseCaseInterface;
@@ -62,29 +63,22 @@ class CreateTicketUseCase implements CreateTicketUseCaseInterface
               
               $id =  $this->ticketRepositoryInterface->createTicket($data);
 
-                
-                 $whatsapp = new WhatsAppService('u99eyqpz5jwn5h4w', 'instance106490');
+                $hora    = Carbon::now()->toDateTimeString();
+                $isInstall = isset($data['type_service']) && stripos($data['type_service'], 'instala') !== false;
+                $eventType = $isInstall ? 'ticket_install' : 'ticket_support';
 
-        
-        
-                $hora = Carbon::now()->toDateTimeString();
-                // Mensaje de error
-                $message = 
-                "🆕 *NUEVO TICKET CREADO*\n\n".
-                "🆔 *ID Ticket:* {$id}\n".
+                $message =
+                "🆕 *NUEVO TICKET*\n\n".
+                "🆔 *ID:* {$id}\n".
                 "👤 *Cliente:* {$data['client_name']}\n".
                 "📄 *Cédula:* {$data['cedula']}\n".
                 "📞 *Teléfono:* {$data['phone']}\n".
-                "📍 *Dirección:* {$data['address']}\n\n".
-                // "🛠️ *Tipo de Servicio:* {$data['type_service']}\n".
-                // "⚡ *Prioridad:* {$data['priority']}\n".
-                "👨‍🔧 *Técnico Asignado:* {$data['technician_name']}\n".
-                "📌 *Estado:* Creado\n\n".
+                "📍 *Dirección:* {$data['address']}\n".
+                "👨‍🔧 *Técnico:* {$data['technician_name']}\n\n".
                 "📝 *Observación:*\n{$data['observation']}\n\n".
-                "⏰ *Fecha:* {$hora}\n";
-                    
-                $response = $whatsapp->mensajeInformativo('120363364349473490@g.us', $message);
-                 //$response = $whatsapp->mensajeInformativo('3245127869', $message);
+                "⏰ *Fecha:* {$hora}";
+
+                NotificationRouterService::dispatch(getSessionCompanyId(), $eventType, $message);
 
                 // $this->TemplateEmailPay->EmailPay($dataUser,$data['price_total'],$data['number_facture']);
             } else {

@@ -32,7 +32,8 @@ class UserData extends Authenticatable
         'phone',
         'birthday',
         'active',
-        'status'
+        'status',
+        'whatsapp_enabled',
     ];
 
      /**

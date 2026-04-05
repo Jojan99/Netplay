@@ -10,8 +10,10 @@ class Egresses extends Model
     use HasFactory;
     protected $fillable = [
         'id',
+        'company_id',
         'id_category_egresses',
         'concept',
+        'category',
         'value',
         'user_id',
         'created_at',

@@ -36,7 +36,7 @@ interface GeneratePdfRepositoryInterface{
      */
     public function getperiodeNotificationRemenber(): mixed;
 
-    public function getUserPeriode1($Periodo): mixed;
+    public function getUserPeriode1($Periodo, int $companyId): mixed;
 
     /**
      * @return mixed

@@ -12,10 +12,11 @@ class Kernel extends ConsoleKernel
      */
     protected function schedule(Schedule $schedule): void
     {
-        // $schedule->command('inspire')->hourly();
-        // $schedule->command("NombreDelComando")->emailOutputTo('jojanemece@gmail.com');
-        $schedule->command('post:create')->everyMinute();
-        // $schedule->command('app:generate-pdf')->everyMinute();
+        // Revisa cada hora qué empresas tienen proceso programado para este día y hora exacta
+        $schedule->command('billing:auto')->hourly();
+
+        // Verifica compromisos de pago vencidos y suspende servicio si no pagó
+        $schedule->command('commitments:check')->dailyAt('08:00');
         
     }
 

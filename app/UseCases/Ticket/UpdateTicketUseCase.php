@@ -11,6 +11,7 @@ use App\Repositories\Interfaces\FacturationRepositoryInterface;
 use App\Repositories\Interfaces\TicketRepositoryInterface;
 use App\Repositories\Interfaces\UserRepositoryInterface;
 use App\Resources\TemplatesEmail\TemplateEmailPay;
+use App\Services\NotificationRouterService;
 use App\Services\WhatsAppService;
 use App\UseCases\Facturation\Interfaces\CreatePaidFacturationUseCaseInterface;
 use App\UseCases\GeneratePdf\Interfaces\GeneratePdfReceiptByIdUseCaseInterface;
@@ -58,30 +59,29 @@ class UpdateTicketUseCase implements UpdateTicketUseCaseInterface
                 // $dataUser = $this->userRepositoryInterface->getUserById($data['']);
                 // $data['log_id'] = getSessionUserId();
 
-                 $whatsapp = new WhatsAppService();
                 $hora = now()->format('H:i');
-                if($data['status'] == 1){
+                if ($data['status'] == 1) {
                     $message =
-                "🟡 *TICKET EN CURSO*\n\n".
-                "🆔 *ID Ticket:* {$data['id']}\n".
-                "👨‍🔧 *Cliente:* {$data['names_client']}\n\n".
-                "👨‍🔧 *Técnico:* {$data['tech_names']}\n\n".
-                "⏰ *Hora de inicio:* {$hora}\n\n".
-                "⚙️ El técnico ha iniciado el ticket";
-                } elseif($data['status'] == 2){
-                $message =
-                "🟢 *TICKET EN FINALIZADO*\n\n".
-                "🆔 *ID Ticket:* {$data['id']}\n".
-                "👨‍🔧 *Cliente:* {$data['names_client']}\n\n".
-                "👨‍🔧 *Técnico:* {$data['tech_names']}\n\n".
-                "⏰ *Hora de inicio:* {$hora}\n\n".
-                "⚙️ El técnico ha Finalizado el ticket";
+                        "🟡 *TICKET EN CURSO*\n\n" .
+                        "🆔 *ID Ticket:* {$data['id'] ech_names']}\n\n" .
+                        "⏰ *Hora de inicio:* {$hora}\n\n" .
+                        "⚙️ El técnico ha *iniciado* el ticket";
+                } elseif ($data['status'] == 2) {
+                    $message =
+                        "🟢 *TICKET FINALIZADO*\n\n" .
+                        "🆔 *ID Ticket:* {$data['id'] ech_names']}\n\n" .
+                        "⏰ *Hora de cierre:* {$hora}\n\n" .
+                        "⚙️ El técnico ha *finalizado* el ticket";
                 }
-                
 
-                  $response = $whatsapp->mensajeInformativo('120363364349473490@g.us', $message);
-                 //$response = $whatsapp->mensajeInformativo('3245127869', $message);
-                
+                if (!empty($message)) {
+                    NotificationRouterService::dispatch(
+                        getSessionCompanyId(),
+                        'ticket_status_change',
+                        $message
+                    );
+                }
+
                 $this->ticketRepositoryInterface->updateTicket($data);
                 // $this->TemplateEmailPay->EmailPay($dataUser,$data['price_total'],$data['number_facture']);
             } else {

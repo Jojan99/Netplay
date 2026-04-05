@@ -33,6 +33,8 @@ interface InternetInfoRepositoryInterface
 /**
  * @return int
  */
-public function AssignemetIpUser($id, $id_user): int;
-    
+public function AssignemetIpUser($id, $id_user, string $mac = ''): int;
+
+public function updateIpMac(string $ip, string $mac): void;
+
 }

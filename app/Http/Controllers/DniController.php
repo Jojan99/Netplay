@@ -12,6 +12,7 @@ use RouterOS\Config;
 use RouterOS\Query;
 use Illuminate\Http\JsonResponse;
 use Tymon\JWTAuth\Exceptions\JWTException;
+use Tymon\JWTAuth\Facades\JWTAuth;
 
 class DniController extends Controller
 {
@@ -19,9 +20,35 @@ class DniController extends Controller
 
     protected  $connection;
 
-    public function __construct(private ConectionRouterManagerInterface $conectionRouterManagerInterface)
-    {
+    public function __construct(
+        private ConectionRouterManagerInterface $conectionRouterManagerInterface,
+        private \App\Repositories\Interfaces\RouterRepositoryInterface $routerRepositoryInterface,
+    ) {
         $this->connection = $conectionRouterManagerInterface;
+    }
+
+    private function getCompanyRouterId(?int $companyId = null): string
+    {
+        // 1. Parámetro directo, 2. Sesión, 3. JWT manual (para SSE que no pasa por middleware)
+        if (!$companyId) {
+            $companyId = 1;
+        }
+        if (!$companyId) {
+            try {
+                $rawToken = JWTAuth::getToken() ?: request()->query('token');
+                if ($rawToken) {
+                    $companyId = JWTAuth::setToken($rawToken)->toUser()->company_id ?? null;
+                }
+            } catch (\Exception $e) {}
+        }
+        if (!$companyId) {
+            throw new \RuntimeException('Sesión sin empresa asociada');
+        }
+        $token = $this->routerRepositoryInterface->getTokenByCompany($companyId);
+        if (!$token) {
+            throw new \RuntimeException('No hay router configurado para esta empresa');
+        }
+        return $token;
     }
 
     /**
@@ -56,7 +83,7 @@ class DniController extends Controller
     {
 
         try {
-            $response = $this->connection->conection('b5c2f0e8-7e82-4a5c-a7d7-0ee8b2d7b905')->qr('/ip/address/print');
+            $response = $this->connection->conection($this->getCompanyRouterId())->qr('/ip/address/print');
         } catch (JWTException $e) {
 
             // Respuesta en caso de excepción
@@ -87,7 +114,7 @@ class DniController extends Controller
                 ->equal('mac-address', '00:00:00:00:40:27')
                 ->equal('comment', 'Marcela Te Amo');
 
-            $response = $this->connection->conection('b5c2f0e8-7e82-4a5c-a7d7-0ee8b2d7b905')->query($query)->read();
+            $response = $this->connection->conection($this->getCompanyRouterId())->query($query)->read();
         } catch (JWTException $e) {
 
             // Respuesta en caso de excepción
@@ -123,7 +150,7 @@ class DniController extends Controller
 
             error_log(json_encode($query));
 
-            $user = $this->connection->conection('b5c2f0e8-7e82-4a5c-a7d7-0ee8b2d7b905')->query($query)->read();
+            $user = $this->connection->conection($this->getCompanyRouterId())->query($query)->read();
 
             error_log(json_encode($user));
             if (!empty($user[0]['.id'])) {
@@ -131,7 +158,7 @@ class DniController extends Controller
                 (new Query('/ip/arp/enable'))
                     ->equal('.id', $user[0]['.id']);
     
-                $response = $this->connection->conection('b5c2f0e8-7e82-4a5c-a7d7-0ee8b2d7b905')->query($query)->read();
+                $response = $this->connection->conection($this->getCompanyRouterId())->query($query)->read();
             }else{
                 $response = "error";
             }
@@ -204,9 +231,9 @@ class DniController extends Controller
                 ->where('comment', $gestionUserRequest['dni']);
 
 
-            $user = $this->connection->conection('b5c2f0e8-7e82-4a5c-a7d7-0ee8b2d7b905')->query($query)->read();
+            $user = $this->connection->conection($this->getCompanyRouterId())->query($query)->read();
             $ip = $user[0]['address'];
-            $connection = $this->connection->conection('b5c2f0e8-7e82-4a5c-a7d7-0ee8b2d7b905');
+            $connection = $this->connection->conection($this->getCompanyRouterId());
     
             for ($i = 0; $i < $gestionUserRequest['count']; $i++) {
                 // Verificar si la conexión sigue activa con un ping ligero
@@ -258,7 +285,7 @@ public function pruebaMikroPingBots(GestionUserRequest $gestionUserRequest)
             ->where('comment', $gestionUserRequest['dni']);
 
         $user = $this->connection
-            ->conection('b5c2f0e8-7e82-4a5c-a7d7-0ee8b2d7b905')
+            ->conection($this->getCompanyRouterId())
             ->query($query)
             ->read();
 
@@ -274,7 +301,7 @@ public function pruebaMikroPingBots(GestionUserRequest $gestionUserRequest)
         $ip = $user[0]['address'];
 
         $connection = $this->connection
-            ->conection('b5c2f0e8-7e82-4a5c-a7d7-0ee8b2d7b905');
+            ->conection($this->getCompanyRouterId());
 
         $count = $gestionUserRequest['count'] ?? 5;
 
@@ -346,7 +373,7 @@ public function diagnosticoConexionBot(GestionUserRequest $request)
         $count = $request['count'] ?? 5;
 
         $connection = $this->connection
-            ->conection('b5c2f0e8-7e82-4a5c-a7d7-0ee8b2d7b905');
+            ->conection($this->getCompanyRouterId());
 
         /*
         ================================

@@ -9,4 +9,5 @@ Route::prefix('generatePdf')->group(function () {
     Route::get('generatePdfbyId/{userid}', [GeneratePdfController::class, 'generatePdfbyId'])->withoutMiddleware('jwt.verify');
     Route::get('generatePdfTicketbyId/{id}', [GeneratePdfController::class, 'generatePdfTicketbyId']);
     Route::get('generatePaidPdfbyId/{idFacture}', [GeneratePdfController::class, 'generatePaidPdfbyId']);
+    Route::post('sendInvoiceByWhatsApp/{invoiceId}', [GeneratePdfController::class, 'sendInvoiceByWhatsApp']);
 });

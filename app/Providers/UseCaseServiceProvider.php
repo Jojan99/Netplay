@@ -103,15 +103,31 @@ use App\UseCases\Egresos\CreateEgresosUseCase;
 use App\UseCases\Egresos\Interfaces\GetEgresosUseCaseInterface;
 use App\UseCases\Egresos\GetEgresosUseCase;
 use App\UseCases\Egresos\Interfaces\GetPriceEgresseUseCaseInterface;
+use App\UseCases\Egresos\GetIngresosDetailedUseCase;
+use App\UseCases\Egresos\Interfaces\GetIngresosDetailedUseCaseInterface;
 use App\UseCases\Egresos\GetPriceEgresseUseCase;
 use App\UseCases\Facturation\GetDatePayFactureUseCase;
 use App\UseCases\Facturation\Interfaces\GetDatePayFactureUseCaseInterface;
 use App\UseCases\GeneratePdf\GeneratePdfTicketByIdUseCase;
 use App\UseCases\GeneratePdf\Interfaces\GeneratePdfTicketByIdUseCaseInterface;
+use App\UseCases\Company\ConfirmCompanyEmailUseCase;
+use App\UseCases\Company\CreateStaffUseCase;
+use App\UseCases\Company\GetStaffUseCase;
+use App\UseCases\Company\UpdateBillingConfigUseCase;
+use App\UseCases\Company\Interfaces\ConfirmCompanyEmailUseCaseInterface;
+use App\UseCases\Company\Interfaces\CreateStaffUseCaseInterface;
+use App\UseCases\Company\Interfaces\GetStaffUseCaseInterface;
+use App\UseCases\Company\Interfaces\UpdateBillingConfigUseCaseInterface;
+use App\UseCases\Company\Interfaces\RegisterCompanyUseCaseInterface;
+use App\UseCases\Company\RegisterCompanyUseCase;
+use App\UseCases\Oauth\ChangePasswordUseCase;
+use App\UseCases\Oauth\Interfaces\ChangePasswordUseCaseInterface;
 use App\UseCases\ManagementRouter\GetIpAvaliblesUseCase;
 use App\UseCases\ManagementRouter\Interfaces\GetIpAvaliblesUseCaseInterface;
 use App\UseCases\ManagementRouter\Interfaces\validateMikrotikConnectionUseCaseInterface;
 use App\UseCases\ManagementRouter\validateMikrotikConnectionUseCase;
+use App\UseCases\ManagementRouter\MikrotikInfoUseCase;
+use App\UseCases\ManagementRouter\Interfaces\MikrotikInfoUseCaseInterface;
 use App\UseCases\Notifications\Interfaces\SendNotificationUseCaseInterface;
 use App\UseCases\Notifications\SendNotificationUseCase;
 use App\UseCases\Ticket\CreateTicketUseCase;
@@ -126,6 +142,22 @@ use App\UseCases\Ticket\Interfaces\GetTypePriorityUseCaseInterface;
 use App\UseCases\Ticket\Interfaces\GetTypeServiceUseCaseInterface;
 use App\UseCases\Ticket\Interfaces\UpdateTicketUseCaseInterface;
 use App\UseCases\Ticket\UpdateTicketUseCase;
+use App\UseCases\Inventory\CreateInventoryCategoryUseCase;
+use App\UseCases\Inventory\CreateInventoryMovementUseCase;
+use App\UseCases\Inventory\CreateInventoryUseCase;
+use App\UseCases\Inventory\DeleteInventoryUseCase;
+use App\UseCases\Inventory\GetInventoryCategoriesUseCase;
+use App\UseCases\Inventory\GetInventoriesUseCase;
+use App\UseCases\Inventory\GetInventoryMovementsUseCase;
+use App\UseCases\Inventory\UpdateInventoryUseCase;
+use App\UseCases\Inventory\Interfaces\CreateInventoryCategoryUseCaseInterface;
+use App\UseCases\Inventory\Interfaces\CreateInventoryMovementUseCaseInterface;
+use App\UseCases\Inventory\Interfaces\CreateInventoryUseCaseInterface;
+use App\UseCases\Inventory\Interfaces\DeleteInventoryUseCaseInterface;
+use App\UseCases\Inventory\Interfaces\GetInventoryCategoriesUseCaseInterface;
+use App\UseCases\Inventory\Interfaces\GetInventoriesUseCaseInterface;
+use App\UseCases\Inventory\Interfaces\GetInventoryMovementsUseCaseInterface;
+use App\UseCases\Inventory\Interfaces\UpdateInventoryUseCaseInterface;
 use GetCrmAgentsUseCase;
 use TransferConversationUseCase;
 
@@ -195,6 +227,7 @@ class UseCaseServiceProvider extends ServiceProvider
         [CreateEgresosUseCaseInterface::class, CreateEgresosUseCase::class],
         [GetEgresosUseCaseInterface::class, GetEgresosUseCase::class],
         [GetPriceEgresseUseCaseInterface::class, GetPriceEgresseUseCase::class],
+        [GetIngresosDetailedUseCaseInterface::class, GetIngresosDetailedUseCase::class],
         [GetTypeServiceUseCaseInterface::class, GetTypeServiceUseCase::class],
         [GetTypePriorityUseCaseInterface::class, GetTypePriorityUseCase::class],
         [GetTechnicalUseCaseInterface::class, GetTechnicalUseCase::class],
@@ -206,6 +239,7 @@ class UseCaseServiceProvider extends ServiceProvider
         [SendNotificationUseCaseInterface::class, SendNotificationUseCase::class],
         [validateMikrotikConnectionUseCaseInterface::class, validateMikrotikConnectionUseCase::class],
         [GetIpAvaliblesUseCaseInterface::class, GetIpAvaliblesUseCase::class],
+        [MikrotikInfoUseCaseInterface::class, MikrotikInfoUseCase::class],
         [InterfacesGetInboxConversationsUseCaseInterface::class, CrmGetInboxConversationsUseCase::class],
         [GetConversationMessagesUseCaseInterface::class, UseCasesCrmGetConversationMessagesUseCase::class],
         [ReceiveConversationMessageUseCaseInterface::class, ReceiveConversationMessageUseCase::class],
@@ -214,9 +248,20 @@ class UseCaseServiceProvider extends ServiceProvider
         [GetCrmAgentsUseCaseInterface::class, CrmGetCrmAgentsUseCase::class],
         [TransferConversationUseCaseInterface::class, CrmTransferConversationUseCase::class],
         [SendConversationMediaUseCaseInterface::class, SendConversationMediaUseCase::class],
-
-        
-        
+        [RegisterCompanyUseCaseInterface::class, RegisterCompanyUseCase::class],
+        [ConfirmCompanyEmailUseCaseInterface::class, ConfirmCompanyEmailUseCase::class],
+        [CreateStaffUseCaseInterface::class, CreateStaffUseCase::class],
+        [GetStaffUseCaseInterface::class, GetStaffUseCase::class],
+        [UpdateBillingConfigUseCaseInterface::class, UpdateBillingConfigUseCase::class],
+        [ChangePasswordUseCaseInterface::class, ChangePasswordUseCase::class],
+        [GetInventoryCategoriesUseCaseInterface::class, GetInventoryCategoriesUseCase::class],
+        [CreateInventoryCategoryUseCaseInterface::class, CreateInventoryCategoryUseCase::class],
+        [GetInventoriesUseCaseInterface::class, GetInventoriesUseCase::class],
+        [CreateInventoryUseCaseInterface::class, CreateInventoryUseCase::class],
+        [UpdateInventoryUseCaseInterface::class, UpdateInventoryUseCase::class],
+        [DeleteInventoryUseCaseInterface::class, DeleteInventoryUseCase::class],
+        [CreateInventoryMovementUseCaseInterface::class, CreateInventoryMovementUseCase::class],
+        [GetInventoryMovementsUseCaseInterface::class, GetInventoryMovementsUseCase::class],
     ];
 
     /**

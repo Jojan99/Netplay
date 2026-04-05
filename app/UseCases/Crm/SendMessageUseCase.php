@@ -92,19 +92,19 @@ class SendMessageUseCase implements SendMessageUseCaseInterface
         ));
 
 
-        $whats = new WatchChimpService();
+        // $whats = new WatchChimpService();
 
-            $whats->replyText(
-            $conversation->phone,
-            $content,
-            "wamid.HBgMNTczMTQ0NTgwODQ0FQIAEhgUM0ExMkJBRjlCRjJDQjIzNEEwMUYA"
-        );
+        //     $whats->replyText(
+        //     $conversation->phone,
+        //     $content,
+        //     "wamid.HBgMNTczMTQ0NTgwODQ0FQIAEhgUM0ExMkJBRjlCRjJDQjIzNEEwMUYA"
+        // );
 
-    // 7️⃣ WhatsApp
-    // $this->whatsAppService->mensajeInformativo(
-    //     $conversation->phone,
-        
-    // );
+    //WhatsApp
+    $whats = $this->whatsAppService->mensajeInformativo(
+        $conversation->phone,
+        $content,
+    );
 
     return $whats;
 }

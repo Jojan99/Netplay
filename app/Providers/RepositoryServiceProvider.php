@@ -4,6 +4,7 @@ namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
 use App\Repositories\Interfaces\{
+    CompanyRepositoryInterface,
     ConversationRepositoryInterface,
     CrmMediaRepositoryInterface,
     DniRepositoryInterface,
@@ -17,9 +18,11 @@ use App\Repositories\Interfaces\{
     RouterRepositoryInterface,
     ManagementRouterRepositoryInterface,
     EgresosRepositoryInterface,
+    InventoryRepositoryInterface,
     TicketRepositoryInterface,
 };
 use App\Repositories\{
+    CompanyRepository,
     ConversationRepository,
     CrmMediaRepository,
     DniRepository,
@@ -33,6 +36,7 @@ use App\Repositories\{
     SearchRepository,
     ManagementRouterRepository,
     EgresosRepository,
+    InventoryRepository,
     TicketRepository,
 };
 
@@ -67,6 +71,7 @@ class RepositoryServiceProvider extends ServiceProvider
      * @const array [interfaz, clase]
      */
     const SERVICES = [
+        [CompanyRepositoryInterface::class, CompanyRepository::class],
         [UserRepositoryInterface::class, UserRepository::class],
         [GenderRepositoryInterface::class, GenderRepository::class],
         [DniRepositoryInterface::class, DniRepository::class],
@@ -78,6 +83,7 @@ class RepositoryServiceProvider extends ServiceProvider
         [RouterRepositoryInterface::class, RouterRepository::class],
         [ManagementRouterRepositoryInterface::class, ManagementRouterRepository::class],
         [EgresosRepositoryInterface::class, EgresosRepository::class],
+        [InventoryRepositoryInterface::class, InventoryRepository::class],
         [TicketRepositoryInterface::class, TicketRepository::class],
         [ConversationRepositoryInterface::class, ConversationRepository::class],
         [CrmMediaRepositoryInterface::class, CrmMediaRepository::class],

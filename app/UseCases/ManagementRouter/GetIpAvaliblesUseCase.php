@@ -35,9 +35,23 @@ class GetIpAvaliblesUseCase implements GetIpAvaliblesUseCaseInterface
         private ManagementRouterRepositoryInterface $managementRouterRepositoryInterface,
         private ConectionRouterManagerInterface $conectionRouterManagerInterface,
         private UserRepositoryInterface $userRepositoryInterface,
-
+        private \App\Repositories\Interfaces\RouterRepositoryInterface $routerRepositoryInterface,
+        private \App\Repositories\Interfaces\InternetInfoRepositoryInterface $internetInfoRepositoryInterface,
     ) {
         $this->connection = $conectionRouterManagerInterface;
+    }
+
+    private function getCompanyRouterId(): string
+    {
+        $companyId = getSessionCompanyId();
+        if (!$companyId) {
+            throw new \RuntimeException('Sesión sin empresa asociada');
+        }
+        $token = $this->routerRepositoryInterface->getTokenByCompany($companyId);
+        if (!$token) {
+            throw new \RuntimeException('No hay router configurado para esta empresa');
+        }
+        return $token;
     }
 
     /**
@@ -47,8 +61,7 @@ class GetIpAvaliblesUseCase implements GetIpAvaliblesUseCaseInterface
 public function GetIpAvalibles(GestionUserRequest $gestionUserRequest): mixed
 {   
     try {
-
-        if (getSessionUserProfileId() == 2) {
+        if (getSessionUserProfileId() == 1) {
             return [
                 'message' => 'Acción no permitida',
                 'status'  => 1,
@@ -58,9 +71,7 @@ public function GetIpAvalibles(GestionUserRequest $gestionUserRequest): mixed
 
 
         $vlan = $gestionUserRequest['vlan'];
-        $routerId = 'b5c2f0e8-7e82-4a5c-a7d7-0ee8b2d7b905';
-
-        $api = $this->connection->conection($routerId);
+        $api = $this->connection->conection($this->getCompanyRouterId());
 
         /** 1️⃣ RED DE LA VLAN */
         $query = new Query('/ip/address/print');
@@ -131,8 +142,8 @@ public function getLanSegments(): mixed
 {
     try {
 
-        // ✔ solo perfil 2
-        if (getSessionUserProfileId() == 2) {
+        // Solo bloquear perfil 1 (usuario regular)
+        if (getSessionUserProfileId() == 1) {
             return [
                 'message' => 'Acción no permitida',
                 'status'  => 1,
@@ -143,22 +154,15 @@ public function getLanSegments(): mixed
         // ⏱️ importante
 
 
-        $routerId = 'b5c2f0e8-7e82-4a5c-a7d7-0ee8b2d7b905';
-        $api = $this->connection->conection($routerId);
+        $api = $this->connection->conection($this->getCompanyRouterId());
 
         /**
          * 1️⃣ TRAER TODAS LAS IPs (sin filtro)
          */
-    $query = new Query('/ip/address/print');
-$query->add('=.proplist=address,interface');
-
-$rows = $api->query($query)->read();
-
+        $query = new Query('/ip/address/print');
+        $query->add('=.proplist=address,interface');
 
         $rows = $api->query($query)->read();
-      
-
-        error_log('IP ADDRESS RAW: ' . json_encode($rows));
 
         if (empty($rows)) {
             return [
@@ -219,8 +223,7 @@ public function autorizarServicio(GestionUserRequest $request): array
         $dataUser = $this->userRepositoryInterface
             ->getUserById($request['service_id']);
 
-        $routerId = 'b5c2f0e8-7e82-4a5c-a7d7-0ee8b2d7b905';
-        $api = $this->connection->conection($routerId);
+        $api = $this->connection->conection($this->getCompanyRouterId());
 
         // 🔹 Buscar ARP existente
         $query = new Query('/ip/arp/print');
@@ -247,6 +250,15 @@ public function autorizarServicio(GestionUserRequest $request): array
         $query->equal('mac-address', $mac);
 
         $api->query($query)->read();
+
+        // Guardar MAC en TablaIp
+        $arpQuery = new Query('/ip/arp/print');
+        $arpQuery->where('.id', $arpId);
+        $arpQuery->add('=.proplist=address');
+        $arpResult = $api->query($arpQuery)->read();
+        if (!empty($arpResult[0]['address'])) {
+            $this->internetInfoRepositoryInterface->updateIpMac($arpResult[0]['address'], $mac);
+        }
 
         return [
             'message' => 'MAC actualizada correctamente',
@@ -279,8 +291,7 @@ public function registerIpInArp(
         error_log($vlan);
         error_log($comment);
 
-        $routerId = 'b5c2f0e8-7e82-4a5c-a7d7-0ee8b2d7b905';
-        $api = $this->connection->conection($routerId);
+        $api = $this->connection->conection($this->getCompanyRouterId());
 
         /**
          * 🔹 VALIDAR SI YA EXISTE EN ARP
@@ -332,7 +343,7 @@ public function registerIpInArp(
 {
     try {
         // Intentar establecer una conexión con MikroTik
-        $connection = $this->connection->conection('b5c2f0e8-7e82-4a5c-a7d7-0ee8b2d7b905');
+        $connection = $this->connection->conection($this->getCompanyRouterId());
         
         // Realizar una consulta de prueba
         $query = new Query('/system/resource/print');

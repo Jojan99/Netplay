@@ -45,6 +45,9 @@ class RouteServiceProvider extends ServiceProvider
                     require base_path('routes/api/egresosRoutes.php');
                     require base_path('routes/api/ticketRoutes.php');
                     require base_path('routes/api/broadcastingRoutes.php');
+                    require base_path('routes/api/companyRoutes.php');
+                    require base_path('routes/api/inventoryRoutes.php');
+                    require base_path('routes/api/waProxyRoutes.php');
                 });
 
             Route::middleware('web')

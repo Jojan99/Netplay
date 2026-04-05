@@ -35,6 +35,7 @@ class GestionUserRequest extends FormRequest
             'service_id' => 'int',
             'mac' => 'string',
             'serial' => 'nullable|string',
+            'company_id' => 'nullable|int',
         ];
     }
 

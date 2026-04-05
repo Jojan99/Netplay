@@ -44,6 +44,7 @@ return [
     'api_key'     => env('NETPLAY_WS_API_KEY'),
     'instance_id' => env('NETPLAY_WS_INSTANCE_ID'),
     'base_url'    => env('NETPLAY_WS_URL', 'http://181.48.150.43:3001/crm'),
+    'master_key'  => env('NETPLAY_WS_MASTER_KEY', 'netplay_master_2026_xK9pLmQr'),
 ],
 'whatchimp' => [
     'token' => env('WATCHCHIMP_TOKEN'),

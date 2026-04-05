@@ -8,6 +8,7 @@ use App\Http\Requests\User\CreateUserDataRequest;
 use Illuminate\Support\Facades\Hash;
 use App\Repositories\Interfaces\UserRepositoryInterface;
 use Illuminate\Support\Facades\DB;
+use App\Constants\ProfileConstants;
 
 class UserRepository implements UserRepositoryInterface
 {
@@ -48,10 +49,11 @@ class UserRepository implements UserRepositoryInterface
     public function createUser(CreateUserDataRequest $data): mixed
     {
         return User::create([
-            'username' => $data['dni'],
-            'email' => $data['email'],
-            'password' => Hash::make($data['dni']),
-            'profile_id' => 1
+            'username'   => $data['dni'],
+            'email'      => $data['email'],
+            'password'   => Hash::make($data['dni']),
+            'profile_id' => 1,
+            'company_id' => getSessionCompanyId(),
         ]);
     }
 
@@ -85,10 +87,74 @@ class UserRepository implements UserRepositoryInterface
      */
     public function UpdateUserData(CreateUserDataRequest $data): mixed
     {
-        $user = UserData::where('user_id', $data['id'])->first();
-        if ($user) $user->update(['names' => $data['names']]);
+        $userId = $data['id_user'] ?? $data['id'];
+        $user = UserData::where('user_id', $userId)->first();
 
-        return $data['id'];
+        if ($user) {
+            $oldPlanId = $user->internet_plans_id;
+            $oldGroup  = DB::table('cab_facturations')->where('user_id', $userId)->value('group');
+
+            $user->update([
+                'names'             => $data['names'],
+                'lastname'          => $data['lastname'],
+                'address'           => $data['address'],
+                'phone'             => $data['phone'],
+                'email'             => $data['email'],
+                'internet_plans_id' => $data['planInternet'],
+            ]);
+
+            // Update billing group in cab_facturations
+            DB::table('cab_facturations')
+                ->where('user_id', $userId)
+                ->update(['group' => $data['group']]);
+
+            // Audit log for plan change
+            if ($oldPlanId != $data['planInternet']) {
+                $oldPlanName = DB::table('internet_plans')->where('id', $oldPlanId)->value('plan_name') ?? $oldPlanId;
+                $newPlanName = DB::table('internet_plans')->where('id', $data['planInternet'])->value('plan_name') ?? $data['planInternet'];
+                DB::table('user_audit_logs')->insert([
+                    'user_id'       => $userId,
+                    'changed_by'    => getSessionUserId(),
+                    'company_id'    => getSessionCompanyId(),
+                    'field_changed' => 'plan',
+                    'old_value'     => $oldPlanName,
+                    'new_value'     => $newPlanName,
+                    'description'   => 'Cambio de plan de internet',
+                    'created_at'    => now(),
+                    'updated_at'    => now(),
+                ]);
+            }
+
+            // Audit log for billing group change
+            if ($oldGroup != $data['group']) {
+                DB::table('user_audit_logs')->insert([
+                    'user_id'       => $userId,
+                    'changed_by'    => getSessionUserId(),
+                    'company_id'    => getSessionCompanyId(),
+                    'field_changed' => 'grupo_facturacion',
+                    'old_value'     => $oldGroup,
+                    'new_value'     => $data['group'],
+                    'description'   => 'Cambio de grupo de facturación',
+                    'created_at'    => now(),
+                    'updated_at'    => now(),
+                ]);
+            }
+
+            // Audit log for general data update
+            DB::table('user_audit_logs')->insert([
+                'user_id'       => $userId,
+                'changed_by'    => getSessionUserId(),
+                'company_id'    => getSessionCompanyId(),
+                'field_changed' => 'datos_generales',
+                'old_value'     => null,
+                'new_value'     => json_encode(['names' => $data['names'], 'lastname' => $data['lastname'], 'address' => $data['address'], 'phone' => $data['phone'], 'email' => $data['email']]),
+                'description'   => 'Actualización de datos personales',
+                'created_at'    => now(),
+                'updated_at'    => now(),
+            ]);
+        }
+
+        return $userId;
     }
 
     /**
@@ -124,14 +190,15 @@ class UserRepository implements UserRepositoryInterface
             'user_data.phone',
             'internet_status.name as internet_status',
             'internet_plans.plan_name',
-            //'tabla_ips.name as ip',
             'cab_facturations.id as id_cab',
-            'users.created_at as date_create'
+            'users.created_at as date_create',
+            DB::raw("COALESCE(tabla_ips.ip, '') AS ip"),
+            'users.username as alias'
         )
             ->join('user_data', 'users.id', 'user_data.user_id')
             ->join('internet_status', 'user_data.status_internet_id', 'internet_status.id')
             ->join('internet_plans', 'user_data.internet_plans_id', 'internet_plans.id')
-            //->join('tabla_ips', 'user_data.ip_assignment_id', 'tabla_ips.id')
+            ->leftJoin('tabla_ips', 'user_data.ip_assignment_id', 'tabla_ips.id')
             ->join('cab_facturations', 'users.id', 'cab_facturations.user_id')
             ->where('user_data.active', 1)
             ->where('users.company_id', getSessionCompanyId())
@@ -145,22 +212,30 @@ class UserRepository implements UserRepositoryInterface
     public function getUserById($dni): mixed
     {
         return User::select(
+                'users.id AS user_id',
                 'user_data.names',
                 'user_data.lastname',
                 'user_data.dni',
                 'internet_plans.plan_name',
                 'internet_plans.monthly_price',
+                'internet_plans.id AS internet_plans_id',
                 'user_data.address',
                 'user_data.phone',
                 'user_data.email',
                 'cab_facturations.id AS id_cab',
-                'internet_status.id AS status_internet'
+                'cab_facturations.group AS data_cortes_id',
+                'internet_status.name AS status_internet',
+                'user_data.created_at AS date_create',
+                DB::raw("COALESCE(tabla_ips.ip, '') AS ip_address"),
+                DB::raw("COALESCE(tabla_ips.ip, '') AS ip")
             )
             ->join('user_data', 'users.id', '=', 'user_data.user_id')
             ->join('internet_plans', 'user_data.internet_plans_id', '=', 'internet_plans.id')
             ->join('cab_facturations', 'cab_facturations.user_id', '=', 'user_data.user_id')
             ->join('internet_status', 'internet_status.id', '=', 'user_data.status_internet_id')
+            ->leftJoin('tabla_ips', 'tabla_ips.id', '=', 'user_data.ip_assignment_id')
             ->where('user_data.user_id', $dni)
+            ->where('users.company_id', getSessionCompanyId())
             ->first();
     }
 
@@ -197,7 +272,10 @@ class UserRepository implements UserRepositoryInterface
      */
     public function validateUserEmail(string $email): mixed
     {
-        return UserData::where("email", $email)->first();
+        return UserData::join('users', 'users.id', '=', 'user_data.user_id')
+            ->where('user_data.email', $email)
+            ->where('users.company_id', getSessionCompanyId())
+            ->first();
     }
 
     /**
@@ -206,7 +284,10 @@ class UserRepository implements UserRepositoryInterface
      */
     public function validateUserDni(string $dni): mixed
     {
-        return UserData::where("dni", $dni)->first();
+        return UserData::join('users', 'users.id', '=', 'user_data.user_id')
+            ->where('user_data.dni', $dni)
+            ->where('users.company_id', getSessionCompanyId())
+            ->first();
     }
 
     /**
@@ -215,7 +296,10 @@ class UserRepository implements UserRepositoryInterface
      */
     public function validateUserPhone(string $phone): mixed
     {
-        return UserData::where("phone", $phone)->first();
+        return UserData::join('users', 'users.id', '=', 'user_data.user_id')
+            ->where('user_data.phone', $phone)
+            ->where('users.company_id', getSessionCompanyId())
+            ->first();
     }
 
     /**
@@ -281,6 +365,63 @@ class UserRepository implements UserRepositoryInterface
             ->first();
 
         return $results;
+    }
+
+    /**
+     * @param mixed $data
+     * @return mixed
+     */
+    public function createStaff(mixed $data): mixed
+    {
+        return User::create([
+            'username'   => $data['username'],
+            'email'      => $data['email'],
+            'password'   => Hash::make($data['password']),
+            'profile_id' => $data['profile_id'],
+            'company_id' => getSessionCompanyId(),
+        ]);
+    }
+
+    /**
+     * @param string $email
+     * @return mixed
+     */
+    public function validateStaffEmail(string $email): mixed
+    {
+        return User::where('email', $email)
+            ->where('company_id', getSessionCompanyId())
+            ->first();
+    }
+
+    /**
+     * @param string $username
+     * @return mixed
+     */
+    public function validateStaffUsername(string $username): mixed
+    {
+        return User::where('username', $username)->first();
+    }
+
+    /**
+     * @return mixed
+     */
+    public function getStaff(): mixed
+    {
+        return User::select(
+                'users.id',
+                'users.username',
+                'users.email',
+                'users.profile_id',
+                'users.active',
+                'profiles.name as profile_name',
+                'user_data.names',
+                'user_data.lastname'
+            )
+            ->join('profiles', 'profiles.id', '=', 'users.profile_id')
+            ->leftJoin('user_data', 'user_data.user_id', '=', 'users.id')
+            ->where('users.company_id', getSessionCompanyId())
+            ->whereIn('users.profile_id', [ProfileConstants::ADMIN, ProfileConstants::TECNICO, ProfileConstants::CONTADOR])
+            ->get();
     }
 
     /**

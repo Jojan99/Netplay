@@ -7,7 +7,11 @@ use Illuminate\Database\QueryException;
 use App\Constants\ApiResponseConstants;
 use App\Http\Requests\Gestions\GestionUserRequest;
 use App\Managers\Interfaces\ConectionRouterManagerInterface;
+use App\Models\CabFacturation;
+use App\Models\DetFacturation;
+use App\Models\UserData;
 use App\Repositories\Interfaces\ManagementRouterRepositoryInterface;
+use App\Services\WhatsAppService;
 use App\UseCases\ManagementRouter\Interfaces\UpdateStatusUserUseCaseInterface;
 use RouterOS\Exceptions\QueryException as ExceptionsQueryException;
 use RouterOS\Query;
@@ -31,9 +35,23 @@ class UpdateStatusUserUseCase implements UpdateStatusUserUseCaseInterface
 
     public function __construct(
         private ManagementRouterRepositoryInterface $managementRouterRepositoryInterface,
-        private ConectionRouterManagerInterface $conectionRouterManagerInterface
+        private ConectionRouterManagerInterface $conectionRouterManagerInterface,
+        private \App\Repositories\Interfaces\RouterRepositoryInterface $routerRepositoryInterface,
     ) {
         $this->connection = $conectionRouterManagerInterface;
+    }
+
+    private function getCompanyRouterId(): string
+    {
+        $companyId = getSessionCompanyId();
+        if (!$companyId) {
+            throw new \RuntimeException('Sesión sin empresa asociada');
+        }
+        $token = $this->routerRepositoryInterface->getTokenByCompany($companyId);
+        if (!$token) {
+            throw new \RuntimeException('No hay router configurado para esta empresa');
+        }
+        return $token;
     }
 
     /**
@@ -66,7 +84,7 @@ public function UpdateStatus(GestionUserRequest $gestionUserRequest): array
         }
 
         // ✅ UNA SOLA CONEXIÓN
-        $client = $this->connection->conection('b5c2f0e8-7e82-4a5c-a7d7-0ee8b2d7b905');
+        $client = $this->connection->conection($this->getCompanyRouterId());
 
         // BUSCAR ARP POR USERNAME
         $query = (new Query('/ip/arp/print'))
@@ -87,6 +105,42 @@ public function UpdateStatus(GestionUserRequest $gestionUserRequest): array
             ->equal('.id', $user[0]['.id']);
 
         $client->query($query)->read();
+
+        // Send WhatsApp notification on suspension
+        if ($gestionUserRequest['status'] == 2) {
+            try {
+                $userData = UserData::select('user_data.*')
+                    ->join('users', 'users.id', '=', 'user_data.user_id')
+                    ->where('user_data.user_id', $gestionUserRequest['id_user'])
+                    ->where('users.company_id', getSessionCompanyId())
+                    ->first();
+
+                if ($userData && $userData->phone) {
+                    $cab = CabFacturation::where('user_id', $userData->user_id)->first();
+                    $balance = $cab
+                        ? (float) DetFacturation::where('cab_id', $cab->id)->where('paid', '<>', 1)->sum('price_total')
+                        : 0.0;
+
+                    $vars = [
+                        '{nombre}'   => $userData->names ?? '',
+                        '{apellido}' => $userData->lastname ?? '',
+                        '{dni}'      => $userData->dni ?? '',
+                        '{telefono}' => $userData->phone ?? '',
+                        '{deuda}'    => number_format($balance, 0, '.', ','),
+                        '{fecha}'    => now()->format('d/m/Y'),
+                    ];
+                    $template = "Estimado/a {nombre} {apellido}, le informamos que su servicio de internet ha sido *suspendido* por falta de pago.\n\n"
+                              . "💰 Saldo pendiente: *\${deuda}*\n\n"
+                              . "Para reactivar su servicio, comuníquese con nosotros o realice su pago.\n\n"
+                              . "📅 Fecha: {fecha}";
+
+                    $message = str_replace(array_keys($vars), array_values($vars), $template);
+                    (new WhatsAppService())->mensajeInformativo($userData->phone, $message);
+                }
+            } catch (\Throwable $waErr) {
+                error_log('WA suspend notify: ' . $waErr->getMessage());
+            }
+        }
 
         return [
             'message' => 'consulta realizada con exito',
@@ -116,7 +170,7 @@ public function UpdateStatus(GestionUserRequest $gestionUserRequest): array
 {
     try {
         // Intentar establecer una conexión con MikroTik
-        $connection = $this->connection->conection('b5c2f0e8-7e82-4a5c-a7d7-0ee8b2d7b905');
+        $connection = $this->connection->conection($this->getCompanyRouterId());
         
         // Realizar una consulta de prueba
         $query = new Query('/system/resource/print');

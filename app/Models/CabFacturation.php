@@ -11,6 +11,7 @@ class CabFacturation extends Authenticatable
     use HasFactory;
     protected $fillable = [
         'user_id',
+        'company_id',
         'date_init_facturation',
         'group',
     ];

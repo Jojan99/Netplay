@@ -2,19 +2,64 @@
 
 namespace App\Resources\Templates;
 
+use App\Models\Company;
 use Carbon\Carbon;
 use Dompdf\Dompdf;
 use Dompdf\Options;
 
 class TemplatesPdf
 {
-  
-  public function PdfFacturas($user,$Cab): mixed
+
+  /**
+   * Load company invoice config, falling back to sensible defaults.
+   */
+  private function loadCompany(?int $companyId = null): array
+  {
+    $id = $companyId ?? (function_exists('getSessionCompanyId') ? getSessionCompanyId() : null);
+    $company = $id ? Company::find($id) : null;
+
+    $defaultLogoPath = realpath(__DIR__ . "/../../../resources/img/NET-PLAY-LOGO-Mesa-de-trabajo-1.jpg");
+
+    // Resolve logo to base64
+    $logoBase64 = null;
+    $logoUrl = $company?->invoice_logo_url ?? $company?->logo ?? null;
+    if ($logoUrl && filter_var($logoUrl, FILTER_VALIDATE_URL)) {
+      try {
+        $data = @file_get_contents($logoUrl);
+        if ($data) {
+          $mime = 'image/jpeg';
+          if (str_ends_with(strtolower(parse_url($logoUrl, PHP_URL_PATH) ?? ''), '.png')) {
+            $mime = 'image/png';
+          }
+          $logoBase64 = "data:{$mime};base64," . base64_encode($data);
+        }
+      } catch (\Throwable) {}
+    }
+    if (!$logoBase64 && $defaultLogoPath && file_exists($defaultLogoPath)) {
+      $logoBase64 = "data:image/jpeg;base64," . base64_encode(file_get_contents($defaultLogoPath));
+    }
+
+    return [
+      'business_name'      => $company?->invoice_business_name ?? $company?->name ?? 'SOLUCIONES NETPLAY S.A.S',
+      'nit'                => $company?->invoice_nit            ?? $company?->nit  ?? '901911441-2',
+      'phone'              => $company?->invoice_phone          ?? $company?->phone ?? '3022042294',
+      'address'            => $company?->invoice_address        ?? $company?->address ?? 'Soledad, Atlantico',
+      'city'               => $company?->invoice_city           ?? 'Soledad',
+      'country'            => $company?->invoice_country        ?? 'COLOMBIA',
+      'iva_condition'      => $company?->invoice_iva_condition  ?? 'No Aplica',
+      'economic_activity'  => $company?->invoice_economic_activity ?? '6110 - Actividades de telecomunicaciones alámbricas',
+      'payment_info'       => $company?->invoice_payment_info   ?? "- BANCOLOMBIA CTA AHO 47800013328\n- DAVIPLATA 3022042294\n- NEQUI 3022042294",
+      'footer'             => $company?->invoice_footer         ?? '¡Gracias por preferirnos!',
+      'logo_base64'        => $logoBase64,
+    ];
+  }
+
+  public function PdfFacturas($user, $Cab, ?int $companyId = null): mixed
   {
 
     json_encode($Cab);
     $priceAntFactura = $Cab;
-    
+
     $fechaInit = substr($user['date_facturation'], 0, 10);
     $fechaNueva = date('Y-m-d', strtotime($fechaInit . ' -1 month'));
     $fechaActual = date('Y-m-d');
@@ -23,13 +68,13 @@ class TemplatesPdf
     $daysFacture = $user['days_facture'];
     $saldoTotal = $user['price_total'] - $user['price_discount'];
     $valorDescuento = $user['price_discount'];
-    $logoPath = realpath(__DIR__ . "/../../../resources/img/NET-PLAY-LOGO-Mesa-de-trabajo-1.jpg");
 
     if($user['create_facture_manual'] == 1){
       $user['monthly_price'] = $user['price_total'];
     }
 
-    $imagenBase64 = "data:image/png;base64," . base64_encode(file_get_contents($logoPath));
+    $co = $this->loadCompany($companyId);
+    $imagenBase64 = $co['logo_base64'] ?? '';
 
     $html = '
         <!DOCTYPE html>
@@ -179,21 +224,17 @@ class TemplatesPdf
   <div class="container">
     <div class="left-column"">
       <a><strong>Actividad Económica:</strong></a>
-      <a>6110 - Actividades de
-        telecomunicaciones alámbricas</a>
-
+      <a>' . htmlspecialchars($co['economic_activity']) . '</a>
     </div>
-    <div class=" center-column">
-      <a><strong>Razon Social</strong>: SOLUCIONES NETPLAY S.A.S</a>
-      <a><strong>Identificación</strong>:901911441-2</a>
-      <a><strong>Teléfono</strong>: 3022042294</a>
-      <p><strong>Dirección</strong>:
-        Soledad, Atlantico,
-        COLOMBIA.</p>
-      <a><strong>Condición IVA: No Aplica</strong></a>
+    <div class="center-column">
+      <a><strong>Razon Social</strong>: ' . htmlspecialchars($co['business_name']) . '</a>
+      <a><strong>Identificación</strong>: ' . htmlspecialchars($co['nit']) . '</a>
+      <a><strong>Teléfono</strong>: ' . htmlspecialchars($co['phone']) . '</a>
+      <p><strong>Dirección</strong>: ' . htmlspecialchars($co['address']) . ', ' . htmlspecialchars($co['country']) . '</p>
+      <a><strong>Condición IVA: ' . htmlspecialchars($co['iva_condition']) . '</strong></a>
     </div>
     <div class="right-column">
-    <a><strong>Numero: </strong>' . $user['number_facture'] . '</a>
+      <a><strong>Numero: </strong>' . $user['number_facture'] . '</a>
       <p><strong>Fecha: </strong>' . $fechaActual . '</p>
       <p><strong>Fecha Vto: </strong>' . $fechaVence . '</p>
       <a><strong>Forma de pago: </strong>Efectivo</a>
@@ -205,8 +246,7 @@ class TemplatesPdf
     <div class="left-column-center">
       <a><strong>Sr. (es): </strong>' . $user['names'] . ' ' . $user['lastname'] . '</a>
       <p><strong>Dirección: </strong>' . $user['address'] . '</p>
-      <a><strong>Municipio: </strong>Soledad</a>
-
+      <a><strong>Municipio: </strong>' . htmlspecialchars($co['city']) . '</a>
     </div>
     <div class="right-column-center">
       <a><strong>CC: </strong> ' . $user['dni'] . '</a>
@@ -230,31 +270,33 @@ class TemplatesPdf
     <tbody>
       <tr>
         <td>' . $user['plan_name'] . '</td>
-        <td>' . $fechaNueva . ' - ' . $fechaInit . ' </td>
+        <td>' . $fechaNueva . ' - ' . $fechaInit . '</td>
         <td class="iva">0%</td>
         <td>' . $user['monthly_price'] . '</td>
         <td class="descuento">' . $Porcentage . '</td>
         <td class="descuento">' . $daysFacture . '</td>
         <td>' . $saldoTotal . '</td>
       </tr>
-       <tr>
+      <tr>
         <td>' . $user['plan_name'] . '</td>
-        <td>' .  'SALDO ANTERIOR' .  ' </td>
+        <td>SALDO ANTERIOR</td>
         <td class="iva">-</td>
         <td>' . $priceAntFactura . '</td>
-        <td class="descuento">' . '-' . '</td>
-        <td class="descuento">' . '-' . '</td>
-        <td>' . $priceAntFactura  . '</td>
+        <td class="descuento">-</td>
+        <td class="descuento">-</td>
+        <td>' . $priceAntFactura . '</td>
       </tr>
     </tbody>
   </table>
   <div class="additional-field">
-    <p><strong>Subtotal:</strong> ' . $user['monthly_price'] + $priceAntFactura . '</p>
+    <p><strong>Subtotal:</strong> ' . ($user['monthly_price'] + $priceAntFactura) . '</p>
     <p><strong>Descuento:</strong> ' . $valorDescuento . '</p>
-    <p><strong>Total Bruto:</strong> ' . ($saldoTotal) + $priceAntFactura  . '</p>
+    <p><strong>Total Bruto:</strong> ' . (($saldoTotal) + $priceAntFactura) . '</p>
   </div>
   <div class="bottom-section">
-    <p><strong>Valor a Pagar: ' . ($saldoTotal) +  $priceAntFactura  . '</strong></p>
+    <p><strong>Valor a Pagar: ' . (($saldoTotal) + $priceAntFactura) . '</strong></p>
+    <p style="font-size:10px;white-space:pre-line;">' . htmlspecialchars($co['payment_info']) . '</p>
+    <p style="font-size:10px;">' . htmlspecialchars($co['footer']) . '</p>
   </div>
 </body>
 
@@ -266,8 +308,9 @@ class TemplatesPdf
 
 
 
-  public function PdfReceiptPay($dataUser,$Cab,$extraParam)
+  public function PdfReceiptPay($dataUser, $Cab, $extraParam, ?int $companyId = null)
   {
+    $co = $this->loadCompany($companyId);
 
     error_log(json_encode($dataUser));
     $valorPrice = $dataUser['abone'] == 1 ? $extraParam : $dataUser['price_total'] - $dataUser['price_discount'];
@@ -340,12 +383,12 @@ class TemplatesPdf
 <body>
     <div class="container">
         <div class="header">
-            <h1>Soluciones Neplay S.A.S</h1>
-            <p>Régimen fiscal: No Aplica</p>
-            <p>Soledad, Atlantico</p>
-            <p>NIT: 901911441-2</p>
-            <p>Tel: 3022042294</p>
-            <p>Direccion:</p>
+            <h1>' . htmlspecialchars($co['business_name']) . '</h1>
+            <p>Régimen fiscal: ' . htmlspecialchars($co['iva_condition']) . '</p>
+            <p>' . htmlspecialchars($co['city']) . '</p>
+            <p>NIT: ' . htmlspecialchars($co['nit']) . '</p>
+            <p>Tel: ' . htmlspecialchars($co['phone']) . '</p>
+            <p>' . htmlspecialchars($co['address']) . '</p>
             <p>SISTEMA P.O.S</p>
             <h2>RECIBO DE PAGO</h2>
         </div>
