@@ -32,7 +32,7 @@ class GetInternetPlanUseCase implements GetInternetPlanUseCaseInterface
     public function getInternetPlanAll(): mixed
     {
         try {
-            if(true){
+            if(getSessionUserProfileId() == 2){
                 $getInternetPlanAll = $this->internetInfoRepositoryInterface->getInternetPlanAll();
             }else{
                 return [

@@ -4,38 +4,40 @@ namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
 use App\Repositories\Interfaces\{
-    CabDocumentVerificationRequestRepositoryInterface,
-    CountryRepositoryInterface,
+    CompanyRepositoryInterface,
+    ConversationRepositoryInterface,
+    CrmMediaRepositoryInterface,
     DniRepositoryInterface,
-    EmailUserSendInterface,
     GenderRepositoryInterface,
-    NotificationRepositoryInterface,
-    RequestPurchaseRepositoryInterface,
-    RequestWithdrawalsRepositoryInterface,
-    TypeCurrencisRepositoryInterface,
     UserRepositoryInterface,
     GeneratePdfRepositoryInterface,
     FacturationRepositoryInterface,
     InternetInfoRepositoryInterface,
     LocationRepositoryInterface,
-    
-    
+    SearchRepositoryInterface,
+    RouterRepositoryInterface,
+    ManagementRouterRepositoryInterface,
+    EgresosRepositoryInterface,
+    InventoryRepositoryInterface,
+    TicketRepositoryInterface,
 };
 use App\Repositories\{
-    CabDocumentVerificationRequestRepository,
-    CountryRepository,
+    CompanyRepository,
+    ConversationRepository,
+    CrmMediaRepository,
     DniRepository,
-    EmailUserSendRepository,
     GenderRepository,
-    NotificationRepository,
-    RequestPurchaseRepository,
-    RequestWithdrawalsRepository,
-    TypeCurrencisRepository,
     UserRepository,
     GeneratePdfRepository,
     FacturationRepository,
     InternetInfoRepository,
-    LocationRepository
+    LocationRepository,
+    RouterRepository,
+    SearchRepository,
+    ManagementRouterRepository,
+    EgresosRepository,
+    InventoryRepository,
+    TicketRepository,
 };
 
 /**
@@ -69,20 +71,23 @@ class RepositoryServiceProvider extends ServiceProvider
      * @const array [interfaz, clase]
      */
     const SERVICES = [
+        [CompanyRepositoryInterface::class, CompanyRepository::class],
         [UserRepositoryInterface::class, UserRepository::class],
-        [TypeCurrencisRepositoryInterface::class, TypeCurrencisRepository::class],
-        [RequestPurchaseRepositoryInterface::class, RequestPurchaseRepository::class],
-        [NotificationRepositoryInterface::class, NotificationRepository::class],
         [GenderRepositoryInterface::class, GenderRepository::class],
-        [CountryRepositoryInterface::class, CountryRepository::class],
         [DniRepositoryInterface::class, DniRepository::class],
-        [EmailUserSendInterface::class, EmailUserSendRepository::class],
-        [CabDocumentVerificationRequestRepositoryInterface::class, CabDocumentVerificationRequestRepository::class],
-        [RequestWithdrawalsRepositoryInterface::class, RequestWithdrawalsRepository::class],
         [GeneratePdfRepositoryInterface::class, GeneratePdfRepository::class],
         [FacturationRepositoryInterface::class, FacturationRepository::class],
         [InternetInfoRepositoryInterface::class, InternetInfoRepository::class],
         [LocationRepositoryInterface::class, LocationRepository::class],
+        [SearchRepositoryInterface::class, SearchRepository::class],
+        [RouterRepositoryInterface::class, RouterRepository::class],
+        [ManagementRouterRepositoryInterface::class, ManagementRouterRepository::class],
+        [EgresosRepositoryInterface::class, EgresosRepository::class],
+        [InventoryRepositoryInterface::class, InventoryRepository::class],
+        [TicketRepositoryInterface::class, TicketRepository::class],
+        [ConversationRepositoryInterface::class, ConversationRepository::class],
+        [CrmMediaRepositoryInterface::class, CrmMediaRepository::class],
+
         
     ];
 

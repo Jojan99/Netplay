@@ -3,6 +3,8 @@
 namespace App\UseCases\Facturation;
 
 use App\Constants\ApiResponseConstants;
+use App\Http\Requests\Facturation\CreateFacturationRequest;
+use App\Http\Requests\Facturation\GetDateFacturePendingnRequest;
 use App\Repositories\Interfaces\FacturationRepositoryInterface;
 use App\UseCases\Facturation\Interfaces\GetDateFacturePendingUseCaseInterface;
 use Illuminate\Database\QueryException;
@@ -30,13 +32,12 @@ class GetDateFacturePendingUseCase implements GetDateFacturePendingUseCaseInterf
     }
 
     /**
-x     * @return mixed
      */
-    public function getDateFacturePending(): mixed
+    public function getDateFacturePending(GetDateFacturePendingnRequest $data): mixed
     {
         try {
             if (true) {
-                $getDateFacturea = $this->facturationRepository->getDateFacturePending();
+                $getDateFacturea = $this->facturationRepository->getDateFacturePending($data);
             } else {
                 return [
                     'message' => 'Accion no permitida',

@@ -2,6 +2,9 @@
 
 namespace App\UseCases\Facturation\Interfaces;
 
+use App\Http\Requests\Facturation\CreateFacturationRequest;
+use App\Http\Requests\Facturation\GetDateFacturePendingnRequest;
+
 /**
  * Clase interfaz del caso de uso para obtener la información de pqrs en el sistema
  *
@@ -15,5 +18,5 @@ interface GetDateFacturePendingUseCaseInterface
    /**
      * @return mixed
      */
-    public function getDateFacturePending(): mixed;
+    public function getDateFacturePending(GetDateFacturePendingnRequest $data): mixed;
 }

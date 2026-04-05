@@ -39,15 +39,21 @@ class DeleteUserDatabyIdUseCase implements DeleteUserDatabyIdUseCaseInterface
      */
     public function DeleteUserData($id): mixed
     {
-        try {
-            $this->userRepository->DeleteUserData($id);
-        } catch (QueryException $err) {
-            return [
-                'message' => 'Ha ocurrido un error al actualizar los datos',
-                'status' => 1,
-                'data' => ApiResponseConstants::DATA_NULL
-            ];
+        error_log(">>>>>>>>>>>>>>>>>><<".$id);
+        if(getSessionUserProfileId() == 2){
+            try {
+                $this->userRepository->DeleteUserData($id);
+            } catch (QueryException $err) {
+                return [
+                    'message' => 'Ha ocurrido un error al actualizar los datos',
+                    'status' => 1,
+                    'data' => ApiResponseConstants::DATA_NULL
+                ];
+            }
+            return ['message' => 'Usuario Actualizado con éxito', 'status' => 0, 'data' => ApiResponseConstants::DATA_NULL];
+        }else{
+            return ['message' => 'Accion no permitida', 'status' => 1, 'data' => ''];
+
         }
-        return ['message' => 'Usuario Actualizado con éxito', 'status' => 0, 'data' => ApiResponseConstants::DATA_NULL];
     }
 }

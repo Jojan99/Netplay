@@ -31,15 +31,17 @@ class GetUserAllUseCase implements GetUserAllUseCaseInterface
      */
     public function getUserAll(): mixed
     {
-        
         try {
-            if(true){
+
+        
+            if(getSessionUserProfileId() == 2){
                 $userAll = $this->userRepository->getUserAll();
             }else{
+
                 return [
                     'message' => 'Accion no permitida',
                     'status' => 1,
-                    'data' => getSessionUserProfileId()
+                    'data' => ApiResponseConstants::DATA_NULL
                 ];
             }
         } catch (QueryException $err) {

@@ -43,11 +43,11 @@ class UpdateUserDataUseCase implements UpdateUserDataUseCaseInterface
             $this->userRepository->UpdateUserData($data);
         } catch (QueryException $err) {
             return [
-                'message' => 'Ha ocurrido un error al actualizar los datos',
+                'message' => 'Ha ocurrido un error al actualizar los datos: ' . $err->getMessage(),
                 'status' => 1,
                 'data' => ApiResponseConstants::DATA_NULL
             ];
         }
-        return ['message' => 'Usuario Actualizado con éxito', 'status' => 0, 'data' => ApiResponseConstants::DATA_NULL];
+        return ['message' => 'Cliente actualizado con éxito', 'status' => 0, 'data' => ApiResponseConstants::DATA_NULL];
     }
 }

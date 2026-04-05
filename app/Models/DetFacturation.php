@@ -10,6 +10,7 @@ class DetFacturation extends Authenticatable
 {
     use HasFactory;
     protected $fillable = [
+        'id',
         'cab_id',
         'date_facturation',
         'number_facture',
@@ -21,8 +22,12 @@ class DetFacturation extends Authenticatable
         'discount',
         'price_discount',
         'porcentage_discount',
-        'paid'
-
+        'create_facture_manual',
+        'paid',
+        'price_abone',
+        'log_id',
+        'paid_at',
+        'paid_by_user_id',
     ];
 
     /**

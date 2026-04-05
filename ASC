@@ -1,0 +1,32 @@
+//FIBER HOME CAMBIO CONTRASEÑA
+curl -X POST "http://127.0.0.1:7557/devices/80F7A6-FD512XW%2DR550-DF1D%2D2404010649/tasks?timeout=3000" \
+  -H "Content-Type: application/json" \
+  --data '{
+    "name": "setParameterValues",
+    "parameterValues": [
+["InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase","CELESTE2026*","xsd:string"],
+["InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.KeyPassphrase","CELESTE2026*","xsd:string"]
+    ]
+  }'
+
+  //Cdata
+curl -X POST "http://127.0.0.1:7557/devices/80F7A6-FD512XW%2DR550-DF1D%2D2404010649/tasks?timeout=3000&connection_request" \
+-H "Content-Type: application/json" \
+--data '{
+"name":"setParameterValues",
+"parameterValues":[
+["InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase","FeZa07111831","xsd:string"],
+["InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.KeyPassphrase","FeZa07111831","xsd:string"]
+]
+}
+'
+//Huwei
+curl -X POST "http://127.0.0.1:7557/devices/00259E-HG8145X6-48575443CDD3A6AC/tasks?timeout=3000&connection_request" \
+-H "Content-Type: application/json" \
+-d '{
+"name":"setParameterValues",
+"parameterValues":[
+["InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.KeyPassphrase","Celeste2026*","xsd:string"],
+["InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.PreSharedKey.1.KeyPassphrase","Celeste2026*","xsd:string"]
+]
+}'

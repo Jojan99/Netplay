@@ -25,13 +25,15 @@ class UserData extends Authenticatable
         'lastname',
         'internet_plans_id',
         'status_internet_id',
+        'ip_assignment_id',
         'address',
         'dni',
         'email',
         'phone',
         'birthday',
         'active',
-        'status'
+        'status',
+        'whatsapp_enabled',
     ];
 
      /**

@@ -2,6 +2,8 @@
 
 namespace App\Console\Commands;
 
+use App\Repositories\FacturationRepository;
+use App\UseCases\Notifications\SendNotificationUseCase;
 use Illuminate\Console\Command;
 
 class NombreDelComando extends Command
@@ -17,6 +19,10 @@ class NombreDelComando extends Command
 
     public function handle()
     {
-       error_log("MENSAJEEEEE"); // Imprimir el mensaje en la consola
+        $FacturationRepository = new FacturationRepository();
+
+        $SendNotificationUseCase = new SendNotificationUseCase($FacturationRepository);
+
+        $SendNotificationUseCase->sendNotificationReminder();
     }
 }

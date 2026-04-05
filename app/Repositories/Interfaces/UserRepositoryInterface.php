@@ -76,4 +76,49 @@ interface UserRepositoryInterface{
      * @return mixed
      */
     public function DeleteUserData($id): mixed;
+
+    public function getUserByIdBost($dni): mixed;
+
+    /**
+     * @param int $id
+     * @return mixed
+     */
+    public function getCountUser(): mixed;
+
+    /**
+     * @param int $id
+     * @return mixed
+     */
+    public function getTotalPriceMonth($year): mixed;
+
+    /**
+     * @param int $id
+     * @return mixed
+     */
+    public function getTotalClientRegisterMonth($year): mixed;
+
+    /**
+     * @return mixed
+     */
+    public function getTrazaFacture(): mixed;
+
+    /**
+     * Crea un usuario de staff (admin, técnico, contador) para la empresa en sesión.
+     */
+    public function createStaff(mixed $data): mixed;
+
+    /**
+     * Verifica si el email ya existe para la empresa en sesión.
+     */
+    public function validateStaffEmail(string $email): mixed;
+
+    /**
+     * Verifica si el username ya existe globalmente.
+     */
+    public function validateStaffUsername(string $username): mixed;
+
+    /**
+     * Retorna todos los usuarios de staff de la empresa en sesión.
+     */
+    public function getStaff(): mixed;
 }
