@@ -286,7 +286,7 @@ public function registerIpInArp(
 ): bool {
     try {
 
-        error_log($ip);
+        \Log::info("Registering IP", ["ip" => $ip]);
         error_log($mac);
         error_log($vlan);
         error_log($comment);
