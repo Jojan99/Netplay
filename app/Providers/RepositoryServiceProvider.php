@@ -3,6 +3,8 @@
 namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
+use App\Repositories\Interfaces\OltAdminRepositoryInterface;
+use App\Repositories\OltAdminRepository;
 use App\Repositories\Interfaces\{
     CompanyRepositoryInterface,
     ConversationRepositoryInterface,
@@ -87,8 +89,7 @@ class RepositoryServiceProvider extends ServiceProvider
         [TicketRepositoryInterface::class, TicketRepository::class],
         [ConversationRepositoryInterface::class, ConversationRepository::class],
         [CrmMediaRepositoryInterface::class, CrmMediaRepository::class],
-
-        
+        [OltAdminRepositoryInterface::class, OltAdminRepository::class],
     ];
 
     /**

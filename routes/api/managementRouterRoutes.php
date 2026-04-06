@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Crm\ConversationController;
 use App\Http\Controllers\ManagementRouterController;
+use App\Http\Controllers\OltAdminController;
 use App\Http\Controllers\SnmpController;
 
 use Illuminate\Support\Facades\Route;
@@ -37,6 +38,19 @@ Route::prefix('management')->group(function () {
     Route::post('getIpAvalibles', [ManagementRouterController::class, 'getIpAvalibles'])->withoutMiddleware('jwt.verify');
     Route::post('autorizarServicio', [ManagementRouterController::class, 'autorizarServicio'])->withoutMiddleware('jwt.verify');
     Route::post('migrarIp', [ManagementRouterController::class, 'migrarIp'])->withoutMiddleware('jwt.verify');
+
+    // ── OLT Admin ──────────────────────────────────────────────────────────
+    Route::prefix('olt')->group(function () {
+        Route::get('/',                    [OltAdminController::class, 'index']);
+        Route::post('/',                   [OltAdminController::class, 'store']);
+        Route::put('/{id}',                [OltAdminController::class, 'update']);
+        Route::delete('/{id}',             [OltAdminController::class, 'destroy']);
+        Route::get('/{oltId}/unauth',      [OltAdminController::class, 'unauthONTs']);
+        Route::post('/{oltId}/register',   [OltAdminController::class, 'registerONT']);
+        Route::delete('/{oltId}/ont',      [OltAdminController::class, 'deleteONT']);
+        Route::post('/{oltId}/assign',     [OltAdminController::class, 'assignONT']);
+    });
+
   // 📥 Inbox
     Route::get(
         'inbox',
