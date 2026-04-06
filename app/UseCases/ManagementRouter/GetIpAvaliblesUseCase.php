@@ -327,12 +327,12 @@ public function registerIpInArp(
 
     } catch (QueryException $e) {
 
-        // \Log::error('MIKROTIK ARP ERROR', [
-        //     'ip' => $ip,
-        //     'mac' => $mac,
-        //     'vlan' => $vlan,
-        //     'error' => $e->getMessage()
-        // ]);
+        \Log::error('MIKROTIK ARP ERROR', [
+            'ip' => $ip,
+            'mac' => $mac,
+            'vlan' => $vlan,
+            'error' => $e->getMessage()
+        ]);
 
         return false;
     }
