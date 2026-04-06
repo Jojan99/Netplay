@@ -33,6 +33,7 @@ class CreateUserDataRequest extends FormRequest
             'lastname' => 'required|string',
             'address' => 'required|string',
             'countryId' => 'string',
+            'vlan' => 'nullable|string',
             'dni' => 'required|string',
             'email' => 'required|string',
             'phone' => 'required|string',

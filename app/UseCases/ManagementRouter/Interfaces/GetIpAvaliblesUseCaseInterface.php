@@ -33,6 +33,6 @@ interface GetIpAvaliblesUseCaseInterface
     string $comment
 ): bool;
 
-
+    public function migrarIp(GestionUserRequest $request): array;
 
 }

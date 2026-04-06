@@ -151,18 +151,21 @@ public function getLanSegments(): mixed
             ];
         }
 
-        // ⏱️ importante
+        $maxAttempts = 3;
+        $rows = null;
 
-
-        $api = $this->connection->conection($this->getCompanyRouterId());
-
-        /**
-         * 1️⃣ TRAER TODAS LAS IPs (sin filtro)
-         */
-        $query = new Query('/ip/address/print');
-        $query->add('=.proplist=address,interface');
-
-        $rows = $api->query($query)->read();
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+            try {
+                $api = $this->connection->conection($this->getCompanyRouterId());
+                $query = new Query('/ip/address/print');
+                $query->add('=.proplist=address,interface');
+                $rows = $api->query($query)->read();
+                break;
+            } catch (\Throwable $e) {
+                if ($attempt === $maxAttempts) throw $e;
+                sleep(1);
+            }
+        }
 
         if (empty($rows)) {
             return [
@@ -293,6 +296,10 @@ public function registerIpInArp(
 
         $api = $this->connection->conection($this->getCompanyRouterId());
 
+        \Log::info("Rapi", ["api" => $api]);
+        \Log::info("this->getCompanyRouterId()", ["getCompanyRouterId" => $this->getCompanyRouterId()]);
+
+
         /**
          * 🔹 VALIDAR SI YA EXISTE EN ARP
          */
@@ -301,6 +308,8 @@ public function registerIpInArp(
         $query->add('=.proplist=.id');
 
         $exists = $api->query($query)->read();
+
+        \Log::info("exists", ["exists" => $exists]);
 
         if (!empty($exists)) {
             // Ya existe, no volver a crear
@@ -323,6 +332,9 @@ public function registerIpInArp(
 
         $api->query($query)->read();
 
+        \Log::info("api ABAJO", ["api" => $api]);
+
+
         return true;
 
     } catch (QueryException $e) {
@@ -337,6 +349,59 @@ public function registerIpInArp(
         return false;
     }
 }
+
+
+    public function migrarIp(GestionUserRequest $request): array
+    {
+        try {
+            $userId = (int) $request['service_id'];
+            $newIp  = $request['new_ip'] ?? '';
+            $vlan   = $request['vlan'] ?? '';
+
+            if (!$userId || !$newIp || !$vlan) {
+                return ['message' => 'Faltan parámetros: service_id, new_ip, vlan', 'status' => 1, 'data' => null];
+            }
+
+            $dataUser = $this->userRepositoryInterface->getUserById($userId);
+            if (!$dataUser) {
+                return ['message' => 'Usuario no encontrado', 'status' => 1, 'data' => null];
+            }
+
+            $dni = $dataUser['dni'];
+            $api = $this->connection->conection($this->getCompanyRouterId());
+
+            // 1️⃣ Eliminar ARP anterior del cliente (busca por comment = DNI)
+            $query = new Query('/ip/arp/print');
+            $query->where('comment', $dni);
+            $query->add('=.proplist=.id');
+            $existing = $api->query($query)->read();
+
+            foreach ($existing as $entry) {
+                $del = new Query('/ip/arp/remove');
+                $del->equal('.id', $entry['.id']);
+                $api->query($del)->read();
+            }
+
+            // 2️⃣ Crear nuevo ARP con la nueva IP
+            $query = new Query('/ip/arp/add');
+            $query->equal('address', $newIp);
+            $query->equal('mac-address', '00:00:00:00:00:00');
+            $query->equal('interface', $vlan);
+            $query->equal('comment', $dni);
+            $api->query($query)->read();
+
+            // 3️⃣ Actualizar IP en base de datos
+            $this->internetInfoRepositoryInterface->updateUserIp($userId, $newIp);
+
+            \Log::info('IP MIGRADA', ['user_id' => $userId, 'new_ip' => $newIp, 'vlan' => $vlan]);
+
+            return ['message' => 'IP migrada correctamente', 'status' => 0, 'data' => ['ip' => $newIp, 'vlan' => $vlan]];
+
+        } catch (\Throwable $e) {
+            \Log::error('ERROR MIGRACION IP', ['error' => $e->getMessage()]);
+            return ['message' => 'Error al migrar IP: ' . $e->getMessage(), 'status' => 1, 'data' => null];
+        }
+    }
 
 
     public function validateMikrotikConnection(): bool

@@ -88,6 +88,29 @@ public function getLanSegments(
         );
     }
 
+    public function migrarIp(
+        GetIpAvaliblesUseCaseInterface $getIpAvaliblesUseCaseInterface,
+        GestionUserRequest $gestionUserRequest
+    ): object {
+        try {
+            $result = $getIpAvaliblesUseCaseInterface->migrarIp($gestionUserRequest);
+        } catch (JWTException $e) {
+            return standardApiReponse(
+                'Error al migrar IP: ' . $e->getMessage(),
+                ApiResponseConstants::DATA_NULL,
+                ApiResponseConstants::ERROR,
+                JsonResponse::HTTP_INTERNAL_SERVER_ERROR
+            );
+        }
+
+        return standardApiReponse(
+            $result['message'],
+            $result['data'],
+            $result['status'],
+            JsonResponse::HTTP_OK
+        );
+    }
+
     public function getRouterConfig(MikrotikInfoUseCaseInterface $uc): object
     {
         $result = $uc->getRouterConfig();

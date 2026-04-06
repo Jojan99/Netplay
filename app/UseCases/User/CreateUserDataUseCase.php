@@ -60,21 +60,21 @@ class CreateUserDataUseCase implements CreateUserDataUseCaseInterface
                 
                     \Log::info('REGISTERING USER IN MIKROTIK', [
                         'ip' => $data['ip_assignment_id'] ?? 'N/A',
-                        'vlan' => $data['countryId'] ?? 'N/A',
+                        'vlan' => $data['vlan'] ?? 'N/A',
                         'dni' => $data['dni'] ?? 'N/A'
                     ]);
 
                     $pasa = $this->getIpAvaliblesUseCaseInterface->registerIpInArp(
                         ip: $data['ip_assignment_id'],
                         mac: '',
-                        vlan: $data['countryId'],
+                        vlan: $data['vlan'] ?? '',
                         comment: $data['dni']
                     );
 
                     if(!$pasa){
                         \Log::error('FAILED TO REGISTER IP IN MIKROTIK', [
                             'ip' => $data['ip_assignment_id'],
-                            'vlan' => $data['countryId'],
+                            'vlan' => $data['vlan'] ?? '',
                             'dni' => $data['dni']
                         ]);
                         return ['message' => 'Error registrando usuario en Mikrotik. Contacte al administrador.', 'status' => 1, 'data' => 'MIKROTIK_SYNC_ERROR'];

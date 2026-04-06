@@ -36,7 +36,7 @@ Route::prefix('management')->group(function () {
     Route::get('getLanSegments', [ManagementRouterController::class, 'getLanSegments'])->withoutMiddleware('jwt.verify');
     Route::post('getIpAvalibles', [ManagementRouterController::class, 'getIpAvalibles'])->withoutMiddleware('jwt.verify');
     Route::post('autorizarServicio', [ManagementRouterController::class, 'autorizarServicio'])->withoutMiddleware('jwt.verify');
-    Route::post('autorizarServicio', [ManagementRouterController::class, 'autorizarServicio'])->withoutMiddleware('jwt.verify');
+    Route::post('migrarIp', [ManagementRouterController::class, 'migrarIp'])->withoutMiddleware('jwt.verify');
   // 📥 Inbox
     Route::get(
         'inbox',
