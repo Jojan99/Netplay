@@ -626,20 +626,18 @@ class CompanyController extends Controller
         $request->validate(['logo' => 'required|image|max:2048']);
 
         $company = Company::findOrFail(getSessionCompanyId());
-
-        $logosDir = storage_path('app/public/logos');
-        if (!file_exists($logosDir)) {
-            mkdir($logosDir, 0775, true);
-        }
-
         $file = $request->file('logo');
-        $filename = 'logo_company_' . $company->id . '_' . time() . '.' . $file->getClientOriginalExtension();
-        $file->move($logosDir, $filename);
 
-        $url = rtrim(config('app.url'), '/') . '/storage/logos/' . $filename;
-        $company->update(['invoice_logo_url' => $url]);
+        $fileContent = file_get_contents($file->getRealPath());
+        $mimeType = $file->getMimeType();
+        $base64Logo = "data:{$mimeType};base64," . base64_encode($fileContent);
 
-        return standardApiReponse('Logo subido correctamente', ['url' => $url], false, JsonResponse::HTTP_OK);
+        $company->update([
+            'invoice_logo_url' => $base64Logo,
+            'invoice_logo_base64' => $base64Logo,
+        ]);
+
+        return standardApiReponse('Logo subido correctamente', ['url' => $base64Logo], false, JsonResponse::HTTP_OK);
     }
 
     /** GET /api/company/whatsapp/groups — lista grupos de la instancia activa */

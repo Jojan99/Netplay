@@ -35,6 +35,7 @@ class Company extends Model
         'invoice_payment_info',
         'invoice_footer',
         'invoice_logo_url',
+        'invoice_logo_base64',
     ];
 
     protected $casts = [

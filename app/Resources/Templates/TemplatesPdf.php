@@ -22,19 +22,39 @@ class TemplatesPdf
 
     // Resolve logo to base64
     $logoBase64 = null;
-    $logoUrl = $company?->invoice_logo_url ?? $company?->logo ?? null;
-    if ($logoUrl && filter_var($logoUrl, FILTER_VALIDATE_URL)) {
+    
+    // First try: use invoice_logo_base64 directly (already in base64 format)
+    if ($company?->invoice_logo_base64) {
+      $logoBase64 = $company->invoice_logo_base64;
+    }
+    // Fallback: if invoice_logo_url is already base64, use it directly
+    elseif ($company?->invoice_logo_url && str_starts_with($company->invoice_logo_url, 'data:')) {
+      $logoBase64 = $company->invoice_logo_url;
+    }
+    // Legacy: if invoice_logo_url is a URL, try to convert it
+    elseif ($company?->invoice_logo_url && filter_var($company->invoice_logo_url, FILTER_VALIDATE_URL)) {
       try {
-        $data = @file_get_contents($logoUrl);
+        $data = @file_get_contents($company->invoice_logo_url);
         if ($data) {
           $mime = 'image/jpeg';
-          if (str_ends_with(strtolower(parse_url($logoUrl, PHP_URL_PATH) ?? ''), '.png')) {
+          if (str_ends_with(strtolower(parse_url($company->invoice_logo_url, PHP_URL_PATH) ?? ''), '.png')) {
             $mime = 'image/png';
           }
           $logoBase64 = "data:{$mime};base64," . base64_encode($data);
         }
       } catch (\Throwable) {}
     }
+    // Fallback to company logo
+    elseif ($company?->logo && filter_var($company->logo, FILTER_VALIDATE_URL)) {
+      try {
+        $data = @file_get_contents($company->logo);
+        if ($data) {
+          $logoBase64 = "data:image/jpeg;base64," . base64_encode($data);
+        }
+      } catch (\Throwable) {}
+    }
+    
+    // Last resort: use default logo
     if (!$logoBase64 && $defaultLogoPath && file_exists($defaultLogoPath)) {
       $logoBase64 = "data:image/jpeg;base64," . base64_encode(file_get_contents($defaultLogoPath));
     }
