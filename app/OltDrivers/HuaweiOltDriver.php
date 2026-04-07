@@ -3,15 +3,13 @@
 namespace App\OltDrivers;
 
 use App\OltDrivers\Interfaces\OltDriverInterface;
-use phpseclib3\Net\SSH2;
-
 class HuaweiOltDriver implements OltDriverInterface
 {
-    private SSH2 $ssh;
-    private int  $lineProfileId;
-    private int  $srvProfileId;
+    private object $ssh;
+    private int    $lineProfileId;
+    private int    $srvProfileId;
 
-    public function __construct(SSH2 $ssh, array $config)
+    public function __construct(object $ssh, array $config)
     {
         $this->ssh           = $ssh;
         $this->lineProfileId = $config['ont_lineprofile_id'] ?? 10;

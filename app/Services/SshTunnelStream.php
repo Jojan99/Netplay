@@ -60,8 +60,14 @@ class SshTunnelStream
             . ' -o StrictHostKeyChecking=no'
             . ' -o UserKnownHostsFile=/dev/null'
             . ' -o PasswordAuthentication=yes'
+            . ' -o KbdInteractiveAuthentication=yes'
+            . ' -o PreferredAuthentications=password,keyboard-interactive'
             . ' -o NumberOfPasswordPrompts=1'
             . ' -o ConnectTimeout=10'
+            . ' -o KexAlgorithms=+diffie-hellman-group14-sha1,diffie-hellman-group1-sha1,diffie-hellman-group-exchange-sha1'
+            . ' -o HostKeyAlgorithms=+ssh-rsa,rsa-sha2-256,rsa-sha2-512'
+            . ' -o PubkeyAcceptedKeyTypes=+ssh-rsa'
+            . ' -o Ciphers=+aes128-cbc,aes192-cbc,aes256-cbc,3des-cbc'
             . ' -p %d'
             . ' %s@%s'
             . ' -W %s',
@@ -77,15 +83,19 @@ class SshTunnelStream
             'DISPLAY'             => ':0.0',
         ]);
 
+        $stderrFile = tempnam(sys_get_temp_dir(), 'olt_ssh_err_');
+
         $this->process = proc_open($cmd, [
             0 => ['pipe', 'r'],          // stdin  → we write  → OLT
             1 => ['pipe', 'w'],          // stdout ← we read   ← OLT
-            2 => ['file', '/dev/null', 'w'],
+            2 => ['file', $stderrFile, 'w'],
         ], $pipes, null, $env);
 
-        @unlink($askPass);
-
-        if (!is_resource($this->process)) return false;
+        if (!is_resource($this->process)) {
+            @unlink($askPass);
+            @unlink($stderrFile);
+            return false;
+        }
 
         $this->stdin  = $pipes[0];
         $this->stdout = $pipes[1];
@@ -93,9 +103,24 @@ class SshTunnelStream
         stream_set_blocking($this->stdin,  false);
         stream_set_blocking($this->stdout, false);
 
-        // Give SSH time to authenticate
+        // Give SSH time to authenticate before removing the askpass script
         usleep(800_000);
+        @unlink($askPass);
 
+        $status = proc_get_status($this->process);
+        if (!$status['running']) {
+            $sshError = trim((string) @file_get_contents($stderrFile));
+            @unlink($stderrFile);
+            \Illuminate\Support\Facades\Log::error('[SshTunnelStream] SSH jump failed', [
+                'jump_host' => $jumpHost,
+                'olt_target' => $oltTarget,
+                'exit_code' => $status['exitcode'],
+                'stderr' => $sshError ?: '(empty)',
+            ]);
+            return false;
+        }
+
+        @unlink($stderrFile);
         return true;
     }
 
@@ -103,13 +128,22 @@ class SshTunnelStream
     {
         // Block until data is available (phpseclib expects blocking reads)
         $read = [$this->stdout]; $write = []; $except = [];
-        if (stream_select($read, $write, $except, 10) < 1) return '';
-        return fread($this->stdout, $count) ?: '';
+        $ready = stream_select($read, $write, $except, 10);
+        if ($ready < 1) {
+            \Illuminate\Support\Facades\Log::debug('[SshTunnelStream] stream_read: select timeout (no data in 10s)');
+            return '';
+        }
+        $data = fread($this->stdout, $count);
+        \Illuminate\Support\Facades\Log::debug('[SshTunnelStream] stream_read: got data', ['len' => strlen((string)$data), 'hex' => bin2hex(substr((string)$data, 0, 32))]);
+        return $data ?: '';
     }
 
     public function stream_write(string $data): int
     {
-        $written = fwrite($this->stdin, $data);
+        if (!is_resource($this->process) || !proc_get_status($this->process)['running']) {
+            return 0;
+        }
+        $written = @fwrite($this->stdin, $data);
         return $written === false ? 0 : $written;
     }
 
