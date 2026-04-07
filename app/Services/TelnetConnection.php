@@ -64,7 +64,6 @@ class TelnetConnection
             // waits up to 10 s for data via stream_select on the SSH pipe.
             $chunk = @fread($this->stream, 4096);
             if ($chunk !== false && $chunk !== '') {
-                \Illuminate\Support\Facades\Log::debug('[Telnet] raw chunk', ['hex' => bin2hex(substr($chunk, 0, 64)), 'txt' => substr($chunk, 0, 64)]);
                 $this->buffer .= $this->stripIac($chunk);
             } else {
                 usleep(50_000); // 50 ms back-off when no data available
@@ -92,8 +91,6 @@ class TelnetConnection
         if (empty(trim($out))) {
             throw new RuntimeException('Telnet: timed out waiting for username prompt. Received: ' . json_encode($out));
         }
-        \Illuminate\Support\Facades\Log::debug('[Telnet] username prompt received', ['recv' => substr($out, -200)]);
-
         $this->write($username . "\r\n");
 
         // Wait for password prompt

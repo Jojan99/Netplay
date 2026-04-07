@@ -49,6 +49,16 @@ Route::prefix('management')->group(function () {
         Route::post('/{oltId}/register',   [OltAdminController::class, 'registerONT']);
         Route::delete('/{oltId}/ont',      [OltAdminController::class, 'deleteONT']);
         Route::post('/{oltId}/assign',     [OltAdminController::class, 'assignONT']);
+
+        // Read operations
+        Route::get('/{oltId}/onts',           [OltAdminController::class, 'authorizedONTs']);
+        Route::get('/{oltId}/ont/info',       [OltAdminController::class, 'ontInfo']);        // ?fsp=0/1/0&ont_id=0
+        Route::get('/{oltId}/service-ports',  [OltAdminController::class, 'servicePorts']);  // ?fsp=&ont_id=
+
+        // Write operations
+        Route::post('/{oltId}/ont/transfer',  [OltAdminController::class, 'transferONT']);
+        Route::post('/{oltId}/ont/deactivate',[OltAdminController::class, 'deactivateONT']);
+        Route::post('/{oltId}/ont/activate',  [OltAdminController::class, 'activateONT']);
     });
 
   // 📥 Inbox

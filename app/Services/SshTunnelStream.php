@@ -126,15 +126,13 @@ class SshTunnelStream
 
     public function stream_read(int $count): string|false
     {
-        // Block until data is available (phpseclib expects blocking reads)
+        // Block until data is available; 3 s is enough — TelnetConnection retries in a loop
         $read = [$this->stdout]; $write = []; $except = [];
-        $ready = stream_select($read, $write, $except, 10);
+        $ready = stream_select($read, $write, $except, 3);
         if ($ready < 1) {
-            \Illuminate\Support\Facades\Log::debug('[SshTunnelStream] stream_read: select timeout (no data in 10s)');
             return '';
         }
         $data = fread($this->stdout, $count);
-        \Illuminate\Support\Facades\Log::debug('[SshTunnelStream] stream_read: got data', ['len' => strlen((string)$data), 'hex' => bin2hex(substr((string)$data, 0, 32))]);
         return $data ?: '';
     }
 

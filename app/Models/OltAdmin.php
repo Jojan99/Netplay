@@ -24,6 +24,10 @@ class OltAdmin extends Model
         'ont_lineprofile_id',
         'ont_srvprofile_id',
         'default_vlan',
+        'snmp_community',
+        'snmp_version',
+        'snmp_port',
+        'snmp_host',
     ];
 
     protected $hidden = ['password', 'jump_pass'];
