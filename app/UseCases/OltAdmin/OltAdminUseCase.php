@@ -11,6 +11,8 @@ use App\Constants\ProfileConstants;
 
 class OltAdminUseCase
 {
+    private array $connections = []; // Caché de conexiones abiertas
+
     public function __construct(
         private OltAdminRepositoryInterface $repo,
         private OltConnectionFactory        $factory,
@@ -44,6 +46,7 @@ class OltAdminUseCase
             return ['status' => 1, 'message' => 'OLT no encontrada', 'data' => null];
         }
         $this->repo->delete($id);
+        $this->closeConnection($id);
         return ['status' => 0, 'message' => 'OLT eliminada', 'data' => null];
     }
 
@@ -57,6 +60,7 @@ class OltAdminUseCase
             return ['status' => 0, 'message' => count($onts) . ' ONTs sin autenticar', 'data' => $onts];
         } catch (\Throwable $e) {
             \Log::error('OLT getUnauthONTs error', ['olt_id' => $oltId, 'error' => $e->getMessage()]);
+            $this->closeConnection($oltId);
             return ['status' => 1, 'message' => 'Error consultando OLT: ' . $e->getMessage(), 'data' => null];
         }
     }
@@ -78,6 +82,7 @@ class OltAdminUseCase
             return ['status' => $result['success'] ? 0 : 1, 'message' => $msg, 'data' => $result];
         } catch (\Throwable $e) {
             \Log::error('OLT registerONT error', ['olt_id' => $oltId, 'error' => $e->getMessage()]);
+            $this->closeConnection($oltId);
             return ['status' => 1, 'message' => 'Error registrando ONT: ' . $e->getMessage(), 'data' => null];
         }
     }
@@ -99,6 +104,7 @@ class OltAdminUseCase
             ];
         } catch (\Throwable $e) {
             \Log::error('OLT deleteONT error', ['olt_id' => $oltId, 'error' => $e->getMessage()]);
+            $this->closeConnection($oltId);
             return ['status' => 1, 'message' => 'Error eliminando ONT: ' . $e->getMessage(), 'data' => null];
         }
     }
@@ -124,6 +130,7 @@ class OltAdminUseCase
             ];
         } catch (\Throwable $e) {
             \Log::error('OLT assignONT error', ['olt_id' => $oltId, 'error' => $e->getMessage()]);
+            $this->closeConnection($oltId);
             return ['status' => 1, 'message' => 'Error asignando ONT: ' . $e->getMessage(), 'data' => null];
         }
     }
@@ -137,14 +144,56 @@ class OltAdminUseCase
         return OltAdmin::find($id);
     }
 
+    /**
+     * Obtiene una conexión reutilizando caché si existe
+     */
     private function driver(int $oltId): OltDriverInterface
     {
         $olt = $this->getOltModel($oltId);
-        $ssh = $this->factory->connect($olt);
+        
+        // Si ya tenemos una conexión abierta, reutilizarla
+        if (isset($this->connections[$oltId])) {
+            \Log::info('OLT CONNECTION REUSED', ['olt_id' => $oltId]);
+            $ssh = $this->connections[$oltId];
+        } else {
+            // Crear nueva conexión
+            \Log::info('OLT CONNECTION CREATED', ['olt_id' => $oltId]);
+            $ssh = $this->factory->connect($olt);
+            $this->connections[$oltId] = $ssh;
+        }
 
         return match ($olt->brand) {
             'huawei' => new HuaweiOltDriver($ssh, $olt->toArray()),
             default  => throw new \RuntimeException("Driver para marca '{$olt->brand}' no implementado"),
         };
+    }
+
+    /**
+     * Cierra una conexión abierta
+     */
+    private function closeConnection(int $oltId): void
+    {
+        if (isset($this->connections[$oltId])) {
+            \Log::info('OLT CONNECTION CLOSED', ['olt_id' => $oltId]);
+            unset($this->connections[$oltId]);
+        }
+    }
+
+    /**
+     * Cierra todas las conexiones abiertas
+     */
+    public function closeAllConnections(): void
+    {
+        foreach (array_keys($this->connections) as $oltId) {
+            $this->closeConnection($oltId);
+        }
+    }
+
+    /**
+     * Destructor para limpiar conexiones
+     */
+    public function __destruct()
+    {
+        $this->closeAllConnections();
     }
 }
