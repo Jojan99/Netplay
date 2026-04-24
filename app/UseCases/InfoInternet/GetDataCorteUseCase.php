@@ -32,7 +32,7 @@ class GetDataCorteUseCase implements GetDataCorteUseCaseInterface
     public function getDataCorteAll(): mixed
     {
         try {
-            if(getSessionUserProfileId() == 2){
+            if(sessionUserHasProfile('CONTADOR', 'ADMIN')){
                 $getInternetPlanAll = $this->internetInfoRepositoryInterface->getDataCorteAll();
             }else{
                 return [

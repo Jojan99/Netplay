@@ -4,6 +4,7 @@ namespace App\Managers;
 
 use App\Managers\Interfaces\ConectionRouterManagerInterface;
 use App\Repositories\Interfaces\RouterRepositoryInterface;
+use Illuminate\Support\Facades\Log;
 
 class ConectionRouterManager implements ConectionRouterManagerInterface
 {
@@ -22,23 +23,41 @@ class ConectionRouterManager implements ConectionRouterManagerInterface
     }
 
 
-    public function conection($token):mixed{
-        $data = $this->getDataConection($token);
+    public function conection($token): mixed
+{
+    $data = $this->getDataConection($token);
 
-        error_log(json_encode($data));
+    $config = [
+        'host' => $data[0]['host'],
+        'user' => $data[0]['user'],
+        'pass' => $data[0]['pass'],
+        'port' => $data[0]['port'],
+        'timeout' => 30,
+    ];
 
-        $defaultConfig = [
-            'host' => $data[0]['host'],
-            'user' => $data[0]['user'],
-            'pass' => $data[0]['pass'],
-            'port' => $data[0]['port'],
-            'timeout' => 60,
-        ];
+    \Log::info('Intentando conectar a MikroTik', [
+        'host' => $config['host'],
+        'user' => $config['user'],
+        'port' => $config['port'],
+    ]);
     
-        $client = new \RouterOS\Client($defaultConfig);
-    
-       return $client;
+
+    try {
+        $client = new \RouterOS\Client($config);
+
+        \Log::info('Conexión exitosa a MikroTik');
+
+        return $client;
+
+    } catch (\Exception $e) {
+
+        \Log::error('Error conectando a MikroTik', [
+            'message' => $e->getMessage(),
+        ]);
+
+        throw $e;
     }
+}
 }
 
 

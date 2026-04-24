@@ -32,7 +32,7 @@ class GetTechnicalUseCase implements GetTechnicalUseCaseInterface
     public function getTechnicaAll(): mixed
     {
         try {
-            if(getSessionUserProfileId() == 2 || getSessionUserProfileId() == 3){
+            if(sessionUserHasProfile('CONTADOR', 'TECNICO', 'ADMIN')){
                 $userAll = $this->ticketRepositoryInterface->getTechnicaAll();
             }else{
                 return [

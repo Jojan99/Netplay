@@ -33,7 +33,7 @@ class SearchUseCase implements SearchUseCaseInterface
     public function getSearchUseCase(SearchRequest $searchRequest): mixed
     {
         try {
-            if(getSessionUserProfileId() == 2){
+            if(sessionUserHasProfile('CONTADOR', 'ADMIN')){
                 $getDniAll = $this->searchRepositoryInterface->getSearchUseCase($searchRequest);
             }else{
                 return [

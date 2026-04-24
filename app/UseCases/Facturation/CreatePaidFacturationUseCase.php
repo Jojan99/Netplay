@@ -8,9 +8,11 @@ use App\Http\Requests\Facturation\CreatePaidFacturationRequest;
 use App\Repositories\Interfaces\FacturationRepositoryInterface;
 use App\Repositories\Interfaces\UserRepositoryInterface;
 use App\Resources\TemplatesEmail\TemplateEmailPay;
+use App\Services\AutoSuspendService;
 use App\UseCases\Facturation\Interfaces\CreatePaidFacturationUseCaseInterface;
 use App\UseCases\GeneratePdf\Interfaces\GeneratePdfReceiptByIdUseCaseInterface;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
 use RouterOS\Exceptions\QueryException as ExceptionsQueryException;
 
 /**
@@ -33,8 +35,8 @@ class CreatePaidFacturationUseCase implements CreatePaidFacturationUseCaseInterf
         private FacturationRepositoryInterface $facturationRepository,
         private GeneratePdfReceiptByIdUseCaseInterface $generatePdfReceiptByIdUseCaseInterface,
         private TemplateEmailPay $TemplateEmailPay,
-        private UserRepositoryInterface $UserRepositoryInterface
-
+        private UserRepositoryInterface $UserRepositoryInterface,
+        private AutoSuspendService $autoSuspendService,
     ) {
     }
 
@@ -45,17 +47,21 @@ class CreatePaidFacturationUseCase implements CreatePaidFacturationUseCaseInterf
     public function createpaidFacturation(CreatePaidFacturationRequest $data): mixed
     {
         try {
-            if (getSessionUserProfileId() == 2) {
+            $profileName = strtoupper(
+                DB::table('profiles')->where('id', getSessionUserProfileId())->value('name') ?? ''
+            );
 
+            if (in_array($profileName, ['ADMIN', 'CONTADOR'])) {
                 $validation = $this->facturationRepository->getDateFacturePendingById($data['det_id']);
 
-                $dataUser = $this->UserRepositoryInterface->getUserById($data['id_user']);
                 $data['log_id'] = getSessionUserId();
                 if ($validation["abone"] == 1) {
                     return ['message' => 'el usuario ya tiene un abono no puedes realizar un pago total', 'data' => 0, 'status' => 1];
                 }
                 $this->facturationRepository->createpaidFacturation($data);
-                // $this->TemplateEmailPay->EmailPay($dataUser,$data['price_total'],$data['number_facture']);
+
+                // Reactivar cliente si ya no tiene facturas vencidas
+                $this->autoSuspendService->reactivateIfClear($data['id_user'], getSessionCompanyId());
             } else {
                 return ['message' => 'No tienes esta accion permitida', 'data' => 9, 'status' => 1];
             }

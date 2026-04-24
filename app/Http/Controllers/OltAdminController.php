@@ -64,15 +64,22 @@ class OltAdminController extends Controller
         return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
     }
 
+    public function autoAssignONT(Request $request, int $oltId): JsonResponse
+    {
+        $r = $this->uc->autoAssignONT($oltId, $request->only(['fsp', 'ont_id', 'vlan', 'description']));
+        return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
+    }
+
     // ── New read operations ───────────────────────────────────────────────
 
     /**
      * GET /management/olt/{oltId}/onts
      * Returns all authorized/registered ONTs.
      */
-    public function authorizedONTs(int $oltId): JsonResponse
+    public function authorizedONTs(int $oltId, Request $request): JsonResponse
     {
-        $r = $this->uc->getAuthorizedONTs($oltId);
+        $force = $request->boolean('force', false);
+        $r = $this->uc->getAuthorizedONTs($oltId, $force);
         return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
     }
 
@@ -107,6 +114,26 @@ class OltAdminController extends Controller
     }
 
     // ── New write operations ──────────────────────────────────────────────
+
+    /**
+     * GET /management/olt/{oltId}/profiles
+     * Returns line and srv profiles stored in DB for this OLT.
+     */
+    public function getProfiles(int $oltId): JsonResponse
+    {
+        $r = $this->uc->getProfiles($oltId);
+        return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
+    }
+
+    /**
+     * POST /management/olt/{oltId}/profiles/sync
+     * Fetches profiles from OLT via Telnet and saves to DB.
+     */
+    public function syncProfiles(int $oltId): JsonResponse
+    {
+        $r = $this->uc->syncProfiles($oltId);
+        return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
+    }
 
     /**
      * POST /management/olt/{oltId}/ont/transfer
@@ -151,6 +178,47 @@ class OltAdminController extends Controller
         ]);
 
         $r = $this->uc->activateONT($oltId, $request->only(['fsp', 'ont_id']));
+        return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
+    }
+
+    public function cliCommand(Request $request, int $oltId): JsonResponse
+    {
+        $command = trim($request->input('command', ''));
+        if (empty($command)) {
+            return standardApiReponse('Comando requerido', null, 1, JsonResponse::HTTP_UNPROCESSABLE_ENTITY);
+        }
+        $r = $this->uc->cliCommand($oltId, $command);
+        return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
+    }
+
+    /**
+     * POST /management/olt/{oltId}/ont/assign-client
+     * Body: { fsp, ont_id, user_data_id (nullable) }
+     */
+    public function assignClientToOnt(Request $request, int $oltId): JsonResponse
+    {
+        $request->validate([
+            'fsp'          => 'required|string',
+            'ont_id'       => 'required|integer',
+            'user_data_id' => 'nullable|integer',
+        ]);
+
+        $r = $this->uc->assignClientToOnt(
+            $oltId,
+            $request->input('fsp'),
+            (int) $request->input('ont_id'),
+            $request->input('user_data_id') !== null ? (int) $request->input('user_data_id') : null,
+        );
+        return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
+    }
+
+    /**
+     * GET /management/olt/ont/by-user/{userId}
+     * Returns the ONT assigned to the given user_data.id
+     */
+    public function getOntByUser(int $userId): JsonResponse
+    {
+        $r = $this->uc->getOntByUserId($userId);
         return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
     }
 }

@@ -32,7 +32,7 @@ class GetTypePriorityUseCase implements GetTypePriorityUseCaseInterface
     public function getTypePriorityAll(): mixed
     {
         try {
-            if(getSessionUserProfileId() == 2){
+            if(sessionUserHasProfile('CONTADOR', 'ADMIN')){
                 $getTypePriorityAll = $this->ticketRepositoryInterface->getTypePriorityAll();
             }else{
                 return [

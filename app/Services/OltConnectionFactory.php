@@ -28,17 +28,21 @@ class OltConnectionFactory
             'access_mode' => $olt->access_mode,
         ]);
 
+        // Telnet (port 23) — also supports jump host
         if ((int) $olt->port === 23) {
             \Illuminate\Support\Facades\Log::info('OLT TELNET CONNECTION', [
-                'host' => $olt->host,
-                'port' => 23,
+                'host'        => $olt->host,
+                'port'        => 23,
+                'access_mode' => $olt->access_mode,
+                'jump_host'   => $olt->jump_host ?? null,
             ]);
             return $this->connectTelnet($olt);
         }
 
+        // SSH (any other port)
         \Illuminate\Support\Facades\Log::info('OLT SSH CONNECTION', [
-            'host' => $olt->host,
-            'port' => $olt->port,
+            'host'        => $olt->host,
+            'port'        => $olt->port,
             'access_mode' => $olt->access_mode,
         ]);
 

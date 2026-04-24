@@ -25,7 +25,8 @@ class CreateStaffUseCase implements CreateStaffUseCaseInterface
                 return ['message' => 'El nombre de usuario ya está en uso', 'data' => null, 'status' => 1];
             }
 
-            $this->userRepository->createStaff($request);
+            $user = $this->userRepository->createStaff($request);
+            $this->userRepository->createStaffUserData($request, $user->id);
 
         } catch (QueryException $e) {
             return ['message' => 'Error al crear el usuario: ' . $e->getMessage(), 'data' => ApiResponseConstants::DATA_NULL, 'status' => 1];

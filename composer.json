@@ -15,6 +15,7 @@
         "mailjet/mailjet-apiv3-php": "^1.6",
         "php-ffmpeg/php-ffmpeg": "^1.4",
         "phpseclib/phpseclib": "^3.0",
+        "predis/predis": "*",
         "pusher/pusher-php-server": "^7.2",
         "simpod/php-snmp": "^0.2.3",
         "tymon/jwt-auth": "^2.0"

@@ -51,7 +51,7 @@ class CreateAboneFacturationUseCase implements CreateAboneFacturationUseCaseInte
     { 
         ;
         try {
-            if (getSessionUserProfileId() == 2) {
+            if (sessionUserHasProfile('CONTADOR', 'ADMIN')) {
                     $validation = $this->facturationRepository->getDateFacturePendingById($data['det_id']);
                     $dataUser = $this->UserRepositoryInterface->getUserById($data['id_user']);
                     $jugada = $validation['price_abone'] + $data['price_discount'];

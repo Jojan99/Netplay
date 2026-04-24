@@ -116,7 +116,9 @@ public function UpdateStatus(GestionUserRequest $gestionUserRequest): array
                     ->first();
 
                 if ($userData && $userData->phone) {
-                    $cab = CabFacturation::where('user_id', $userData->user_id)->first();
+                    $cab = CabFacturation::where('user_id', $userData->user_id)
+                    ->select('id', 'user_id', 'billing_electronic')
+                    ->first();
                     $balance = $cab
                         ? (float) DetFacturation::where('cab_id', $cab->id)->where('paid', '<>', 1)->sum('price_total')
                         : 0.0;
@@ -129,18 +131,50 @@ public function UpdateStatus(GestionUserRequest $gestionUserRequest): array
                         '{deuda}'    => number_format($balance, 0, '.', ','),
                         '{fecha}'    => now()->format('d/m/Y'),
                     ];
-                    $template = "Estimado/a {nombre} {apellido}, le informamos que su servicio de internet ha sido *suspendido* por falta de pago.\n\n"
-                              . "💰 Saldo pendiente: *\${deuda}*\n\n"
-                              . "Para reactivar su servicio, comuníquese con nosotros o realice su pago.\n\n"
-                              . "📅 Fecha: {fecha}";
 
-                    $message = str_replace(array_keys($vars), array_values($vars), $template);
-                    (new WhatsAppService())->mensajeInformativo($userData->phone, $message);
+                    if ($cab->billing_electronic == 1) {
+                    $template = "🚫 Estimado/a {nombre} {apellido}, le informamos que su servicio de internet ha sido *suspendido* por falta de pago. 🚫\n\n"
+                    . "💰 Saldo pendiente: *\${deuda}*\n\n"
+                    . "Para reactivar su servicio comuníquese con nosotros.\n\n"
+                    . "📅 Fecha: {fecha}\n\n"
+                    . "💳 Pago de tu saldo pendiente\n\n"
+                    . "Puedes realizar tu pago siguiendo una de estas opciones:\n"
+                    . "1⃣ Descarga la imagen adjunta.\n"
+                    . "2⃣ Si deseas pagar con Nequi, escanea el código QR y sigue los pasos indicados.\n"
+                    . "3⃣ También puedes realizar una transferencia por Bre-B usando la siguiente llave:\n"
+                    . "🔑 0091768855\n\n"
+                    . "📩 Envíanos el comprobante en tu siguiente mensaje.";
+
+                        $message = str_replace(array_keys($vars), array_values($vars), $template);
+                        (new WhatsAppService())->sendImage($userData->phone, "https://netplay.com.co/storage/Qr/QrNetplay.jpeg", $message);
+                    } else {
+                                   $template = "🚫 Estimado/a {nombre} {apellido}, le informamos que su servicio de internet ha sido *suspendido* por falta de pago.🚫\n\n"
+                                  . "💰 Saldo pendiente: *\${deuda}*\n\n"
+                                  . "Para reactivar su servicio escanea el código QR adjunto.\n\n"
+                                  . "📅 Fecha: {fecha}\n\n"
+                                  . "Medios de pago: BANCOLOMBIA CTA AHO 47800013328\n"
+                                  . "DAVIPLATA 3022042294 (Hum Gom)\n"
+                                  . "NEQUI 3022042294 (Hum Gom)";
+
+                        $message = str_replace(array_keys($vars), array_values($vars), $template);
+                        (new WhatsAppService())->mensajeInformativo($userData->phone, $message);
+                    }
                 }
+                   
             } catch (\Throwable $waErr) {
                 error_log('WA suspend notify: ' . $waErr->getMessage());
             }
         }
+
+        // Registrar en auto_suspend_logs para que el proceso automático lo tenga en cuenta
+        $action = ($gestionUserRequest['status'] == 2) ? 'suspended' : 'reactivated';
+        \Illuminate\Support\Facades\DB::table('auto_suspend_logs')->insert([
+            'company_id'     => getSessionCompanyId(),
+            'user_id'        => $gestionUserRequest['id_user'],
+            'action'         => $action,
+            'invoices_count' => 0,
+            'created_at'     => now(),
+        ]);
 
         return [
             'message' => 'consulta realizada con exito',

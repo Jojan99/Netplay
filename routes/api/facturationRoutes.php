@@ -61,6 +61,9 @@ Route::prefix('facturation')->group(function () {
         Route::get('export',                     [FacturationController::class, 'exportPaymentsCSV']);
         Route::get('logs',                       [FacturationController::class, 'paymentLogs']);
 
+        // Liquidación masiva
+        Route::post('liquidate-bulk',            [FacturationController::class, 'liquidateBulk']);
+
         // Compromisos de pago
         Route::get('commitments',                [FacturationController::class, 'listCommitments']);
         Route::post('commitments',               [FacturationController::class, 'createCommitment']);

@@ -48,17 +48,24 @@ Route::prefix('management')->group(function () {
         Route::get('/{oltId}/unauth',      [OltAdminController::class, 'unauthONTs']);
         Route::post('/{oltId}/register',   [OltAdminController::class, 'registerONT']);
         Route::delete('/{oltId}/ont',      [OltAdminController::class, 'deleteONT']);
-        Route::post('/{oltId}/assign',     [OltAdminController::class, 'assignONT']);
+        Route::post('/{oltId}/assign',      [OltAdminController::class, 'assignONT']);
+        Route::post('/{oltId}/auto-assign', [OltAdminController::class, 'autoAssignONT']);
 
         // Read operations
+        Route::get('/snmp-onts',              [ManagementRouterController::class, 'obtenerInformacionSNMP'])->withoutMiddleware('jwt.verify');
         Route::get('/{oltId}/onts',           [OltAdminController::class, 'authorizedONTs']);
         Route::get('/{oltId}/ont/info',       [OltAdminController::class, 'ontInfo']);        // ?fsp=0/1/0&ont_id=0
         Route::get('/{oltId}/service-ports',  [OltAdminController::class, 'servicePorts']);  // ?fsp=&ont_id=
+        Route::get('/{oltId}/profiles',       [OltAdminController::class, 'getProfiles']);
 
         // Write operations
         Route::post('/{oltId}/ont/transfer',  [OltAdminController::class, 'transferONT']);
         Route::post('/{oltId}/ont/deactivate',[OltAdminController::class, 'deactivateONT']);
         Route::post('/{oltId}/ont/activate',  [OltAdminController::class, 'activateONT']);
+        Route::post('/{oltId}/profiles/sync', [OltAdminController::class, 'syncProfiles']);
+        Route::post('/{oltId}/cli',                  [OltAdminController::class, 'cliCommand']);
+        Route::post('/{oltId}/ont/assign-client',    [OltAdminController::class, 'assignClientToOnt']);
+        Route::get('/ont/by-user/{userId}',          [OltAdminController::class, 'getOntByUser']);
     });
 
   // 📥 Inbox

@@ -16,3 +16,7 @@ use Illuminate\Support\Facades\Route;
 Route::get('/', function () {
     return view('welcome');
 });
+
+// Página de firma de contrato para el cliente (acceso por token, sin login)
+Route::get('/contrato/firmar/{token}', [\App\Http\Controllers\ContractSignController::class, 'show'])
+    ->name('contract.sign');

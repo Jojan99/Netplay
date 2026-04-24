@@ -61,7 +61,7 @@ class GetIpAvaliblesUseCase implements GetIpAvaliblesUseCaseInterface
 public function GetIpAvalibles(GestionUserRequest $gestionUserRequest): mixed
 {   
     try {
-        if (getSessionUserProfileId() == 1) {
+        if (sessionUserHasProfile('USER')) {
             return [
                 'message' => 'Acción no permitida',
                 'status'  => 1,
@@ -143,7 +143,7 @@ public function getLanSegments(): mixed
     try {
 
         // Solo bloquear perfil 1 (usuario regular)
-        if (getSessionUserProfileId() == 1) {
+        if (sessionUserHasProfile('USER')) {
             return [
                 'message' => 'Acción no permitida',
                 'status'  => 1,

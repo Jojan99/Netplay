@@ -64,6 +64,10 @@ class SignInController extends Controller
 
         $authenticatedUser = JWTAuth::user();
 
+        $profileName = DB::table('profiles')
+            ->where('id', $authenticatedUser->profile_id)
+            ->value('name') ?? '';
+
         // Respuesta en caso de éxito
         return standardApiReponse(
             'The token has been created successfully',
@@ -72,6 +76,7 @@ class SignInController extends Controller
                 'userId'       => $authenticatedUser->id,
                 'company_id'   => $authenticatedUser->company_id,
                 'profile_id'   => $authenticatedUser->profile_id,
+                'profile_name' => $profileName,
                 'expires_in'   => config("jwt.ttl") * 60,
                 'user' => [
                     'user'  => $request->user,

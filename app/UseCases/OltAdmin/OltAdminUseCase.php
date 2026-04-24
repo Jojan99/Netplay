@@ -3,20 +3,18 @@
 namespace App\UseCases\OltAdmin;
 
 use App\Models\OltAdmin;
-use App\OltDrivers\HuaweiOltDriver;
-use App\OltDrivers\Interfaces\OltDriverInterface;
+use App\Models\OltOnt;
+use App\Models\OltProfile;
 use App\Repositories\Interfaces\OltAdminRepositoryInterface;
-use App\Services\OltConnectionFactory;
 use App\Services\HuaweiSnmpReader;
+use App\Services\OltTelnetDispatcher;
 use Illuminate\Support\Facades\Cache;
 
 class OltAdminUseCase
 {
-    private array $connections = []; // Caché de conexiones abiertas
-
     public function __construct(
         private OltAdminRepositoryInterface $repo,
-        private OltConnectionFactory        $factory,
+        private OltTelnetDispatcher         $dispatcher,
     ) {}
 
     // ── CRUD ──────────────────────────────────────────────────────────────
@@ -60,35 +58,127 @@ class OltAdminUseCase
     {
         $cacheKey = "olt:{$oltId}:unauth_onts";
 
-        $cached = Cache::get($cacheKey);
-        if ($cached !== null) {
-            return ['status' => 0, 'message' => count($cached) . ' ONTs sin autenticar (caché)', 'data' => $cached];
+        // $cached = Cache::get($cacheKey);
+        // if ($cached !== null) {
+        //     return ['status' => 0, 'message' => count($cached) . ' ONTs sin autenticar (caché)', 'data' => $cached];
+        // }
+
+        // SNMP first — fast, no Telnet session needed
+        try {
+            $olt  = $this->getOltModel($oltId);
+            $onts = $this->snmpReader($olt)->getUnauthONTs();
+
+            if (!empty($onts)) {
+                Cache::put($cacheKey, $onts, now()->addMinutes(self::CACHE_TTL));
+                return ['status' => 0, 'message' => count($onts) . ' ONTs sin autenticar (SNMP)', 'data' => $onts];
+            }
+
+            \Log::info('OLT getUnauthONTs SNMP vacío, usando Telnet', ['olt_id' => $oltId]);
+        } catch (\Throwable $e) {
+            \Log::warning('OLT getUnauthONTs SNMP falló, usando Telnet', ['olt_id' => $oltId, 'error' => $e->getMessage()]);
         }
 
+        // Telnet fallback
         try {
-            $driver = $this->driver($oltId);
-            $onts   = $driver->getUnauthONTs();
+            $onts = $this->dispatcher->dispatch($oltId, 'getUnauthONTs');
             Cache::put($cacheKey, $onts, now()->addMinutes(self::CACHE_TTL));
-            return ['status' => 0, 'message' => count($onts) . ' ONTs sin autenticar', 'data' => $onts];
+            return ['status' => 0, 'message' => count($onts) . ' ONTs sin autenticar (Telnet)', 'data' => $onts];
         } catch (\Throwable $e) {
-            \Log::error('OLT getUnauthONTs error', ['olt_id' => $oltId, 'error' => $e->getMessage()]);
-            $this->closeConnection($oltId);
+            \Log::error('OLT getUnauthONTs Telnet error', ['olt_id' => $oltId, 'error' => $e->getMessage()]);
             return ['status' => 1, 'message' => 'Error consultando OLT: ' . $e->getMessage(), 'data' => null];
         }
+    }
+
+    public function syncProfiles(int $oltId): array
+    {
+        try {
+            $lineProfiles = $this->dispatcher->dispatch($oltId, 'getLineProfiles');
+            $srvProfiles  = $this->dispatcher->dispatch($oltId, 'getSrvProfiles');
+            $now = now();
+
+            foreach ($lineProfiles as $p) {
+                OltProfile::updateOrCreate(
+                    ['olt_id' => $oltId, 'type' => 'line', 'profile_id' => $p['id']],
+                    ['profile_name' => $p['name'], 'synced_at' => $now]
+                );
+            }
+            foreach ($srvProfiles as $p) {
+                OltProfile::updateOrCreate(
+                    ['olt_id' => $oltId, 'type' => 'srv', 'profile_id' => $p['id']],
+                    ['profile_name' => $p['name'], 'synced_at' => $now]
+                );
+            }
+
+            return ['status' => 0, 'message' => 'Perfiles sincronizados', 'data' => [
+                'line' => count($lineProfiles),
+                'srv'  => count($srvProfiles),
+                'synced_at' => $now->toIso8601String(),
+            ]];
+        } catch (\Throwable $e) {
+            \Log::error('OLT syncProfiles error', ['olt_id' => $oltId, 'error' => $e->getMessage()]);
+            return ['status' => 1, 'message' => 'Error sincronizando perfiles: ' . $e->getMessage(), 'data' => null];
+        }
+    }
+
+    public function getProfiles(int $oltId): array
+    {
+        $line = OltProfile::where('olt_id', $oltId)->where('type', 'line')
+            ->orderBy('profile_id')
+            ->get(['profile_id', 'profile_name', 'synced_at']);
+
+        $srv = OltProfile::where('olt_id', $oltId)->where('type', 'srv')
+            ->orderBy('profile_id')
+            ->get(['profile_id', 'profile_name', 'synced_at']);
+
+        return ['status' => 0, 'message' => 'OK', 'data' => ['line' => $line, 'srv' => $srv]];
     }
 
     public function registerONT(int $oltId, array $data): array
     {
         try {
-            $driver = $this->driver($oltId);
-            $result = $driver->registerONT(
-                fsp:         $data['fsp'],
-                serial:      $data['serial'],
-                description: $data['description'] ?? $data['serial'],
-            );
+            $desc = strtoupper(str_replace(' ', '_', trim($data['description'] ?? $data['serial'])));
+
+            $vlan    = !empty($data['vlan']) ? (int) $data['vlan'] : null;
+            $spIndex = $vlan !== null ? $this->generateServicePort($oltId, $vlan) : null;
+
+            \Log::debug('OLT registerONT: payload recibido', [
+                'olt_id'       => $oltId,
+                'fsp'          => $data['fsp'],
+                'vlan_raw'     => $data['vlan'] ?? 'NO VIENE',
+                'vlan_parsed'  => $vlan,
+                'sp_index'     => $spIndex,
+            ]);
+
+            $result = $this->dispatcher->dispatch($oltId, 'registerONT', [
+                'fsp'             => $data['fsp'],
+                'serial'          => $data['serial'],
+                'description'     => $desc,
+                'line_profile_id' => isset($data['line_profile_id']) ? (int) $data['line_profile_id'] : null,
+                'srv_profile_id'  => isset($data['srv_profile_id'])  ? (int) $data['srv_profile_id']  : null,
+                'vlan'            => $vlan,
+                'service_port'    => $spIndex,
+            ]);
 
             if ($result['success']) {
                 Cache::forget("olt:{$oltId}:unauth_onts");
+
+                $ontId     = (int) $result['ont_id'];
+                $spCreated = $result['service_port_created'] ?? false;
+
+                OltOnt::updateOrCreate(
+                    ['olt_id' => $oltId, 'fsp' => $data['fsp'], 'ont_id' => $ontId],
+                    [
+                        'serial'        => $data['serial'],
+                        'description'   => $desc,
+                        'status'        => 'offline',
+                        'service_ports' => ($spCreated && $vlan !== null && $spIndex !== null)
+                                            ? [['index' => $spIndex, 'vlan' => $vlan]]
+                                            : [],
+                        'synced_at'     => now(),
+                    ]
+                );
+
+                Cache::forget("olt:{$oltId}:all_service_ports");
             }
 
             $msg = $result['success']
@@ -98,23 +188,58 @@ class OltAdminUseCase
             return ['status' => $result['success'] ? 0 : 1, 'message' => $msg, 'data' => $result];
         } catch (\Throwable $e) {
             \Log::error('OLT registerONT error', ['olt_id' => $oltId, 'error' => $e->getMessage()]);
-            $this->closeConnection($oltId);
             return ['status' => 1, 'message' => 'Error registrando ONT: ' . $e->getMessage(), 'data' => null];
+        }
+    }
+
+    public function cliCommand(int $oltId, string $command): array
+    {
+        try {
+            $output = $this->dispatcher->dispatch($oltId, 'runCommand', ['command' => $command]);
+            return ['status' => 0, 'message' => 'OK', 'data' => ['output' => $output, 'command' => $command]];
+        } catch (\Throwable $e) {
+            return ['status' => 1, 'message' => $e->getMessage(), 'data' => null];
         }
     }
 
     public function deleteONT(int $oltId, array $data): array
     {
         try {
-            $driver = $this->driver($oltId);
-            $ok     = $driver->deleteONT(
-                fsp:         $data['fsp'],
-                ontId:       (int) $data['ont_id'],
-                servicePort: (int) ($data['service_port'] ?? 0),
-            );
+            $fsp   = $data['fsp'];
+            $ontId = (int) $data['ont_id'];
+
+            // Auto-obtener todos los service-ports de esta ONT para eliminarlos primero
+            $servicePortIndices = [];
+            try {
+                $ports = $this->dispatcher->dispatch($oltId, 'getServicePorts', [
+                    'fsp'    => $fsp,
+                    'ont_id' => $ontId,
+                ]);
+                $servicePortIndices = array_filter(array_column($ports, 'index'));
+                Cache::forget("olt:{$oltId}:service_ports:{$fsp}:{$ontId}");
+            } catch (\Throwable $e) {
+                // Si es un error de sesión (límite, timeout) lo relanzamos — no tiene sentido continuar
+                if (str_contains($e->getMessage(), 'session limit') || str_contains($e->getMessage(), 'Timeout') || str_contains($e->getMessage(), 'Reenter')) {
+                    throw $e;
+                }
+                \Log::warning('OLT deleteONT: no se pudieron obtener service-ports, se continúa sin ellos', [
+                    'olt_id' => $oltId, 'fsp' => $fsp, 'ont_id' => $ontId, 'error' => $e->getMessage(),
+                ]);
+            }
+
+            $ok = $this->dispatcher->dispatch($oltId, 'deleteONT', [
+                'fsp'           => $fsp,
+                'ont_id'        => $ontId,
+                'service_ports' => array_values($servicePortIndices),
+            ]);
 
             if ($ok) {
                 Cache::forget("olt:{$oltId}:unauth_onts");
+                Cache::forget("olt:{$oltId}:all_service_ports");
+                OltOnt::where('olt_id', $oltId)
+                    ->where('fsp', $fsp)
+                    ->where('ont_id', $ontId)
+                    ->delete();
             }
 
             return [
@@ -124,7 +249,6 @@ class OltAdminUseCase
             ];
         } catch (\Throwable $e) {
             \Log::error('OLT deleteONT error', ['olt_id' => $oltId, 'error' => $e->getMessage()]);
-            $this->closeConnection($oltId);
             return ['status' => 1, 'message' => 'Error eliminando ONT: ' . $e->getMessage(), 'data' => null];
         }
     }
@@ -133,15 +257,14 @@ class OltAdminUseCase
     {
         try {
             $oltModel = $this->getOltModel($oltId);
-            $driver   = $this->driver($oltId);
 
-            $ok = $driver->assignToClient(
-                fsp:         $data['fsp'],
-                ontId:       (int) $data['ont_id'],
-                vlan:        (int) ($data['vlan'] ?? $oltModel->default_vlan),
-                servicePort: (int) $data['service_port'],
-                description: $data['description'] ?? '',
-            );
+            $ok = $this->dispatcher->dispatch($oltId, 'assignToClient', [
+                'fsp'         => $data['fsp'],
+                'ont_id'      => (int) $data['ont_id'],
+                'vlan'        => (int) ($data['vlan'] ?? $oltModel->default_vlan),
+                'service_port'=> (int) $data['service_port'],
+                'description' => $data['description'] ?? '',
+            ]);
 
             return [
                 'status'  => $ok ? 0 : 1,
@@ -150,34 +273,93 @@ class OltAdminUseCase
             ];
         } catch (\Throwable $e) {
             \Log::error('OLT assignONT error', ['olt_id' => $oltId, 'error' => $e->getMessage()]);
-            $this->closeConnection($oltId);
             return ['status' => 1, 'message' => 'Error asignando ONT: ' . $e->getMessage(), 'data' => null];
         }
     }
 
     /**
-     * Get all authorized/registered ONTs via SNMP (fast, no Telnet session).
-     * Cached for 2 minutes.
+     * Get all authorized ONTs. Reads from DB first.
+     * Only queries the OLT (SNMP → Telnet) when the DB is empty.
+     * Pass ?force=1 to skip the DB and re-sync from the OLT.
      */
-    public function getAuthorizedONTs(int $oltId): array
+    public function getAuthorizedONTs(int $oltId, bool $force = false): array
     {
-        $cacheKey = "olt:{$oltId}:auth_onts";
-
-        $cached = Cache::get($cacheKey);
-        if ($cached !== null) {
-            return ['status' => 0, 'message' => count($cached) . ' ONTs autorizadas (caché)', 'data' => $cached];
+        if (!$force) {
+            $dbOnts = OltOnt::where('olt_id', $oltId)
+                            ->with('client:id,user_id,names,lastname,dni')
+                            ->orderBy('fsp')->orderBy('ont_id')
+                            ->get()
+                            ->map(fn($o) => array_merge($o->toArray(), ['assigned_client' => $o->client]))
+                            ->toArray();
+            if (!empty($dbOnts)) {
+                return ['status' => 0, 'message' => count($dbOnts) . ' ONTs autorizadas (BD)', 'data' => $dbOnts];
+            }
         }
 
+        // BD vacía o force → consultar OLT y guardar
         try {
             $olt    = $this->getOltModel($oltId);
             $reader = $this->snmpReader($olt);
             $onts   = $reader->getAuthorizedONTs();
-            Cache::put($cacheKey, $onts, now()->addMinutes(2));
+
+            if (empty($onts)) {
+                \Log::info('OLT getAuthorizedONTs SNMP returned empty, falling back to Telnet driver', ['olt_id' => $oltId]);
+                $onts = $this->dispatcher->dispatch($oltId, 'getAuthorizedONTs');
+            }
+
+            $onts = $this->mergeServicePorts($oltId, $onts);
+            $this->syncONTsToDb($oltId, $onts);
+
             return ['status' => 0, 'message' => count($onts) . ' ONTs autorizadas', 'data' => $onts];
         } catch (\Throwable $e) {
-            \Log::error('OLT getAuthorizedONTs SNMP error', ['olt_id' => $oltId, 'error' => $e->getMessage()]);
+            if (str_contains($e->getMessage(), 'SNMP_JUMP_UNAVAILABLE')) {
+                try {
+                    $onts = $this->dispatcher->dispatch($oltId, 'getAuthorizedONTs');
+                    $onts = $this->mergeServicePorts($oltId, $onts);
+                    $this->syncONTsToDb($oltId, $onts);
+                    return ['status' => 0, 'message' => count($onts) . ' ONTs autorizadas (Telnet)', 'data' => $onts];
+                } catch (\Throwable $e2) {
+                    \Log::error('OLT getAuthorizedONTs Telnet fallback error', ['olt_id' => $oltId, 'error' => $e2->getMessage()]);
+                    return ['status' => 1, 'message' => 'Error: ' . $e2->getMessage(), 'data' => null];
+                }
+            }
+
+            \Log::error('OLT getAuthorizedONTs error', ['olt_id' => $oltId, 'error' => $e->getMessage()]);
             return ['status' => 1, 'message' => 'Error SNMP: ' . $e->getMessage(), 'data' => null];
         }
+    }
+
+    /**
+     * Persiste el snapshot de ONTs en olt_onts.
+     * Hace upsert por (olt_id, fsp, ont_id) y elimina las que ya no existen.
+     */
+    private function syncONTsToDb(int $oltId, array $onts): void
+    {
+        $now  = now();
+        $keys = [];
+
+        foreach ($onts as $ont) {
+            OltOnt::updateOrCreate(
+                ['olt_id' => $oltId, 'fsp' => $ont['fsp'], 'ont_id' => $ont['ont_id']],
+                [
+                    'serial'        => $ont['serial']        ?? null,
+                    'description'   => $ont['description']   ?? null,
+                    'status'        => $ont['status']        ?? 'offline',
+                    'service_ports' => $ont['service_ports'] ?? [],
+                    'synced_at'     => $now,
+                ]
+            );
+            $keys[] = $ont['fsp'] . ':' . $ont['ont_id'];
+        }
+
+        // Eliminar de BD las ONTs que ya no existen en la OLT
+        OltOnt::where('olt_id', $oltId)
+            ->get(['id', 'fsp', 'ont_id'])
+            ->each(function ($row) use ($keys) {
+                if (!in_array($row->fsp . ':' . $row->ont_id, $keys)) {
+                    $row->delete();
+                }
+            });
     }
 
     /**
@@ -200,8 +382,17 @@ class OltAdminUseCase
             Cache::put($cacheKey, $info, now()->addMinutes(1));
             return ['status' => 0, 'message' => 'Info ONT obtenida', 'data' => $info];
         } catch (\Throwable $e) {
-            \Log::error('OLT getOntInfo SNMP error', ['olt_id' => $oltId, 'fsp' => $fsp, 'ont_id' => $ontId, 'error' => $e->getMessage()]);
-            return ['status' => 1, 'message' => 'Error SNMP: ' . $e->getMessage(), 'data' => null];
+            if (str_contains($e->getMessage(), 'SNMP_JUMP_UNAVAILABLE')) {
+                try {
+                    $info = $this->dispatcher->dispatch($oltId, 'getOntInfo', ['fsp' => $fsp, 'ont_id' => $ontId]);
+                    Cache::put($cacheKey, $info, now()->addMinutes(1));
+                    return ['status' => 0, 'message' => 'Info ONT obtenida (Telnet)', 'data' => $info];
+                } catch (\Throwable $e2) {
+                    return ['status' => 1, 'message' => 'Error: ' . $e2->getMessage(), 'data' => null];
+                }
+            }
+            \Log::error('OLT getOntInfo error', ['olt_id' => $oltId, 'fsp' => $fsp, 'ont_id' => $ontId, 'error' => $e->getMessage()]);
+            return ['status' => 1, 'message' => 'Error: ' . $e->getMessage(), 'data' => null];
         }
     }
 
@@ -223,15 +414,90 @@ class OltAdminUseCase
         }
 
         try {
-            $driver = $this->driver($oltId);
-            $ports  = $driver->getServicePorts($fsp, $ontId);
+            $ports = $this->dispatcher->dispatch($oltId, 'getServicePorts', ['fsp' => $fsp, 'ont_id' => $ontId]);
             Cache::put($cacheKey, $ports, now()->addMinutes(2));
             return ['status' => 0, 'message' => count($ports) . ' service-ports', 'data' => $ports];
         } catch (\Throwable $e) {
             \Log::error('OLT getServicePorts error', ['olt_id' => $oltId, 'error' => $e->getMessage()]);
-            $this->closeConnection($oltId);
             return ['status' => 1, 'message' => 'Error obteniendo service-ports: ' . $e->getMessage(), 'data' => null];
         }
+    }
+
+    /**
+     * Auto-assign a service port to an ONT.
+     * El número se genera con HHMMSS (6 dígitos, siempre único por segundo).
+     * Si ya está en uso, incrementa hasta encontrar uno libre en la BD.
+     */
+    public function autoAssignONT(int $oltId, array $data): array
+    {
+        try {
+            $oltModel = $this->getOltModel($oltId);
+            $vlan     = (int) ($data['vlan'] ?? $oltModel->default_vlan);
+            $nextSp   = $this->generateServicePort($oltId, $vlan);
+
+            $ok = $this->dispatcher->dispatch($oltId, 'assignToClient', [
+                'fsp'          => $data['fsp'],
+                'ont_id'       => (int) $data['ont_id'],
+                'vlan'         => $vlan,
+                'service_port' => $nextSp,
+                'description'  => $data['description'] ?? '',
+            ]);
+
+            if ($ok) {
+                Cache::forget("olt:{$oltId}:auth_onts");
+                Cache::forget("olt:{$oltId}:all_service_ports");
+                Cache::forget("olt:{$oltId}:service_ports:{$data['fsp']}:{$data['ont_id']}");
+                $dbOnt = OltOnt::where('olt_id', $oltId)
+                    ->where('fsp', $data['fsp'])
+                    ->where('ont_id', (int) $data['ont_id'])
+                    ->first();
+                if ($dbOnt) {
+                    $ports   = $dbOnt->service_ports ?? [];
+                    $ports[] = ['index' => $nextSp, 'vlan' => (int) ($data['vlan'] ?? $oltModel->default_vlan)];
+                    $dbOnt->update(['service_ports' => $ports, 'synced_at' => now()]);
+                }
+            }
+
+            return [
+                'status'  => $ok ? 0 : 1,
+                'message' => $ok ? "Service-port {$nextSp} asignado correctamente" : 'Error al asignar ONT',
+                'data'    => $ok ? ['service_port' => $nextSp] : null,
+            ];
+        } catch (\Throwable $e) {
+            \Log::error('OLT autoAssignONT error', ['olt_id' => $oltId, 'error' => $e->getMessage()]);
+            return ['status' => 1, 'message' => 'Error: ' . $e->getMessage(), 'data' => null];
+        }
+    }
+
+    /**
+     * Genera un número de service-port de 5 dígitos.
+     * Composición: [último dígito VLAN][último dígito día][último dígito año][último dígito hora][último dígito minuto]
+     * Ejemplo: VLAN 107, día 16, año 2026, 14:32 → 7·6·6·4·2 = 76642
+     * Si ya está en uso, incrementa hasta encontrar uno libre (máx 99999).
+     */
+    private function generateServicePort(int $oltId, int $vlan = 0): int
+    {
+        $used = OltOnt::where('olt_id', $oltId)
+            ->whereNotNull('service_ports')
+            ->get('service_ports')
+            ->flatMap(fn($o) => collect($o->service_ports)->pluck('index'))
+            ->filter()
+            ->values()
+            ->all();
+
+        $d1 = $vlan          % 10; // último dígito de la VLAN
+        $d2 = (int) date('j') % 10; // último dígito del día
+        $d3 = (int) date('Y') % 10; // último dígito del año
+        $d4 = (int) date('G') % 10; // último dígito de la hora (0-23)
+        $d5 = (int) date('i') % 10; // último dígito del minuto
+
+        $candidate = (int) "{$d1}{$d2}{$d3}{$d4}{$d5}";
+
+        while (in_array($candidate, $used)) {
+            $candidate = ($candidate % 99999) + 1;
+        }
+
+        return $candidate;
     }
 
     /**
@@ -240,16 +506,20 @@ class OltAdminUseCase
     public function transferONT(int $oltId, array $data): array
     {
         try {
-            $driver = $this->driver($oltId);
-            $result = $driver->transferONT(
-                fromFsp: $data['from_fsp'],
-                ontId:   (int) $data['ont_id'],
-                toFsp:   $data['to_fsp'],
-            );
+            $result = $this->dispatcher->dispatch($oltId, 'transferONT', [
+                'from_fsp' => $data['from_fsp'],
+                'ont_id'   => (int) $data['ont_id'],
+                'to_fsp'   => $data['to_fsp'],
+            ]);
 
             if ($result['success']) {
                 Cache::forget("olt:{$oltId}:auth_onts");
                 Cache::forget("olt:{$oltId}:unauth_onts");
+                // Mover el registro en BD al nuevo fsp sin re-sync completo
+                OltOnt::where('olt_id', $oltId)
+                    ->where('fsp', $data['from_fsp'])
+                    ->where('ont_id', (int) $data['ont_id'])
+                    ->update(['fsp' => $data['to_fsp'], 'service_ports' => [], 'synced_at' => now()]);
             }
 
             return [
@@ -259,7 +529,6 @@ class OltAdminUseCase
             ];
         } catch (\Throwable $e) {
             \Log::error('OLT transferONT error', ['olt_id' => $oltId, 'error' => $e->getMessage()]);
-            $this->closeConnection($oltId);
             return ['status' => 1, 'message' => 'Error transfiriendo ONT: ' . $e->getMessage(), 'data' => null];
         }
     }
@@ -270,14 +539,17 @@ class OltAdminUseCase
     public function deactivateONT(int $oltId, array $data): array
     {
         try {
-            $driver = $this->driver($oltId);
-            $ok     = $driver->deactivateONT(
-                fsp:   $data['fsp'],
-                ontId: (int) $data['ont_id'],
-            );
+            $ok = $this->dispatcher->dispatch($oltId, 'deactivateONT', [
+                'fsp'    => $data['fsp'],
+                'ont_id' => (int) $data['ont_id'],
+            ]);
 
             if ($ok) {
                 Cache::forget("olt:{$oltId}:auth_onts");
+                OltOnt::where('olt_id', $oltId)
+                    ->where('fsp', $data['fsp'])
+                    ->where('ont_id', (int) $data['ont_id'])
+                    ->update(['status' => 'offline', 'synced_at' => now()]);
             }
 
             return [
@@ -287,7 +559,6 @@ class OltAdminUseCase
             ];
         } catch (\Throwable $e) {
             \Log::error('OLT deactivateONT error', ['olt_id' => $oltId, 'error' => $e->getMessage()]);
-            $this->closeConnection($oltId);
             return ['status' => 1, 'message' => 'Error desactivando ONT: ' . $e->getMessage(), 'data' => null];
         }
     }
@@ -298,14 +569,17 @@ class OltAdminUseCase
     public function activateONT(int $oltId, array $data): array
     {
         try {
-            $driver = $this->driver($oltId);
-            $ok     = $driver->activateONT(
-                fsp:   $data['fsp'],
-                ontId: (int) $data['ont_id'],
-            );
+            $ok = $this->dispatcher->dispatch($oltId, 'activateONT', [
+                'fsp'    => $data['fsp'],
+                'ont_id' => (int) $data['ont_id'],
+            ]);
 
             if ($ok) {
                 Cache::forget("olt:{$oltId}:auth_onts");
+                OltOnt::where('olt_id', $oltId)
+                    ->where('fsp', $data['fsp'])
+                    ->where('ont_id', (int) $data['ont_id'])
+                    ->update(['status' => 'online', 'synced_at' => now()]);
             }
 
             return [
@@ -315,7 +589,6 @@ class OltAdminUseCase
             ];
         } catch (\Throwable $e) {
             \Log::error('OLT activateONT error', ['olt_id' => $oltId, 'error' => $e->getMessage()]);
-            $this->closeConnection($oltId);
             return ['status' => 1, 'message' => 'Error activando ONT: ' . $e->getMessage(), 'data' => null];
         }
     }
@@ -329,65 +602,84 @@ class OltAdminUseCase
         return OltAdmin::find($id);
     }
 
-    /**
-     * Obtiene una conexión reutilizando caché si existe
-     */
-    private function driver(int $oltId): OltDriverInterface
-    {
-        $olt = $this->getOltModel($oltId);
-
-        // Si ya tenemos una conexión abierta, reutilizarla
-        if (isset($this->connections[$oltId])) {
-            \Log::info('OLT CONNECTION REUSED', ['olt_id' => $oltId]);
-            $ssh = $this->connections[$oltId];
-        } else {
-            // Crear nueva conexión
-            \Log::info('OLT CONNECTION CREATED', ['olt_id' => $oltId]);
-            $ssh = $this->factory->connect($olt);
-            $this->connections[$oltId] = $ssh;
-        }
-
-        return match ($olt->brand) {
-            'huawei' => new HuaweiOltDriver($ssh, $olt->toArray()),
-            default  => throw new \RuntimeException("Driver para marca '{$olt->brand}' no implementado"),
-        };
-    }
-
-    /**
-     * Cierra una conexión abierta
-     */
-    private function closeConnection(int $oltId): void
-    {
-        if (isset($this->connections[$oltId])) {
-            \Log::info('OLT CONNECTION CLOSED', ['olt_id' => $oltId]);
-            unset($this->connections[$oltId]);
-        }
-    }
-
-    /**
-     * Cierra todas las conexiones abiertas
-     */
-    public function closeAllConnections(): void
-    {
-        foreach (array_keys($this->connections) as $oltId) {
-            $this->closeConnection($oltId);
-        }
-    }
-
-    /**
-     * Build the right SNMP reader for the OLT brand.
-     * Only Huawei is supported for now.
-     */
     private function snmpReader(OltAdmin $olt): HuaweiSnmpReader
     {
         return new HuaweiSnmpReader($olt);
     }
 
     /**
-     * Destructor para limpiar conexiones
+     * Obtiene todos los service-ports del OLT con un solo comando Telnet
+     * y los añade a cada ONT como 'service_ports' => [['index'=>100,'vlan'=>200], ...].
+     * Se cachea separado para no invalidar el listado SNMP cada vez.
      */
-    public function __destruct()
+    private function mergeServicePorts(int $oltId, array $onts): array
     {
-        $this->closeAllConnections();
+        $cacheKey = "olt:{$oltId}:all_service_ports";
+
+        try {
+            $allPorts = Cache::get($cacheKey);
+
+            if ($allPorts === null) {
+                $allPorts = $this->dispatcher->dispatch($oltId, 'getServicePorts');
+                Cache::put($cacheKey, $allPorts, now()->addMinutes(5));
+            }
+
+            // Construir mapa fsp:ont_id → [service_ports]
+            $map = [];
+            foreach ($allPorts as $sp) {
+                $key = ($sp['fsp'] ?? '') . ':' . ($sp['ont_id'] ?? '');
+                $map[$key][] = ['index' => $sp['index'] ?? null, 'vlan' => $sp['vlan'] ?? null];
+            }
+
+            foreach ($onts as &$ont) {
+                $key = ($ont['fsp'] ?? '') . ':' . ($ont['ont_id'] ?? '');
+                $ont['service_ports'] = $map[$key] ?? [];
+            }
+            unset($ont);
+
+        } catch (\Throwable $e) {
+            // Si Telnet falla, devolvemos los ONTs sin service_ports (no bloqueante)
+            \Log::warning('mergeServicePorts failed, skipping', ['olt_id' => $oltId, 'error' => $e->getMessage()]);
+            foreach ($onts as &$ont) { $ont['service_ports'] = []; }
+            unset($ont);
+        }
+
+        return $onts;
+    }
+
+    /**
+     * Asignar (o desasignar) un cliente a una ONT registrada.
+     * user_data_id = null → desasignar.
+     */
+    public function assignClientToOnt(int $oltId, string $fsp, int $ontId, ?int $userDataId): array
+    {
+        $ont = OltOnt::where('olt_id', $oltId)
+                     ->where('fsp', $fsp)
+                     ->where('ont_id', $ontId)
+                     ->first();
+
+        if (!$ont) {
+            return ['status' => 1, 'message' => 'ONT no encontrada en la base de datos.', 'data' => null];
+        }
+
+        $ont->update(['user_data_id' => $userDataId]);
+
+        return ['status' => 0, 'message' => $userDataId ? 'Cliente asignado correctamente.' : 'Cliente desasignado.', 'data' => $ont->fresh()];
+    }
+
+    /**
+     * Obtener el equipo ONT asignado a un cliente.
+     */
+    public function getOntByUserId(int $userDataId): array
+    {
+        $ont = OltOnt::where('user_data_id', $userDataId)
+                     ->with('olt:id,name,host')
+                     ->first();
+
+        if (!$ont) {
+            return ['status' => 0, 'message' => 'Sin equipo ONT asignado.', 'data' => null];
+        }
+
+        return ['status' => 0, 'message' => 'Equipo ONT encontrado.', 'data' => $ont];
     }
 }

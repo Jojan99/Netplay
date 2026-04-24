@@ -13,6 +13,7 @@ use RouterOS\Query;
 use Illuminate\Http\JsonResponse;
 use Tymon\JWTAuth\Exceptions\JWTException;
 use Tymon\JWTAuth\Facades\JWTAuth;
+use Illuminate\Support\Facades\Log;
 
 class DniController extends Controller
 {
@@ -31,7 +32,7 @@ class DniController extends Controller
     {
         // 1. Parámetro directo, 2. Sesión, 3. JWT manual (para SSE que no pasa por middleware)
         if (!$companyId) {
-            $companyId = 1;
+            $companyId = getSessionCompanyId();
         }
         if (!$companyId) {
             try {
@@ -226,54 +227,104 @@ class DniController extends Controller
     
         try {
 
-            $query =
-            (new Query('/ip/arp/print'))
-                ->where('comment', $gestionUserRequest['dni']);
+    \Log::info('🔵 INICIO PING MIKROTIK', [
+        'dni'   => $gestionUserRequest['dni'],
+        'count' => $gestionUserRequest['count'],
+        'getCompanyRouterId' => $this->getCompanyRouterId()
+    ]);
 
+    $query = (new Query('/ip/arp/print'))
+        ->where('comment', $gestionUserRequest['dni']);
 
-            $user = $this->connection->conection($this->getCompanyRouterId())->query($query)->read();
-            $ip = $user[0]['address'];
-            $connection = $this->connection->conection($this->getCompanyRouterId());
-    
-            for ($i = 0; $i < $gestionUserRequest['count']; $i++) {
-                // Verificar si la conexión sigue activa con un ping ligero
-                try {
-                    $connection->query(new Query('/system/identity/print'))->read();
-                } catch (\Exception $e) {
-                    echo "data: " . json_encode(["error" => "Conexión perdida con MikroTik"]) . "\n\n";
-                    flush();
-                    break;
-                }
-    
-                // Realizar el ping
-                $query = (new Query('/ping'))
-                    ->equal('address', $ip)
-                    ->equal('count', '1');  
-    
-                $response = $connection->query($query)->read();
-    
-                if (!empty($response)) {
-                    echo "data: " . json_encode($response[0]) . "\n\n";
-                    flush();
-                }
-    
-                // Pausa de 1 segundo para evitar bloqueos
-                usleep(1000000);
-            }
-    
-            // Señal de finalización
-            echo "data: " . json_encode(["message" => "done"]) . "\n\n";
-            flush();
-        } catch (\Exception $e) {
-            echo "data: " . json_encode(["error" => $e->getMessage()]) . "\n\n";
-            flush();
-        }
-    
-        if (function_exists('fastcgi_finish_request')) {
-            fastcgi_finish_request();
-        }
-    
+    $connection = $this->connection->conection($this->getCompanyRouterId());
+
+    \Log::info('📡 Consultando ARP...');
+
+    $user = $connection->query($query)->read();
+
+    if (empty($user)) {
+        \Log::warning('⚠️ Usuario no encontrado en ARP', [
+            'dni' => $gestionUserRequest['dni']
+        ]);
+
+        echo "data: " . json_encode(["error" => "Usuario no encontrado en ARP"]) . "\n\n";
+        flush();
         exit();
+    }
+
+    $ip = $user[0]['address'];
+
+    \Log::info('✅ IP encontrada', [
+        'ip' => $ip
+    ]);
+
+    for ($i = 0; $i < $gestionUserRequest['count']; $i++) {
+
+        \Log::info("🔁 Iteración ping", ['iteration' => $i + 1]);
+
+        // Validar conexión viva
+        try {
+            $connection->query(new Query('/system/identity/print'))->read();
+        } catch (\Exception $e) {
+
+            \Log::error('❌ Conexión perdida con MikroTik', [
+                'error' => $e->getMessage()
+            ]);
+
+            echo "data: " . json_encode(["error" => "Conexión perdida con MikroTik"]) . "\n\n";
+            flush();
+            break;
+        }
+
+        // Ejecutar ping
+        $query = (new Query('/ping'))
+            ->equal('address', $ip)
+            ->equal('count', '1');
+
+        \Log::info('📶 Ejecutando ping', ['ip' => $ip]);
+
+        $response = $connection->query($query)->read();
+
+        if (!empty($response)) {
+
+            \Log::info('📥 Respuesta ping', [
+                'response' => $response[0]
+            ]);
+
+            echo "data: " . json_encode($response[0]) . "\n\n";
+            flush();
+
+        } else {
+
+            \Log::warning('⚠️ Ping sin respuesta', [
+                'ip' => $ip
+            ]);
+        }
+
+        usleep(1000000);
+    }
+
+    \Log::info('✅ FIN PING');
+
+    echo "data: " . json_encode(["message" => "done"]) . "\n\n";
+    flush();
+
+} catch (\Exception $e) {
+
+    \Log::error('💥 ERROR GENERAL PING', [
+        'error' => $e->getMessage(),
+        'trace' => $e->getTraceAsString()
+    ]);
+
+    echo "data: " . json_encode(["error" => $e->getMessage()]) . "\n\n";
+    flush();
+}
+
+if (function_exists('fastcgi_finish_request')) {
+    fastcgi_finish_request();
+}
+
+exit();
     }
 
 

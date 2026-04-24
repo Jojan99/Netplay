@@ -28,7 +28,12 @@ class OltAdmin extends Model
         'snmp_version',
         'snmp_port',
         'snmp_host',
+        'snmp_jump_host',
+        'snmp_jump_port',
+        'snmp_jump_user',
+        'snmp_jump_pass',
+        'enable_password',
     ];
 
-    protected $hidden = ['password', 'jump_pass'];
+    protected $hidden = ['password', 'enable_password', 'jump_pass'];
 }

@@ -43,7 +43,7 @@ class CreateEgresosUseCase implements CreateEgresosUseCaseInterface
     public function createEgresos(CreateEgresosRequest $data): mixed
     {
         try {
-            if(getSessionUserProfileId() == 2){
+            if(sessionUserHasProfile('CONTADOR', 'ADMIN')){
                 
                 $user = $this->egresosRepository->createEgresos($data);
             }

@@ -34,7 +34,7 @@ class GetUserAllUseCase implements GetUserAllUseCaseInterface
         try {
 
         
-            if(getSessionUserProfileId() == 2){
+            if(sessionUserHasProfile('CONTADOR', 'ADMIN')){
                 $userAll = $this->userRepository->getUserAll();
             }else{
 

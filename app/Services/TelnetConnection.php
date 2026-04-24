@@ -103,6 +103,24 @@ class TelnetConnection
         // CLI prompt will arrive shortly; driver constructor will read() it.
     }
 
+    public function close(): void
+    {
+        if (is_resource($this->stream)) {
+            // Send quit so the OLT releases the session slot immediately.
+            // Without this, the OLT keeps the slot alive until its own timeout
+            // and rejects new connections with "Reenter times reached upper limit".
+            // quit twice: first exits config/interface sub-mode, second exits
+            // enable mode. The OLT may ask "Are you sure? (y/n)" — answer y.
+            @fwrite($this->stream, "quit\n");
+            usleep(200000);
+            @fwrite($this->stream, "quit\n");
+            usleep(200000);
+            @fwrite($this->stream, "y\n");
+            usleep(300000); // give OLT time to process logout and free the session slot
+            fclose($this->stream);
+        }
+    }
+
     // ── Telnet IAC negotiation ────────────────────────────────────────────
 
     /**

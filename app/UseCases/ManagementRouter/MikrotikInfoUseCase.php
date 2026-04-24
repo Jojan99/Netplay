@@ -267,10 +267,14 @@ class MikrotikInfoUseCase implements MikrotikInfoUseCaseInterface
 
     private function resolveSuspensionTemplate($userData, float $balance): string
     {
-        $template = "Estimado/a {nombre} {apellido}, le informamos que su servicio de internet ha sido *suspendido* por falta de pago.\n\n"
+        $template = "🚫Estimado/a {nombre} {apellido}, le informamos que su servicio de internet ha sido *suspendido* por falta de pago.🚫\n\n"
                   . "💰 Saldo pendiente: *\${deuda}*\n\n"
                   . "Para reactivar su servicio, comuníquese con nosotros o realice su pago.\n\n"
-                  . "📅 Fecha: {fecha}";
+                  . "📅 Fecha: {fecha}"
+                  . "Medios de pago: BANCOLOMBIA CTA AHO 47800013328
+                    DAVIPLATA 3022042294 (Hum Gom)
+                    NEQUI 3022042294 (Hum Gom)
+                    ";
 
         $vars = [
             '{nombre}'   => $userData->names ?? '',

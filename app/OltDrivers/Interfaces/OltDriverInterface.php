@@ -20,16 +20,17 @@ interface OltDriverInterface
      * @param string $description  Client name or ID
      * @return array ['ont_id' => int, 'port_id' => int, 'message' => string]
      */
-    public function registerONT(string $fsp, string $serial, string $description): array;
+    public function registerONT(string $fsp, string $serial, string $description, ?int $lineProfileId = null, ?int $srvProfileId = null, ?int $vlan = null, ?int $servicePort = null): array;
 
     /**
      * Delete an ONT from the OLT.
+     * Deletes all provided service-ports first, then removes the ONT.
      *
-     * @param string $fsp        e.g. "0/0/3"
-     * @param int    $ontId      ONT ID assigned by OLT
-     * @param int    $servicePort Service-port number (0 if none)
+     * @param string $fsp          e.g. "0/0/3"
+     * @param int    $ontId        ONT ID assigned by OLT
+     * @param array  $servicePorts List of service-port indices to undo before deletion
      */
-    public function deleteONT(string $fsp, int $ontId, int $servicePort = 0): bool;
+    public function deleteONT(string $fsp, int $ontId, array $servicePorts = []): bool;
 
     /**
      * Create service-port to activate client traffic.
@@ -84,4 +85,7 @@ interface OltDriverInterface
      * Re-activate a previously deactivated ONT.
      */
     public function activateONT(string $fsp, int $ontId): bool;
+
+    /** Send a raw CLI command and return the output. */
+    public function runCommand(string $command): string;
 }

@@ -48,6 +48,17 @@ class RouteServiceProvider extends ServiceProvider
                     require base_path('routes/api/companyRoutes.php');
                     require base_path('routes/api/inventoryRoutes.php');
                     require base_path('routes/api/waProxyRoutes.php');
+                    require base_path('routes/api/employeeRoutes.php');
+                    require base_path('routes/api/internetPlanRoutes.php');
+                    require base_path('routes/api/paymentMethodRoutes.php');
+                });
+
+            // Contratos: sign-token es público (sin JWT), el resto usa jwt.verify interno
+            Route::middleware('api')
+                ->prefix('api')
+                ->namespace('App\Http\Controllers')
+                ->group(function () {
+                    require base_path('routes/api/contractRoutes.php');
                 });
 
             Route::middleware('web')

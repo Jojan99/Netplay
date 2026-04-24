@@ -43,7 +43,7 @@ if (!function_exists('getSessionCompanyId')) {
 
 if (!function_exists('getSessionUserProfileId')) {
     /**
-     * Función encargada de establecer la respuesta estandar para una solicitud 
+     * Función encargada de establecer la respuesta estandar para una solicitud
      * api
      *
      * @return int|null
@@ -51,5 +51,23 @@ if (!function_exists('getSessionUserProfileId')) {
     function getSessionUserProfileId()
     {
         return (session()->has('user') && isset(session()->get('user')->profile_id)) ? session()->get('user')->profile_id : null;
+    }
+}
+
+if (!function_exists('sessionUserHasProfile')) {
+    /**
+     * Verifica si el usuario en sesión tiene alguno de los perfiles indicados (por nombre).
+     * Funciona para cualquier empresa sin importar el ID del perfil.
+     */
+    function sessionUserHasProfile(string ...$names): bool
+    {
+        $profileId = getSessionUserProfileId();
+        $companyId = getSessionCompanyId();
+        if (!$profileId || !$companyId) return false;
+        return \Illuminate\Support\Facades\DB::table('profiles')
+            ->where('id', $profileId)
+            ->where('company_id', $companyId)
+            ->whereIn('name', $names)
+            ->exists();
     }
 }

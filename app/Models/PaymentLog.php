@@ -16,10 +16,16 @@ class PaymentLog extends Model
         'amount',
         'type',
         'notes',
+        'payment_method_id',
     ];
 
     protected $casts = [
         'created_at' => 'datetime:Y-m-d H:i:s',
         'updated_at' => 'datetime:Y-m-d H:i:s',
     ];
+
+    public function paymentMethod()
+    {
+        return $this->belongsTo(\App\Models\PaymentMethod::class, 'payment_method_id');
+    }
 }
