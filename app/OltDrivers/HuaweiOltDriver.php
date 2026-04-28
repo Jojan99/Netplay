@@ -122,8 +122,8 @@ class HuaweiOltDriver implements OltDriverInterface
             "ont confirm %d sn-auth %s omci ont-lineprofile-id %d ont-srvprofile-id %d desc %s\n",
             $port,
             strtoupper($serial),
-            $this->srvProfileId,
             $vlan,
+            $lineProfileId,
             $description
         );
 

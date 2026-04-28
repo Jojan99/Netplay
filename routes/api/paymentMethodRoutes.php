@@ -7,6 +7,7 @@ Route::prefix('payment-methods')->middleware('role:admin,contador')->group(funct
     Route::get('/',         [PaymentMethodController::class, 'index']);
     Route::get('/active',   [PaymentMethodController::class, 'active']);
     Route::get('/summary',  [PaymentMethodController::class, 'summary']);
+    Route::get('/payments', [PaymentMethodController::class, 'payments']);
     Route::post('/',        [PaymentMethodController::class, 'store']);
     Route::put('/{id}',     [PaymentMethodController::class, 'update']);
     Route::patch('/{id}/toggle', [PaymentMethodController::class, 'toggle']);

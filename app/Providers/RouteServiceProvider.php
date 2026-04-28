@@ -51,6 +51,8 @@ class RouteServiceProvider extends ServiceProvider
                     require base_path('routes/api/employeeRoutes.php');
                     require base_path('routes/api/internetPlanRoutes.php');
                     require base_path('routes/api/paymentMethodRoutes.php');
+                    require base_path('routes/api/installationRoutes.php');
+                    require base_path('routes/api/transferRoutes.php');
                 });
 
             // Contratos: sign-token es público (sin JWT), el resto usa jwt.verify interno

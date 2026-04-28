@@ -488,7 +488,7 @@ public function getLanSegments(
         $ssh->write("enable\n");
         $ssh->write("config\n");
         $ssh->write("interface gpon 0/0\n");
-        $ssh->write("ont confirm $lastPart sn-auth {$oltDataRequest['serial']} omci ont-lineprofile-id 10 ont-srvprofile-id 10 desc {$oltDataRequest['descripcion']}\n");
+        $ssh->write("ont confirm $lastPart sn-auth {$oltDataRequest['serial']} omci ont-lineprofile-id {$oltDataRequest['line_profile_id']} ont-srvprofile-id {$oltDataRequest['srv_profile_id']} desc {$oltDataRequest['descripcion']}\n");
     
         // Leer la salida del registro
         $output = $ssh->read();

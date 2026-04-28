@@ -1,0 +1,112 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+
+class TransferOrder extends Model
+{
+    use HasFactory;
+
+    protected $fillable = [
+        'company_id',
+        'user_data_id',
+        'old_router_id',
+        'new_router_id',
+        'old_address',
+        'new_address',
+        'new_neighborhood',
+        'old_ip',
+        'new_ip',
+        'scheduled_date',
+        'scheduled_time',
+        'status',
+        'payment_status',
+        'transfer_cost',
+        'payment_amount',
+        'payment_reference',
+        'payment_image_url',
+        'technician_1_id',
+        'technician_2_id',
+        'commission_amount',
+        'observations',
+        'technical_notes',
+        'created_by',
+        'assigned_by',
+        'started_at',
+        'finished_at',
+    ];
+
+    protected $casts = [
+        'scheduled_date' => 'date',
+        'scheduled_time' => 'datetime:H:i:s',
+        'started_at' => 'datetime',
+        'finished_at' => 'datetime',
+        'payment_amount' => 'decimal:2',
+        'transfer_cost' => 'decimal:2',
+        'commission_amount' => 'decimal:2',
+    ];
+
+    public function company()
+    {
+        return $this->belongsTo(Company::class);
+    }
+
+    public function client()
+    {
+        return $this->belongsTo(UserData::class, 'user_data_id');
+    }
+
+    public function oldRouter()
+    {
+        return $this->belongsTo(ConectionRouter::class, 'old_router_id');
+    }
+
+    public function newRouter()
+    {
+        return $this->belongsTo(ConectionRouter::class, 'new_router_id');
+    }
+
+    public function technician1()
+    {
+        return $this->belongsTo(Employee::class, 'technician_1_id');
+    }
+
+    public function technician2()
+    {
+        return $this->belongsTo(Employee::class, 'technician_2_id');
+    }
+
+    public function creator()
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function assignee()
+    {
+        return $this->belongsTo(User::class, 'assigned_by');
+    }
+
+    public function getTechniciansAttribute()
+    {
+        $technicians = [];
+        if ($this->technician1) {
+            $technicians[] = $this->technician1;
+        }
+        if ($this->technician2) {
+            $technicians[] = $this->technician2;
+        }
+        return $technicians;
+    }
+
+    public function getCanStartAttribute()
+    {
+        return $this->status === 'confirmed';
+    }
+
+    public function getCanCompleteAttribute()
+    {
+        return $this->status === 'in_progress';
+    }
+}

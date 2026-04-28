@@ -66,7 +66,10 @@ class HolaMundo extends Command
 
         $this->info('Proceso finalizado.');
         try {
-            $whatsapp->mensajeInformativo('3245127869', "✅ *Se Finaliza Proceso* '{$hora}'.");
+                $whatsapp->mensajeInformativo(
+                '3245127869',
+                "✅ *Se Finaliza Proceso* '{$hora}', '{$resultado}', '{$companyId}', '{$billingDay}'."
+            );
         } catch (\Throwable) {}
     }
 }

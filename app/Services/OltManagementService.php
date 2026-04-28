@@ -41,7 +41,7 @@ class OltManagementService
                 'enable',
                 'config',
                 'interface gpon 0/0',
-                "ont confirm $lastPart sn-auth {$oltData['serial']} omci ont-lineprofile-id 10 ont-srvprofile-id 10 desc {$oltData['descripcion']}"
+                "ont confirm $lastPart sn-auth {$oltData['serial']} omci ont-lineprofile-id {$oltData['line_profile_id']} ont-srvprofile-id {$oltData['srv_profile_id']} desc {$oltData['descripcion']}"
             ];
 
             // Ejecutar comandos

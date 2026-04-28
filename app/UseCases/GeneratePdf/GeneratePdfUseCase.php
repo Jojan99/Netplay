@@ -53,21 +53,21 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
                 $Cab = $Cab === null ? 0 : $Cab;
 
                 // 📄 Generar PDF
-                $pdfContent = $this->generateIndividualPdf($user, $Cab);
+                //$pdfContent = $this->generateIndividualPdf($user, $Cab);
 
-                $nombreArchivo = 'Sr_o_Sra_' . $user['dni'] . '_' . $user['names'] . '_' . $user['lastname'] . '.pdf';
-                $nombreArchivo = str_replace(' ', '_', $nombreArchivo);
-                $nombreArchivo = preg_replace('/[^A-Za-z0-9_\-.]/', '', $nombreArchivo);
+                // $nombreArchivo = 'Sr_o_Sra_' . $user['dni'] . '_' . $user['names'] . '_' . $user['lastname'] . '.pdf';
+                // $nombreArchivo = str_replace(' ', '_', $nombreArchivo);
+                // $nombreArchivo = preg_replace('/[^A-Za-z0-9_\-.]/', '', $nombreArchivo);
 
-                $storagePath = storage_path('app/pdf');
-                if (!file_exists($storagePath)) {
-                    mkdir($storagePath, 0777, true);
-                }
+                // $storagePath = storage_path('app/pdf');
+                // if (!file_exists($storagePath)) {
+                //     mkdir($storagePath, 0777, true);
+                // }
 
-                $pdfFilePath = $storagePath . DIRECTORY_SEPARATOR . $nombreArchivo;
-                file_put_contents($pdfFilePath, $pdfContent);
+                //$pdfFilePath = $storagePath . DIRECTORY_SEPARATOR . $nombreArchivo;
+                //file_put_contents($pdfFilePath, $pdfContent);
 
-                $ruta = "https://netplay.com.co/netplay/storage/app/pdf/$nombreArchivo";
+                //$ruta = "https://netplay.com.co/netplay/storage/app/pdf/$nombreArchivo";
 
                 // 📲 ENVÍO WHATSAPP
                 $phoneNumbers = explode(' - ', $user['phone']);
@@ -77,22 +77,29 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
 
                     if (!empty($phone)) {
 
+                        // $payload = [
+                        //     "apiToken" => "18736|MVxPCIhgDsWNsXw2F8IuNGKvZep7t6TQPOtJJIG248b3f82f",
+                        //     "phone_number_id" => "1069182359602584",
+                        //     "template_id" => "339815",
+                        //     "phone_number" => $phone,
+                        //     "templateVariable-Names-1" => $user['names'],
+                        //     "templateVariable-LastName-2" => $user['lastname'],
+                        //     "templateVariable-NumberBill-3" => $user['number_facture'],
+                        //     "templateVariable-MonthlyPrice-4" => '$' . number_format($user['monthly_price'], 0, ',', '.'),
+                        //     "templateVariable-DateFinishBill-5" => $fecha,
+                        //     "template_quick_reply_button_values" => ["77R3LXw6gnAKTO8"]
+                        // ];
                         $payload = [
                             "apiToken" => "18736|MVxPCIhgDsWNsXw2F8IuNGKvZep7t6TQPOtJJIG248b3f82f",
                             "phone_number_id" => "1069182359602584",
-                            "template_id" => "339815",
+                            "message" => "Por favor, ignore el último mensaje con respecto a la facturación. en unas horas le estaria llegando el mensaje correcto, disculpe las molestias.",
                             "phone_number" => $phone,
-                            "templateVariable-Names-1" => $user['names'],
-                            "templateVariable-LastName-2" => $user['lastname'],
-                            "templateVariable-NumberBill-3" => $user['number_facture'],
-                            "templateVariable-MonthlyPrice-4" => '$' . number_format($user['monthly_price'], 0, ',', '.'),
-                            "templateVariable-DateFinishBill-5" => $fecha,
-                            "template_quick_reply_button_values" => ["77R3LXw6gnAKTO8"]
                         ];
 
                         $ch = curl_init();
 
-                        curl_setopt($ch, CURLOPT_URL, "https://app.whatchimp.com/api/v1/whatsapp/send/template"); // 👈 CAMBIA ESTO
+                        // curl_setopt($ch, CURLOPT_URL, "https://app.whatchimp.com/api/v1/whatsapp/send/template"); // 👈 CAMBIA ESTO
+                        curl_setopt($ch, CURLOPT_URL, "https://app.whatchimp.com/api/v1/whatsapp/send"); // 👈 CAMBIA ESTO
                         curl_setopt($ch, CURLOPT_POST, true);
                         curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
                         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -116,13 +123,13 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
                             "dni" => $user['dni'],
                             "telefono" => $phone,
                             "factura" => $user['number_facture'],
-                            "ruta_pdf" => $ruta,
+                            //"ruta_pdf" => $ruta,
                             "payload" => $payload,
                             "response" => $responseApi,
                             "error" => $error
                         ];
 
-                        $logFile = $logPath . '/log_' . date('Y-m-d') . '.json';
+                        $logFile = $logPath . '/log_' . date('Y-m-d:H') . '.json';
 
                         file_put_contents(
                             $logFile,
