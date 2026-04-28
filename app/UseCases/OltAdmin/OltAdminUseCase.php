@@ -470,10 +470,10 @@ class OltAdminUseCase
     }
 
     /**
-     * Genera un número de service-port de 5 dígitos.
-     * Composición: [último dígito VLAN][último dígito día][último dígito año][último dígito hora][último dígito minuto]
-     * Ejemplo: VLAN 107, día 16, año 2026, 14:32 → 7·6·6·4·2 = 76642
-     * Si ya está en uso, incrementa hasta encontrar uno libre (máx 99999).
+     * Genera un número de service-port de 4 dígitos.
+     * Composición: [último dígito VLAN][último dígito día][último dígito año][último dígito hora]
+     * Ejemplo: VLAN 107, día 16, año 2026, hora 14 → 7·6·6·4 = 7664
+     * Si ya está en uso, incrementa hasta encontrar uno libre (máx 9999).
      */
     private function generateServicePort(int $oltId, int $vlan = 0): int
     {
@@ -489,12 +489,11 @@ class OltAdminUseCase
         $d2 = (int) date('j') % 10; // último dígito del día
         $d3 = (int) date('Y') % 10; // último dígito del año
         $d4 = (int) date('G') % 10; // último dígito de la hora (0-23)
-        $d5 = (int) date('i') % 10; // último dígito del minuto
 
-        $candidate = (int) "{$d1}{$d2}{$d3}{$d4}{$d5}";
+        $candidate = (int) "{$d1}{$d2}{$d3}{$d4}";
 
         while (in_array($candidate, $used)) {
-            $candidate = ($candidate % 99999) + 1;
+            $candidate = ($candidate % 9999) + 1;
         }
 
         return $candidate;
