@@ -27,8 +27,6 @@ class InstallationOrder extends Model
         'payment_reference',
         'payment_image_url',
         'payment_method_id',
-        'technician_1_id',
-        'technician_2_id',
         'technician_ids',
         'installation_cost',
         'commission_amount',
@@ -64,16 +62,6 @@ class InstallationOrder extends Model
     public function plan()
     {
         return $this->belongsTo(InternetPlan::class, 'internet_plan_id');
-    }
-
-    public function technician1()
-    {
-        return $this->belongsTo(Employee::class, 'technician_1_id');
-    }
-
-    public function technician2()
-    {
-        return $this->belongsTo(Employee::class, 'technician_2_id');
     }
 
     public function paymentMethod()

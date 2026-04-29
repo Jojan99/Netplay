@@ -19,7 +19,7 @@ class InstallationOrderController extends Controller
         $companyId = getSessionCompanyId();
         
         $query = InstallationOrder::where('company_id', $companyId)
-            ->with(['client', 'plan', 'technician1', 'technician2', 'paymentMethod']);
+            ->with(['client', 'plan', 'paymentMethod']);
         
         if ($request->has('status') && $request->status) {
             $query->where('status', $request->status);
@@ -31,9 +31,7 @@ class InstallationOrderController extends Controller
         
         if ($request->has('technician_id') && $request->technician_id) {
             $query->where(function ($q) use ($request) {
-                $q->where('technician_1_id', $request->technician_id)
-                  ->orWhere('technician_2_id', $request->technician_id)
-                  ->orWhereJsonContains('technician_ids', (int) $request->technician_id);
+                $q->whereJsonContains('technician_ids', (int) $request->technician_id);
             });
         }
         
@@ -105,7 +103,7 @@ class InstallationOrderController extends Controller
     public function show($id)
     {
         $installation = InstallationOrder::where('company_id', getSessionCompanyId())
-            ->with(['client', 'plan', 'technician1', 'technician2', 'paymentMethod', 'creator', 'assignee', 'logs'])
+            ->with(['client', 'plan', 'paymentMethod', 'creator', 'assignee', 'logs'])
             ->findOrFail($id);
         
         return response()->json($installation);
@@ -138,7 +136,7 @@ class InstallationOrderController extends Controller
         
         return response()->json([
             'message' => 'Orden de instalación actualizada',
-            'data' => $installation->fresh(['client', 'plan', 'technician1', 'technician2', 'paymentMethod'])
+            'data' => $installation->fresh(['client', 'plan', 'paymentMethod'])
         ]);
     }
 
@@ -335,7 +333,7 @@ class InstallationOrderController extends Controller
         
         return response()->json([
             'message' => 'Técnicos asignados',
-            'data' => $installation->fresh(['technician1', 'technician2'])
+            'data' => $installation->fresh(['paymentMethod'])
         ]);
     }
 
@@ -344,30 +342,23 @@ class InstallationOrderController extends Controller
         $installation = InstallationOrder::where('company_id', getSessionCompanyId())
             ->findOrFail($id);
         
-        $commission = 0;
+        $technicians = $installation->technicians_list ?? collect([]);
+        $count = $technicians->count();
+        $commissionPerTech = $count > 0 ? $installation->commission_amount / $count : 0;
         
-        if ($installation->technician1) {
-            $commission += $installation->commission_amount / 2;
-        }
-        
-        if ($installation->technician2) {
-            $commission += $installation->commission_amount / 2;
-        }
+        $techData = $technicians->map(function ($tech) use ($commissionPerTech) {
+            return [
+                'id' => $tech->id,
+                'name' => $tech->first_name . ' ' . $tech->last_name,
+                'commission' => $commissionPerTech
+            ];
+        });
         
         return response()->json([
             'installation_id' => $installation->id,
             'commission_amount' => $installation->commission_amount,
-            'technician_1' => $installation->technician1 ? [
-                'id' => $installation->technician1->id,
-                'name' => $installation->technician1->first_name . ' ' . $installation->technician1->last_name,
-                'commission' => $installation->commission_amount / 2
-            ] : null,
-            'technician_2' => $installation->technician2 ? [
-                'id' => $installation->technician2->id,
-                'name' => $installation->technician2->first_name . ' ' . $installation->technician2->last_name,
-                'commission' => $installation->commission_amount / 2
-            ] : null,
-            'total_commission' => $commission
+            'technicians' => $techData,
+            'total_commission' => $installation->commission_amount
         ]);
     }
 
