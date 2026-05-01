@@ -63,6 +63,14 @@ class RouteServiceProvider extends ServiceProvider
                     require base_path('routes/api/contractRoutes.php');
                 });
 
+            // Portal de cliente: rutas públicas (login) y protegidas (jwt.client)
+            // El middleware jwt.client se aplica internamente por grupo en clientRoutes.php
+            Route::middleware('api')
+                ->prefix('api')
+                ->group(function () {
+                    require base_path('routes/api/clientRoutes.php');
+                });
+
             Route::middleware('web')
                 ->group(base_path('routes/web.php'));
         });
