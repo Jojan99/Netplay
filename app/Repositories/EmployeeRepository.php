@@ -17,7 +17,9 @@ class EmployeeRepository implements EmployeeRepositoryInterface
 {
     private function companyId(): int
     {
-        return getSessionCompanyId();
+        $id = getSessionCompanyId();
+        // Si es null, usar el company_id del primer empleado o 1 por defecto
+        return $id ?? \App\Models\Employee::first()?->company_id ?? 1;
     }
 
     private function findEmployee(int $id): Employee
@@ -251,5 +253,38 @@ class EmployeeRepository implements EmployeeRepositoryInterface
             ->where('company_id', $this->companyId())
             ->firstOrFail();
         return $pay->delete();
+    }
+
+    // ── Ubicación en tiempo real ───────────────────────────────────────
+
+    public function updateLocation(int $employeeId, float $latitude, float $longitude): mixed
+    {
+        $emp = $this->findEmployee($employeeId);
+        $emp->latitude           = $latitude;
+        $emp->longitude          = $longitude;
+        $emp->last_location_update = now();
+        $emp->save();
+
+        \App\Events\TechnicianLocationUpdated::dispatch(
+            $emp->id, $emp->first_name, $emp->last_name, $emp->job_title, $latitude, $longitude
+        );
+
+        return $emp->fresh();
+    }
+
+    public function getTechnicianLocations(array $filters = []): mixed
+    {
+        $minutes = (int) ($filters['last_update_minutes'] ?? 30);
+        $q = Employee::where('company_id', $this->companyId())
+            ->whereNotNull('latitude')
+            ->whereNotNull('longitude')
+            ->where('last_location_update', '>=', now()->subMinutes($minutes))
+            ->select('id', 'first_name', 'last_name', 'job_title', 'latitude', 'longitude', 'last_location_update');
+
+        if (!empty($filters['job_title'])) {
+            $q->where('job_title', $filters['job_title']);
+        }
+
+        return $q->get();
     }
 }

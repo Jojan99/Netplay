@@ -5,9 +5,15 @@ use Illuminate\Support\Facades\Route;
 
 Route::prefix('employees')->middleware(['jwt.verify'])->group(function () {
 
-    // Empleados CRUD
+    // Rutas específicas primero (antes de {id})
     Route::get('/',              [EmployeeController::class, 'index']);
     Route::get('/available-staff', [EmployeeController::class, 'availableStaff']);
+    Route::get('/technician-locations', [EmployeeController::class, 'getTechnicianLocations']);
+    
+    // Ubicación — rutas estáticas ANTES de {id} para evitar conflicto
+    Route::put('/my-location',             [EmployeeController::class, 'updateMyLocation']);
+
+    // Empleados CRUD con {id}
     Route::get('/{id}',          [EmployeeController::class, 'show']);
     Route::post('/',   [EmployeeController::class, 'store']);
     Route::put('/{id}', [EmployeeController::class, 'update']);
@@ -39,4 +45,6 @@ Route::prefix('employees')->middleware(['jwt.verify'])->group(function () {
     Route::post('/{id}/payroll',           [EmployeeController::class, 'createPayroll']);
     Route::put('/{id}/payroll/{payId}',    [EmployeeController::class, 'updatePayroll']);
     Route::delete('/{id}/payroll/{payId}', [EmployeeController::class, 'deletePayroll']);
+
+    Route::put('/{id}/location',           [EmployeeController::class, 'updateLocation']);
 });

@@ -651,10 +651,11 @@ class CompanyController extends Controller
      */
     public function getMyModules(): JsonResponse
     {
-        $profileId = getSessionUserProfileId();
+        // Usar JWT directamente en lugar de la sesión para evitar mezcla entre usuarios
+        $user = \Tymon\JWTAuth\Facades\JWTAuth::user();
 
         $modules = \Illuminate\Support\Facades\DB::table('profile_modules')
-            ->where('profile_id', $profileId)
+            ->where('profile_id', $user->profile_id)
             ->where('active', true)
             ->pluck('module');
 
@@ -668,9 +669,16 @@ class CompanyController extends Controller
     public function getProfileModules(int $profileId): JsonResponse
     {
         $all = [
-            'usuario', 'finanzas', 'egresos', 'report-paid', 'history-facture',
-            'created-ticket', 'view-ticket', 'olt-detail', 'olt-admin', 'router',
-            'staff', 'billing-config', 'inventory', 'mikrotik', 'resumen', 'crm', 'whatsapp',
+            'usuario',
+            'created-ticket', 'view-ticket', 'installations',
+            'finanzas', 'egresos', 'report-paid', 'history-facture', 'resumen',
+            'inventory',
+            'mikrotik',
+            'olt-admin', 'olt-detail', 'router',
+            'staff', 'billing-config', 'contratos', 'empleados', 'planes-internet',
+            'crm',
+            'whatsapp',
+            'technician-map',
         ];
 
         $active = \Illuminate\Support\Facades\DB::table('profile_modules')
@@ -694,10 +702,13 @@ class CompanyController extends Controller
      */
     public function updateProfileModules(int $profileId, Request $request): JsonResponse
     {
+        $user = \Tymon\JWTAuth\Facades\JWTAuth::user();
+        $companyId = $user ? $user->company_id : getSessionCompanyId();
+
         // Verificar que el perfil pertenece a la empresa en sesión
         $exists = \Illuminate\Support\Facades\DB::table('profiles')
             ->where('id', $profileId)
-            ->where('company_id', getSessionCompanyId())
+            ->where('company_id', $companyId)
             ->exists();
 
         if (!$exists) {
@@ -707,9 +718,16 @@ class CompanyController extends Controller
         $modules = $request->input('modules', []);
         $now     = now();
         $all = [
-            'usuario', 'finanzas', 'egresos', 'report-paid', 'history-facture',
-            'created-ticket', 'view-ticket', 'olt-detail', 'olt-admin', 'router',
-            'staff', 'billing-config', 'inventory', 'mikrotik', 'resumen', 'crm', 'whatsapp',
+            'usuario',
+            'created-ticket', 'view-ticket', 'installations',
+            'finanzas', 'egresos', 'report-paid', 'history-facture', 'resumen',
+            'inventory',
+            'mikrotik',
+            'olt-admin', 'olt-detail', 'router',
+            'staff', 'billing-config', 'contratos', 'empleados', 'planes-internet',
+            'crm',
+            'whatsapp',
+            'technician-map',
         ];
 
         foreach ($all as $module) {

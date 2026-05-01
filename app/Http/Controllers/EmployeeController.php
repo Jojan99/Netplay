@@ -40,7 +40,7 @@ class EmployeeController extends Controller
         }
     }
 
-    public function show(int $id): JsonResponse
+    public function show($id): JsonResponse
     {
         try {
             return $this->ok($this->repo->getById($id));
@@ -60,7 +60,7 @@ class EmployeeController extends Controller
         }
     }
 
-    public function update(int $id, Request $request): JsonResponse
+    public function update($id, Request $request): JsonResponse
     {
         try {
             return $this->ok($this->repo->update($id, $request->only(
@@ -71,7 +71,7 @@ class EmployeeController extends Controller
         }
     }
 
-    public function destroy(int $id): JsonResponse
+    public function destroy($id): JsonResponse
     {
         try {
             $this->repo->delete($id);
@@ -83,7 +83,7 @@ class EmployeeController extends Controller
 
     // ── Contrato laboral ──────────────────────────────────────────────────────
 
-    public function upsertLaborContract(int $id, Request $request): JsonResponse
+    public function upsertLaborContract($id, Request $request): JsonResponse
     {
         try {
             return $this->ok($this->repo->upsertLaborContract($id, $request->only(
@@ -96,7 +96,7 @@ class EmployeeController extends Controller
 
     // ── Afiliaciones ──────────────────────────────────────────────────────────
 
-    public function upsertAffiliation(int $id, Request $request): JsonResponse
+    public function upsertAffiliation($id, Request $request): JsonResponse
     {
         try {
             return $this->ok($this->repo->upsertAffiliation($id, $request->only(
@@ -109,7 +109,7 @@ class EmployeeController extends Controller
 
     // ── Cuenta bancaria ───────────────────────────────────────────────────────
 
-    public function upsertBankAccount(int $id, Request $request): JsonResponse
+    public function upsertBankAccount($id, Request $request): JsonResponse
     {
         try {
             return $this->ok($this->repo->upsertBankAccount($id, $request->only(
@@ -122,13 +122,13 @@ class EmployeeController extends Controller
 
     // ── Dotaciones ────────────────────────────────────────────────────────────
 
-    public function getEquipment(int $id): JsonResponse
+    public function getEquipment($id): JsonResponse
     {
         try { return $this->ok($this->repo->getEquipment($id)); }
         catch (\Throwable $e) { return $this->err($e->getMessage()); }
     }
 
-    public function createEquipment(int $id, Request $request): JsonResponse
+    public function createEquipment($id, Request $request): JsonResponse
     {
         try {
             return $this->ok($this->repo->createEquipment($id, $request->only(
@@ -137,7 +137,7 @@ class EmployeeController extends Controller
         } catch (\Throwable $e) { return $this->err($e->getMessage()); }
     }
 
-    public function updateEquipment(int $id, int $eqId, Request $request): JsonResponse
+    public function updateEquipment($id, $eqId, Request $request): JsonResponse
     {
         try {
             return $this->ok($this->repo->updateEquipment($id, $eqId, $request->only(
@@ -146,7 +146,7 @@ class EmployeeController extends Controller
         } catch (\Throwable $e) { return $this->err($e->getMessage()); }
     }
 
-    public function deleteEquipment(int $id, int $eqId): JsonResponse
+    public function deleteEquipment($id, $eqId): JsonResponse
     {
         try { $this->repo->deleteEquipment($id, $eqId); return $this->ok(null, 'Dotación eliminada.'); }
         catch (\Throwable $e) { return $this->err($e->getMessage()); }
@@ -154,13 +154,13 @@ class EmployeeController extends Controller
 
     // ── Descargos ─────────────────────────────────────────────────────────────
 
-    public function getDisciplinary(int $id): JsonResponse
+    public function getDisciplinary($id): JsonResponse
     {
         try { return $this->ok($this->repo->getDisciplinary($id)); }
         catch (\Throwable $e) { return $this->err($e->getMessage()); }
     }
 
-    public function createDisciplinary(int $id, Request $request): JsonResponse
+    public function createDisciplinary($id, Request $request): JsonResponse
     {
         try {
             return $this->ok($this->repo->createDisciplinary($id, $request->only(
@@ -169,7 +169,7 @@ class EmployeeController extends Controller
         } catch (\Throwable $e) { return $this->err($e->getMessage()); }
     }
 
-    public function updateDisciplinary(int $id, int $recId, Request $request): JsonResponse
+    public function updateDisciplinary($id, $recId, Request $request): JsonResponse
     {
         try {
             return $this->ok($this->repo->updateDisciplinary($id, $recId, $request->only(
@@ -178,7 +178,7 @@ class EmployeeController extends Controller
         } catch (\Throwable $e) { return $this->err($e->getMessage()); }
     }
 
-    public function deleteDisciplinary(int $id, int $recId): JsonResponse
+    public function deleteDisciplinary($id, $recId): JsonResponse
     {
         try { $this->repo->deleteDisciplinary($id, $recId); return $this->ok(null, 'Descargo eliminado.'); }
         catch (\Throwable $e) { return $this->err($e->getMessage()); }
@@ -186,13 +186,13 @@ class EmployeeController extends Controller
 
     // ── Nómina ────────────────────────────────────────────────────────────────
 
-    public function getPayrolls(int $id): JsonResponse
+    public function getPayrolls($id): JsonResponse
     {
         try { return $this->ok($this->repo->getPayrolls($id)); }
         catch (\Throwable $e) { return $this->err($e->getMessage()); }
     }
 
-    public function createPayroll(int $id, Request $request): JsonResponse
+    public function createPayroll($id, Request $request): JsonResponse
     {
         try {
             return $this->ok($this->repo->createPayroll($id, $request->only(
@@ -201,7 +201,7 @@ class EmployeeController extends Controller
         } catch (\Throwable $e) { return $this->err($e->getMessage()); }
     }
 
-    public function updatePayroll(int $id, int $payId, Request $request): JsonResponse
+    public function updatePayroll($id, $payId, Request $request): JsonResponse
     {
         try {
             return $this->ok($this->repo->updatePayroll($id, $payId, $request->only(
@@ -210,9 +210,84 @@ class EmployeeController extends Controller
         } catch (\Throwable $e) { return $this->err($e->getMessage()); }
     }
 
-    public function deletePayroll(int $id, int $payId): JsonResponse
+    public function deletePayroll($id, $payId): JsonResponse
     {
         try { $this->repo->deletePayroll($id, $payId); return $this->ok(null, 'Nómina eliminada.'); }
         catch (\Throwable $e) { return $this->err($e->getMessage()); }
+    }
+
+    // ── Ubicación en tiempo real ───────────────────────────────────────
+
+    public function updateLocation($id, Request $request): JsonResponse
+    {
+        try {
+            $request->validate([
+                'latitude'  => 'required|numeric|between:-90,90',
+                'longitude' => 'required|numeric|between:-180,180',
+            ]);
+
+            return $this->ok(
+                $this->repo->updateLocation((int) $id, (float) $request->latitude, (float) $request->longitude),
+                'Ubicación actualizada.'
+            );
+        } catch (\Throwable $e) {
+            return $this->err($e->getMessage());
+        }
+    }
+
+    public function getTechnicianLocations(Request $request): JsonResponse
+    {
+        try {
+            return $this->ok($this->repo->getTechnicianLocations(
+                $request->only('job_title', 'last_update_minutes')
+            ));
+        } catch (\Throwable $e) {
+            return $this->err($e->getMessage());
+        }
+    }
+
+    /**
+     * Actualizar ubicación del empleado autenticado vía JWT (PUT /employees/my-location)
+     */
+    public function updateMyLocation(Request $request): JsonResponse
+    {
+        try {
+            $user = \Tymon\JWTAuth\Facades\JWTAuth::user();
+            if (!$user) {
+                return $this->err('No autenticado');
+            }
+
+            $employee = \App\Models\Employee::where('user_id', $user->id)
+                ->where('company_id', $user->company_id)
+                ->first();
+
+            if (!$employee) {
+                return $this->err('No se encontró empleado asociado a este usuario');
+            }
+
+            $request->validate([
+                'latitude'  => 'required|numeric|between:-90,90',
+                'longitude' => 'required|numeric|between:-180,180',
+            ]);
+
+            $lat = (float) $request->input('latitude');
+            $lng = (float) $request->input('longitude');
+
+            $result = $this->repo->updateLocation((int) $employee->id, $lat, $lng);
+
+            // Emitir evento Pusher para actualización en tiempo real
+            event(new \App\Events\TechnicianLocationUpdated(
+                (int) $employee->id,
+                $employee->first_name,
+                $employee->last_name,
+                $employee->job_title,
+                $lat,
+                $lng
+            ));
+
+            return $this->ok($result, 'Ubicación actualizada.');
+        } catch (\Throwable $e) {
+            return $this->err($e->getMessage());
+        }
     }
 }

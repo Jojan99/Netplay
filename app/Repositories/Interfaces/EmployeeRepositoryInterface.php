@@ -30,4 +30,8 @@ interface EmployeeRepositoryInterface
     public function createPayroll(int $employeeId, array $data): mixed;
     public function updatePayroll(int $employeeId, int $payrollId, array $data): mixed;
     public function deletePayroll(int $employeeId, int $payrollId): mixed;
+
+    // Ubicación en tiempo real
+    public function updateLocation(int $employeeId, float $latitude, float $longitude): mixed;
+    public function getTechnicianLocations(array $filters = []): mixed;
 }
