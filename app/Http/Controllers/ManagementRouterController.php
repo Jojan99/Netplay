@@ -21,27 +21,58 @@ use Tymon\JWTAuth\Exceptions\JWTException;
 
 class ManagementRouterController extends Controller
 {
-public function getLanSegments(
+    // ── Router CRUD ───────────────────────────────────────────────────────────
+
+    public function listRouters(MikrotikInfoUseCaseInterface $uc): object
+    {
+        $result = $uc->listRouters();
+        return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
+    }
+
+    public function storeRouter(Request $request, MikrotikInfoUseCaseInterface $uc): object
+    {
+        $data = $request->only(['name', 'host', 'user', 'pass', 'port']);
+        if (empty($data['host']) || empty($data['user']) || empty($data['pass'])) {
+            return standardApiReponse('host, user y pass son requeridos', null, 1, JsonResponse::HTTP_UNPROCESSABLE_ENTITY);
+        }
+        $result = $uc->createRouter($data);
+        return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
+    }
+
+    public function updateRouterById(Request $request, int $id, MikrotikInfoUseCaseInterface $uc): object
+    {
+        $data   = $request->only(['name', 'host', 'user', 'pass', 'port']);
+        $result = $uc->updateRouter($id, $data);
+        return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
+    }
+
+    public function destroyRouter(int $id, MikrotikInfoUseCaseInterface $uc): object
+    {
+        $result = $uc->deleteRouter($id);
+        return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private function routerId(Request $request): ?int
+    {
+        $id = $request->input('router_id');
+        return $id ? (int) $id : null;
+    }
+
+    // ── IP / LAN ──────────────────────────────────────────────────────────────
+
+    public function getLanSegments(
         GetIpAvaliblesUseCaseInterface $getIpAvaliblesUseCaseInterface,
-        GestionUserRequest $gestionUserRequest
+        Request $request
     ): object {
         try {
-            $result = $getIpAvaliblesUseCaseInterface->getLanSegments();
+            $result = $getIpAvaliblesUseCaseInterface->getLanSegments($this->routerId($request));
         } catch (JWTException $e) {
-            return standardApiReponse(
-                'No se pudieron consultar las tasas de cambio: ' . $e->getMessage(),
-                ApiResponseConstants::DATA_NULL,
-                ApiResponseConstants::ERROR,
-                JsonResponse::HTTP_INTERNAL_SERVER_ERROR
-            );
+            return standardApiReponse('Error: ' . $e->getMessage(), ApiResponseConstants::DATA_NULL, ApiResponseConstants::ERROR, JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
         }
 
-        return standardApiReponse(
-            $result['message'],
-            $result['data'],
-            $result['status'],
-            JsonResponse::HTTP_OK
-        );
+        return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }
 
     public function getIpAvalibles(
@@ -49,45 +80,25 @@ public function getLanSegments(
         GestionUserRequest $gestionUserRequest
     ): object {
         try {
-            $result = $getIpAvaliblesUseCaseInterface->GetIpAvalibles($gestionUserRequest);
+            $result = $getIpAvaliblesUseCaseInterface->GetIpAvalibles($gestionUserRequest, $this->routerId($gestionUserRequest));
         } catch (JWTException $e) {
-            return standardApiReponse(
-                'No se pudieron consultar las tasas de cambio: ' . $e->getMessage(),
-                ApiResponseConstants::DATA_NULL,
-                ApiResponseConstants::ERROR,
-                JsonResponse::HTTP_INTERNAL_SERVER_ERROR
-            );
+            return standardApiReponse('Error: ' . $e->getMessage(), ApiResponseConstants::DATA_NULL, ApiResponseConstants::ERROR, JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
         }
 
-        return standardApiReponse(
-            $result['message'],
-            $result['data'],
-            $result['status'],
-            JsonResponse::HTTP_OK
-        );
+        return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }
 
-       public function autorizarServicio(
+    public function autorizarServicio(
         GetIpAvaliblesUseCaseInterface $getIpAvaliblesUseCaseInterface,
         GestionUserRequest $gestionUserRequest
     ): object {
         try {
-            $result = $getIpAvaliblesUseCaseInterface->autorizarServicio($gestionUserRequest);
+            $result = $getIpAvaliblesUseCaseInterface->autorizarServicio($gestionUserRequest, $this->routerId($gestionUserRequest));
         } catch (JWTException $e) {
-            return standardApiReponse(
-                'No se pudieron consultar las tasas de cambio: ' . $e->getMessage(),
-                ApiResponseConstants::DATA_NULL,
-                ApiResponseConstants::ERROR,
-                JsonResponse::HTTP_INTERNAL_SERVER_ERROR
-            );
+            return standardApiReponse('Error: ' . $e->getMessage(), ApiResponseConstants::DATA_NULL, ApiResponseConstants::ERROR, JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
         }
 
-        return standardApiReponse(
-            $result['message'],
-            $result['data'],
-            $result['status'],
-            JsonResponse::HTTP_OK
-        );
+        return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }
 
     public function migrarIp(
@@ -95,7 +106,7 @@ public function getLanSegments(
         GestionUserRequest $gestionUserRequest
     ): object {
         try {
-            $result = $getIpAvaliblesUseCaseInterface->migrarIp($gestionUserRequest);
+            $result = $getIpAvaliblesUseCaseInterface->migrarIp($gestionUserRequest, $this->routerId($gestionUserRequest));
         } catch (JWTException $e) {
             return standardApiReponse(
                 'Error al migrar IP: ' . $e->getMessage(),
@@ -113,15 +124,15 @@ public function getLanSegments(
         );
     }
 
-    public function getRouterConfig(MikrotikInfoUseCaseInterface $uc): object
+    public function getRouterConfig(Request $request, MikrotikInfoUseCaseInterface $uc): object
     {
-        $result = $uc->getRouterConfig();
+        $result = $uc->getRouterConfig($this->routerId($request));
         return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }
 
     public function saveRouterConfig(Request $request, MikrotikInfoUseCaseInterface $uc): object
     {
-        $data = $request->only(['host', 'user', 'pass', 'port']);
+        $data = $request->only(['name', 'host', 'user', 'pass', 'port']);
         if (empty($data['host']) || empty($data['user']) || empty($data['pass'])) {
             return standardApiReponse('host, user y pass son requeridos', null, 1, JsonResponse::HTTP_UNPROCESSABLE_ENTITY);
         }
@@ -129,39 +140,39 @@ public function getLanSegments(
         return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }
 
-    public function getRouterInfo(MikrotikInfoUseCaseInterface $uc): object
+    public function getRouterInfo(Request $request, MikrotikInfoUseCaseInterface $uc): object
     {
-        $result = $uc->getRouterInfo();
+        $result = $uc->getRouterInfo($this->routerId($request));
         return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }
 
-    public function getConnectedClients(MikrotikInfoUseCaseInterface $uc): object
+    public function getConnectedClients(Request $request, MikrotikInfoUseCaseInterface $uc): object
     {
-        $result = $uc->getConnectedClients();
+        $result = $uc->getConnectedClients($this->routerId($request));
         return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }
 
-    public function getQueues(MikrotikInfoUseCaseInterface $uc): object
+    public function getQueues(Request $request, MikrotikInfoUseCaseInterface $uc): object
     {
-        $result = $uc->getQueues();
+        $result = $uc->getQueues($this->routerId($request));
         return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }
 
     public function createQueue(Request $request, MikrotikInfoUseCaseInterface $uc): object
     {
-        $result = $uc->createQueue($request->all());
+        $result = $uc->createQueue($request->except('router_id'), $this->routerId($request));
         return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }
 
     public function updateQueue(Request $request, string $id, MikrotikInfoUseCaseInterface $uc): object
     {
-        $result = $uc->updateQueue($id, $request->all());
+        $result = $uc->updateQueue($id, $request->except('router_id'), $this->routerId($request));
         return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }
 
-    public function deleteQueue(string $id, MikrotikInfoUseCaseInterface $uc): object
+    public function deleteQueue(Request $request, string $id, MikrotikInfoUseCaseInterface $uc): object
     {
-        $result = $uc->deleteQueue($id);
+        $result = $uc->deleteQueue($id, $this->routerId($request));
         return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }
 
@@ -171,7 +182,7 @@ public function getLanSegments(
         if (empty($userIds) || !is_array($userIds)) {
             return standardApiReponse('user_ids requerido', null, 1, JsonResponse::HTTP_UNPROCESSABLE_ENTITY);
         }
-        $result = $uc->suspendBulk($userIds);
+        $result = $uc->suspendBulk($userIds, $this->routerId($request));
         return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }
 

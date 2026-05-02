@@ -369,7 +369,7 @@ class UserController extends Controller
                       ->orWhere('ud.dni', 'like', "%{$q}%")
                       ->orWhere('users.username', 'like', "%{$q}%");
             })
-            ->select('ud.user_id as id', 'ud.names', 'ud.lastname', 'ud.dni', 'ud.phone', 'ud.email')
+            ->select('ud.user_id as id', 'ud.names', 'ud.lastname', 'ud.dni', 'ud.phone', 'ud.email', 'ud.router_id')
             ->limit(10)
             ->get();
 

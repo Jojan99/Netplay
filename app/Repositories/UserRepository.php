@@ -95,6 +95,7 @@ class UserRepository implements UserRepositoryInterface
             'phone'              => $data['phone'],
             'birthday'           => 1,
             'ip_assignment_id'   => $data['ip_assignment_id'],
+            'router_id'          => $data['router_id'] ?? null,
         ]);
     }
 
@@ -210,7 +211,8 @@ class UserRepository implements UserRepositoryInterface
             'cab_facturations.id as id_cab',
             'users.created_at as date_create',
             DB::raw("COALESCE(tabla_ips.ip, '') AS ip"),
-            'users.username as alias'
+            'users.username as alias',
+            'user_data.router_id'
         )
             ->join('user_data', 'users.id', 'user_data.user_id')
             ->join('internet_status', 'user_data.status_internet_id', 'internet_status.id')
@@ -243,6 +245,7 @@ class UserRepository implements UserRepositoryInterface
                 'cab_facturations.group AS data_cortes_id',
                 'internet_status.name AS status_internet',
                 'user_data.created_at AS date_create',
+                'user_data.router_id',
                 DB::raw("COALESCE(tabla_ips.ip, '') AS ip_address"),
                 DB::raw("COALESCE(tabla_ips.ip, '') AS ip")
             )

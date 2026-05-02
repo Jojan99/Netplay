@@ -41,17 +41,32 @@ class UpdateStatusUserUseCase implements UpdateStatusUserUseCaseInterface
         $this->connection = $conectionRouterManagerInterface;
     }
 
-    private function getCompanyRouterId(): string
+    private function resolveToken(?int $routerId = null): string
     {
         $companyId = getSessionCompanyId();
         if (!$companyId) {
             throw new \RuntimeException('Sesión sin empresa asociada');
         }
+
+        if ($routerId) {
+            $router = $this->routerRepositoryInterface->getRouterById($routerId, $companyId);
+            if (!$router) {
+                throw new \RuntimeException('Router no encontrado o no pertenece a esta empresa');
+            }
+            return $router->token;
+        }
+
         $token = $this->routerRepositoryInterface->getTokenByCompany($companyId);
         if (!$token) {
             throw new \RuntimeException('No hay router configurado para esta empresa');
         }
         return $token;
+    }
+
+    /** @deprecated use resolveToken() */
+    private function getCompanyRouterId(): string
+    {
+        return $this->resolveToken();
     }
 
     /**
@@ -83,8 +98,11 @@ public function UpdateStatus(GestionUserRequest $gestionUserRequest): array
             ];
         }
 
-        // ✅ UNA SOLA CONEXIÓN
-        $client = $this->connection->conection($this->getCompanyRouterId());
+        // 🔹 Obtener router_id del usuario
+        $userRouterId = UserData::where('user_id', $gestionUserRequest['id_user'])->value('router_id');
+
+        // ✅ UNA SOLA CONEXIÓN (al router del usuario o al default)
+        $client = $this->connection->conection($this->resolveToken($userRouterId ? (int) $userRouterId : null));
 
         // BUSCAR ARP POR USERNAME
         $query = (new Query('/ip/arp/print'))

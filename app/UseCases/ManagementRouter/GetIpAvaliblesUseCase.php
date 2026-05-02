@@ -41,12 +41,21 @@ class GetIpAvaliblesUseCase implements GetIpAvaliblesUseCaseInterface
         $this->connection = $conectionRouterManagerInterface;
     }
 
-    private function getCompanyRouterId(): string
+    private function resolveToken(?int $routerId = null): string
     {
         $companyId = getSessionCompanyId();
         if (!$companyId) {
             throw new \RuntimeException('Sesión sin empresa asociada');
         }
+
+        if ($routerId) {
+            $router = $this->routerRepositoryInterface->getRouterById($routerId, $companyId);
+            if (!$router) {
+                throw new \RuntimeException('Router no encontrado o no pertenece a esta empresa');
+            }
+            return $router->token;
+        }
+
         $token = $this->routerRepositoryInterface->getTokenByCompany($companyId);
         if (!$token) {
             throw new \RuntimeException('No hay router configurado para esta empresa');
@@ -54,24 +63,25 @@ class GetIpAvaliblesUseCase implements GetIpAvaliblesUseCaseInterface
         return $token;
     }
 
+    /** @deprecated use resolveToken() */
+    private function getCompanyRouterId(): string
+    {
+        return $this->resolveToken();
+    }
+
     /**
      * @return mixed
      * @param GestionUserRequest $gestionUserRequest
      */
-public function GetIpAvalibles(GestionUserRequest $gestionUserRequest): mixed
-{   
+public function GetIpAvalibles(GestionUserRequest $gestionUserRequest, ?int $routerId = null): mixed
+{
     try {
         if (sessionUserHasProfile('USER')) {
-            return [
-                'message' => 'Acción no permitida',
-                'status'  => 1,
-                'data'    => null
-            ];
+            return ['message' => 'Acción no permitida', 'status' => 1, 'data' => null];
         }
 
-
         $vlan = $gestionUserRequest['vlan'];
-        $api = $this->connection->conection($this->getCompanyRouterId());
+        $api  = $this->connection->conection($this->resolveToken($routerId));
 
         /** 1️⃣ RED DE LA VLAN */
         $query = new Query('/ip/address/print');
@@ -138,7 +148,7 @@ public function GetIpAvalibles(GestionUserRequest $gestionUserRequest): mixed
 
 
 
-public function getLanSegments(): mixed
+public function getLanSegments(?int $routerId = null): mixed
 {
     try {
 
@@ -156,7 +166,7 @@ public function getLanSegments(): mixed
 
         for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
             try {
-                $api = $this->connection->conection($this->getCompanyRouterId());
+                $api = $this->connection->conection($this->resolveToken($routerId));
                 $query = new Query('/ip/address/print');
                 $query->add('=.proplist=address,interface');
                 $rows = $api->query($query)->read();
@@ -219,14 +229,14 @@ public function getLanSegments(): mixed
 }
 
 
-public function autorizarServicio(GestionUserRequest $request): array
+public function autorizarServicio(GestionUserRequest $request, ?int $routerId = null): array
 {
     try {
 
         $dataUser = $this->userRepositoryInterface
             ->getUserById($request['service_id']);
 
-        $api = $this->connection->conection($this->getCompanyRouterId());
+        $api = $this->connection->conection($this->resolveToken($routerId));
 
         // 🔹 Buscar ARP existente
         $query = new Query('/ip/arp/print');
@@ -281,24 +291,10 @@ public function autorizarServicio(GestionUserRequest $request): array
 
 
 
-public function registerIpInArp(
-    string $ip,
-    string $mac,
-    string $vlan,
-    string $comment
-): bool {
+public function registerIpInArp(string $ip, string $mac, string $vlan, string $comment, ?int $routerId = null): bool
+{
     try {
-
-        \Log::info("Registering IP", ["ip" => $ip]);
-        error_log($mac);
-        error_log($vlan);
-        error_log($comment);
-
-        $api = $this->connection->conection($this->getCompanyRouterId());
-
-        \Log::info("Rapi", ["api" => $api]);
-        \Log::info("this->getCompanyRouterId()", ["getCompanyRouterId" => $this->getCompanyRouterId()]);
-
+        $api = $this->connection->conection($this->resolveToken($routerId));
 
         /**
          * 🔹 VALIDAR SI YA EXISTE EN ARP
@@ -351,7 +347,7 @@ public function registerIpInArp(
 }
 
 
-    public function migrarIp(GestionUserRequest $request): array
+    public function migrarIp(GestionUserRequest $request, ?int $routerId = null): array
     {
         try {
             $userId = (int) $request['service_id'];
@@ -368,7 +364,7 @@ public function registerIpInArp(
             }
 
             $dni = $dataUser['dni'];
-            $api = $this->connection->conection($this->getCompanyRouterId());
+            $api = $this->connection->conection($this->resolveToken($routerId));
 
             // 1️⃣ Eliminar ARP anterior del cliente (busca por comment = DNI)
             $query = new Query('/ip/arp/print');

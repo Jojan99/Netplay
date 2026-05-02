@@ -9,7 +9,13 @@ use Illuminate\Support\Facades\Route;
 
 
 Route::prefix('management')->group(function () {
-    // Mikrotik info & management
+    // ── Multi-Mikrotik router CRUD ──────────────────────────────────────────
+    Route::get('routers',            [ManagementRouterController::class, 'listRouters']);
+    Route::post('routers',           [ManagementRouterController::class, 'storeRouter']);
+    Route::put('routers/{id}',       [ManagementRouterController::class, 'updateRouterById']);
+    Route::delete('routers/{id}',    [ManagementRouterController::class, 'destroyRouter']);
+
+    // ── Mikrotik info & management (aceptan ?router_id=N) ──────────────────
     Route::get('router-config',      [ManagementRouterController::class, 'getRouterConfig']);
     Route::post('router-config',     [ManagementRouterController::class, 'saveRouterConfig']);
     Route::get('router-info',        [ManagementRouterController::class, 'getRouterInfo']);

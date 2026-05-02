@@ -71,6 +71,15 @@ class RouteServiceProvider extends ServiceProvider
                     require base_path('routes/api/clientRoutes.php');
                 });
 
+            // Landing page pública: GET /api/landing/{slug} sin JWT.
+            // Las rutas /api/landing-admin/* tienen jwt.verify via el grupo principal arriba
+            // y role:admin aplicado internamente en landingRoutes.php.
+            Route::middleware('api')
+                ->prefix('api')
+                ->group(function () {
+                    require base_path('routes/api/landingRoutes.php');
+                });
+
             Route::middleware('web')
                 ->group(base_path('routes/web.php'));
         });
