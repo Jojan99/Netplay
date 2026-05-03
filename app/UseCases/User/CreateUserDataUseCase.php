@@ -124,6 +124,7 @@ class CreateUserDataUseCase implements CreateUserDataUseCaseInterface
         } catch (QueryException $err) {
             return ['message' => 'An error occurred while creating the user: ' . $err->getMessage(), 'data' => ApiResponseConstants::DATA_NULL, 'status' => 1];
         }
+            $ipReal = $data['ip_assignment_id'] ?? 'N/A';
                 try {
             NotificationRouterService::dispatch(
                 getSessionCompanyId(),
@@ -133,7 +134,7 @@ class CreateUserDataUseCase implements CreateUserDataUseCaseInterface
                 "Cédula: *{$data['dni']}*\n" .
                 "Teléfono: *{$data['phone']}*\n" .
                 "Dirección: *{$data['address']}*\n" .
-                "IP: *{$data['ip_assignment_id']}*\n" .
+                "IP: *{$ipReal}*\n" .
                 "VLAN: *{$data['vlan']}*\n"
             );
         } catch (\Throwable $e) {

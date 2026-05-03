@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Client\ClientAuthController;
 use App\Http\Controllers\Client\ClientInvoiceController;
+use App\Http\Controllers\Client\ClientPaymentController;
 use App\Http\Controllers\Client\ClientTicketController;
 use App\Http\Controllers\Client\ClientProfileController;
 use Illuminate\Support\Facades\Route;
@@ -44,6 +45,11 @@ Route::prefix('client')->middleware(['jwt.client'])->group(function () {
     Route::get('invoices/{id}',                    [ClientInvoiceController::class, 'show']);
     Route::get('invoices/{id}/pdf-url',            [ClientInvoiceController::class, 'pdfUrl']);
     Route::post('invoices/{id}/send-whatsapp',     [ClientInvoiceController::class, 'sendWhatsapp']);
+
+    // Pago online — iniciar pago (multi-factura, abono parcial)
+    Route::post('payment/initiate',    [ClientPaymentController::class, 'initiatePayment']);
+    // Pago online — resultado (retorno de pasarela)
+    Route::get('payment/result/{ref}', [ClientPaymentController::class, 'paymentResult']);
 
     // Reportes de falla
     Route::get('tickets',      [ClientTicketController::class, 'index']);

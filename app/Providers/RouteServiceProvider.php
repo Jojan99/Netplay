@@ -55,6 +55,13 @@ class RouteServiceProvider extends ServiceProvider
                     require base_path('routes/api/transferRoutes.php');
                 });
 
+            // Pasarela de pago: config (jwt.verify+role) + webhooks + checkout ePayco (públicos)
+            Route::middleware('api')
+                ->prefix('api')
+                ->group(function () {
+                    require base_path('routes/api/paymentGatewayRoutes.php');
+                });
+
             // Contratos: sign-token es público (sin JWT), el resto usa jwt.verify interno
             Route::middleware('api')
                 ->prefix('api')

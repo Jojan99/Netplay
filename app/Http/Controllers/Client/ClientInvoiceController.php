@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Client;
 
 use App\Constants\ApiResponseConstants;
 use App\Http\Controllers\Controller;
+use App\Models\Company;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -44,7 +45,6 @@ class ClientInvoiceController extends Controller
             ->orderByDesc('date_facturation')
             ->get()
             ->map(function ($invoice) use ($today) {
-                // Calcular estado: paid → pagada | vencida si fecha < hoy | pendiente
                 if ($invoice->paid) {
                     $invoice->invoice_status = 'paid';
                 } elseif ($invoice->date_facturation < $today) {
@@ -52,8 +52,29 @@ class ClientInvoiceController extends Controller
                 } else {
                     $invoice->invoice_status = 'pending';
                 }
+                $invoice->payment_gateway = null;
+                $invoice->payment_sandbox = null;
                 return $invoice;
             });
+
+        // Enriquecer con info de pago online (una sola query para evitar N+1)
+        $invoiceIds = $invoices->pluck('id')->all();
+        if (!empty($invoiceIds)) {
+            $txMap = [];
+            DB::table('online_payment_transactions')
+                ->whereIn('det_facturation_id', $invoiceIds)
+                ->where('status', 'approved')
+                ->get(['det_facturation_id', 'gateway', 'sandbox'])
+                ->each(function ($tx) use (&$txMap) { $txMap[$tx->det_facturation_id] = $tx; });
+
+            $invoices = $invoices->map(function ($inv) use ($txMap) {
+                if (isset($txMap[$inv->id])) {
+                    $inv->payment_gateway = $txMap[$inv->id]->gateway;
+                    $inv->payment_sandbox = (bool) $txMap[$inv->id]->sandbox;
+                }
+                return $inv;
+            });
+        }
 
         // Resumen de estado
         $summary = [
@@ -63,11 +84,16 @@ class ClientInvoiceController extends Controller
             'overdue' => $invoices->where('invoice_status', 'overdue')->count(),
         ];
 
+        // Indicar si el pago en línea está disponible para esta empresa
+        $company = Company::find($user->company_id);
+        $paymentAvailable = $company && $company->pg_active && $company->pg_gateway;
+
         return response()->json([
             'message' => 'Facturas obtenidas correctamente',
             'data'    => [
-                'summary'  => $summary,
-                'invoices' => $invoices->values(),
+                'summary'           => $summary,
+                'invoices'          => $invoices->values(),
+                'payment_available' => (bool) $paymentAvailable,
             ],
             'status' => ApiResponseConstants::SUCCESS,
         ], JsonResponse::HTTP_OK);
@@ -104,6 +130,26 @@ class ClientInvoiceController extends Controller
             $invoice->invoice_status = 'overdue';
         } else {
             $invoice->invoice_status = 'pending';
+        }
+
+        // Info de pago online si existe
+        $invoice->payment_gateway       = null;
+        $invoice->payment_reference     = null;
+        $invoice->payment_sandbox       = null;
+        $invoice->payment_gateway_tx_id = null;
+        $invoice->payment_date          = null;
+
+        $onlineTx = DB::table('online_payment_transactions')
+            ->where('det_facturation_id', $id)
+            ->where('status', 'approved')
+            ->first(['gateway', 'reference', 'sandbox', 'paid_at', 'gateway_transaction_id']);
+
+        if ($onlineTx) {
+            $invoice->payment_gateway       = $onlineTx->gateway;
+            $invoice->payment_reference     = $onlineTx->reference;
+            $invoice->payment_sandbox       = (bool) $onlineTx->sandbox;
+            $invoice->payment_gateway_tx_id = $onlineTx->gateway_transaction_id;
+            $invoice->payment_date          = $onlineTx->paid_at;
         }
 
         return response()->json([
