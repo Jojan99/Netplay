@@ -34,7 +34,7 @@ class GeneratePayPdfByIdFacturesUseCase implements GeneratePayPdfByIdFacturesUse
   public function generatePayPdfByIdFacture($userFacture,$extraParam): mixed
   {
 
-    if(getSessionUserProfileId() == 2){
+    if(sessionUserHasProfile('CONTADOR', 'ADMIN')){
       try {
         
         // Obtener los datos del usuario y generar el PDF

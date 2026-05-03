@@ -16,6 +16,7 @@ class Egresses extends Model
         'category',
         'value',
         'user_id',
+        'payment_method_id',
         'created_at',
         'updated_at',
     ];

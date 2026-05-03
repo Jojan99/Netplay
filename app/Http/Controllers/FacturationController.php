@@ -18,6 +18,8 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use App\Models\PaymentCommitment;
 use App\Repositories\Interfaces\FacturationRepositoryInterface;
+use App\Services\AutoSuspendService;
+use Illuminate\Support\Facades\DB;
 use App\UseCases\Facturation\Interfaces\CreatePaidFacturationUseCaseInterface;
 use App\UseCases\Facturation\Interfaces\GetDatePayFactureUseCaseInterface;
 
@@ -240,16 +242,56 @@ class FacturationController extends Controller
         return standardApiReponse('OK', $data, 0, JsonResponse::HTTP_OK);
     }
 
-    public function payInvoice(Request $request, int $detId, FacturationRepositoryInterface $repo): object
+    public function payInvoice(Request $request, int $detId, FacturationRepositoryInterface $repo, AutoSuspendService $autoSuspend): object
     {
-        $ok = $repo->payInvoice($detId, $request->input('client_name', ''));
+        $ok = $repo->payInvoice(
+            $detId,
+            $request->input('client_name', ''),
+            $request->input('payment_method_id') ? (int) $request->input('payment_method_id') : null
+        );
+
+        if ($ok) {
+            $userId = DB::table('det_facturations as df')
+                ->join('cab_facturations as cb', 'cb.id', '=', 'df.cab_id')
+                ->where('df.id', $detId)
+                ->value('cb.user_id');
+            if ($userId) {
+                $autoSuspend->reactivateIfClear($userId, getSessionCompanyId());
+            }
+        }
+
         return standardApiReponse($ok ? 'Pago registrado' : 'Factura no encontrada', null, $ok ? 0 : 1, JsonResponse::HTTP_OK);
     }
 
     public function abonarInvoice(Request $request, int $detId, FacturationRepositoryInterface $repo): object
     {
-        $ok = $repo->abonarInvoice($detId, (float) $request->input('amount', 0), $request->input('client_name', ''));
+        $ok = $repo->abonarInvoice(
+            $detId,
+            (float) $request->input('amount', 0),
+            $request->input('client_name', ''),
+            $request->input('payment_method_id') ? (int) $request->input('payment_method_id') : null
+        );
         return standardApiReponse($ok ? 'Abono registrado' : 'Factura no encontrada', null, $ok ? 0 : 1, JsonResponse::HTTP_OK);
+    }
+
+    public function liquidateBulk(Request $request, FacturationRepositoryInterface $repo, AutoSuspendService $autoSuspend): object
+    {
+        $detIds          = (array) $request->input('det_ids', []);
+        $clientName      = $request->input('client_name', '');
+        $userId          = $request->input('user_id');
+        $paymentMethodId = $request->input('payment_method_id') ? (int) $request->input('payment_method_id') : null;
+
+        if (empty($detIds)) {
+            return standardApiReponse('Selecciona al menos una factura', null, 1, JsonResponse::HTTP_OK);
+        }
+
+        $paid = $repo->liquidateBulk($detIds, $clientName, $paymentMethodId);
+
+        if ($paid > 0 && $userId) {
+            $autoSuspend->reactivateIfClear($userId, getSessionCompanyId());
+        }
+
+        return standardApiReponse("{$paid} factura(s) liquidada(s)", ['paid' => $paid], 0, JsonResponse::HTTP_OK);
     }
 
     public function updateInvoiceNew(Request $request, int $detId, FacturationRepositoryInterface $repo): object

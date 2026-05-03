@@ -37,7 +37,7 @@ class GeneratePdfTicketByIdUseCase implements GeneratePdfTicketByIdUseCaseInterf
   public function generatePdfTicketById($id): mixed
   {
     error_log($id);
-    if(getSessionUserProfileId() == 2){
+    if(sessionUserHasProfile('CONTADOR', 'ADMIN')){
       try {
         // Obtener los datos del usuario y generar el PDF
         $generatePdf = $this->generatePdfRepository->getTicketInProgressAll($id);

@@ -273,10 +273,12 @@ class UserController extends Controller
      * @return object
      */
     public function GetTotalClientRegisterMonth(
+        Request $request,
         GetTotalClientRegisterMonthUseCaseInterface $getTotalClientRegisterMonthUseCaseInterface
     ): object {
         try {
-            $result = $getTotalClientRegisterMonthUseCaseInterface->GetTotalClientRegisterMonth();
+            $year = (int) $request->query('year', (int) now()->year);
+            $result = $getTotalClientRegisterMonthUseCaseInterface->GetTotalClientRegisterMonth($year);
         } catch (JWTException $e) {
             // Respuesta en caso de excepción
             return standardApiReponse(
@@ -303,10 +305,12 @@ class UserController extends Controller
      * @return object
      */
     public function getTotalPriceMonth(
+        Request $request,
         GetTotalPriceMonthUseCaseInterface $getTotalPriceMonthUseCaseInterface
     ): object {
         try {
-            $result = $getTotalPriceMonthUseCaseInterface->getTotalPriceMonth();
+            $year = (int) $request->query('year', (int) now()->year);
+            $result = $getTotalPriceMonthUseCaseInterface->getTotalPriceMonth($year);
         } catch (JWTException $e) {
             // Respuesta en caso de excepción
             return standardApiReponse(
@@ -351,6 +355,25 @@ class UserController extends Controller
             $result['status'],
             JsonResponse::HTTP_OK
         );
+    }
+
+    public function search(Request $request): object
+    {
+        $q = $request->query('q', '');
+        $results = DB::table('user_data as ud')
+            ->join('users', 'users.id', '=', 'ud.user_id')
+            ->where('users.company_id', getSessionCompanyId())
+            ->where(function ($query) use ($q) {
+                $query->where('ud.names', 'like', "%{$q}%")
+                      ->orWhere('ud.lastname', 'like', "%{$q}%")
+                      ->orWhere('ud.dni', 'like', "%{$q}%")
+                      ->orWhere('users.username', 'like', "%{$q}%");
+            })
+            ->select('ud.user_id as id', 'ud.names', 'ud.lastname', 'ud.dni', 'ud.phone', 'ud.email', 'ud.router_id')
+            ->limit(10)
+            ->get();
+
+        return standardApiReponse('ok', $results, 0, JsonResponse::HTTP_OK);
     }
 
     public function getAuditLog(int $user_id): object

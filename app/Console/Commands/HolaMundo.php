@@ -59,14 +59,17 @@ class HolaMundo extends Command
         $GeneratePdfRepository        = new GeneratePdfRepository();
         $GeneratePdfUseCase           = new GeneratePdfUseCase($GeneratePdfRepository, $FacturationRepository);
 
-        $CreateDetFacturationUseCase->createProcesoDetFacturation(
-            $CreateFacturationRequest, $resultado, $companyId, $billingDay, $billingMonth, $billingYear
-        );
+        // $CreateDetFacturationUseCase->createProcesoDetFacturation(
+        //     $CreateFacturationRequest, $resultado, $companyId, $billingDay, $billingMonth, $billingYear
+        // );
         $GeneratePdfUseCase->generatePdf($resultado, $companyId, $billingDay);
 
         $this->info('Proceso finalizado.');
         try {
-            $whatsapp->mensajeInformativo('3245127869', "✅ *Se Finaliza Proceso* '{$hora}'.");
+                $whatsapp->mensajeInformativo(
+                '3245127869',
+                "✅ *Se Finaliza Proceso* '{$hora}', '{$resultado}', '{$companyId}', '{$billingDay}'."
+            );
         } catch (\Throwable) {}
     }
 }

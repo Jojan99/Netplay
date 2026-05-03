@@ -9,22 +9,25 @@ class InternetPlan extends Model
 {
     use HasFactory;
     protected $fillable = [
-        'id',
         'company_id',
         'plan_name',
         'download_speed',
         'upload_speed',
         'monthly_price',
         'description',
+        'type',
+        'active',
     ];
 
-    /**
-     * The attributes that should be cast.
-     *
-     * @var array<string, string>
-     */
     protected $casts = [
-        'created_at' => 'datetime:Y-m-d H:i:s',
-        'updated_at' => 'datetime:Y-m-d H:i:s',
+        'active'       => 'boolean',
+        'monthly_price'=> 'float',
+        'created_at'   => 'datetime:Y-m-d H:i:s',
+        'updated_at'   => 'datetime:Y-m-d H:i:s',
     ];
+
+    public function clients()
+    {
+        return $this->hasMany(UserData::class, 'internet_plans_id');
+    }
 }

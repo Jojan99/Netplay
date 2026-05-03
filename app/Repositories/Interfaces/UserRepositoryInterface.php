@@ -121,4 +121,9 @@ interface UserRepositoryInterface{
      * Retorna todos los usuarios de staff de la empresa en sesión.
      */
     public function getStaff(): mixed;
+
+    /**
+     * Crea el registro user_data para un usuario de staff.
+     */
+    public function createStaffUserData(mixed $data, int $userId): mixed;
 }

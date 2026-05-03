@@ -5,6 +5,7 @@ namespace App\Http\Requests\Company;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Http\Exceptions\HttpResponseException;
+use Illuminate\Validation\Rule;
 
 class CreateStaffRequest extends FormRequest
 {
@@ -21,7 +22,10 @@ class CreateStaffRequest extends FormRequest
             'email'      => 'required|email|max:255',
             'username'   => 'required|string|max:100',
             'password'   => 'required|string|min:6',
-            'profile_id' => 'required|integer|in:2,3,4',
+            'profile_id' => [
+                'required', 'integer',
+                Rule::exists('profiles', 'id')->where('company_id', getSessionCompanyId()),
+            ],
         ];
     }
 

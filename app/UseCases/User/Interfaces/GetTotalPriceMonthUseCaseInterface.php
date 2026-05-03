@@ -15,5 +15,5 @@ interface GetTotalPriceMonthUseCaseInterface
     /**
      * @return mixed
      */
-    public function getTotalPriceMonth(): mixed;
+    public function getTotalPriceMonth(int $year): mixed;
 }

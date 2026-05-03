@@ -18,6 +18,7 @@ class UserData extends Authenticatable
      */
     protected $fillable = [
         'user_id',
+        'company_id',
         'gender_id',
         'country_id',
         'dni_id',
@@ -31,6 +32,7 @@ class UserData extends Authenticatable
         'email',
         'phone',
         'birthday',
+        'role_id',
         'active',
         'status',
         'whatsapp_enabled',

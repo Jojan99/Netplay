@@ -37,12 +37,17 @@ class FacturationRepository implements FacturationRepositoryInterface
             ->where('cab_facturations.group', $periodo)
             ->where('user_data.active', 1)
             ->where('users.company_id', $companyId)
-            ->where('users.profile_id', \App\Constants\ProfileConstants::USER)
+            ->whereNotIn('users.profile_id', function ($q) use ($companyId) {
+                $q->select('id')->from('profiles')
+                    ->where('company_id', $companyId)
+                    ->whereIn('name', ['ADMIN', 'TECNICO', 'CONTADOR']);
+            })
             ->get();
     }
 
     public function getuserFactureCreate($idUser): mixed
     {
+        $companyId = getSessionCompanyId();
         return CabFacturation::select('internet_plans.monthly_price','cab_facturations.id',
             'cab_facturations.user_id','cab_facturations.date_init_facturation','cab_facturations.created_at')
             ->join('user_data', 'user_data.user_id', '=', 'cab_facturations.user_id')
@@ -50,8 +55,12 @@ class FacturationRepository implements FacturationRepositoryInterface
             ->join('internet_plans', 'internet_plans.id', '=', 'user_data.internet_plans_id')
             ->where('user_data.user_id', $idUser)
             ->where('user_data.active', 1)
-            ->where('users.company_id', getSessionCompanyId())
-            ->where('users.profile_id', \App\Constants\ProfileConstants::USER)
+            ->where('users.company_id', $companyId)
+            ->whereNotIn('users.profile_id', function ($q) use ($companyId) {
+                $q->select('id')->from('profiles')
+                    ->where('company_id', $companyId)
+                    ->whereIn('name', ['ADMIN', 'TECNICO', 'CONTADOR']);
+            })
             ->get();
     }
 
@@ -303,7 +312,8 @@ class FacturationRepository implements FacturationRepositoryInterface
         ->orderByDesc('det_facturations.date_facturation')
         ->get();
 
-        $logs = PaymentLog::where('cab_id', $cabId)
+        $logs = PaymentLog::with('paymentMethod:id,name')
+            ->where('cab_id', $cabId)
             ->where('company_id', $companyId)
             ->orderByDesc('created_at')
             ->get();
@@ -314,7 +324,7 @@ class FacturationRepository implements FacturationRepositoryInterface
     /**
      * Pay an invoice fully and log the event.
      */
-    public function payInvoice(int $detId, string $clientName): bool
+    public function payInvoice(int $detId, string $clientName, ?int $paymentMethodId = null): bool
     {
         $det = DetFacturation::where('det_facturations.id', $detId)
             ->join('cab_facturations', 'cab_facturations.id', '=', 'det_facturations.cab_id')
@@ -339,22 +349,59 @@ class FacturationRepository implements FacturationRepositoryInterface
             'recorded_by_user_id' => getSessionUserId(),
             'amount'              => $det->price_total - $det->price_discount,
             'type'                => 'pago_completo',
+            'payment_method_id'   => $paymentMethodId,
         ]);
-
-        $this->notifyPayment($det->cab_id, $clientName, $det->number_facture, $det->price_total - $det->price_discount, 'completo');
-        NotificationRouterService::dispatch(
-            getSessionCompanyId(),
-            'payment',
-            "💰 *Pago completo registrado*\n\nCliente: *{$clientName}*\nFactura: *{$det->number_facture}*\nValor: *$" . number_format($det->price_total - $det->price_discount, 0, ',', '.') . " COP*"
-        );
 
         return true;
     }
 
     /**
+     * Pay multiple invoices at once (bulk liquidation).
+     * Returns number of invoices paid.
+     */
+    public function liquidateBulk(array $detIds, string $clientName, ?int $paymentMethodId = null): int
+    {
+        $companyId = getSessionCompanyId();
+        $paid = 0;
+
+        foreach ($detIds as $detId) {
+            $det = DetFacturation::where('det_facturations.id', $detId)
+                ->join('cab_facturations', 'cab_facturations.id', '=', 'det_facturations.cab_id')
+                ->where('cab_facturations.company_id', $companyId)
+                ->where('det_facturations.paid', 0)
+                ->select('det_facturations.*')
+                ->first();
+
+            if (!$det) continue;
+
+            $det->update([
+                'paid'            => 1,
+                'paid_at'         => now(),
+                'paid_by_user_id' => getSessionUserId(),
+            ]);
+
+            PaymentLog::create([
+                'company_id'          => $companyId,
+                'det_facturation_id'  => $detId,
+                'cab_id'              => $det->cab_id,
+                'number_facture'      => $det->number_facture,
+                'client_name'         => $clientName,
+                'recorded_by_user_id' => getSessionUserId(),
+                'amount'              => $det->price_total - $det->price_discount,
+                'type'                => 'pago_completo',
+                'payment_method_id'   => $paymentMethodId,
+            ]);
+
+            $paid++;
+        }
+
+        return $paid;
+    }
+
+    /**
      * Record a partial payment and log the event.
      */
-    public function abonarInvoice(int $detId, float $amount, string $clientName): bool
+    public function abonarInvoice(int $detId, float $amount, string $clientName, ?int $paymentMethodId = null): bool
     {
         $det = DetFacturation::where('det_facturations.id', $detId)
             ->join('cab_facturations', 'cab_facturations.id', '=', 'det_facturations.cab_id')
@@ -384,9 +431,10 @@ class FacturationRepository implements FacturationRepositoryInterface
             'recorded_by_user_id' => getSessionUserId(),
             'amount'              => $amount,
             'type'                => $isPaid ? 'pago_completo' : 'abono',
+            'payment_method_id'   => $paymentMethodId,
         ]);
 
-        $this->notifyPayment($det->cab_id, $clientName, $det->number_facture, $amount, $isPaid ? 'completo' : 'abono');
+       // $this->notifyPayment($det->cab_id, $clientName, $det->number_facture, $amount, $isPaid ? 'completo' : 'abono');
         $typeLabel = $isPaid ? 'Pago completo' : 'Abono';
         NotificationRouterService::dispatch(
             getSessionCompanyId(),
@@ -496,6 +544,7 @@ class FacturationRepository implements FacturationRepositoryInterface
 
         $base = DB::table('payment_logs as pl')
             ->leftJoin('users as rec', 'rec.id', '=', 'pl.recorded_by_user_id')
+            ->leftJoin('payment_methods as pm', 'pm.id', '=', 'pl.payment_method_id')
             ->where('pl.company_id', $companyId);
 
         if ($search) {
@@ -513,6 +562,7 @@ class FacturationRepository implements FacturationRepositoryInterface
             ->select([
                 'pl.*',
                 DB::raw("COALESCE(rec.username,'—') as recorded_by_name"),
+                DB::raw("pm.name as payment_method_name"),
             ])
             ->orderByDesc('pl.created_at')
             ->offset(($page - 1) * $perPage)

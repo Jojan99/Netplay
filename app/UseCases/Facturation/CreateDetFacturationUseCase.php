@@ -41,7 +41,7 @@ class CreateDetFacturationUseCase implements CreateDetFacturationUseCaseInterfac
     public function createDetFacturation(CreateFacturationRequest $data): mixed
     {
         try {
-            if (getSessionUserProfileId() == 2) {
+            if (sessionUserHasProfile('CONTADOR', 'ADMIN')) {
                 // Obtener el día del mes de la fecha actual
 
 

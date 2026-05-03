@@ -9,8 +9,9 @@ use App\Repositories\Interfaces\FacturationRepositoryInterface;
 use App\UseCases\User\Interfaces\CreateUserDataUseCaseInterface;
 use Carbon\Carbon;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\Log;
 use App\Repositories\Interfaces\InternetInfoRepositoryInterface;
-use App\Constants\ProfileConstants;
+use Illuminate\Support\Facades\DB;
 use App\UseCases\ManagementRouter\Interfaces\GetIpAvaliblesUseCaseInterface;
 use App\Services\NotificationRouterService;
 
@@ -52,19 +53,42 @@ class CreateUserDataUseCase implements CreateUserDataUseCaseInterface
         try {
 
 
-            if(getSessionUserProfileId() == ProfileConstants::ADMIN){
+            $profileName = strtoupper(
+                DB::table('profiles')->where('id', getSessionUserProfileId())->value('name') ?? ''
+            );
+
+            if ($profileName === 'ADMIN') {
                 if ($this->userRepository->validateUserEmail($data['email'])) return ['message' => 'The email already exists', 'data' => 4, 'status' => 1];
                 if ($this->userRepository->validateUserPhone($data['phone']))  return ['message' => 'The phone already exists', 'data' => 5, 'status' => 1];
                 if ($this->userRepository->validateUserDni($data['dni'])) return ['message' => 'ID already exists', 'data' => 6, 'status' => 1];
                 
+                    \Log::info('REGISTERING USER IN MIKROTIK', [
+                        'ip' => $data['ip_assignment_id'] ?? 'N/A',
+                        'vlan' => $data['vlan'] ?? 'N/A',
+                        'dni' => $data['dni'] ?? 'N/A'
+                    ]);
+
                     $pasa = $this->getIpAvaliblesUseCaseInterface->registerIpInArp(
                         ip: $data['ip_assignment_id'],
                         mac: '',
-                        vlan: $data['countryId'],
+                        vlan: $data['vlan'] ?? '',
                         comment: $data['dni']
                     );
 
-                    if($pasa){
+                    if(!$pasa){
+                        \Log::error('FAILED TO REGISTER IP IN MIKROTIK', [
+                            'ip' => $data['ip_assignment_id'],
+                            'vlan' => $data['vlan'] ?? '',
+                            'dni' => $data['dni']
+                        ]);
+                        return ['message' => 'Error registrando usuario en Mikrotik. Contacte al administrador.', 'status' => 1, 'data' => 'MIKROTIK_SYNC_ERROR'];
+                    }
+
+                    \Log::info('USER MIKROTIK REGISTRATION SUCCESSFUL', [
+                        'ip' => $data['ip_assignment_id'],
+                        'dni' => $data['dni']
+                    ]);
+
                 $user = $this->userRepository->createUser($data);
                 if ($user) {
                     $data['userId'] = $user['id'];
@@ -89,9 +113,6 @@ class CreateUserDataUseCase implements CreateUserDataUseCaseInterface
                 } else {
                     return ['message' => 'Error creating user', 'data' => 9, 'status' => 1];
                 }
-                    }else{
-                            return ['message' => 'Hubo un error intentando crar el usuario en el mikrotik', 'status' => 1, 'data' => ''];
-                    }
             }else{
                 return ['message' => 'Accion no permitida', 'status' => 1, 'data' => ''];
             }
@@ -103,16 +124,25 @@ class CreateUserDataUseCase implements CreateUserDataUseCaseInterface
         } catch (QueryException $err) {
             return ['message' => 'An error occurred while creating the user: ' . $err->getMessage(), 'data' => ApiResponseConstants::DATA_NULL, 'status' => 1];
         }
-
-        NotificationRouterService::dispatch(
-            getSessionCompanyId(),
-            'new_user',
-            "👤 *Nuevo usuario registrado*\n\n" .
-            "Nombre: *{$data['names']} {$data['lastname']}*\n" .
-            "Cédula: *{$data['dni']}*\n" .
-            "Teléfono: *{$data['phone']}*\n" .
-            "Dirección: *{$data['address']}*"
-        );
+            $ipReal = $data['ip_assignment_id'] ?? 'N/A';
+                try {
+            NotificationRouterService::dispatch(
+                getSessionCompanyId(),
+                'new_user',
+                "👤 *Nuevo usuario registrado*\n\n" .
+                "Nombre: *{$data['names']} {$data['lastname']}*\n" .
+                "Cédula: *{$data['dni']}*\n" .
+                "Teléfono: *{$data['phone']}*\n" .
+                "Dirección: *{$data['address']}*\n" .
+                "IP: *{$ipReal}*\n" .
+                "VLAN: *{$data['vlan']}*\n"
+            );
+        } catch (\Throwable $e) {
+            \Log::error('Error enviando notificación new_user', [
+                'error' => $e->getMessage(),
+                'data'  => $data
+            ]);
+        }
 
         return ['message' => 'Usuario creado con éxito', 'status' => 0, 'data' => ApiResponseConstants::DATA_NULL];
     }

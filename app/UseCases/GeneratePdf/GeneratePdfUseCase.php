@@ -45,208 +45,118 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
             $getUserPeriode1 = $this->generatePdfRepository->getUserPeriode1($Periodo, $companyId);
             $generatePdf     = $this->generatePdfRepository->generatePdf($getUserPeriode1);
 
-            // Usar el día de corte configurado, no el día actual
-            if ($billingDay > 0) {
-                $fechaCarbon = Carbon::now()->setDay(min($billingDay, Carbon::now()->daysInMonth));
-            } else {
-                $fechaCarbon = Carbon::now();
-            }
-            $fecha = $fechaCarbon->format('Y-m-d');
-            $zipFileName     = storage_path('app/archivos.zip');
-
-            if (file_exists($zipFileName)) unlink($zipFileName);
-
-            $zip = new \ZipArchive();
-            if ($zip->open($zipFileName, \ZipArchive::CREATE) !== true) {
-                throw new \Exception('No se pudo crear el archivo ZIP.');
-            }
-
-            $storagePath = storage_path('app/public/pdf');
-            if (!file_exists($storagePath)) {
-                mkdir($storagePath, 0775, true);
-            } else {
-                foreach (glob($storagePath . '/*') as $file) {
-                    if (is_file($file)) unlink($file);
-                }
-            }
-
-            $emojisHola  = ['👋', '😊', '🙌', '✨', '💬'];
-            $emojisFactura = ['📄', '📋', '🧾', '📑', '💼'];
-            $emojisGracias = ['🙏', '💚', '✅', '⭐', '😊'];
-            $emojisPago  = ['💳', '🏦', '💰', '📲', '✅'];
-
-            $saludos = [
-                "¡Hola", "Buenas", "Hola", "Cordial saludo", "Estimado(a)"
-            ];
-
-            $cierres = [
-                "Gracias por preferir Soluciones NetPlay",
-                "Gracias por confiar en Soluciones NetPlay",
-                "Quedamos atentos a cualquier consulta. Soluciones NetPlay",
-                "Estamos para servirte. Soluciones NetPlay",
-                "Un gusto atenderte. Soluciones NetPlay"
-            ];
-
-            $disponibilidad = [
-                "tu factura del servicio de internet ya está disponible",
-                "tu factura de internet ya fue generada",
-                "tu factura del mes ya se encuentra lista",
-                "hemos generado tu factura de internet",
-                "tu factura ya está lista para consultar"
-            ];
-
-            $mensajesComprobante = [
-                "Le solicitamos amablemente enviar el comprobante de pago por este mismo canal para validar su transacción.",
-                "Por favor compártenos el comprobante de pago a través de este medio para realizar la verificación.",
-                "Agradecemos enviar el comprobante de pago por esta misma conversación para confirmar su transacción.",
-                "Para completar la validación, por favor envíe el comprobante por este mismo medio.",
-                "Le agradecemos compartir el comprobante por este canal para proceder con la validación.",
-                "Una vez realizado el pago, envíenos el comprobante por esta conversación.",
-                "Por favor envíanos el comprobante por este medio para confirmar tu pago.",
-                "Recuerda enviarnos el comprobante por esta conversación para validar tu pago."
-            ];
-
-            // ✅ Contadores para el log
-            $totalEnviados = 0;
-            $totalFallidos = 0;
-            $fallidos      = [];
+             $fecha = date('Y-m-d', strtotime('+1 days'));
 
             foreach ($generatePdf as $user) {
 
                 $Cab = $this->generatePdfRepository->getSaldoAnt($user['id'], $user['number_facture']);
                 $Cab = $Cab === null ? 0 : $Cab;
 
-                $pdfContent    = $this->generateIndividualPdf($user, $Cab);
-                $nombreArchivo = 'Sr_o_Sra_' . $user['dni'] . '_' . $user['names'] . '_' . $user['lastname'] . '.pdf';
-                $nombreArchivo = str_replace(' ', '_', $nombreArchivo);
-                $nombreArchivo = preg_replace('/[^A-Za-z0-9_\-.]/', '', $nombreArchivo);
-                $nombrMensaje  = mb_convert_encoding($user['names'] . ' ' . $user['lastname'], 'UTF-8', 'auto');
+                // 📄 Generar PDF
+                //$pdfContent = $this->generateIndividualPdf($user, $Cab);
 
-                $zip->addFromString($nombreArchivo, $pdfContent);
+                // $nombreArchivo = 'Sr_o_Sra_' . $user['dni'] . '_' . $user['names'] . '_' . $user['lastname'] . '.pdf';
+                // $nombreArchivo = str_replace(' ', '_', $nombreArchivo);
+                // $nombreArchivo = preg_replace('/[^A-Za-z0-9_\-.]/', '', $nombreArchivo);
 
-                $pdfFilePath = $storagePath . DIRECTORY_SEPARATOR . $nombreArchivo;
-                file_put_contents($pdfFilePath, $pdfContent);
+                // $storagePath = storage_path('app/pdf');
+                // if (!file_exists($storagePath)) {
+                //     mkdir($storagePath, 0777, true);
+                // }
 
-                $ruta = "https://netplay.com.co/storage/pdf/$nombreArchivo";
+                //$pdfFilePath = $storagePath . DIRECTORY_SEPARATOR . $nombreArchivo;
+                //file_put_contents($pdfFilePath, $pdfContent);
 
-                // Variantes aleatorias
-                $emojiHola    = $emojisHola[array_rand($emojisHola)];
-                $emojiFactura = $emojisFactura[array_rand($emojisFactura)];
-                $emojiGracias = $emojisGracias[array_rand($emojisGracias)];
-                $emojiPago    = $emojisPago[array_rand($emojisPago)];
-                $saludo       = $saludos[array_rand($saludos)];
-                $cierre       = $cierres[array_rand($cierres)];
-                $disponible   = $disponibilidad[array_rand($disponibilidad)];
-                $mensageQr    = $mensajesComprobante[array_rand($mensajesComprobante)];
+                //$ruta = "https://netplay.com.co/netplay/storage/app/pdf/$nombreArchivo";
 
-                if ($user['billing_electronic'] != 1) {
-                    $mensage = "{$saludo} {$nombrMensaje} {$emojiHola}
+                // 📲 ENVÍO WHATSAPP
+                $phoneNumbers = explode(' - ', $user['phone']);
 
-{$emojiFactura} {$disponible}.
-La fecha límite de pago es *{$fecha}*.
+                foreach ($phoneNumbers as $phone) {
+                    $phone = trim($phone);
 
-{$emojiPago} Puedes realizar tu pago en:
-- BANCOLOMBIA CTA AHO 47800013328
-- DAVIPLATA 3022042294
-- NEQUI 3022042294 (Hum Gom)
-- NEQUI 3245127869 (Joj Pom)
+                    if (!empty($phone)) {
 
-{$mensajesComprobante[array_rand($mensajesComprobante)]}
+                        // $payload = [
+                        //     "apiToken" => "18736|MVxPCIhgDsWNsXw2F8IuNGKvZep7t6TQPOtJJIG248b3f82f",
+                        //     "phone_number_id" => "1069182359602584",
+                        //     "template_id" => "339815",
+                        //     "phone_number" => $phone,
+                        //     "templateVariable-Names-1" => $user['names'],
+                        //     "templateVariable-LastName-2" => $user['lastname'],
+                        //     "templateVariable-NumberBill-3" => $user['number_facture'],
+                        //     "templateVariable-MonthlyPrice-4" => '$' . number_format($user['monthly_price'], 0, ',', '.'),
+                        //     "templateVariable-DateFinishBill-5" => $fecha,
+                        //     "template_quick_reply_button_values" => ["77R3LXw6gnAKTO8"]
+                        // ];
+                        $payload = [
+                            "apiToken" => "18736|MVxPCIhgDsWNsXw2F8IuNGKvZep7t6TQPOtJJIG248b3f82f",
+                            "phone_number_id" => "1069182359602584",
+                            "message" => "Por favor, ignore el último mensaje con respecto a la facturación. en unas horas le estaria llegando el mensaje correcto, disculpe las molestias.",
+                            "phone_number" => $phone,
+                        ];
 
-{$emojiGracias} {$cierre}.";
-                } else {
-                    $mensage = "{$saludo} {$nombrMensaje} {$emojiHola}
+                        $ch = curl_init();
 
-{$emojiFactura} {$disponible}.
-La fecha límite de pago es *{$fecha}*.
-
-{$emojiPago} Puedes realizar tu pago en:
-- BANCOLOMBIA CTA AHO 44200009784
-  Soluciones Netplay SAS
-
-{$mensajesComprobante[array_rand($mensajesComprobante)]}
-
-{$emojiGracias} {$cierre}.";
-                }
-
-                // ✅ Enviar WhatsApp con try/catch individual
-                $phone = trim($user['phone']);
-
-                if (!empty($phone)) {
-                    $whatsapp = new WhatsAppService();
-
-                    // Enviar documento
-                    try {
-                        $whatsapp->sendDocument($phone, $ruta, $nombreArchivo, $mensage);
-                        $totalEnviados++;
-                        Log::info('[FACTURA ENVIADA]', [
-                            'dni'   => $user['dni'],
-                            'phone' => $phone,
+                        // curl_setopt($ch, CURLOPT_URL, "https://app.whatchimp.com/api/v1/whatsapp/send/template"); // 👈 CAMBIA ESTO
+                        curl_setopt($ch, CURLOPT_URL, "https://app.whatchimp.com/api/v1/whatsapp/send"); // 👈 CAMBIA ESTO
+                        curl_setopt($ch, CURLOPT_POST, true);
+                        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
+                        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                            'Content-Type: application/json'
                         ]);
-                    } catch (\Exception $e) {
-                        $totalFallidos++;
-                        $fallidos[] = ['dni' => $user['dni'], 'phone' => $phone, 'error' => $e->getMessage()];
-                        Log::warning('[FACTURA FALLIDA]', [
-                            'dni'   => $user['dni'],
-                            'phone' => $phone,
-                            'error' => $e->getMessage(),
-                        ]);
-                        // ✅ Continúa con el siguiente cliente
-                        continue;
-                    }
 
-                    // Enviar imagen QR solo si es factura electrónica
-                    if ($user['billing_electronic'] == 1) {
-                        try {
-                            $whatsapp->sendImage(
-                                $phone,
-                                "https://netplay.com.co/storage/Qr/QrNetplay.jpeg",
-                                $mensageQr
-                            );
-                        } catch (\Exception $e) {
-                            Log::warning('[QR IMAGE FALLIDA]', [
-                                'dni'   => $user['dni'],
-                                'phone' => $phone,
-                                'error' => $e->getMessage(),
-                            ]);
-                            // No interrumpir — el documento ya se envió
+                        $responseApi = curl_exec($ch);
+                        $error = curl_error($ch);
+                        curl_close($ch);
+
+                        // 📁 LOG DE TRAZABILIDAD
+                        $logPath = storage_path('logs/whatsapp_logs');
+                        if (!file_exists($logPath)) {
+                            mkdir($logPath, 0777, true);
                         }
+
+                        $logData = [
+                            "fecha_envio" => Carbon::now()->toDateTimeString(),
+                            "usuario" => $user['names'] . ' ' . $user['lastname'],
+                            "dni" => $user['dni'],
+                            "telefono" => $phone,
+                            "factura" => $user['number_facture'],
+                            //"ruta_pdf" => $ruta,
+                            "payload" => $payload,
+                            "response" => $responseApi,
+                            "error" => $error
+                        ];
+
+                        $logFile = $logPath . '/log_' . date('Y-m-d:H') . '.json';
+
+                        file_put_contents(
+                            $logFile,
+                            json_encode($logData, JSON_PRETTY_PRINT) . PHP_EOL,
+                            FILE_APPEND
+                        );
                     }
                 }
-                //$delay = rand(60, 90);
-                Log::info("[DELAY] Cliente {$user['dni']} procesado. Esperando {$delay}s...");
-                sleep($delay);
+
+                // ❌ Ya no borramos el PDF (opcional)
+                // unlink($pdfFilePath);
             }
 
-            $zip->close();
-
-            Log::info('[PROCESO COMPLETADO]', [
-                'enviados' => $totalEnviados,
-                'fallidos' => $totalFallidos,
-                'detalle_fallidos' => $fallidos,
-            ]);
-
             return [
-                'message'  => "PDF generado. Enviados: {$totalEnviados}, Fallidos: {$totalFallidos}",
-                'status'   => 0,
-                'enviados' => $totalEnviados,
-                'fallidos' => $totalFallidos,
-                'detalle_fallidos' => $fallidos,
+                'message' => 'PDFs generados y enviados correctamente',
+                'status' => 0
             ];
-
-        } else {
-            return ['message' => 'No puedes realizar esta acción', 'status' => 0];
         }
-    } catch (QueryException $err) {
-        return [
-            'message' => 'Ha ocurrido un error al generar el PDF',
-            'status'  => 1,
-            'data'    => ApiResponseConstants::DATA_NULL
-        ];
-    }
 
-    return ['message' => 'PDF generado con éxito', 'status' => 0];
-}
+        } catch (QueryException $err) {
+            return [
+                'message' => 'Error generando PDF',
+                'status' => 1,
+                'data' => ApiResponseConstants::DATA_NULL
+            ];
+        }
+    }
 
 public function generatePdfMeta($Periodo, int $companyId = 0, int $billingDay = 0): mixed
 {

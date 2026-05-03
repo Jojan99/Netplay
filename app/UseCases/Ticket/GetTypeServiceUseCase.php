@@ -33,7 +33,7 @@ class GetTypeServiceUseCase implements GetTypeServiceUseCaseInterface
     public function getTypeServiceAll(): mixed
     {
         try {
-            if(getSessionUserProfileId() == 2){
+            if(sessionUserHasProfile('CONTADOR', 'ADMIN')){
                 $userAll = $this->ticketRepositoryInterface->getTypeServiceAll();
             }else{
                 return [

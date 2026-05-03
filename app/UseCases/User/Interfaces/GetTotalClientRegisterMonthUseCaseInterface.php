@@ -15,5 +15,5 @@ interface GetTotalClientRegisterMonthUseCaseInterface
     /**
      * @return mixed
      */
-    public function GetTotalClientRegisterMonth(): mixed;
+    public function GetTotalClientRegisterMonth(int $year): mixed;
 }

@@ -33,8 +33,24 @@ class GeneratePdfRepository implements GeneratePdfRepositoryInterface
      */
     public function getUserPeriode1($Periodo, int $companyId): mixed
     {
-        return CabFacturation::where('group', $Periodo)
-            ->where('company_id', $companyId)
+        // return CabFacturation::where('group', $Periodo)
+        //     ->where('company_id', $companyId)
+        //     ->get();
+
+             $companyId = $companyId ?? getSessionCompanyId();
+            return CabFacturation::select('internet_plans.monthly_price','cab_facturations.id',
+            'cab_facturations.user_id','cab_facturations.date_init_facturation','cab_facturations.created_at')
+            ->join('user_data', 'user_data.user_id', '=', 'cab_facturations.user_id')
+            ->join('users', 'users.id', '=', 'user_data.user_id')
+            ->join('internet_plans', 'internet_plans.id', '=', 'user_data.internet_plans_id')
+            ->where('cab_facturations.group', $Periodo)
+            ->where('user_data.active', 1)
+            ->where('users.company_id', $companyId)
+            ->whereNotIn('users.profile_id', function ($q) use ($companyId) {
+                $q->select('id')->from('profiles')
+                    ->where('company_id', $companyId)
+                    ->whereIn('name', ['ADMIN', 'TECNICO', 'CONTADOR']);
+            })
             ->get();
     }
 

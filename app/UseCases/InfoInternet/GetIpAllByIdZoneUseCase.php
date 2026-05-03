@@ -34,7 +34,7 @@ class GetIpAllByIdZoneUseCase implements GetIpAllByIdZoneUseCaseInterface
     public function getIpAllByIdZone(InternetIpRequest $data): mixed
     {
         try {
-            if(getSessionUserProfileId() == 2){
+            if(sessionUserHasProfile('CONTADOR', 'ADMIN')){
                 $getInternetPlanAll = $this->internetInfoRepositoryInterface->getIpAllByIdZone($data);
             }else{
                 return [

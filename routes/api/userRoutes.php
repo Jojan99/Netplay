@@ -19,6 +19,7 @@ Route::prefix('user')->group(function () {
     // Admin y contador: consultar clientes y generar PDF
     Route::middleware('role:admin,contador')->group(function () {
         Route::get('getUserAll', [UserController::class, 'getUserAll']);
+        Route::get('search', [UserController::class, 'search']);
         Route::get('getCountUser', [UserController::class, 'getCountUser']);
         Route::get('generatePdf', [UserController::class, 'generatePdf']);
         Route::get('getTotalPriceMonth', [UserController::class, 'getTotalPriceMonth']);

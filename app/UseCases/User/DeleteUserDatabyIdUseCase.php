@@ -40,7 +40,7 @@ class DeleteUserDatabyIdUseCase implements DeleteUserDatabyIdUseCaseInterface
     public function DeleteUserData($id): mixed
     {
         error_log(">>>>>>>>>>>>>>>>>><<".$id);
-        if(getSessionUserProfileId() == 2){
+        if(sessionUserHasProfile('CONTADOR', 'ADMIN')){
             try {
                 $this->userRepository->DeleteUserData($id);
             } catch (QueryException $err) {

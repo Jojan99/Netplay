@@ -36,6 +36,8 @@ class GestionUserRequest extends FormRequest
             'mac' => 'string',
             'serial' => 'nullable|string',
             'company_id' => 'nullable|int',
+            'vlan' => 'nullable|string',
+            'new_ip' => 'nullable|string',
         ];
     }
 

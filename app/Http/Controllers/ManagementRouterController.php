@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Constants\ApiResponseConstants;
+use App\Models\OltAdmin;
+use App\Services\HuaweiSnmpReader;
 use App\Http\Requests\Gestions\GestionUserRequest;
 use App\Http\Requests\Gestions\OltDataRequest;
 use App\Managers\Interfaces\SSHConnectionManagerInterface;
@@ -19,27 +21,58 @@ use Tymon\JWTAuth\Exceptions\JWTException;
 
 class ManagementRouterController extends Controller
 {
-public function getLanSegments(
+    // ── Router CRUD ───────────────────────────────────────────────────────────
+
+    public function listRouters(MikrotikInfoUseCaseInterface $uc): object
+    {
+        $result = $uc->listRouters();
+        return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
+    }
+
+    public function storeRouter(Request $request, MikrotikInfoUseCaseInterface $uc): object
+    {
+        $data = $request->only(['name', 'host', 'user', 'pass', 'port']);
+        if (empty($data['host']) || empty($data['user']) || empty($data['pass'])) {
+            return standardApiReponse('host, user y pass son requeridos', null, 1, JsonResponse::HTTP_UNPROCESSABLE_ENTITY);
+        }
+        $result = $uc->createRouter($data);
+        return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
+    }
+
+    public function updateRouterById(Request $request, int $id, MikrotikInfoUseCaseInterface $uc): object
+    {
+        $data   = $request->only(['name', 'host', 'user', 'pass', 'port']);
+        $result = $uc->updateRouter($id, $data);
+        return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
+    }
+
+    public function destroyRouter(int $id, MikrotikInfoUseCaseInterface $uc): object
+    {
+        $result = $uc->deleteRouter($id);
+        return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private function routerId(Request $request): ?int
+    {
+        $id = $request->input('router_id');
+        return $id ? (int) $id : null;
+    }
+
+    // ── IP / LAN ──────────────────────────────────────────────────────────────
+
+    public function getLanSegments(
         GetIpAvaliblesUseCaseInterface $getIpAvaliblesUseCaseInterface,
-        GestionUserRequest $gestionUserRequest
+        Request $request
     ): object {
         try {
-            $result = $getIpAvaliblesUseCaseInterface->getLanSegments();
+            $result = $getIpAvaliblesUseCaseInterface->getLanSegments($this->routerId($request));
         } catch (JWTException $e) {
-            return standardApiReponse(
-                'No se pudieron consultar las tasas de cambio: ' . $e->getMessage(),
-                ApiResponseConstants::DATA_NULL,
-                ApiResponseConstants::ERROR,
-                JsonResponse::HTTP_INTERNAL_SERVER_ERROR
-            );
+            return standardApiReponse('Error: ' . $e->getMessage(), ApiResponseConstants::DATA_NULL, ApiResponseConstants::ERROR, JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
         }
 
-        return standardApiReponse(
-            $result['message'],
-            $result['data'],
-            $result['status'],
-            JsonResponse::HTTP_OK
-        );
+        return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }
 
     public function getIpAvalibles(
@@ -47,33 +80,36 @@ public function getLanSegments(
         GestionUserRequest $gestionUserRequest
     ): object {
         try {
-            $result = $getIpAvaliblesUseCaseInterface->GetIpAvalibles($gestionUserRequest);
+            $result = $getIpAvaliblesUseCaseInterface->GetIpAvalibles($gestionUserRequest, $this->routerId($gestionUserRequest));
         } catch (JWTException $e) {
-            return standardApiReponse(
-                'No se pudieron consultar las tasas de cambio: ' . $e->getMessage(),
-                ApiResponseConstants::DATA_NULL,
-                ApiResponseConstants::ERROR,
-                JsonResponse::HTTP_INTERNAL_SERVER_ERROR
-            );
+            return standardApiReponse('Error: ' . $e->getMessage(), ApiResponseConstants::DATA_NULL, ApiResponseConstants::ERROR, JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
         }
 
-        return standardApiReponse(
-            $result['message'],
-            $result['data'],
-            $result['status'],
-            JsonResponse::HTTP_OK
-        );
+        return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }
 
-       public function autorizarServicio(
+    public function autorizarServicio(
         GetIpAvaliblesUseCaseInterface $getIpAvaliblesUseCaseInterface,
         GestionUserRequest $gestionUserRequest
     ): object {
         try {
-            $result = $getIpAvaliblesUseCaseInterface->autorizarServicio($gestionUserRequest);
+            $result = $getIpAvaliblesUseCaseInterface->autorizarServicio($gestionUserRequest, $this->routerId($gestionUserRequest));
+        } catch (JWTException $e) {
+            return standardApiReponse('Error: ' . $e->getMessage(), ApiResponseConstants::DATA_NULL, ApiResponseConstants::ERROR, JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
+        }
+
+        return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
+    }
+
+    public function migrarIp(
+        GetIpAvaliblesUseCaseInterface $getIpAvaliblesUseCaseInterface,
+        GestionUserRequest $gestionUserRequest
+    ): object {
+        try {
+            $result = $getIpAvaliblesUseCaseInterface->migrarIp($gestionUserRequest, $this->routerId($gestionUserRequest));
         } catch (JWTException $e) {
             return standardApiReponse(
-                'No se pudieron consultar las tasas de cambio: ' . $e->getMessage(),
+                'Error al migrar IP: ' . $e->getMessage(),
                 ApiResponseConstants::DATA_NULL,
                 ApiResponseConstants::ERROR,
                 JsonResponse::HTTP_INTERNAL_SERVER_ERROR
@@ -88,15 +124,15 @@ public function getLanSegments(
         );
     }
 
-    public function getRouterConfig(MikrotikInfoUseCaseInterface $uc): object
+    public function getRouterConfig(Request $request, MikrotikInfoUseCaseInterface $uc): object
     {
-        $result = $uc->getRouterConfig();
+        $result = $uc->getRouterConfig($this->routerId($request));
         return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }
 
     public function saveRouterConfig(Request $request, MikrotikInfoUseCaseInterface $uc): object
     {
-        $data = $request->only(['host', 'user', 'pass', 'port']);
+        $data = $request->only(['name', 'host', 'user', 'pass', 'port']);
         if (empty($data['host']) || empty($data['user']) || empty($data['pass'])) {
             return standardApiReponse('host, user y pass son requeridos', null, 1, JsonResponse::HTTP_UNPROCESSABLE_ENTITY);
         }
@@ -104,39 +140,39 @@ public function getLanSegments(
         return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }
 
-    public function getRouterInfo(MikrotikInfoUseCaseInterface $uc): object
+    public function getRouterInfo(Request $request, MikrotikInfoUseCaseInterface $uc): object
     {
-        $result = $uc->getRouterInfo();
+        $result = $uc->getRouterInfo($this->routerId($request));
         return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }
 
-    public function getConnectedClients(MikrotikInfoUseCaseInterface $uc): object
+    public function getConnectedClients(Request $request, MikrotikInfoUseCaseInterface $uc): object
     {
-        $result = $uc->getConnectedClients();
+        $result = $uc->getConnectedClients($this->routerId($request));
         return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }
 
-    public function getQueues(MikrotikInfoUseCaseInterface $uc): object
+    public function getQueues(Request $request, MikrotikInfoUseCaseInterface $uc): object
     {
-        $result = $uc->getQueues();
+        $result = $uc->getQueues($this->routerId($request));
         return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }
 
     public function createQueue(Request $request, MikrotikInfoUseCaseInterface $uc): object
     {
-        $result = $uc->createQueue($request->all());
+        $result = $uc->createQueue($request->except('router_id'), $this->routerId($request));
         return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }
 
     public function updateQueue(Request $request, string $id, MikrotikInfoUseCaseInterface $uc): object
     {
-        $result = $uc->updateQueue($id, $request->all());
+        $result = $uc->updateQueue($id, $request->except('router_id'), $this->routerId($request));
         return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }
 
-    public function deleteQueue(string $id, MikrotikInfoUseCaseInterface $uc): object
+    public function deleteQueue(Request $request, string $id, MikrotikInfoUseCaseInterface $uc): object
     {
-        $result = $uc->deleteQueue($id);
+        $result = $uc->deleteQueue($id, $this->routerId($request));
         return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }
 
@@ -146,7 +182,7 @@ public function getLanSegments(
         if (empty($userIds) || !is_array($userIds)) {
             return standardApiReponse('user_ids requerido', null, 1, JsonResponse::HTTP_UNPROCESSABLE_ENTITY);
         }
-        $result = $uc->suspendBulk($userIds);
+        $result = $uc->suspendBulk($userIds, $this->routerId($request));
         return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }
 
@@ -333,142 +369,18 @@ public function getLanSegments(
 
 
 
-  public function obtenerInformacionSNMP()
+    public function obtenerInformacionSNMP(Request $request): JsonResponse
     {
-        $host = '181.48.150.43'; // Dirección del host
-        $community = 'public'; // Comunidad SNMP
+        $oltId = $request->input('olt_id', 5);
+        $olt   = OltAdmin::findOrFail($oltId);
 
-        // OID de nombres y otros OIDs
-        $oidNombres = '1.3.6.1.4.1.2011.6.128.1.1.2.43.1.9';
-        $oids = [
-            '1.3.6.1.4.1.2011.6.128.1.1.2.51.1.4',  // RX
-            '1.3.6.1.4.1.2011.6.128.1.1.2.46.1.15', // Estado
-            '1.3.6.1.4.1.2011.6.128.1.1.2.43.1.3'   // Serial
-        ];
+        $onts = (new HuaweiSnmpReader($olt))->getAuthorizedONTs();
 
-        try {
-            // Conexión SNMP utilizando snmp2_walk
-            $snmpOutputNombres = @snmp2_walk($host, $community, $oidNombres);
-            if ($snmpOutputNombres === false) {
-                $error = error_get_last();
-                error_log('Error en snmp2_walk para OID Nombres: ' . print_r($error, true));
-                return response()->json(['error' => 'Error al obtener los nombres desde SNMP']);
-            }
-
-            // Si no se obtienen datos
-            if (empty($snmpOutputNombres)) {
-                error_log('No se encontraron resultados para los nombres en SNMP');
-                return response()->json(['error' => 'No se encontraron resultados para los nombres en SNMP']);
-            }
-
-            // Depuración: mostrar resultados crudos de snmp2_walk
-            error_log('snmpOutputNombres: ' . print_r($snmpOutputNombres, true));
-
-            // Procesar nombres
-            $nombres = $this->procesarNombres($snmpOutputNombres);
-
-            // Depuración: mostrar el array de nombres procesado
-            error_log('Nombres procesados: ' . print_r($nombres, true));
-
-            // Procesar otros OIDs y combinar la información
-            $ontInfoCombinada = [];
-            foreach ($oids as $oid) {
-                $snmpOutput = @snmp2_walk($host, $community, $oid);
-                if ($snmpOutput === false) {
-                    $error = error_get_last();
-                    error_log("Error al obtener OID $oid: " . print_r($error, true));
-                    continue; // Ignorar si no se obtiene información para este OID
-                }
-
-                // Si no se obtienen datos
-                if (empty($snmpOutput)) {
-                    error_log("No se encontraron resultados para OID $oid");
-                    continue;
-                }
-
-                // Depuración: mostrar resultados crudos de snmp2_walk
-                error_log("Resultado SNMP para OID $oid: " . print_r($snmpOutput, true));
-
-                $ontInfo = $this->parseSnmpOutput($snmpOutput);
-                foreach ($ontInfo as $key => $value) {
-                    // Asegurarnos de que el valor en ontInfoCombinada[$key] sea un array
-                    if (!isset($ontInfoCombinada[$key])) {
-                        $ontInfoCombinada[$key] = [];
-                    }
-                    // Mezclar los valores asegurándonos de que ambos sean arrays
-                    if (is_array($value)) {
-                        $ontInfoCombinada[$key] = array_merge($ontInfoCombinada[$key], $value);
-                    } else {
-                        $ontInfoCombinada[$key][] = $value; // Si no es un array, agregar como nuevo valor
-                    }
-                }
-            }
-
-            // Depuración: mostrar la información combinada
-            error_log('Información combinada: ' . print_r($ontInfoCombinada, true));
-
-            // Combinar los nombres con la información recopilada
-            foreach ($nombres as $key => $nombre) {
-                if (isset($ontInfoCombinada[$key])) {
-                    $ontInfoCombinada[$key]['name'] = $nombre;
-                } else {
-                    $ontInfoCombinada[$key] = ['name' => $nombre];
-                }
-            }
-
-            return response()->json($ontInfoCombinada);
-
-        } catch (\Exception $e) {
-            error_log('Error al ejecutar SNMP: ' . $e->getMessage());
-            return response()->json(['error' => 'Error al ejecutar SNMP: ' . $e->getMessage()]);
+        if (empty($onts)) {
+            return response()->json(['error' => 'No se obtuvieron datos SNMP del OLT'], 502);
         }
-    }
 
-    // Función para procesar los nombres, convirtiendo el array recibido en un formato adecuado
-    private function procesarNombres($snmpOutput)
-    {
-        $nombres = [];
-        foreach ($snmpOutput as $valor) {
-            if (is_string($valor)) {
-                $nombres[] = $valor;  // Si es un string, lo agregamos al array de nombres
-            } else {
-                error_log("Valor no esperado en el OID de nombres: " . print_r($valor, true));
-            }
-        }
-        return $nombres;
-    }
-
-    // Función para procesar la salida de SNMP en función del tipo de dato
-    private function parseSnmpOutput($snmpOutput)
-    {
-        $parsedData = [];
-        foreach ($snmpOutput as $key => $value) {
-            if (is_array($value)) {
-                // Si el valor es un array de valores (por ejemplo, INTEGER o Hex-STRING)
-                foreach ($value as $v) {
-                    if (is_integer($v)) {
-                        $parsedData[$key][] = $v;
-                    } elseif (is_string($v) && strpos($v, 'Hex-STRING') !== false) {
-                        $parsedData[$key][] = $this->convertHexToString($v); // Convertir Hex-STRING
-                    }
-                }
-            } else {
-                // Si es un valor único
-                $parsedData[$key] = $value;
-            }
-        }
-        return $parsedData;
-    }
-
-    // Función para convertir un Hex-STRING a un string legible
-    private function convertHexToString($hex)
-    {
-        $hex = str_replace(' ', '', $hex);
-        $str = '';
-        for ($i = 0; $i < strlen($hex); $i += 2) {
-            $str .= chr(hexdec($hex[$i] . $hex[$i + 1]));
-        }
-        return $str;
+        return response()->json($onts, 200, [], JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
     }
     
 
@@ -587,7 +499,7 @@ public function getLanSegments(
         $ssh->write("enable\n");
         $ssh->write("config\n");
         $ssh->write("interface gpon 0/0\n");
-        $ssh->write("ont confirm $lastPart sn-auth {$oltDataRequest['serial']} omci ont-lineprofile-id 10 ont-srvprofile-id 10 desc {$oltDataRequest['descripcion']}\n");
+        $ssh->write("ont confirm $lastPart sn-auth {$oltDataRequest['serial']} omci ont-lineprofile-id {$oltDataRequest['line_profile_id']} ont-srvprofile-id {$oltDataRequest['srv_profile_id']} desc {$oltDataRequest['descripcion']}\n");
     
         // Leer la salida del registro
         $output = $ssh->read();

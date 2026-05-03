@@ -10,7 +10,7 @@ class FileController extends Controller
 
     public function listFiles()
     {
-        if (getSessionUserProfileId() == 2) {
+        if (sessionUserHasProfile('CONTADOR', 'ADMIN')) {
             $filePath = storage_path('archiveZip');
 
             $files = scandir($filePath);

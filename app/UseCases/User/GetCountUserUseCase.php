@@ -38,7 +38,7 @@ class GetCountUserUseCase implements GetCountUserUseCaseInterface
     public function getCountUser(): mixed
     {
         try {
-            if(getSessionUserProfileId() == 2){
+            if(sessionUserHasProfile('CONTADOR', 'ADMIN')){
            $data = $this->userRepository->getCountUser();
         return ['message' => 'Consulta realizada con exito', 'status' => 0, 'data' => $data];
 

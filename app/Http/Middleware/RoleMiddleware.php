@@ -3,9 +3,9 @@
 namespace App\Http\Middleware;
 
 use App\Constants\ApiResponseConstants;
-use App\Constants\ProfileConstants;
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class RoleMiddleware
 {
@@ -22,12 +22,11 @@ class RoleMiddleware
     {
         $profileId = getSessionUserProfileId();
 
-        $allowedIds = array_map(
-            fn($role) => ProfileConstants::ROLE_MAP[$role] ?? 0,
-            $roles
+        $profileName = strtolower(
+            DB::table('profiles')->where('id', $profileId)->value('name') ?? ''
         );
 
-        if (!in_array($profileId, $allowedIds)) {
+        if (!in_array($profileName, $roles)) {
             return standardApiReponse(
                 'No tienes permisos para realizar esta acción',
                 ApiResponseConstants::DATA_NULL,

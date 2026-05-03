@@ -538,8 +538,11 @@ public function ticketMeta(): JsonResponse
     $priorities = DB::table('ticket_type_prioritys')->where('active', 1)->get(['id', 'name']);
     $technicians = DB::table('user_data as ud')
         ->join('users', 'users.id', '=', 'ud.user_id')
-        ->join('type_role as tr', 'tr.id', '=', 'ud.role_id')
-        ->where('tr.id', 1)
+        ->whereIn('users.profile_id', function ($q) use ($companyId) {
+            $q->select('id')->from('profiles')
+                ->where('company_id', $companyId)
+                ->where('name', 'TECNICO');
+        })
         ->where('users.company_id', $companyId)
         ->select('ud.user_id as id', 'ud.names', 'ud.lastname')
         ->get();

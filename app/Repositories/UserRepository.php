@@ -8,7 +8,6 @@ use App\Http\Requests\User\CreateUserDataRequest;
 use Illuminate\Support\Facades\Hash;
 use App\Repositories\Interfaces\UserRepositoryInterface;
 use Illuminate\Support\Facades\DB;
-use App\Constants\ProfileConstants;
 
 class UserRepository implements UserRepositoryInterface
 {
@@ -48,12 +47,20 @@ class UserRepository implements UserRepositoryInterface
      */
     public function createUser(CreateUserDataRequest $data): mixed
     {
+        $companyId = getSessionCompanyId();
+        $profileId = DB::table('profiles')
+            ->where('company_id', $companyId)
+            ->where('name', 'USER')
+            ->value('id') ?? DB::table('profiles')
+            ->where('company_id', $companyId)
+            ->value('id');
+
         return User::create([
             'username'   => $data['dni'],
             'email'      => $data['email'],
             'password'   => Hash::make($data['dni']),
-            'profile_id' => 1,
-            'company_id' => getSessionCompanyId(),
+            'profile_id' => $profileId,
+            'company_id' => $companyId,
         ]);
     }
 
@@ -63,21 +70,32 @@ class UserRepository implements UserRepositoryInterface
      */
     public function createUserData(CreateUserDataRequest $data): mixed
     {
+        $companyId = getSessionCompanyId();
+        $roleId = DB::table('profiles')
+            ->where('company_id', $companyId)
+            ->where('name', 'USER')
+            ->value('id') ?? DB::table('profiles')
+            ->where('company_id', $companyId)
+            ->value('id');
+
         return UserData::create([
-            'names' => $data['names'],
-            'lastname' => $data['lastname'],
-            'address' => $data['address'],
-            'user_id' => $data['userId'],
-            'gender_id' => 1,
-            'dni_id' => 1,
-            'internet_plans_id' => $data['planInternet'],
+            'names'              => $data['names'],
+            'lastname'           => $data['lastname'],
+            'address'            => $data['address'],
+            'user_id'            => $data['userId'],
+            'company_id'         => $companyId,
+            'role_id'            => $roleId,
+            'gender_id'          => 1,
+            'dni_id'             => 1,
+            'internet_plans_id'  => $data['planInternet'],
             'status_internet_id' => 1,
-            'country_id' => 1,
-            'dni' => $data['dni'],
-            'email' => $data['email'],
-            'phone' => $data['phone'],
-            'birthday' => 1,
-            'ip_assignment_id' => $data['ip_assignment_id']
+            'country_id'         => 1,
+            'dni'                => $data['dni'],
+            'email'              => $data['email'],
+            'phone'              => $data['phone'],
+            'birthday'           => 1,
+            'ip_assignment_id'   => $data['ip_assignment_id'],
+            'router_id'          => $data['router_id'] ?? null,
         ]);
     }
 
@@ -193,7 +211,8 @@ class UserRepository implements UserRepositoryInterface
             'cab_facturations.id as id_cab',
             'users.created_at as date_create',
             DB::raw("COALESCE(tabla_ips.ip, '') AS ip"),
-            'users.username as alias'
+            'users.username as alias',
+            'user_data.router_id'
         )
             ->join('user_data', 'users.id', 'user_data.user_id')
             ->join('internet_status', 'user_data.status_internet_id', 'internet_status.id')
@@ -226,6 +245,7 @@ class UserRepository implements UserRepositoryInterface
                 'cab_facturations.group AS data_cortes_id',
                 'internet_status.name AS status_internet',
                 'user_data.created_at AS date_create',
+                'user_data.router_id',
                 DB::raw("COALESCE(tabla_ips.ip, '') AS ip_address"),
                 DB::raw("COALESCE(tabla_ips.ip, '') AS ip")
             )
@@ -403,6 +423,29 @@ class UserRepository implements UserRepositoryInterface
     }
 
     /**
+     * @param mixed $data
+     * @param int $userId
+     * @return mixed
+     */
+    public function createStaffUserData(mixed $data, int $userId): mixed
+    {
+        return UserData::create([
+            'user_id'            => $userId,
+            'company_id'         => getSessionCompanyId(),
+            'role_id'            => $data['profile_id'],
+            'names'              => $data['names'],
+            'lastname'           => $data['lastname'],
+            'email'              => $data['email'],
+            'address'            => '',
+            'dni'                => $data['username'],
+            'phone'              => '',
+            'birthday'           => '',
+            'status_internet_id' => 1,
+            'status'             => 0,
+        ]);
+    }
+
+    /**
      * @return mixed
      */
     public function getStaff(): mixed
@@ -420,7 +463,11 @@ class UserRepository implements UserRepositoryInterface
             ->join('profiles', 'profiles.id', '=', 'users.profile_id')
             ->leftJoin('user_data', 'user_data.user_id', '=', 'users.id')
             ->where('users.company_id', getSessionCompanyId())
-            ->whereIn('users.profile_id', [ProfileConstants::ADMIN, ProfileConstants::TECNICO, ProfileConstants::CONTADOR])
+            ->whereIn('users.profile_id', function ($q) {
+                $q->select('id')->from('profiles')
+                    ->where('company_id', getSessionCompanyId())
+                    ->whereIn('name', ['ADMIN', 'TECNICO', 'CONTADOR']);
+            })
             ->get();
     }
 

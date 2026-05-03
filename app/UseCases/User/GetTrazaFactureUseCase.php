@@ -41,7 +41,7 @@ class GetTrazaFactureUseCase implements GetTrazaFactureUseCaseInterface
     public function getTrazaFacture(): mixed
     {
         try {
-            if(getSessionUserProfileId() == 2){
+            if(sessionUserHasProfile('CONTADOR', 'ADMIN')){
                 $data = $this->userRepository->getTrazaFacture();
 
             }else{

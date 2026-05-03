@@ -48,6 +48,43 @@ class RouteServiceProvider extends ServiceProvider
                     require base_path('routes/api/companyRoutes.php');
                     require base_path('routes/api/inventoryRoutes.php');
                     require base_path('routes/api/waProxyRoutes.php');
+                    require base_path('routes/api/employeeRoutes.php');
+                    require base_path('routes/api/internetPlanRoutes.php');
+                    require base_path('routes/api/paymentMethodRoutes.php');
+                    require base_path('routes/api/installationRoutes.php');
+                    require base_path('routes/api/transferRoutes.php');
+                });
+
+            // Pasarela de pago: config (jwt.verify+role) + webhooks + checkout ePayco (públicos)
+            Route::middleware('api')
+                ->prefix('api')
+                ->group(function () {
+                    require base_path('routes/api/paymentGatewayRoutes.php');
+                });
+
+            // Contratos: sign-token es público (sin JWT), el resto usa jwt.verify interno
+            Route::middleware('api')
+                ->prefix('api')
+                ->namespace('App\Http\Controllers')
+                ->group(function () {
+                    require base_path('routes/api/contractRoutes.php');
+                });
+
+            // Portal de cliente: rutas públicas (login) y protegidas (jwt.client)
+            // El middleware jwt.client se aplica internamente por grupo en clientRoutes.php
+            Route::middleware('api')
+                ->prefix('api')
+                ->group(function () {
+                    require base_path('routes/api/clientRoutes.php');
+                });
+
+            // Landing page pública: GET /api/landing/{slug} sin JWT.
+            // Las rutas /api/landing-admin/* tienen jwt.verify via el grupo principal arriba
+            // y role:admin aplicado internamente en landingRoutes.php.
+            Route::middleware('api')
+                ->prefix('api')
+                ->group(function () {
+                    require base_path('routes/api/landingRoutes.php');
                 });
 
             Route::middleware('web')

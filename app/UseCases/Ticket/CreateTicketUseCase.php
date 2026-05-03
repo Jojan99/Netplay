@@ -52,7 +52,7 @@ class CreateTicketUseCase implements CreateTicketUseCaseInterface
     public function createTicket(CreateTicketRequest $data): mixed
     {
         try {
-            if (getSessionUserProfileId() == 2) {
+            if (sessionUserHasProfile('CONTADOR', 'ADMIN')) {
 
                 $dataUser = $this->UserRepositoryInterface->getUserById($data['id_user']);
                 $data['log_id'] = getSessionUserId();

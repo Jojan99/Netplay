@@ -25,11 +25,15 @@ class TicketRepository implements TicketRepositoryInterface
 
     public function getTechnicaAll(): mixed
     {
+        $companyId = getSessionCompanyId();
         return DB::table('user_data as us')
             ->join('users', 'users.id', '=', 'us.user_id')
-            ->join('type_role as tr', 'tr.id', '=', 'us.role_id')
-            ->where('tr.id', 1)
-            ->where('users.company_id', getSessionCompanyId())
+            ->whereIn('users.profile_id', function ($q) use ($companyId) {
+                $q->select('id')->from('profiles')
+                    ->where('company_id', $companyId)
+                    ->where('name', 'TECNICO');
+            })
+            ->where('users.company_id', $companyId)
             ->select('us.*')
             ->get();
     }
@@ -410,8 +414,14 @@ class TicketRepository implements TicketRepositoryInterface
 
         $total = Ticket::where('company_id', $companyId)->count();
 
+        $pending = Ticket::where('company_id', $companyId)
+            ->where('status_id', 1)->count();
+
         $inProgress = Ticket::where('company_id', $companyId)
             ->where('status_id', 2)->count();
+
+        $closed = Ticket::where('company_id', $companyId)
+            ->where('status_id', 3)->count();
 
         $closedToday = Ticket::where('company_id', $companyId)
             ->where('status_id', 3)
@@ -444,7 +454,9 @@ class TicketRepository implements TicketRepositoryInterface
 
         return [
             'total'           => $total,
+            'pending'         => $pending,
             'in_progress'     => $inProgress,
+            'closed'          => $closed,
             'closed_today'    => $closedToday,
             'reopen_pct'      => $reopenPct,
             'top_technicians' => $topTechnicians,

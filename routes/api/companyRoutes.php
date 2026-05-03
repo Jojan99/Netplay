@@ -12,7 +12,8 @@ Route::prefix('company')->group(function () {
     Route::get('confirm/{token}', [CompanyController::class, 'confirmEmail'])
         ->withoutMiddleware('jwt.verify');
 
-    // ── Cualquier usuario autenticado puede enviar solicitud de plan WA ───────
+    // ── Cualquier usuario autenticado ─────────────────────────────────────────
+    Route::get('my-modules',             [CompanyController::class, 'getMyModules']);
     Route::post('whatsapp/plan-request', [CompanyController::class, 'submitPlanRequest']);
 
     // ── Solo admin ──────────────────────────────────────────────────────────
@@ -21,11 +22,22 @@ Route::prefix('company')->group(function () {
         // Staff y facturación
         Route::post('staff/create',  [CompanyController::class, 'createStaff']);
         Route::get('staff',          [CompanyController::class, 'getStaff']);
+
+        // Roles de la empresa
+        Route::get('profiles',                             [CompanyController::class, 'getProfiles']);
+        Route::put('profiles/{id}',                        [CompanyController::class, 'updateProfile']);
+        Route::get('profiles/{profileId}/modules',         [CompanyController::class, 'getProfileModules']);
+        Route::put('profiles/{profileId}/modules',         [CompanyController::class, 'updateProfileModules']);
         Route::get('billing-config', [CompanyController::class, 'getBillingConfig']);
         Route::put('billing-config', [CompanyController::class, 'updateBillingConfig']);
         Route::post('billing-run',      [CompanyController::class, 'billingRun']);
         Route::get('groups/info',       [CompanyController::class, 'groupsInfo']);
         Route::post('groups/transfer',  [CompanyController::class, 'transferGroup']);
+
+        // Auto-suspend de clientes por mora
+        Route::get('auto-suspend',       [CompanyController::class, 'getAutoSuspendConfig']);
+        Route::put('auto-suspend',       [CompanyController::class, 'saveAutoSuspendConfig']);
+        Route::post('auto-suspend/run',  [CompanyController::class, 'runAutoSuspend']);
 
         // Invoice template config
         Route::get('invoice-config',        [CompanyController::class, 'getInvoiceConfig']);

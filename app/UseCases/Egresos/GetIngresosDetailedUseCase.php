@@ -3,10 +3,10 @@
 namespace App\UseCases\Egresos;
 
 use App\Constants\ApiResponseConstants;
-use App\Constants\ProfileConstants;
 use App\Repositories\Interfaces\EgresosRepositoryInterface;
 use App\UseCases\Egresos\Interfaces\GetIngresosDetailedUseCaseInterface;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
 
 class GetIngresosDetailedUseCase implements GetIngresosDetailedUseCaseInterface
 {
@@ -17,9 +17,11 @@ class GetIngresosDetailedUseCase implements GetIngresosDetailedUseCaseInterface
     public function getAll(?string $from, ?string $to): mixed
     {
         try {
-            $profile = getSessionUserProfileId();
+            $profileName = strtoupper(
+                DB::table('profiles')->where('id', getSessionUserProfileId())->value('name') ?? ''
+            );
 
-            if (!in_array($profile, [ProfileConstants::ADMIN, ProfileConstants::CONTADOR])) {
+            if (!in_array($profileName, ['ADMIN', 'CONTADOR'])) {
                 return [
                     'message' => 'Acción no permitida',
                     'status'  => ApiResponseConstants::ERROR,

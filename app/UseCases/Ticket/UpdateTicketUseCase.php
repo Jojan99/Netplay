@@ -63,13 +63,13 @@ class UpdateTicketUseCase implements UpdateTicketUseCaseInterface
                 if ($data['status'] == 1) {
                     $message =
                         "🟡 *TICKET EN CURSO*\n\n" .
-                        "🆔 *ID Ticket:* {$data['id'] ech_names']}\n\n" .
+                        "🆔 *ID Ticket:* {$data['id']} - {$data['tech_names']}\n\n" .
                         "⏰ *Hora de inicio:* {$hora}\n\n" .
                         "⚙️ El técnico ha *iniciado* el ticket";
                 } elseif ($data['status'] == 2) {
                     $message =
                         "🟢 *TICKET FINALIZADO*\n\n" .
-                        "🆔 *ID Ticket:* {$data['id'] ech_names']}\n\n" .
+                        "🆔 *ID Ticket:* {$data['id']} - {$data['tech_names']}\n\n" .
                         "⏰ *Hora de cierre:* {$hora}\n\n" .
                         "⚙️ El técnico ha *finalizado* el ticket";
                 }

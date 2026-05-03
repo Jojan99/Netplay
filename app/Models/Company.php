@@ -11,6 +11,7 @@ class Company extends Model
 
     protected $fillable = [
         'name',
+        'slug',
         'nit',
         'email',
         'phone',
@@ -35,11 +36,23 @@ class Company extends Model
         'invoice_payment_info',
         'invoice_footer',
         'invoice_logo_url',
+        'invoice_logo_base64',
+        // Pasarela de pago online
+        'pg_gateway',
+        'pg_sandbox',
+        'pg_active',
+        'pg_public_key',
+        'pg_private_key',
+        'pg_events_secret',
+        'pg_integrity_secret',
+        'pg_client_id',
     ];
 
     protected $casts = [
         'email_verified_at' => 'datetime',
         'created_at'        => 'datetime:Y-m-d H:i:s',
         'updated_at'        => 'datetime:Y-m-d H:i:s',
+        'pg_active'         => 'boolean',
+        'pg_sandbox'        => 'boolean',
     ];
 }

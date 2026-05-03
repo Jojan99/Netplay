@@ -262,6 +262,9 @@ class UseCaseServiceProvider extends ServiceProvider
         [DeleteInventoryUseCaseInterface::class, DeleteInventoryUseCase::class],
         [CreateInventoryMovementUseCaseInterface::class, CreateInventoryMovementUseCase::class],
         [GetInventoryMovementsUseCaseInterface::class, GetInventoryMovementsUseCase::class],
+        [\App\UseCases\Contract\Interfaces\GetContractsUseCaseInterface::class, \App\UseCases\Contract\GetContractsUseCase::class],
+        [\App\UseCases\Contract\Interfaces\CreateContractUseCaseInterface::class, \App\UseCases\Contract\CreateContractUseCase::class],
+        [\App\UseCases\Contract\Interfaces\ClientContractUseCaseInterface::class, \App\UseCases\Contract\ClientContractUseCase::class],
     ];
 
     /**

@@ -78,4 +78,11 @@ public function updateIpMac(string $ip, string $mac): void
         ->update(['mac' => $mac]);
 }
 
+public function updateUserIp(int $userId, string $newIp): void
+{
+    TablaIp::where('id_user', $userId)
+        ->where('company_id', getSessionCompanyId())
+        ->update(['ip' => $newIp]);
+}
+
 }

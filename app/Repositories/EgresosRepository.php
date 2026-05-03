@@ -114,18 +114,20 @@ class EgresosRepository implements EgresosRepositoryInterface
     public function getEgresosPaginated(?string $search, ?string $from, ?string $to, ?string $category, int $page, int $perPage): object
     {
         $companyId = getSessionCompanyId();
-        $base = DB::table('egresses')->where('company_id', $companyId);
+        $base = DB::table('egresses as e')
+            ->leftJoin('payment_methods as pm', 'pm.id', '=', 'e.payment_method_id')
+            ->where('e.company_id', $companyId);
 
         if ($search) {
-            $base->where('concept', 'like', "%{$search}%");
+            $base->where('e.concept', 'like', "%{$search}%");
         }
-        if ($from)     $base->whereDate('created_at', '>=', $from);
-        if ($to)       $base->whereDate('created_at', '<=', $to);
-        if ($category) $base->where('category', $category);
+        if ($from)     $base->whereDate('e.created_at', '>=', $from);
+        if ($to)       $base->whereDate('e.created_at', '<=', $to);
+        if ($category) $base->where('e.category', $category);
 
         $total = (clone $base)->count();
         $items = (clone $base)
-            ->select(['id', 'concept', 'category', 'value', 'user_id', 'created_at'])
+            ->select(['e.id', 'e.concept', 'e.category', 'e.value', 'e.user_id', 'e.created_at', DB::raw('pm.name as payment_method_name')])
             ->orderByDesc('created_at')
             ->offset(($page - 1) * $perPage)
             ->limit($perPage)
@@ -149,6 +151,7 @@ class EgresosRepository implements EgresosRepositoryInterface
             'category'             => $data['category'] ?? 'General',
             'value'                => $data['value'],
             'user_id'              => getSessionUserId(),
+            'payment_method_id'    => $data['payment_method_id'] ?? null,
         ]);
     }
 

@@ -40,7 +40,7 @@ x   * @return mixed
     {
 
         try {
-            if (getSessionUserProfileId() == 2) {
+            if (sessionUserHasProfile('CONTADOR', 'ADMIN')) {
                 $getDateFacturea =  $this->facturationRepository->getDataInfoPenddingFacture();
             } else {
                 return [

@@ -2,7 +2,6 @@
 
 namespace App\UseCases\Company;
 
-use App\Constants\ProfileConstants;
 use App\Http\Requests\Company\RegisterCompanyRequest;
 use App\Models\User;
 use App\Models\UserData;
@@ -11,6 +10,7 @@ use App\Resources\TemplatesEmail\TemplateEmailCompanyConfirmation;
 use App\Services\WhatsAppApiService;
 use App\UseCases\Company\Interfaces\RegisterCompanyUseCaseInterface;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 
@@ -28,12 +28,49 @@ class RegisterCompanyUseCase implements RegisterCompanyUseCaseInterface
 
             $company = $this->companyRepository->createCompany($data, $token);
 
-            // Crear usuario admin de la empresa
+            // Crear roles y módulos para la empresa PRIMERO para obtener el profile_id del ADMIN
+            $now = now();
+            $moduleDefaults = [
+                'ADMIN'    => [
+                    'usuario', 'finanzas', 'egresos', 'report-paid', 'history-facture',
+                    'created-ticket', 'view-ticket', 'olt-detail', 'olt-admin', 'router',
+                    'staff', 'billing-config', 'inventory', 'mikrotik', 'resumen', 'crm', 'whatsapp',
+                ],
+                'TECNICO'  => ['created-ticket', 'view-ticket', 'crm'],
+                'CONTADOR' => ['finanzas', 'egresos', 'report-paid', 'history-facture', 'inventory', 'resumen'],
+            ];
+
+            $adminProfileId = null;
+            foreach (['ADMIN', 'TECNICO', 'CONTADOR'] as $roleName) {
+                $profileId = DB::table('profiles')->insertGetId([
+                    'company_id' => $company->id,
+                    'name'       => $roleName,
+                    'active'     => true,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]);
+
+                if ($roleName === 'ADMIN') {
+                    $adminProfileId = $profileId;
+                }
+
+                $moduleRows = array_map(fn($m) => [
+                    'profile_id' => $profileId,
+                    'module'     => $m,
+                    'active'     => true,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ], $moduleDefaults[$roleName]);
+
+                DB::table('profile_modules')->insert($moduleRows);
+            }
+
+            // Crear usuario admin de la empresa con el profile_id real de esta empresa
             User::create([
                 'username'   => $data['nit'],
                 'email'      => $data['email'],
                 'password'   => Hash::make($data['admin_password']),
-                'profile_id' => ProfileConstants::ADMIN,
+                'profile_id' => $adminProfileId,
                 'company_id' => $company->id,
                 'active'     => 0,
             ]);

@@ -33,7 +33,7 @@ class GetEgresosUseCase implements GetEgresosUseCaseInterface
     public function getEgresosAll(): mixed
     {
         try {
-            if(getSessionUserProfileId() == 2){
+            if(sessionUserHasProfile('CONTADOR', 'ADMIN')){
                 $userAll = $this->egresosRepository->getEgresosAll();
             }else{
                 return [

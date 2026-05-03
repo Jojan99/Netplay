@@ -10,6 +10,7 @@ use App\Models\CompanyBillingSchedule;
 use App\Models\UserData;
 use App\Models\WhatsappPlanRequest;
 use App\Models\WaNotificationRoute;
+use App\Services\AutoSuspendService;
 use App\Services\NotificationRouterService;
 use App\Services\WhatsAppApiService;
 use App\UseCases\Company\Interfaces\ConfirmCompanyEmailUseCaseInterface;
@@ -626,20 +627,212 @@ class CompanyController extends Controller
         $request->validate(['logo' => 'required|image|max:2048']);
 
         $company = Company::findOrFail(getSessionCompanyId());
+        $file = $request->file('logo');
 
-        $logosDir = storage_path('app/public/logos');
-        if (!file_exists($logosDir)) {
-            mkdir($logosDir, 0775, true);
+        $fileContent = file_get_contents($file->getRealPath());
+        $mimeType = $file->getMimeType();
+        $base64Logo = "data:{$mimeType};base64," . base64_encode($fileContent);
+
+        $company->update([
+            'invoice_logo_url' => $base64Logo,
+            'invoice_logo_base64' => $base64Logo,
+        ]);
+
+        return standardApiReponse('Logo subido correctamente', ['url' => $base64Logo], false, JsonResponse::HTTP_OK);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // MÓDULOS POR PERFIL
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * GET /api/company/my-modules
+     * Retorna los módulos permitidos para el perfil del usuario en sesión.
+     */
+    public function getMyModules(): JsonResponse
+    {
+        // Usar JWT directamente en lugar de la sesión para evitar mezcla entre usuarios
+        $user = \Tymon\JWTAuth\Facades\JWTAuth::user();
+
+        $modules = \Illuminate\Support\Facades\DB::table('profile_modules')
+            ->where('profile_id', $user->profile_id)
+            ->where('active', true)
+            ->pluck('module');
+
+        return standardApiReponse('OK', $modules, false, JsonResponse::HTTP_OK);
+    }
+
+    /**
+     * GET /api/company/profiles/{profileId}/modules
+     * Lista todos los módulos del sistema con su estado activo/inactivo para el perfil dado.
+     */
+    public function getProfileModules(int $profileId): JsonResponse
+    {
+        $all = [
+            'usuario',
+            'created-ticket', 'view-ticket', 'installations',
+            'finanzas', 'egresos', 'report-paid', 'history-facture', 'resumen',
+            'inventory',
+            'mikrotik',
+            'olt-admin', 'olt-detail', 'router',
+            'staff', 'billing-config', 'payment-gateway', 'contratos', 'empleados', 'planes-internet',
+            'crm',
+            'whatsapp',
+            'technician-map',
+        ];
+
+        $active = \Illuminate\Support\Facades\DB::table('profile_modules')
+            ->where('profile_id', $profileId)
+            ->where('active', true)
+            ->pluck('module')
+            ->toArray();
+
+        $result = array_map(fn($m) => [
+            'module' => $m,
+            'active' => in_array($m, $active),
+        ], $all);
+
+        return standardApiReponse('OK', $result, false, JsonResponse::HTTP_OK);
+    }
+
+    /**
+     * PUT /api/company/profiles/{profileId}/modules
+     * Actualiza los módulos activos para un perfil de la empresa en sesión.
+     * body: { modules: string[] }
+     */
+    public function updateProfileModules(int $profileId, Request $request): JsonResponse
+    {
+        $user = \Tymon\JWTAuth\Facades\JWTAuth::user();
+        $companyId = $user ? $user->company_id : getSessionCompanyId();
+
+        // Verificar que el perfil pertenece a la empresa en sesión
+        $exists = \Illuminate\Support\Facades\DB::table('profiles')
+            ->where('id', $profileId)
+            ->where('company_id', $companyId)
+            ->exists();
+
+        if (!$exists) {
+            return standardApiReponse('Perfil no encontrado', null, true, JsonResponse::HTTP_NOT_FOUND);
         }
 
-        $file = $request->file('logo');
-        $filename = 'logo_company_' . $company->id . '_' . time() . '.' . $file->getClientOriginalExtension();
-        $file->move($logosDir, $filename);
+        $modules = $request->input('modules', []);
+        $now     = now();
+        $all = [
+            'usuario',
+            'created-ticket', 'view-ticket', 'installations',
+            'finanzas', 'egresos', 'report-paid', 'history-facture', 'resumen',
+            'inventory',
+            'mikrotik',
+            'olt-admin', 'olt-detail', 'router',
+            'staff', 'billing-config', 'payment-gateway', 'contratos', 'empleados', 'planes-internet',
+            'crm',
+            'whatsapp',
+            'technician-map',
+        ];
 
-        $url = rtrim(config('app.url'), '/') . '/storage/logos/' . $filename;
-        $company->update(['invoice_logo_url' => $url]);
+        foreach ($all as $module) {
+            \Illuminate\Support\Facades\DB::table('profile_modules')->upsert(
+                [['profile_id' => $profileId, 'module' => $module, 'active' => in_array($module, $modules), 'created_at' => $now, 'updated_at' => $now]],
+                ['profile_id', 'module'],
+                ['active', 'updated_at']
+            );
+        }
 
-        return standardApiReponse('Logo subido correctamente', ['url' => $url], false, JsonResponse::HTTP_OK);
+        return standardApiReponse('Módulos actualizados', null, false, JsonResponse::HTTP_OK);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // COMPANY PROFILES (roles por empresa)
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * GET /api/company/profiles
+     * Retorna los roles disponibles para la empresa en sesión.
+     */
+    public function getProfiles(): JsonResponse
+    {
+        $profiles = \Illuminate\Support\Facades\DB::table('profiles')
+            ->where('company_id', getSessionCompanyId())
+            ->select('id', 'name', 'active')
+            ->orderBy('id')
+            ->get();
+
+        return standardApiReponse('OK', $profiles, false, JsonResponse::HTTP_OK);
+    }
+
+    /**
+     * PUT /api/company/profiles/{id}
+     * Activa o desactiva un rol para la empresa en sesión.
+     * body: { active: bool }
+     */
+    public function updateProfile(int $id, Request $request): JsonResponse
+    {
+        \Illuminate\Support\Facades\DB::table('profiles')
+            ->where('id', $id)
+            ->where('company_id', getSessionCompanyId())
+            ->update(['active' => (bool) $request->input('active')]);
+
+        return standardApiReponse('Rol actualizado', null, false, JsonResponse::HTTP_OK);
+    }
+
+    // ── Auto-suspend ──────────────────────────────────────────────────────────
+
+    public function getAutoSuspendConfig(AutoSuspendService $service): JsonResponse
+    {
+        $companyId = getSessionCompanyId();
+        $config = \Illuminate\Support\Facades\DB::table('auto_suspend_configs')
+            ->where('company_id', $companyId)
+            ->first();
+
+        return standardApiReponse('OK', [
+            'enabled'        => $config ? (bool) $config->enabled : false,
+            'days_overdue'   => $config ? (int) $config->days_overdue : 5,
+            'suspension_day' => $config ? (int) $config->suspension_day : 5,
+            'stats'          => $service->getStats($companyId),
+        ], false, JsonResponse::HTTP_OK);
+    }
+
+    public function saveAutoSuspendConfig(Request $request, AutoSuspendService $service): JsonResponse
+    {
+        $companyId     = getSessionCompanyId();
+        $enabled       = (bool) $request->input('enabled', false);
+        $daysOverdue   = max(1, (int) $request->input('days_overdue', 5));
+        $suspensionDay = max(1, min(28, (int) $request->input('suspension_day', 5)));
+
+        \Illuminate\Support\Facades\DB::table('auto_suspend_configs')->updateOrInsert(
+            ['company_id' => $companyId],
+            [
+                'enabled'        => $enabled,
+                'days_overdue'   => $daysOverdue,
+                'suspension_day' => $suspensionDay,
+                'updated_at'     => now(),
+                'created_at'     => now(),
+            ]
+        );
+
+        return standardApiReponse('Configuración guardada.', null, false, JsonResponse::HTTP_OK);
+    }
+
+    public function runAutoSuspend(AutoSuspendService $service): JsonResponse
+    {
+        $companyId = getSessionCompanyId();
+        $config    = \Illuminate\Support\Facades\DB::table('auto_suspend_configs')
+            ->where('company_id', $companyId)->first();
+
+        $minInvoices = $config ? (int) $config->days_overdue : 1;
+
+        // Importa al log los que ya estaban suspendidos manualmente (solo los nuevos)
+        $service->importExistingSuspended($companyId);
+
+        $suspended   = $service->suspendOverdue($companyId, $minInvoices);
+        $reactivated = $service->reactivateAllClear($companyId, $minInvoices);
+
+        return standardApiReponse(
+            "{$suspended} suspendido(s), {$reactivated} reactivado(s).",
+            ['suspended' => $suspended, 'reactivated' => $reactivated],
+            false,
+            JsonResponse::HTTP_OK
+        );
     }
 
     /** GET /api/company/whatsapp/groups — lista grupos de la instancia activa */
