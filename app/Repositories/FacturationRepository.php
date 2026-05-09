@@ -336,6 +336,7 @@ class FacturationRepository implements FacturationRepositoryInterface
         $det = DetFacturation::where('det_facturations.id', $detId)
             ->join('cab_facturations', 'cab_facturations.id', '=', 'det_facturations.cab_id')
             ->where('cab_facturations.company_id', getSessionCompanyId())
+            ->where('det_facturations.paid', 0)
             ->select('det_facturations.*', 'cab_facturations.id as cab_id_val')
             ->first();
 
@@ -347,6 +348,8 @@ class FacturationRepository implements FacturationRepositoryInterface
             'paid_by_user_id'  => getSessionUserId(),
         ]);
 
+        $amountPaid = $det->price_total - $det->price_discount - ($det->price_abone ?? 0);
+
         PaymentLog::create([
             'company_id'          => getSessionCompanyId(),
             'det_facturation_id'  => $detId,
@@ -354,7 +357,7 @@ class FacturationRepository implements FacturationRepositoryInterface
             'number_facture'      => $det->number_facture,
             'client_name'         => $clientName,
             'recorded_by_user_id' => getSessionUserId(),
-            'amount'              => $det->price_total - $det->price_discount,
+            'amount'              => max(0, $amountPaid),
             'type'                => 'pago_completo',
             'payment_method_id'   => $paymentMethodId,
         ]);
@@ -394,7 +397,7 @@ class FacturationRepository implements FacturationRepositoryInterface
                 'number_facture'      => $det->number_facture,
                 'client_name'         => $clientName,
                 'recorded_by_user_id' => getSessionUserId(),
-                'amount'              => $det->price_total - $det->price_discount,
+                'amount'              => max(0, $det->price_total - $det->price_discount - ($det->price_abone ?? 0)),
                 'type'                => 'pago_completo',
                 'payment_method_id'   => $paymentMethodId,
             ]);

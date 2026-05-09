@@ -4,6 +4,7 @@ namespace App\UseCases\Facturation;
 
 use App\Constants\ApiResponseConstants;
 use App\Http\Requests\Facturation\CreateFacturationRequest;
+use App\Models\DetFacturation;
 use App\Repositories\Interfaces\FacturationRepositoryInterface;
 use App\Repositories\Interfaces\GeneratePdfRepositoryInterface;
 use App\UseCases\Facturation\Interfaces\CreateDetFacturationUseCaseInterface;
@@ -175,6 +176,16 @@ class CreateDetFacturationUseCase implements CreateDetFacturationUseCaseInterfac
                 $data['price_discount']           = 0;
                 $data['paid']                     = 0;
                 $data['create_facture_manual']    = 0;
+
+                // Idempotencia: no crear det si ya existe uno para este cab en el mismo mes/año
+                [$yyyy, $mm] = explode('-', substr($data_fecha, 0, 7));
+                $alreadyExists = DetFacturation::where('cab_id', $value['id'])
+                    ->whereYear('date_facturation', $yyyy)
+                    ->whereMonth('date_facturation', $mm)
+                    ->where('create_facture_manual', 0)
+                    ->exists();
+
+                if ($alreadyExists) continue;
 
                 $this->facturationRepository->createDetFacturation($data);
             }

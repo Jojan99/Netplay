@@ -263,7 +263,7 @@ class FacturationController extends Controller
         return standardApiReponse($ok ? 'Pago registrado' : 'Factura no encontrada', null, $ok ? 0 : 1, JsonResponse::HTTP_OK);
     }
 
-    public function abonarInvoice(Request $request, int $detId, FacturationRepositoryInterface $repo): object
+    public function abonarInvoice(Request $request, int $detId, FacturationRepositoryInterface $repo, AutoSuspendService $autoSuspend): object
     {
         $ok = $repo->abonarInvoice(
             $detId,
@@ -271,6 +271,17 @@ class FacturationController extends Controller
             $request->input('client_name', ''),
             $request->input('payment_method_id') ? (int) $request->input('payment_method_id') : null
         );
+
+        if ($ok) {
+            $userId = DB::table('det_facturations as df')
+                ->join('cab_facturations as cb', 'cb.id', '=', 'df.cab_id')
+                ->where('df.id', $detId)
+                ->value('cb.user_id');
+            if ($userId) {
+                $autoSuspend->reactivateIfClear($userId, getSessionCompanyId());
+            }
+        }
+
         return standardApiReponse($ok ? 'Abono registrado' : 'Factura no encontrada', null, $ok ? 0 : 1, JsonResponse::HTTP_OK);
     }
 
