@@ -16,12 +16,25 @@ class AutoSuspendService
 
     private function logPath(): string
     {
-        return storage_path('logs/auto-suspend-' . now()->format('Y-m-d') . '.log');
+        $path = storage_path('logs/auto-suspend-' . now()->format('Y-m-d') . '.log');
+
+        if (!file_exists($path)) {
+            touch($path);
+            @chmod($path, 0664);
+            @chown($path, 'www-data');
+        }
+
+        return $path;
     }
 
     private function writelog(string $line): void
     {
-        file_put_contents($this->logPath(), '[' . now()->format('H:i:s') . '] ' . $line . PHP_EOL, FILE_APPEND);
+        try {
+            file_put_contents($this->logPath(), '[' . now()->format('H:i:s') . '] ' . $line . PHP_EOL, FILE_APPEND);
+        } catch (\Throwable) {
+            // Si el archivo fue creado por root (cron), solo se registra en el log estándar de Laravel
+            \Illuminate\Support\Facades\Log::info('[auto-suspend] ' . $line);
+        }
     }
 
     public function logRun(string $job, int $companies): void
