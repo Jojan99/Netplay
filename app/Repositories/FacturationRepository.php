@@ -219,10 +219,17 @@ class FacturationRepository implements FacturationRepositoryInterface
 
     public function getConsecutiveFacture(int $companyId): mixed
     {
-        $count = DetFacturation::join('cab_facturations', 'cab_facturations.id', '=', 'det_facturations.cab_id')
+        $last = DetFacturation::join('cab_facturations', 'cab_facturations.id', '=', 'det_facturations.cab_id')
             ->where('cab_facturations.company_id', $companyId)
-            ->count();
-        return $count + 1;
+            ->orderBy('det_facturations.id', 'desc')
+            ->select('det_facturations.number_facture')
+            ->first();
+
+        if (!$last) return 1;
+
+        // Extrae los dígitos finales del número (funciona con cualquier prefijo: GL5, NP87, ISP-100...)
+        preg_match('/(\d+)$/', $last->number_facture, $matches);
+        return isset($matches[1]) ? ((int) $matches[1] + 1) : 1;
     }
 
     public function getConsecutiveFacture1(): mixed
