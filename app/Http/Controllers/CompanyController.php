@@ -575,6 +575,18 @@ class CompanyController extends Controller
     {
         $company = Company::findOrFail(getSessionCompanyId());
 
+        $template = null;
+        if ($company->invoice_template_id) {
+            $template = \App\Models\InvoiceTemplate::where('id', $company->invoice_template_id)
+                ->where('company_id', $company->id)
+                ->first();
+        }
+        if (!$template) {
+            $template = \App\Models\InvoiceTemplate::where('company_id', $company->id)
+                ->where('is_default', true)
+                ->first();
+        }
+
         return standardApiReponse('OK', [
             'invoice_business_name'     => $company->invoice_business_name     ?? $company->name,
             'invoice_nit'               => $company->invoice_nit               ?? $company->nit,
@@ -587,6 +599,9 @@ class CompanyController extends Controller
             'invoice_payment_info'      => $company->invoice_payment_info      ?? '',
             'invoice_footer'            => $company->invoice_footer            ?? '',
             'invoice_logo_url'          => $company->invoice_logo_url          ?? $company->logo ?? '',
+            'invoice_template_id'       => $company->invoice_template_id,
+            'invoice_template'          => $template,
+            'invoice_prefix'            => $company->invoice_prefix ?? 'GL',
         ], false, JsonResponse::HTTP_OK);
     }
 
@@ -610,7 +625,13 @@ class CompanyController extends Controller
             'invoice_payment_info',
             'invoice_footer',
             'invoice_logo_url',
+            'invoice_prefix',
         ]);
+
+        if (isset($fields['invoice_prefix'])) {
+            $fields['invoice_prefix'] = strtoupper(preg_replace('/[^A-Za-z0-9\-]/', '', $fields['invoice_prefix']));
+            $fields['invoice_prefix'] = substr($fields['invoice_prefix'], 0, 10) ?: 'GL';
+        }
 
         $company->update($fields);
 

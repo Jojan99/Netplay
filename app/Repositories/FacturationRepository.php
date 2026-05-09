@@ -2,6 +2,7 @@
 
 namespace App\Repositories;
 
+use App\Models\Company;
 use App\Models\DetFacturation;
 use App\Models\CabFacturation;
 use App\Models\PaymentLog;
@@ -158,7 +159,11 @@ class FacturationRepository implements FacturationRepositoryInterface
 
     public function createDetFacturation(CreateFacturationRequest $data): mixed
     {
-        $number = "NT" . ($this->getConsecutiveFacture());
+        $cab       = CabFacturation::find($data['cab_id']);
+        $companyId = $cab ? $cab->company_id : getSessionCompanyId();
+        $company   = Company::find($companyId);
+        $prefix    = ($company && $company->invoice_prefix) ? $company->invoice_prefix : 'GL';
+        $number    = $prefix . $this->getConsecutiveFacture($companyId);
         return DetFacturation::create([
             'cab_id'                  => $data['cab_id'],
             'date_facturation'        => $data['date_facturation'],
@@ -205,10 +210,12 @@ class FacturationRepository implements FacturationRepositoryInterface
         return true;
     }
 
-    public function getConsecutiveFacture(): mixed
+    public function getConsecutiveFacture(int $companyId): mixed
     {
-        $last = DetFacturation::orderBy('id', 'desc')->first();
-        return ($last ? $last->id : 0) + 1;
+        $count = DetFacturation::join('cab_facturations', 'cab_facturations.id', '=', 'det_facturations.cab_id')
+            ->where('cab_facturations.company_id', $companyId)
+            ->count();
+        return $count + 1;
     }
 
     public function getConsecutiveFacture1(): mixed

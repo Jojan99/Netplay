@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\CompanyController;
+use App\Http\Controllers\InvoiceTemplateController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('company')->group(function () {
@@ -43,6 +44,15 @@ Route::prefix('company')->group(function () {
         Route::get('invoice-config',        [CompanyController::class, 'getInvoiceConfig']);
         Route::put('invoice-config',        [CompanyController::class, 'updateInvoiceConfig']);
         Route::post('invoice-config/logo',  [CompanyController::class, 'uploadInvoiceLogo']);
+
+        // Invoice templates
+        Route::get('invoice-templates',                 [InvoiceTemplateController::class, 'index']);
+        Route::get('invoice-templates/preview',         [InvoiceTemplateController::class, 'preview']);
+        Route::get('invoice-templates/{id}',            [InvoiceTemplateController::class, 'show']);
+        Route::post('invoice-templates',                [InvoiceTemplateController::class, 'store']);
+        Route::put('invoice-templates/{id}',            [InvoiceTemplateController::class, 'update']);
+        Route::delete('invoice-templates/{id}',         [InvoiceTemplateController::class, 'destroy']);
+        Route::put('invoice-templates/{id}/set-default', [InvoiceTemplateController::class, 'setDefault']);
 
         // Notification routes
         Route::get('notification-routes',         [CompanyController::class, 'listNotificationRoutes']);

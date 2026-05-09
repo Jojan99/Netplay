@@ -91,7 +91,7 @@ interface FacturationRepositoryInterface
 
   public function getDateFacturePendingById($det_id): mixed;
 
-  public function getConsecutiveFacture();
+  public function getConsecutiveFacture(int $companyId): mixed;
 
   public function getConsecutiveFacture1();
 

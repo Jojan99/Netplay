@@ -365,7 +365,7 @@ class AutoSuspendService
             ->join('cab_facturations as cb', 'cb.id', '=', 'df.cab_id')
             ->whereIn('cb.user_id', $autoSuspended)
             ->where('df.paid', 0)
-            //->where('df.abone', '!=', 1)
+            ->where('df.abone', '!=', 1)
             ->select('cb.user_id')
             ->distinct()
             ->pluck('user_id')

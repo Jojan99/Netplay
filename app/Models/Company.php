@@ -37,6 +37,8 @@ class Company extends Model
         'invoice_footer',
         'invoice_logo_url',
         'invoice_logo_base64',
+        'invoice_template_id',
+        'invoice_prefix',
         // Pasarela de pago online
         'pg_gateway',
         'pg_sandbox',
@@ -55,4 +57,9 @@ class Company extends Model
         'pg_active'         => 'boolean',
         'pg_sandbox'        => 'boolean',
     ];
+
+    public function invoiceTemplate()
+    {
+        return $this->belongsTo(InvoiceTemplate::class);
+    }
 }
