@@ -817,7 +817,8 @@ class CompanyController extends Controller
     {
         $companyId     = getSessionCompanyId();
         $enabled       = (bool) $request->input('enabled', false);
-        $daysOverdue   = max(1, (int) $request->input('days_overdue', 5));
+        // days_overdue: número mínimo de facturas cabecera pendientes para activar la suspensión (no son "días")
+        $daysOverdue   = max(1, (int) $request->input('days_overdue', 1));
         $suspensionDay = max(1, min(28, (int) $request->input('suspension_day', 5)));
 
         \Illuminate\Support\Facades\DB::table('auto_suspend_configs')->updateOrInsert(

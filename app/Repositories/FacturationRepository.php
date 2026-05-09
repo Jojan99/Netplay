@@ -159,26 +159,33 @@ class FacturationRepository implements FacturationRepositoryInterface
 
     public function createDetFacturation(CreateFacturationRequest $data): mixed
     {
-        $cab       = CabFacturation::find($data['cab_id']);
-        $companyId = $cab ? $cab->company_id : getSessionCompanyId();
-        $company   = Company::find($companyId);
-        $prefix    = ($company && $company->invoice_prefix) ? $company->invoice_prefix : 'GL';
-        $number    = $prefix . $this->getConsecutiveFacture($companyId);
-        return DetFacturation::create([
-            'cab_id'                  => $data['cab_id'],
-            'date_facturation'        => $data['date_facturation'],
-            'number_facture'          => $number,
-            'date_create_facturation' => $data['date_create_facturation'],
-            'total'                   => $data['total'],
-            'price_total'             => $data['price_total'],
-            'price_abone'             => 0,
-            'discount'                => $data['discount'],
-            'price_discount'          => $data['price_discount'],
-            'days_facture'            => $data['days_facture'],
-            'paid'                    => 0,
-            'create_facture_manual'   => $data['create_facture_manual'],
-            'porcentage_discount'     => $data['porcentage_discount'],
-        ]);
+        return DB::transaction(function () use ($data) {
+            $cab       = CabFacturation::find($data['cab_id']);
+            $companyId = $cab ? $cab->company_id : getSessionCompanyId();
+            $company   = Company::find($companyId);
+            $prefix    = ($company && $company->invoice_prefix) ? $company->invoice_prefix : 'GL';
+
+            // Bloquea filas de la empresa para que dos procesos simultáneos no obtengan el mismo consecutivo
+            DB::table('cab_facturations')->where('company_id', $companyId)->lockForUpdate()->count();
+
+            $number = $prefix . $this->getConsecutiveFacture($companyId);
+
+            return DetFacturation::create([
+                'cab_id'                  => $data['cab_id'],
+                'date_facturation'        => $data['date_facturation'],
+                'number_facture'          => $number,
+                'date_create_facturation' => $data['date_create_facturation'],
+                'total'                   => $data['total'],
+                'price_total'             => $data['price_total'],
+                'price_abone'             => 0,
+                'discount'                => $data['discount'],
+                'price_discount'          => $data['price_discount'],
+                'days_facture'            => $data['days_facture'],
+                'paid'                    => 0,
+                'create_facture_manual'   => $data['create_facture_manual'],
+                'porcentage_discount'     => $data['porcentage_discount'],
+            ]);
+        });
     }
 
     public function updateDetFacturation(CreateFacturationRequest $data): mixed
@@ -265,8 +272,9 @@ class FacturationRepository implements FacturationRepositoryInterface
             });
         }
 
+        // Cuenta pares (user_id, cab_id) para que coincida con los items agrupados
         $total = (clone $base)
-            ->select(DB::raw('COUNT(DISTINCT us.user_id) as cnt'))
+            ->selectRaw('COUNT(DISTINCT us.user_id, cb.id) as cnt')
             ->value('cnt') ?? 0;
 
         $items = (clone $base)
@@ -419,8 +427,10 @@ class FacturationRepository implements FacturationRepositoryInterface
             ->select('det_facturations.*', 'cab_facturations.id as cab_id_val')
             ->first();
 
-        if (!$det) return false;
+        if (!$det || $det->paid || $amount <= 0) return false;
 
+        $saldo    = max(0, $det->price_total - $det->price_discount - ($det->price_abone ?? 0));
+        $amount   = min($amount, $saldo);
         $newAbone = ($det->price_abone ?? 0) + $amount;
         $isPaid   = $newAbone >= ($det->price_total - $det->price_discount);
 
