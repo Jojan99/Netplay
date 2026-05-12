@@ -30,9 +30,8 @@ class AutoSuspendService
     private function writelog(string $line): void
     {
         try {
-            file_put_contents($this->logPath(), '[' . now()->format('H:i:s') . '] ' . $line . PHP_EOL, FILE_APPEND);
+            file_put_contents($this->logPath(), '[' . now()->format('Y-m-d H:i:s') . '] ' . $line . PHP_EOL, FILE_APPEND);
         } catch (\Throwable) {
-            // Si el archivo fue creado por root (cron), solo se registra en el log estándar de Laravel
             \Illuminate\Support\Facades\Log::info('[auto-suspend] ' . $line);
         }
     }
@@ -111,17 +110,18 @@ class AutoSuspendService
                 $u   = $users->get($userId);
                 $dni = $u?->dni ?? null;
                 $label = $u
-                    ? "ID:{$userId} DNI:{$dni} ({$u->names} {$u->lastname}) user:{$u->username}"
+                    ? "ID:{$userId} | {$u->names} {$u->lastname} | DNI:{$dni} | user:{$u->username}"
                     : "ID:{$userId} (sin datos)";
 
                 if (!$dni) {
-                    $this->writelog("  ✗ {$label} — sin DNI, omitido");
+                    $this->writelog("  ✗ {$label} — sin DNI registrado, omitido");
                     $notFound++;
                     continue;
                 }
 
                 try {
                     // Intento 1: buscar por DNI
+                    $this->writelog("  >> Buscando en ARP MikroTik: comment=\"{$dni}\"");
                     $arpEntries = $api->query(
                         (new Query('/ip/arp/print'))->where('comment', $dni)
                     )->read();
@@ -130,7 +130,7 @@ class AutoSuspendService
 
                     // Intento 2: buscar por username si no encontró por DNI
                     if (empty($arpEntries) && !empty($u?->username)) {
-                        $this->writelog("  ~ {$label} — no encontrado por DNI:{$dni}, buscando por username:{$u->username}");
+                        $this->writelog("     No encontrado por DNI. Buscando por username=\"{$u->username}\"");
                         $arpEntries = $api->query(
                             (new Query('/ip/arp/print'))->where('comment', $u->username)
                         )->read();
@@ -138,23 +138,26 @@ class AutoSuspendService
                     }
 
                     if (empty($arpEntries)) {
-                        $this->writelog("  ✗ {$label} — NO encontrado en ARP (buscado por DNI y USERNAME)");
+                        $this->writelog("  ✗ {$label}");
+                        $this->writelog("     NO encontrado en ARP (buscado DNI:\"{$dni}\" y USERNAME:\"{$u->username}\")");
                         $notFound++;
                         continue;
                     }
 
                     $found++;
-                    $ips = implode(', ', array_column($arpEntries, 'address'));
-                    $this->writelog("  ✓ {$label} — encontrado en ARP por {$foundBy} │ IPs: {$ips}");
-
                     foreach ($arpEntries as $arp) {
+                        $disabledState = ($arp['disabled'] ?? 'false') === 'true' ? 'YA-DESACTIVADO' : 'activo';
+                        $this->writelog("  ✓ {$label}");
+                        $this->writelog("     Encontrado por {$foundBy} | IP:{$arp['address']} | MAC:{$arp['mac-address']} | Estado-ARP:{$disabledState} | .id:{$arp['.id']}");
+
                         if (empty($arp['.id'])) continue;
                         $api->query(
                             (new Query($cmd))->equal('.id', $arp['.id'])
                         )->read();
+                        $this->writelog("     → Comando '{$cmd}' ejecutado sobre .id:{$arp['.id']}");
                     }
 
-                    $this->writelog("    → {$verb} correctamente");
+                    $this->writelog("     ✔ {$verb} correctamente en MikroTik");
                     $applied[] = $userId;
                     $done++;
 
@@ -204,12 +207,41 @@ class AutoSuspendService
             ->havingRaw('COUNT(DISTINCT cb.id) >= ?', [$minInvoices])
             ->get();
 
-        if ($overdueUsers->isEmpty()) return 0;
+        if ($overdueUsers->isEmpty()) {
+            $this->writelog("suspendOverdue empresa={$companyId} → 0 clientes con deuda >= {$minInvoices} factura(s)");
+            return 0;
+        }
 
         $userIds = $overdueUsers->pluck('user_id')->toArray();
         $total   = count($userIds);
 
-        $this->writelog("suspendOverdue empresa={$companyId} minFacturas={$minInvoices} → {$total} cliente(s) a suspender");
+        // Cargar detalle de deuda por cliente
+        $debtDetail = DB::table('det_facturations as df')
+            ->join('cab_facturations as cb', 'cb.id', '=', 'df.cab_id')
+            ->join('user_data as ud', 'ud.user_id', '=', 'cb.user_id')
+            ->whereIn('cb.user_id', $userIds)
+            ->where('df.paid', 0)
+            ->where('df.abone', '!=', 1)
+            ->select(
+                'cb.user_id',
+                'ud.names', 'ud.lastname', 'ud.dni',
+                DB::raw('COUNT(df.id) as det_count'),
+                DB::raw('SUM(df.price_total - df.price_discount - df.price_abone) as total_deuda')
+            )
+            ->groupBy('cb.user_id', 'ud.names', 'ud.lastname', 'ud.dni')
+            ->get()
+            ->keyBy('user_id');
+
+        $this->writelog("suspendOverdue empresa={$companyId} minFacturas={$minInvoices} → {$total} cliente(s) elegibles para suspensión:");
+        foreach ($overdueUsers as $row) {
+            $d = $debtDetail->get($row->user_id);
+            $nombre  = $d ? "{$d->names} {$d->lastname}" : '?';
+            $dni     = $d->dni ?? '?';
+            $deuda   = $d ? number_format((float)$d->total_deuda, 2) : '?';
+            $dets    = $d->det_count ?? '?';
+            $cabs    = $row->cab_count;
+            $this->writelog("  Cliente ID:{$row->user_id} | {$nombre} | DNI:{$dni} | Cabs:{$cabs} | Dets pendientes:{$dets} | Deuda total:\${$deuda}");
+        }
 
         // 1. Primero aplicar en MikroTik
         $applied = $this->applyArpStatus($companyId, $userIds, '/ip/arp/disable', 'SUSPENDIDO');

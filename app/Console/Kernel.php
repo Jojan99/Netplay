@@ -19,13 +19,13 @@ class Kernel extends ConsoleKernel
         $schedule->command('commitments:check')->dailyAt('08:00');
 
         // Suspende clientes con facturas vencidas (corre el día del mes configurado por empresa)
-        $schedule->command('clients:auto-suspend')->dailyAt('07:00');
+        $schedule->command('clients:auto-suspend')->dailyAt('07:00')->user('www-data');
 
         // Reactiva clientes que ya están al día — corre cada 4 minutos para respuesta rápida tras un pago
-        $schedule->command('clients:auto-reactivate')->everyFourMinutes();
+        $schedule->command('clients:auto-reactivate')->everyFourMinutes()->user('www-data');
 
         // Sincroniza ARP MikroTik con STATUS de plataforma — corrige desyncs diariamente
-        $schedule->command('arp:sync')->dailyAt('06:00');
+        $schedule->command('arp:sync')->dailyAt('06:00')->user('www-data');
         
     }
 

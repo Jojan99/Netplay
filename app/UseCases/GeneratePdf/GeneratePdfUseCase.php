@@ -77,29 +77,29 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
 
                     if (!empty($phone)) {
 
-                        // $payload = [
-                        //     "apiToken" => "18736|MVxPCIhgDsWNsXw2F8IuNGKvZep7t6TQPOtJJIG248b3f82f",
-                        //     "phone_number_id" => "1069182359602584",
-                        //     "template_id" => "339815",
-                        //     "phone_number" => $phone,
-                        //     "templateVariable-Names-1" => $user['names'],
-                        //     "templateVariable-LastName-2" => $user['lastname'],
-                        //     "templateVariable-NumberBill-3" => $user['number_facture'],
-                        //     "templateVariable-MonthlyPrice-4" => '$' . number_format($user['monthly_price'], 0, ',', '.'),
-                        //     "templateVariable-DateFinishBill-5" => $fecha,
-                        //     "template_quick_reply_button_values" => ["77R3LXw6gnAKTO8"]
-                        // ];
                         $payload = [
                             "apiToken" => "18736|MVxPCIhgDsWNsXw2F8IuNGKvZep7t6TQPOtJJIG248b3f82f",
                             "phone_number_id" => "1069182359602584",
-                            "message" => "Por favor, ignore el último mensaje con respecto a la facturación. en unas horas le estaria llegando el mensaje correcto, disculpe las molestias.",
+                            "template_id" => "339815",
                             "phone_number" => $phone,
+                            "templateVariable-Names-1" => $user['names'],
+                            "templateVariable-LastName-2" => $user['lastname'],
+                            "templateVariable-NumberBill-3" => $user['number_facture'],
+                            "templateVariable-MonthlyPrice-4" => '$' . number_format($user['monthly_price'], 0, ',', '.'),
+                            "templateVariable-DateFinishBill-5" => $fecha,
+                            "template_quick_reply_button_values" => ["69b6cc0dd747e"]
                         ];
+                        // $payload = [
+                        //     "apiToken" => "18736|MVxPCIhgDsWNsXw2F8IuNGKvZep7t6TQPOtJJIG248b3f82f",
+                        //     "phone_number_id" => "1069182359602584",
+                        //     "message" => "Por favor, ignore el último mensaje con respecto a la facturación. en unas horas le estaria llegando el mensaje correcto, disculpe las molestias.",
+                        //     "phone_number" => $phone,
+                        // ];
 
                         $ch = curl_init();
 
-                        // curl_setopt($ch, CURLOPT_URL, "https://app.whatchimp.com/api/v1/whatsapp/send/template"); // 👈 CAMBIA ESTO
-                        curl_setopt($ch, CURLOPT_URL, "https://app.whatchimp.com/api/v1/whatsapp/send"); // 👈 CAMBIA ESTO
+                        curl_setopt($ch, CURLOPT_URL, "https://app.whatchimp.com/api/v1/whatsapp/send/template"); // 👈 CAMBIA ESTO
+                       // curl_setopt($ch, CURLOPT_URL, "https://app.whatchimp.com/api/v1/whatsapp/send"); // 👈 CAMBIA ESTO
                         curl_setopt($ch, CURLOPT_POST, true);
                         curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
                         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);

@@ -849,9 +849,22 @@ class CompanyController extends Controller
         $suspended   = $service->suspendOverdue($companyId, $minInvoices);
         $reactivated = $service->reactivateAllClear($companyId, $minInvoices);
 
+        // Retornar las últimas 150 líneas del log del día para inspección inmediata
+        $logPath = storage_path('logs/auto-suspend-' . now()->format('Y-m-d') . '.log');
+        $logLines = [];
+        if (file_exists($logPath)) {
+            $all = file($logPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+            $logLines = array_slice($all, -150);
+        }
+
         return standardApiReponse(
             "{$suspended} suspendido(s), {$reactivated} reactivado(s).",
-            ['suspended' => $suspended, 'reactivated' => $reactivated],
+            [
+                'suspended'   => $suspended,
+                'reactivated' => $reactivated,
+                'log'         => $logLines,
+                'log_file'    => $logPath,
+            ],
             false,
             JsonResponse::HTTP_OK
         );
