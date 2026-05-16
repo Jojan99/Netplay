@@ -5,7 +5,7 @@ namespace App\Http\Requests\Inventory;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
-class CreateInventoryCategoryRequest extends FormRequest
+class UpdateInventoryCategoryRequest extends FormRequest
 {
     public function authorize(): bool
     {
@@ -15,25 +15,19 @@ class CreateInventoryCategoryRequest extends FormRequest
     public function rules(): array
     {
         $companyId = getSessionCompanyId();
+        $categoryId = $this->route('id') ?? $this->input('id');
 
         return [
             'name'        => [
-                'required',
+                'sometimes',
                 'string',
                 'max:100',
                 Rule::unique('inventory_categories')
                     ->where('company_id', $companyId)
-                    ->whereNull('deleted_at'),
+                    ->whereNull('deleted_at')
+                    ->ignore($categoryId),
             ],
             'description' => 'nullable|string|max:255',
-        ];
-    }
-
-    public function messages(): array
-    {
-        return [
-            'name.required' => 'El nombre de la categoría es obligatorio.',
-            'name.unique'   => 'Ya existe una categoría con este nombre en su empresa.',
         ];
     }
 }

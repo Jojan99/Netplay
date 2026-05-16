@@ -2,7 +2,7 @@
 
 namespace App\UseCases\Inventory\Interfaces;
 
-interface DeleteInventoryUseCaseInterface
+interface DeleteInventoryCategoryUseCaseInterface
 {
     public function delete(int $id): array;
 }

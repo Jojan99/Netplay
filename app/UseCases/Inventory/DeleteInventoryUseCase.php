@@ -3,22 +3,40 @@
 namespace App\UseCases\Inventory;
 
 use App\Constants\ApiResponseConstants;
-use App\Repositories\Interfaces\InventoryRepositoryInterface;
+use App\Repositories\Interfaces\InventoryItemRepositoryInterface;
 use App\UseCases\Inventory\Interfaces\DeleteInventoryUseCaseInterface;
 
 class DeleteInventoryUseCase implements DeleteInventoryUseCaseInterface
 {
     public function __construct(
-        private InventoryRepositoryInterface $inventoryRepository
+        private InventoryItemRepositoryInterface $itemRepository
     ) {}
 
-    public function delete(int $id): mixed
+    public function delete(int $id): array
     {
         try {
-            $this->inventoryRepository->delete($id);
-            return ['message' => 'Ítem eliminado correctamente', 'data' => null, 'status' => ApiResponseConstants::SUCCESS];
+            $companyId = (int) getSessionCompanyId();
+            $deleted = $this->itemRepository->delete($companyId, $id);
+
+            if (!$deleted) {
+                return [
+                    'message' => 'Ítem no encontrado',
+                    'data'    => null,
+                    'status'  => ApiResponseConstants::ERROR,
+                ];
+            }
+
+            return [
+                'message' => 'Ítem eliminado correctamente',
+                'data'    => null,
+                'status'  => ApiResponseConstants::SUCCESS,
+            ];
         } catch (\Throwable $e) {
-            return ['message' => $e->getMessage(), 'data' => null, 'status' => ApiResponseConstants::ERROR];
+            return [
+                'message' => 'Error al eliminar ítem: ' . $e->getMessage(),
+                'data'    => null,
+                'status'  => ApiResponseConstants::ERROR,
+            ];
         }
     }
 }

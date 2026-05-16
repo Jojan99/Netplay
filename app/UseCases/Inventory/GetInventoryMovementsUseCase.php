@@ -3,32 +3,54 @@
 namespace App\UseCases\Inventory;
 
 use App\Constants\ApiResponseConstants;
-use App\Repositories\Interfaces\InventoryRepositoryInterface;
+use App\Repositories\Interfaces\InventoryMovementRepositoryInterface;
 use App\UseCases\Inventory\Interfaces\GetInventoryMovementsUseCaseInterface;
 
 class GetInventoryMovementsUseCase implements GetInventoryMovementsUseCaseInterface
 {
     public function __construct(
-        private InventoryRepositoryInterface $inventoryRepository
+        private InventoryMovementRepositoryInterface $movementRepository
     ) {}
 
-    public function getByItem(int $inventoryId): mixed
+    public function getByItem(int $inventoryId): array
     {
         try {
-            $data = $this->inventoryRepository->getMovements($inventoryId);
-            return ['message' => 'OK', 'data' => $data, 'status' => ApiResponseConstants::SUCCESS];
+            $companyId = (int) getSessionCompanyId();
+            $perPage = request()->query('per_page', 15);
+            $data = $this->movementRepository->getByItem($companyId, $inventoryId, (int) $perPage);
+
+            return [
+                'message' => 'Movimientos obtenidos correctamente',
+                'data'    => $data,
+                'status'  => ApiResponseConstants::SUCCESS,
+            ];
         } catch (\Throwable $e) {
-            return ['message' => $e->getMessage(), 'data' => null, 'status' => ApiResponseConstants::ERROR];
+            return [
+                'message' => 'Error al obtener movimientos: ' . $e->getMessage(),
+                'data'    => null,
+                'status'  => ApiResponseConstants::ERROR,
+            ];
         }
     }
 
-    public function getAll(): mixed
+    public function getAll(array $filters = []): array
     {
         try {
-            $data = $this->inventoryRepository->getAllMovements();
-            return ['message' => 'OK', 'data' => $data, 'status' => ApiResponseConstants::SUCCESS];
+            $companyId = (int) getSessionCompanyId();
+            $perPage = $filters['per_page'] ?? 15;
+            $data = $this->movementRepository->getAll($companyId, $filters, (int) $perPage);
+
+            return [
+                'message' => 'Movimientos obtenidos correctamente',
+                'data'    => $data,
+                'status'  => ApiResponseConstants::SUCCESS,
+            ];
         } catch (\Throwable $e) {
-            return ['message' => $e->getMessage(), 'data' => null, 'status' => ApiResponseConstants::ERROR];
+            return [
+                'message' => 'Error al obtener movimientos: ' . $e->getMessage(),
+                'data'    => null,
+                'status'  => ApiResponseConstants::ERROR,
+            ];
         }
     }
 }

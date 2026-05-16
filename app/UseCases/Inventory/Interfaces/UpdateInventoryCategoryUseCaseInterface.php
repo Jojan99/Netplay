@@ -2,7 +2,7 @@
 
 namespace App\UseCases\Inventory\Interfaces;
 
-interface CreateInventoryMovementUseCaseInterface
+interface UpdateInventoryCategoryUseCaseInterface
 {
     public function create(array $data): array;
 }

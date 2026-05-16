@@ -145,18 +145,22 @@ use App\UseCases\Ticket\UpdateTicketUseCase;
 use App\UseCases\Inventory\CreateInventoryCategoryUseCase;
 use App\UseCases\Inventory\CreateInventoryMovementUseCase;
 use App\UseCases\Inventory\CreateInventoryUseCase;
+use App\UseCases\Inventory\DeleteInventoryCategoryUseCase;
 use App\UseCases\Inventory\DeleteInventoryUseCase;
 use App\UseCases\Inventory\GetInventoryCategoriesUseCase;
 use App\UseCases\Inventory\GetInventoriesUseCase;
 use App\UseCases\Inventory\GetInventoryMovementsUseCase;
+use App\UseCases\Inventory\UpdateInventoryCategoryUseCase;
 use App\UseCases\Inventory\UpdateInventoryUseCase;
 use App\UseCases\Inventory\Interfaces\CreateInventoryCategoryUseCaseInterface;
 use App\UseCases\Inventory\Interfaces\CreateInventoryMovementUseCaseInterface;
 use App\UseCases\Inventory\Interfaces\CreateInventoryUseCaseInterface;
+use App\UseCases\Inventory\Interfaces\DeleteInventoryCategoryUseCaseInterface;
 use App\UseCases\Inventory\Interfaces\DeleteInventoryUseCaseInterface;
 use App\UseCases\Inventory\Interfaces\GetInventoryCategoriesUseCaseInterface;
 use App\UseCases\Inventory\Interfaces\GetInventoriesUseCaseInterface;
 use App\UseCases\Inventory\Interfaces\GetInventoryMovementsUseCaseInterface;
+use App\UseCases\Inventory\Interfaces\UpdateInventoryCategoryUseCaseInterface;
 use App\UseCases\Inventory\Interfaces\UpdateInventoryUseCaseInterface;
 use GetCrmAgentsUseCase;
 use TransferConversationUseCase;
@@ -256,6 +260,8 @@ class UseCaseServiceProvider extends ServiceProvider
         [ChangePasswordUseCaseInterface::class, ChangePasswordUseCase::class],
         [GetInventoryCategoriesUseCaseInterface::class, GetInventoryCategoriesUseCase::class],
         [CreateInventoryCategoryUseCaseInterface::class, CreateInventoryCategoryUseCase::class],
+        [UpdateInventoryCategoryUseCaseInterface::class, UpdateInventoryCategoryUseCase::class],
+        [DeleteInventoryCategoryUseCaseInterface::class, DeleteInventoryCategoryUseCase::class],
         [GetInventoriesUseCaseInterface::class, GetInventoriesUseCase::class],
         [CreateInventoryUseCaseInterface::class, CreateInventoryUseCase::class],
         [UpdateInventoryUseCaseInterface::class, UpdateInventoryUseCase::class],

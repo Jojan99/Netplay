@@ -31,10 +31,18 @@ class OltTelnetWorker extends Command
     private const IDLE_TIMEOUT  = 300; // segundos — cierra la sesión tras 5 min sin comandos
     private const HEARTBEAT_TTL = 15;  // TTL del heartbeat en Redis
     private const BLPOP_TIMEOUT = 5;   // segundos que espera por un comando antes de re-loop
+    private const SAVE_DELAY    = 30;  // segundos de inactividad tras escritura antes de auto-save
+
+    private const WRITE_METHODS = [
+        'registerONT', 'deleteONT', 'assignToClient',
+        'transferONT', 'deactivateONT', 'activateONT',
+    ];
 
     private ?object          $connection     = null;
     private ?HuaweiOltDriver $driver         = null;
     private float            $lastActivityAt = 0.0;
+    private bool             $pendingSave    = false;
+    private float            $lastWriteAt    = 0.0;
 
     public function handle(OltConnectionFactory $factory): int
     {
@@ -67,7 +75,8 @@ class OltTelnetWorker extends Command
             $item = Redis::blpop($queueKey, self::BLPOP_TIMEOUT);
 
             if ($item === null) {
-                continue; // sin comandos — re-loop para revisar idle y heartbeat
+                $this->checkPendingSave($oltId);
+                continue;
             }
 
             $command   = json_decode($item[1], true);
@@ -82,6 +91,11 @@ class OltTelnetWorker extends Command
                 $this->ensureConnected($oltId, $factory);
                 $data = $this->executeCommand($command);
                 Redis::rpush($resultKey, json_encode(['success' => true, 'data' => $data]));
+
+                if (in_array($command['method'], self::WRITE_METHODS, true)) {
+                    $this->pendingSave = true;
+                    $this->lastWriteAt = microtime(true);
+                }
             } catch (\Throwable $e) {
                 Log::error("OLT Worker #{$oltId}: error en {$command['method']}", ['error' => $e->getMessage()]);
                 $this->disconnect($oltId); // resetear estado para forzar reconexión
@@ -150,6 +164,32 @@ class OltTelnetWorker extends Command
     private function publishHeartbeat(int $oltId): void
     {
         Redis::setex("olt:{$oltId}:worker_alive", self::HEARTBEAT_TTL, '1');
+    }
+
+    private function checkPendingSave(int $oltId): void
+    {
+        if (!$this->pendingSave || $this->driver === null) {
+            return;
+        }
+
+        if ((microtime(true) - $this->lastWriteAt) < self::SAVE_DELAY) {
+            return;
+        }
+
+        Log::info("OLT Worker #{$oltId}: iniciando auto-save (30s sin cambios)");
+        $this->info("OLT #{$oltId}: guardando configuración en flash...");
+
+        try {
+            $this->driver->saveConfig();
+            $this->pendingSave = false;
+            Log::info("OLT Worker #{$oltId}: auto-save completado");
+            $this->info("OLT #{$oltId}: configuración guardada.");
+        } catch (\Throwable $e) {
+            Log::error("OLT Worker #{$oltId}: auto-save falló, reintentando en 30s", [
+                'error' => $e->getMessage(),
+            ]);
+            $this->lastWriteAt = microtime(true); // reinicia el contador para reintentar
+        }
     }
 
     // ── Ejecución de comandos ─────────────────────────────────────────────

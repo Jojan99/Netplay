@@ -88,4 +88,11 @@ interface OltDriverInterface
 
     /** Send a raw CLI command and return the output. */
     public function runCommand(string $command): string;
+
+    /**
+     * Persist the running configuration to flash.
+     * Equivalent to: config → save → <Enter> → quit
+     * May take up to ~3 minutes on some hardware.
+     */
+    public function saveConfig(): void;
 }

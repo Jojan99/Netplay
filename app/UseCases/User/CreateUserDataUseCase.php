@@ -92,6 +92,7 @@ class CreateUserDataUseCase implements CreateUserDataUseCaseInterface
                 $user = $this->userRepository->createUser($data);
                 if ($user) {
                     $data['userId'] = $user['id'];
+                    $ipReal = $data['ip_assignment_id'] ?? 'N/A';
 
                     $data['ip_assignment_id'] = $this->internetInfoRepository->AssignemetIpUser($data['ip_assignment_id'],$user['id']);
                
@@ -124,7 +125,6 @@ class CreateUserDataUseCase implements CreateUserDataUseCaseInterface
         } catch (QueryException $err) {
             return ['message' => 'An error occurred while creating the user: ' . $err->getMessage(), 'data' => ApiResponseConstants::DATA_NULL, 'status' => 1];
         }
-            $ipReal = $data['ip_assignment_id'] ?? 'N/A';
                 try {
             NotificationRouterService::dispatch(
                 getSessionCompanyId(),

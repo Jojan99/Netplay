@@ -6,7 +6,7 @@ use App\Constants\ApiResponseConstants;
 use App\Repositories\Interfaces\InventoryCategoryRepositoryInterface;
 use App\UseCases\Inventory\Interfaces\CreateInventoryCategoryUseCaseInterface;
 
-class CreateInventoryCategoryUseCase implements CreateInventoryCategoryUseCaseInterface
+class UpdateInventoryCategoryUseCase implements CreateInventoryCategoryUseCaseInterface
 {
     public function __construct(
         private InventoryCategoryRepositoryInterface $categoryRepository
@@ -14,18 +14,28 @@ class CreateInventoryCategoryUseCase implements CreateInventoryCategoryUseCaseIn
 
     public function create(array $data): array
     {
+        // Interface reuse: array contains ['id' => ..., ...fields]
         try {
             $companyId = (int) getSessionCompanyId();
-            $category = $this->categoryRepository->create($companyId, $data);
+            $id = (int) ($data['id'] ?? 0);
+            $category = $this->categoryRepository->update($companyId, $id, $data);
+
+            if (!$category) {
+                return [
+                    'message' => 'Categoría no encontrada',
+                    'data'    => null,
+                    'status'  => ApiResponseConstants::ERROR,
+                ];
+            }
 
             return [
-                'message' => 'Categoría creada correctamente',
+                'message' => 'Categoría actualizada correctamente',
                 'data'    => $category,
                 'status'  => ApiResponseConstants::SUCCESS,
             ];
         } catch (\Throwable $e) {
             return [
-                'message' => 'Error al crear categoría: ' . $e->getMessage(),
+                'message' => 'Error al actualizar categoría: ' . $e->getMessage(),
                 'data'    => null,
                 'status'  => ApiResponseConstants::ERROR,
             ];

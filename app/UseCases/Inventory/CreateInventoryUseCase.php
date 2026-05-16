@@ -3,23 +3,32 @@
 namespace App\UseCases\Inventory;
 
 use App\Constants\ApiResponseConstants;
-use App\Repositories\Interfaces\InventoryRepositoryInterface;
+use App\Repositories\Interfaces\InventoryItemRepositoryInterface;
 use App\UseCases\Inventory\Interfaces\CreateInventoryUseCaseInterface;
-use Illuminate\Http\Request;
 
 class CreateInventoryUseCase implements CreateInventoryUseCaseInterface
 {
     public function __construct(
-        private InventoryRepositoryInterface $inventoryRepository
+        private InventoryItemRepositoryInterface $itemRepository
     ) {}
 
-    public function create(Request $request): mixed
+    public function create(array $data): array
     {
         try {
-            $data = $this->inventoryRepository->create($request->all());
-            return ['message' => 'Ítem creado correctamente', 'data' => $data, 'status' => ApiResponseConstants::SUCCESS];
+            $companyId = (int) getSessionCompanyId();
+            $item = $this->itemRepository->create($companyId, $data);
+
+            return [
+                'message' => 'Ítem creado correctamente',
+                'data'    => $item,
+                'status'  => ApiResponseConstants::SUCCESS,
+            ];
         } catch (\Throwable $e) {
-            return ['message' => $e->getMessage(), 'data' => null, 'status' => ApiResponseConstants::ERROR];
+            return [
+                'message' => 'Error al crear ítem: ' . $e->getMessage(),
+                'data'    => null,
+                'status'  => ApiResponseConstants::ERROR,
+            ];
         }
     }
 }

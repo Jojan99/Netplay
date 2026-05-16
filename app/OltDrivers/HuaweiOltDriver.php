@@ -684,6 +684,40 @@ public function parseServicePorts(string $output): array
         return $this->collectPaged();
     }
 
+    public function saveConfig(): void
+    {
+        $this->resetToPrompt();
+
+        $this->ssh->setTimeout(8);
+        $this->ssh->write("enable\n");
+        $this->ssh->read('/[>#$]\s*$/');
+
+        $this->ssh->write("config\n");
+        $this->ssh->read('/[>#$]\s*$/');
+
+        $this->ssh->write("save\n");
+
+        // Huawei shows { <cr>|configuration<K>|data<K> }: before executing
+        $this->ssh->setTimeout(10);
+        $out = $this->ssh->read('/(?:\{\s*<cr>|[>#$]\s*$)/i');
+
+        if (preg_match('/\{\s*<cr>/i', $out)) {
+            $this->ssh->write("\n");
+        }
+
+        // Save can take several minutes on Huawei hardware
+        $this->ssh->setTimeout(180);
+        $this->ssh->read('/[>#$]\s*$/');
+
+        $this->ssh->write("quit\n");
+        $this->ssh->setTimeout(10);
+        $this->ssh->read('/[>#$]\s*$/');
+
+        $this->ssh->setTimeout(15);
+
+        Log::info('HuaweiOLT saveConfig: configuración guardada en flash');
+    }
+
     public function activateONT(string $fsp, int $ontId): bool
     {
         [$frame, $slot, $port] = $this->parseFsp($fsp);
