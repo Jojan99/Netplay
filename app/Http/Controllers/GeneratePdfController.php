@@ -258,7 +258,7 @@ class GeneratePdfController extends Controller
             $filename = 'factura_' . preg_replace('/[^A-Za-z0-9_\-]/', '_', $data['number_facture']) . '_' . $data['dni'] . '.pdf';
 
             $emailService = new InvoiceEmailService();
-            $result = $emailService->sendInvoice($data, $pdfContent, $filename);
+            $result = $emailService->sendInvoice($data->toArray(), $pdfContent, $filename);
 
             $statusCode = $result['status'] === 'ok' ? 200 : 500;
             $this->logSend(
