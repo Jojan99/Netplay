@@ -14,4 +14,7 @@ Route::prefix('generatePdf')->group(function () {
     Route::post('sendInvoiceByWhatsApp/{invoiceId}', [GeneratePdfController::class, 'sendInvoiceByWhatsApp']);
     Route::post('sendInvoiceByEmail/{invoiceId}', [GeneratePdfController::class, 'sendInvoiceByEmail']);
     Route::post('sendInvoice/{invoiceId}', [GeneratePdfController::class, 'sendInvoice']);
+
+    // Historial de envíos
+    Route::get('sendHistory/{invoiceId}', [GeneratePdfController::class, 'sendHistory']);
 });

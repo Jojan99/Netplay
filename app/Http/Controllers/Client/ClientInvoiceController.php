@@ -272,6 +272,43 @@ class ClientInvoiceController extends Controller
     }
 
     /**
+     * GET /api/client/invoices/{id}/send-history
+     * Historial de envíos de una factura.
+     */
+    public function sendHistory(int $id): JsonResponse
+    {
+        $user = JWTAuth::user();
+
+        $invoice = DB::table('det_facturations as df')
+            ->join('cab_facturations as cf', 'cf.id', '=', 'df.cab_id')
+            ->where('df.id', $id)
+            ->where('cf.user_id', $user->id)
+            ->where('cf.company_id', $user->company_id)
+            ->select('df.id')
+            ->first();
+
+        if (!$invoice) {
+            return response()->json([
+                'message' => 'Factura no encontrada',
+                'data'    => null,
+                'status'  => ApiResponseConstants::ERROR,
+            ], JsonResponse::HTTP_NOT_FOUND);
+        }
+
+        $logs = DB::table('invoice_send_logs')
+            ->where('det_facturation_id', $id)
+            ->orderByDesc('created_at')
+            ->limit(20)
+            ->get();
+
+        return response()->json([
+            'message' => 'OK',
+            'data'    => $logs,
+            'status'  => ApiResponseConstants::SUCCESS,
+        ], JsonResponse::HTTP_OK);
+    }
+
+    /**
      * Helper: reenvía la petición al GeneratePdfController internamente.
      */
     private function forwardToGeneratePdf(int $id, string $action): JsonResponse
