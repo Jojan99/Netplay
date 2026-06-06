@@ -22,14 +22,14 @@ class HolaMundo extends Command
      *
      * @var string
      */
-    protected $signature = 'post:create {company_id : ID de la empresa} {periodo : Grupo a procesar (1-4)} {billing_day : Día del mes al que corresponde la factura} {billing_month? : Mes (1-12), por defecto el actual} {billing_year? : Año, por defecto el actual}';
+    protected $signature = 'post:create {company_id : ID de la empresa} {periodo : Grupo a procesar (1-4)} {billing_day : Día del mes al que corresponde la factura} {billing_month? : Mes (1-12), por defecto el actual} {billing_year? : Año, por defecto el actual} {--channel=whatsapp : Canal de envío: whatsapp, email, both}';
 
     /**
      * The console command description.
      *
      * @var string
      */
-    protected $description = 'Command description';
+    protected $description = 'Genera y envía facturas masivamente por WhatsApp, Email o ambos.';
 
     /**
      * Execute the console command.
@@ -43,14 +43,21 @@ class HolaMundo extends Command
         $billingDay   = (int) $this->argument('billing_day');
         $billingMonth = $this->argument('billing_month') ? (int) $this->argument('billing_month') : Carbon::now()->month;
         $billingYear  = $this->argument('billing_year')  ? (int) $this->argument('billing_year')  : Carbon::now()->year;
+        $channel      = $this->option('channel');
 
-        $this->info("Empresa ID: {$companyId} | Periodo: {$resultado} | Fecha factura: {$billingYear}-{$billingMonth}-{$billingDay}");
+        // Validar canal
+        if (!in_array($channel, ['whatsapp', 'email', 'both'])) {
+            $this->error("Canal '{$channel}' no válido. Use: whatsapp, email o both");
+            return 1;
+        }
+
+        $this->info("Empresa ID: {$companyId} | Periodo: {$resultado} | Fecha factura: {$billingYear}-{$billingMonth}-{$billingDay} | Canal: {$channel}");
 
         $whatsapp = new WhatsAppService($companyId);
         $hora     = Carbon::now()->toDateTimeString();
 
         try {
-            $whatsapp->mensajeInformativo('3245127869', "⚠️ *Se inicia Proceso* '{$hora}'.");
+            $whatsapp->mensajeInformativo('3245127869', "⚠️ *Se inicia Proceso* '{$hora}'. Canal: {$channel}");
         } catch (\Throwable) {}
 
         $FacturationRepository        = new FacturationRepository();
@@ -62,14 +69,18 @@ class HolaMundo extends Command
         // $CreateDetFacturationUseCase->createProcesoDetFacturation(
         //     $CreateFacturationRequest, $resultado, $companyId, $billingDay, $billingMonth, $billingYear
         // );
-        $GeneratePdfUseCase->generatePdf($resultado, $companyId, $billingDay);
+        $result = $GeneratePdfUseCase->generatePdf($resultado, $companyId, $billingDay, $channel);
 
         $this->info('Proceso finalizado.');
+        $this->info("Resultado: " . json_encode($result));
+
         try {
-                $whatsapp->mensajeInformativo(
+            $whatsapp->mensajeInformativo(
                 '3245127869',
-                "✅ *Se Finaliza Proceso* '{$hora}', '{$resultado}', '{$companyId}', '{$billingDay}'."
+                "✅ *Se Finaliza Proceso* '{$hora}', '{$resultado}', '{$companyId}', '{$billingDay}'. Canal: {$channel}. Resultado: " . json_encode($result)
             );
         } catch (\Throwable) {}
+
+        return 0;
     }
 }

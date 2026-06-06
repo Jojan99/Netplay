@@ -32,6 +32,7 @@ class InventoryMovement extends Model
         'cost_after',
         'description',
         'reference',
+        'serial_number',
         'batch_number',
         'expiry_date',
         'user_id',

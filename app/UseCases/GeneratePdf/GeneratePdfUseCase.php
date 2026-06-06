@@ -12,7 +12,10 @@ use App\Constants\ApiResponseConstants;
 use Carbon\Carbon;
 use App\Resources\Templates\TemplatesPdf;
 use App\Services\WhatsAppService;
+use App\Services\WhatsAppMessageHumanizerService;
+use App\Services\InvoiceEmailService;
 use Illuminate\Support\Facades\Log;
+
 /**
  *
  * @package App\UseCases\GeneratePdf
@@ -33,283 +36,313 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
     }
 
     /**
-     * Método encargado de generar pdf masivo .zip
+     * Escribe un log detallado del envío de facturas.
+     */
+    private function writeBillingLog(int $companyId, int $periodo, array $messages, array $result, ?string $error = null, string $channel = 'whatsapp'): void
+    {
+        try {
+            $logPath = storage_path('logs/billing');
+            if (!is_dir($logPath)) {
+                mkdir($logPath, 0777, true);
+            }
+
+            $logFile = $logPath . '/billing_' . $channel . '_' . date('Y-m-d_H-i-s') . '.json';
+
+            $logData = [
+                'fecha_proceso'     => Carbon::now()->toDateTimeString(),
+                'company_id'        => $companyId,
+                'periodo'           => $periodo,
+                'canal'             => $channel,
+                'total_mensajes'    => count($messages),
+                'resultado_batch'   => $result,
+                'error'             => $error,
+                'detalle_envios'    => $messages,
+            ];
+
+            file_put_contents($logFile, json_encode($logData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+            Log::info("[BILLING_LOG] Log detallado guardado", ['file' => $logFile, 'channel' => $channel]);
+        } catch (\Throwable $e) {
+            Log::warning("[BILLING_LOG] No se pudo escribir log detallado", ['error' => $e->getMessage()]);
+        }
+    }
+
+    /**
+     * Generar y enviar facturas masivamente.
+     *
+     * @param mixed $Periodo
+     * @param int $companyId
+     * @param int $billingDay
+     * @param string $sendChannel 'whatsapp' | 'email' | 'both'
      * @return mixed
      */
-   public function generatePdf($Periodo, int $companyId = 0, int $billingDay = 0): mixed
-{
-    set_time_limit(0);
-    ini_set('max_execution_time', 0);
-    try {
-        if (true) {
+    public function generatePdf($Periodo, int $companyId = 0, int $billingDay = 0, string $sendChannel = 'whatsapp'): mixed
+    {
+        set_time_limit(0);
+        ini_set('max_execution_time', 0);
+        ini_set('memory_limit', '512M');
+
+        try {
             $getUserPeriode1 = $this->generatePdfRepository->getUserPeriode1($Periodo, $companyId);
             $generatePdf     = $this->generatePdfRepository->generatePdf($getUserPeriode1);
 
-             $fecha = date('Y-m-d', strtotime('+1 days'));
+            $fecha = date('Y-m-d', strtotime('+1 days'));
+            $waService = new WhatsAppService($companyId);
+            $humanizer = new WhatsAppMessageHumanizerService();
+            $emailService = new InvoiceEmailService();
+
+            $waMessages = [];
+            $emailInvoices = [];
 
             foreach ($generatePdf as $user) {
+                // Preparar mensaje de WhatsApp
+                if (in_array($sendChannel, ['whatsapp', 'both'])) {
+                    $phoneNumbers = explode(' - ', $user['phone']);
+                    foreach ($phoneNumbers as $phone) {
+                        $phone = trim($phone);
+                        if (empty($phone)) continue;
 
-                $Cab = $this->generatePdfRepository->getSaldoAnt($user['id'], $user['number_facture']);
-                $Cab = $Cab === null ? 0 : $Cab;
-
-                // 📄 Generar PDF
-                //$pdfContent = $this->generateIndividualPdf($user, $Cab);
-
-                // $nombreArchivo = 'Sr_o_Sra_' . $user['dni'] . '_' . $user['names'] . '_' . $user['lastname'] . '.pdf';
-                // $nombreArchivo = str_replace(' ', '_', $nombreArchivo);
-                // $nombreArchivo = preg_replace('/[^A-Za-z0-9_\-.]/', '', $nombreArchivo);
-
-                // $storagePath = storage_path('app/pdf');
-                // if (!file_exists($storagePath)) {
-                //     mkdir($storagePath, 0777, true);
-                // }
-
-                //$pdfFilePath = $storagePath . DIRECTORY_SEPARATOR . $nombreArchivo;
-                //file_put_contents($pdfFilePath, $pdfContent);
-
-                //$ruta = "https://netplay.com.co/netplay/storage/app/pdf/$nombreArchivo";
-
-                // 📲 ENVÍO WHATSAPP
-                $phoneNumbers = explode(' - ', $user['phone']);
-
-                foreach ($phoneNumbers as $phone) {
-                    $phone = trim($phone);
-
-                    if (!empty($phone)) {
-
-                        $payload = [
-                            "apiToken" => "18736|MVxPCIhgDsWNsXw2F8IuNGKvZep7t6TQPOtJJIG248b3f82f",
-                            "phone_number_id" => "1069182359602584",
-                            "template_id" => "339815",
-                            "phone_number" => $phone,
-                            "templateVariable-Names-1" => $user['names'],
-                            "templateVariable-LastName-2" => $user['lastname'],
-                            "templateVariable-NumberBill-3" => $user['number_facture'],
-                            "templateVariable-MonthlyPrice-4" => '$' . number_format($user['monthly_price'], 0, ',', '.'),
-                            "templateVariable-DateFinishBill-5" => $fecha,
-                            "template_quick_reply_button_values" => ["69b6cc0dd747e"]
-                        ];
-                        // $payload = [
-                        //     "apiToken" => "18736|MVxPCIhgDsWNsXw2F8IuNGKvZep7t6TQPOtJJIG248b3f82f",
-                        //     "phone_number_id" => "1069182359602584",
-                        //     "message" => "Por favor, ignore el último mensaje con respecto a la facturación. en unas horas le estaria llegando el mensaje correcto, disculpe las molestias.",
-                        //     "phone_number" => $phone,
-                        // ];
-
-                        $ch = curl_init();
-
-                        curl_setopt($ch, CURLOPT_URL, "https://app.whatchimp.com/api/v1/whatsapp/send/template"); // 👈 CAMBIA ESTO
-                       // curl_setopt($ch, CURLOPT_URL, "https://app.whatchimp.com/api/v1/whatsapp/send"); // 👈 CAMBIA ESTO
-                        curl_setopt($ch, CURLOPT_POST, true);
-                        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
-                        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-                        curl_setopt($ch, CURLOPT_HTTPHEADER, [
-                            'Content-Type: application/json'
+                        $msgBody = $humanizer->generateInvoiceMessage([
+                            'names' => $user['names'] ?? '',
+                            'lastname' => $user['lastname'] ?? '',
+                            'number_bill' => $user['number_facture'] ?? '',
+                            'monthly_price' => '$' . number_format($user['monthly_price'] ?? 0, 0, ',', '.'),
+                            'date_finish_bill' => $fecha,
+                            'billing_electronic' => $user['billing_electronic'] ?? 0,
                         ]);
 
-                        $responseApi = curl_exec($ch);
-                        $error = curl_error($ch);
-                        curl_close($ch);
-
-                        // 📁 LOG DE TRAZABILIDAD
-                        $logPath = storage_path('logs/whatsapp_logs');
-                        if (!file_exists($logPath)) {
-                            mkdir($logPath, 0777, true);
-                        }
-
-                        $logData = [
-                            "fecha_envio" => Carbon::now()->toDateTimeString(),
-                            "usuario" => $user['names'] . ' ' . $user['lastname'],
-                            "dni" => $user['dni'],
-                            "telefono" => $phone,
-                            "factura" => $user['number_facture'],
-                            //"ruta_pdf" => $ruta,
-                            "payload" => $payload,
-                            "response" => $responseApi,
-                            "error" => $error
+                        $waMessages[] = [
+                            'number' => $phone,
+                            'message' => $msgBody,
+                            'type' => 'text',
                         ];
-
-                        $logFile = $logPath . '/log_' . date('Y-m-d:H') . '.json';
-
-                        file_put_contents(
-                            $logFile,
-                            json_encode($logData, JSON_PRETTY_PRINT) . PHP_EOL,
-                            FILE_APPEND
-                        );
                     }
                 }
 
-                // ❌ Ya no borramos el PDF (opcional)
-                // unlink($pdfFilePath);
+                // Preparar correo electrónico
+                if (in_array($sendChannel, ['email', 'both'])) {
+                    $pdfContent = $this->generateIndividualPdf($user, 0);
+                    $filename = 'factura_' . preg_replace('/[^A-Za-z0-9_\-]/', '_', $user['number_facture'] ?? '') . '_' . ($user['dni'] ?? '') . '.pdf';
+
+                    $emailInvoices[] = [
+                        'user' => $user,
+                        'pdf_content' => $pdfContent,
+                        'filename' => $filename,
+                    ];
+                }
+            }
+
+            // Enviar por WhatsApp
+            $waResult = ['queued' => 0, 'invalid' => 0, 'chunks' => 0];
+            if (in_array($sendChannel, ['whatsapp', 'both']) && count($waMessages) > 0) {
+                if (!$waService) {
+                    return [
+                        'message' => 'WhatsApp no configurado para esta empresa',
+                        'status' => 1,
+                    ];
+                }
+                $waResult = $waService->sendBulk($waMessages);
+                Log::info('[WA_BILLING] Batch encolado en whatsapp-service', [
+                    'company_id' => $companyId,
+                    'queued' => $waResult['queued'] ?? 0,
+                    'invalid' => $waResult['invalid'] ?? 0,
+                ]);
+                $this->writeBillingLog($companyId, $Periodo, $waMessages, $waResult, null, 'whatsapp');
+            }
+
+            // Enviar por Correo
+            $emailResult = ['sent' => 0, 'failed' => 0, 'errors' => []];
+            if (in_array($sendChannel, ['email', 'both']) && count($emailInvoices) > 0) {
+                $emailResult = $emailService->sendBulkInvoices($emailInvoices);
+                Log::info('[EMAIL_BILLING] Envío masivo completado', [
+                    'company_id' => $companyId,
+                    'sent' => $emailResult['sent'],
+                    'failed' => $emailResult['failed'],
+                ]);
+                $this->writeBillingLog($companyId, $Periodo, $emailInvoices, $emailResult, null, 'email');
             }
 
             return [
-                'message' => 'PDFs generados y enviados correctamente',
-                'status' => 0
+                'message' => "Facturas procesadas. WhatsApp: " . ($waResult['queued'] ?? 0) . " encolados. Email: " . ($emailResult['sent'] ?? 0) . " enviados.",
+                'status' => 0,
+                'whatsapp' => $waResult,
+                'email' => $emailResult,
             ];
-        }
 
         } catch (QueryException $err) {
+            Log::error('[BILLING] Error general', ['error' => $err->getMessage()]);
+            $this->writeBillingLog($companyId, $Periodo, $waMessages ?? [], $waResult ?? [], $err->getMessage(), $sendChannel);
             return [
-                'message' => 'Error generando PDF',
+                'message' => 'Error generando/enviando facturas',
                 'status' => 1,
-                'data' => ApiResponseConstants::DATA_NULL
+                'data' => ApiResponseConstants::DATA_NULL,
             ];
         }
     }
 
-public function generatePdfMeta($Periodo, int $companyId = 0, int $billingDay = 0): mixed
-{
-    try {
+    /**
+     * Generar y enviar facturas con saldo anterior.
+     *
+     * @param mixed $Periodo
+     * @param int $companyId
+     * @param int $billingDay
+     * @param string $sendChannel 'whatsapp' | 'email' | 'both'
+     * @return mixed
+     */
+    public function generatePdfMeta($Periodo, int $companyId = 0, int $billingDay = 0, string $sendChannel = 'whatsapp'): mixed
+    {
+        try {
+            $getUserPeriode1 = $this->generatePdfRepository->getUserPeriode1($Periodo, $companyId);
+            $users           = $this->generatePdfRepository->generatePdf($getUserPeriode1);
 
-        $getUserPeriode1 = $this->generatePdfRepository->getUserPeriode1($Periodo, $companyId);
-        $users           = $this->generatePdfRepository->generatePdf($getUserPeriode1);
-
-        if ($billingDay > 0) {
-            $fecha = Carbon::now()->setDay(min($billingDay, Carbon::now()->daysInMonth))->format('Y-m-d');
-        } else {
-            $fecha = Carbon::now()->format('Y-m-d');
-        }
-
-        $totalEnviados = 0;
-        $totalFallidos = 0;
-        $fallidos      = [];
-
-        $watchchimp = new \App\Services\WatchChimpService();
-
-        foreach ($users as $user) {
-
-            $phone = trim($user['phone'] ?? '');
-
-            if (empty($phone)) {
-                continue;
+            if ($billingDay > 0) {
+                $fecha = Carbon::now()->setDay(min($billingDay, Carbon::now()->daysInMonth))->format('Y-m-d');
+            } else {
+                $fecha = Carbon::now()->format('Y-m-d');
             }
 
-            try {
+            $waService = new WhatsAppService($companyId);
+            $humanizer = new WhatsAppMessageHumanizerService();
+            $emailService = new InvoiceEmailService();
 
-                // 🔥 Obtener saldo anterior
-                $Cab = $this->generatePdfRepository->getSaldoAnt(
-                    $user['id'], 
-                    $user['number_facture']
-                );
+            $waMessages = [];
+            $emailInvoices = [];
 
+            foreach ($users as $user) {
+                $Cab = $this->generatePdfRepository->getSaldoAnt($user['id'], $user['number_facture']);
                 $Cab = $Cab ?? 0;
+                $total = $Cab > 0 ? $Cab + ($user['total'] ?? 0) : ($user['total'] ?? 0);
 
-                // 🔥 Total (sirve para deuda o no)
-                $total = $Cab > 0 
-                    ? $Cab + ($user['total'] ?? 0)
-                    : ($user['total'] ?? 0);
+                if (in_array($sendChannel, ['whatsapp', 'both'])) {
+                    $phoneNumbers = explode(' - ', $user['phone']);
+                    foreach ($phoneNumbers as $phone) {
+                        $phone = trim($phone);
+                        if (empty($phone)) continue;
 
-                // 🔥 Variables (ORDEN IMPORTANTE)
-                $variables = [
-                    'names' => $user['names'] ?? '',
-                    'last_names' => $user['lastname'] ?? '',
-                    'number_bill' => $user['number_facture'] ?? '',
-                    'monthly_price' => number_format($total, 0, ',', '.'),
-                    'date_finish_bill' => $fecha,
-                ];
+                        $msgBody = $humanizer->generateInvoiceMessage([
+                            'names' => $user['names'] ?? '',
+                            'lastname' => $user['lastname'] ?? '',
+                            'number_bill' => $user['number_facture'] ?? '',
+                            'monthly_price' => '$' . number_format($total, 0, ',', '.') . ' COP',
+                            'date_finish_bill' => $fecha,
+                            'billing_electronic' => $user['billing_electronic'] ?? 0,
+                        ]);
 
-                // 🚀 Enviar template
-                $response = $watchchimp->sendTemplate(
-                    $phone,
-                    "333320", // TU TEMPLATE ID
-                    $variables
-                );
-
-                if (($response['status'] ?? 0) != 1) {
-                    throw new \Exception(json_encode($response));
+                        $waMessages[] = [
+                            'number' => $phone,
+                            'message' => $msgBody,
+                            'type' => 'text',
+                        ];
+                    }
                 }
 
-                $totalEnviados++;
+                if (in_array($sendChannel, ['email', 'both'])) {
+                    $pdfContent = $this->generateIndividualPdf($user, $Cab);
+                    $filename = 'factura_' . preg_replace('/[^A-Za-z0-9_\-]/', '_', $user['number_facture'] ?? '') . '_' . ($user['dni'] ?? '') . '.pdf';
 
-                Log::info('[TEMPLATE ENVIADO]', [
-                    'dni'   => $user['dni'],
-                    'phone' => $phone,
-                ]);
-
-            } catch (\Exception $e) {
-
-                $totalFallidos++;
-
-                $fallidos[] = [
-                    'dni'   => $user['dni'],
-                    'phone' => $phone,
-                    'error' => $e->getMessage()
-                ];
-
-                Log::warning('[TEMPLATE FALLIDO]', [
-                    'dni'   => $user['dni'],
-                    'phone' => $phone,
-                    'error' => $e->getMessage(),
-                ]);
-
-                continue;
+                    $emailInvoices[] = [
+                        'user' => $user,
+                        'pdf_content' => $pdfContent,
+                        'filename' => $filename,
+                    ];
+                }
             }
+
+            $waResult = ['queued' => 0, 'invalid' => 0, 'chunks' => 0];
+            if (in_array($sendChannel, ['whatsapp', 'both']) && count($waMessages) > 0) {
+                if (!$waService) {
+                    return [
+                        'message' => 'WhatsApp no configurado para esta empresa',
+                        'status' => 1,
+                    ];
+                }
+                $waResult = $waService->sendBulk($waMessages);
+                Log::info('[WA_BILLING META] Batch encolado en whatsapp-service', [
+                    'company_id' => $companyId,
+                    'queued' => $waResult['queued'] ?? 0,
+                    'invalid' => $waResult['invalid'] ?? 0,
+                ]);
+                $this->writeBillingLog($companyId, $Periodo, $waMessages, $waResult, null, 'whatsapp');
+            }
+
+            $emailResult = ['sent' => 0, 'failed' => 0, 'errors' => []];
+            if (in_array($sendChannel, ['email', 'both']) && count($emailInvoices) > 0) {
+                $emailResult = $emailService->sendBulkInvoices($emailInvoices);
+                Log::info('[EMAIL_BILLING META] Envío masivo completado', [
+                    'company_id' => $companyId,
+                    'sent' => $emailResult['sent'],
+                    'failed' => $emailResult['failed'],
+                ]);
+                $this->writeBillingLog($companyId, $Periodo, $emailInvoices, $emailResult, null, 'email');
+            }
+
+            return [
+                'message' => "Facturas procesadas. WhatsApp: " . ($waResult['queued'] ?? 0) . " encolados. Email: " . ($emailResult['sent'] ?? 0) . " enviados.",
+                'status' => 0,
+                'whatsapp' => $waResult,
+                'email' => $emailResult,
+            ];
+
+        } catch (\Exception $err) {
+            Log::error('[BILLING META] Error', ['error' => $err->getMessage()]);
+            $this->writeBillingLog($companyId, $Periodo, $waMessages ?? [], $waResult ?? [], $err->getMessage(), $sendChannel);
+            return [
+                'message' => 'Error en el proceso',
+                'status'  => 1,
+                'error'   => $err->getMessage(),
+            ];
         }
-
-        Log::info('[PROCESO COMPLETADO]', [
-            'enviados' => $totalEnviados,
-            'fallidos' => $totalFallidos,
-            'detalle_fallidos' => $fallidos,
-        ]);
-
-        return [
-            'message'  => "Proceso completado. Enviados: {$totalEnviados}, Fallidos: {$totalFallidos}",
-            'status'   => 0,
-            'enviados' => $totalEnviados,
-            'fallidos' => $totalFallidos,
-            'detalle_fallidos' => $fallidos,
-        ];
-
-    } catch (\Exception $err) {
-
-        return [
-            'message' => 'Error en el proceso',
-            'status'  => 1,
-            'error'   => $err->getMessage()
-        ];
     }
-}
 
-
-    private function generateIndividualPdf($user,$Cab)
+    /**
+     * Enviar una factura individual por correo electrónico.
+     *
+     * @param string $invoiceId
+     * @return array
+     */
+    public function sendInvoiceByEmail(string $invoiceId): array
     {
+        try {
+            $data = $this->generatePdfRepository->generatePdfById($invoiceId);
 
-        // $fechaInit = substr($user['date_init_facturation'], 0, 10);
-        // $fechaNueva = date('Y-m-d', strtotime($fechaInit . ' -1 month'));
-        // $fechaActual = date('Y-m-d');
-        // $fechaVence = date('Y-m-d',strtotime($fechaActual . ' +3 days'));
+            if (!$data) {
+                return ['status' => 'error', 'message' => 'Factura no encontrada'];
+            }
 
+            $email = trim($data['email'] ?? '');
+            if (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                return ['status' => 'error', 'message' => 'El cliente no tiene un correo válido registrado'];
+            }
 
-        // $Porcentage = 0;
+            $saldoAnt = $this->generatePdfRepository->getSaldoAnt($data['id'], $data['number_facture']) ?? 0;
 
-        // $valorDescuento = $user['price_discount'];
+            $pdfContent = $this->generateIndividualPdf($data, $saldoAnt);
+            $filename = 'factura_' . preg_replace('/[^A-Za-z0-9_\-]/', '_', $data['number_facture']) . '_' . $data['dni'] . '.pdf';
 
-        // $saldoTotal = $user['monthly_price'] - $user['price_discount'];
+            $emailService = new InvoiceEmailService();
+            return $emailService->sendInvoice($data, $pdfContent, $filename);
 
-        // Crea un PDF individual y devuelve su contenido
-        // Aquí puedes usar Dompdf, TCPDF, o cualquier otra biblioteca de tu elección
+        } catch (\Throwable $e) {
+            Log::error('[EMAIL_SINGLE] Error enviando factura individual', [
+                'invoice_id' => $invoiceId,
+                'error' => $e->getMessage(),
+            ]);
+            return ['status' => 'error', 'message' => $e->getMessage()];
+        }
+    }
+
+    private function generateIndividualPdf($user, $Cab)
+    {
         $options = new Options();
         $options->set('isHtml5ParserEnabled', true);
         $options->set('isPhpEnabled', true);
-        $logoPath = "https://i.ibb.co/wQyTjTy/NET-PLAY-LOGO-Mesa-de-trabajo-1.jpg";
 
-        // $imagenBase64 = "data:image/png;base64," . base64_encode(file_get_contents($logoPath));
-        // Crea una instancia de Dompdf, TCPDF u otra biblioteca
-         $pdfT = new TemplatesPdf();
-        
+        $pdfT = new TemplatesPdf();
         $pdf = new Dompdf($options);
-       
 
-        $html = $pdfT->PdfFacturas($user,$Cab);
-          // Agrega contenido al PDF personalizado (por ejemplo, el nombre del usuario)
-          $pdf->loadHtml($html);
+        $html = $pdfT->PdfFacturas($user, $Cab);
+        $pdf->loadHtml($html);
+        $pdf->render();
 
-          // Renderiza el PDF
-          $pdf->render();
-
-
-          // Devuelve el contenido del PDF generado
-          return $pdf->output();
-      }
+        return $pdf->output();
+    }
 }

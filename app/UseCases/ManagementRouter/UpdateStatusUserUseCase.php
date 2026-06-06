@@ -172,7 +172,7 @@ public function UpdateStatus(GestionUserRequest $gestionUserRequest): array
                                   . "📅 Fecha: {fecha}\n\n"
                                   . "Medios de pago: BANCOLOMBIA CTA AHO 47800013328\n"
                                   . "DAVIPLATA 3022042294 (Hum Gom)\n"
-                                  . "NEQUI 3022042294 (Hum Gom)";
+                                  . "NEQUI 3245127869 (Joj Pom)";
 
                         $message = str_replace(array_keys($vars), array_values($vars), $template);
                         (new WhatsAppService())->mensajeInformativo($userData->phone, $message);

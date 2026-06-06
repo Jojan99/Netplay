@@ -116,6 +116,7 @@ class CreateInventoryMovementUseCase implements CreateInventoryMovementUseCaseIn
                 'cost_after'    => $newAvgCost,
                 'description'   => $data['description'] ?? null,
                 'reference'     => $data['reference'] ?? null,
+                'serial_number' => $data['serial_number'] ?? null,
                 'batch_number'  => $data['batch_number'] ?? null,
                 'expiry_date'   => $data['expiry_date'] ?? null,
                 'user_id'       => $userId,

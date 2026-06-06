@@ -51,6 +51,7 @@ class GeneratePdfRepository implements GeneratePdfRepositoryInterface
                     ->where('company_id', $companyId)
                     ->whereIn('name', ['ADMIN', 'TECNICO', 'CONTADOR']);
             })
+            ->orderBy('cab_facturations.id', 'desc')
             ->get();
     }
 

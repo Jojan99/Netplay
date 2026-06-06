@@ -10,9 +10,14 @@ namespace App\UseCases\GeneratePdf\Interfaces;
 interface GeneratePdfUseCaseInterface
 {
     /**
-     * Método encargado de generar pdf masivo .zip
+     * Método encargado de generar y enviar facturas masivamente.
+     *
+     * @param mixed $Periodo
+     * @param int $companyId
+     * @param int $billingDay
+     * @param string $sendChannel 'whatsapp' | 'email' | 'both'
      * @return mixed
      */
-    public function generatePdf($Periodo): mixed;
+    public function generatePdf($Periodo, int $companyId = 0, int $billingDay = 0, string $sendChannel = 'whatsapp'): mixed;
 
 }

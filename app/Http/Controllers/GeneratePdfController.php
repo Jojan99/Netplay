@@ -6,6 +6,8 @@ use App\Constants\ApiResponseConstants;
 use App\Repositories\Interfaces\GeneratePdfRepositoryInterface;
 use App\Resources\Templates\TemplatesPdf;
 use App\Services\WhatsAppService;
+use App\Services\InvoiceEmailService;
+use App\UseCases\GeneratePdf\GeneratePdfUseCase;
 use App\UseCases\GeneratePdf\Interfaces\GeneratePdfUseCaseInterface;
 use App\UseCases\GeneratePdf\Interfaces\GeneratePdfByIdUseCaseInterface;
 use App\UseCases\GeneratePdf\Interfaces\GeneratePdfByIdFacturesUseCaseInterface;
@@ -17,34 +19,67 @@ use App\Http\Requests\GeneratePdf\GeneratePdfDataRequest;
 use App\UseCases\GeneratePdf\Interfaces\GeneratePayPdfByIdFacturesUseCaseInterface;
 use App\UseCases\GeneratePdf\Interfaces\GeneratePdfTicketByIdUseCaseInterface;
 use Illuminate\Http\Request;
+
 class GeneratePdfController extends Controller
 {
 
-  /**
-     * @param GeneratePdfUseCaseInterface $generatePdfUseCaseInterface
-     * @return object
+    /**
+     * POST /api/generatePdf/generatePdf
+     * Genera y envía facturas masivamente.
+     *
+     * Body: { ids: [...], company_id?: number, billing_day?: number, channel?: 'whatsapp'|'email'|'both' }
      */
     public function generatePdf(
         GeneratePdfUseCaseInterface $generatePdfUseCaseInterface,
-        GeneratePdfDataRequest $request
+        Request $request
     ): object {
         try {
+            $companyId  = (int) $request->input('company_id', 0);
+            $billingDay = (int) $request->input('billing_day', 0);
+            $channel    = $request->input('channel', 'whatsapp');
+            $ids        = $request->input('ids', [3]);
 
-            
-            $data = [
-                'ids' => [3]
-            ];
+            // Validar canal permitido
+            if (!in_array($channel, ['whatsapp', 'email', 'both'])) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => "Canal '{$channel}' no válido. Use: whatsapp, email o both"
+                ], 400);
+            }
 
-            $response = $generatePdfUseCaseInterface->generatePdf($data);
+            $response = $generatePdfUseCaseInterface->generatePdf($ids, $companyId, $billingDay, $channel);
 
-            // Verifica si la respuesta es un objeto Response
             if ($response instanceof \Illuminate\Http\Response) {
                 return $response;
             }
-            // Si no es una respuesta HTTP, entonces asume que es una respuesta de error
+
+            return response()->json($response, $response['status'] == 0 ? JsonResponse::HTTP_OK : JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
+        } catch (JWTException $e) {
+            return standardApiReponse(
+                'Currency rates could not be queried: ' . $e->getMessage(),
+                ApiResponseConstants::DATA_NULL,
+                ApiResponseConstants::ERROR,
+                JsonResponse::HTTP_INTERNAL_SERVER_ERROR
+            );
+        }
+    }
+
+    /**
+     * GET /api/generatePdf/generatePdfbyId/{userid}
+     */
+    public function generatePdfbyId(
+        GeneratePdfByIdFacturesUseCaseInterface $generatePdfByIdFacturesUseCaseInterface,
+        $user_id
+    ): object {
+        try {
+            $response = $generatePdfByIdFacturesUseCaseInterface->generatePdfByIdFacture($user_id);
+
+            if ($response instanceof \Illuminate\Http\Response) {
+                return $response;
+            }
+
             return response()->json($response, JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
         } catch (JWTException $e) {
-            // Respuesta en caso de excepción
             return standardApiReponse(
                 'Currency rates could not be queried: ' . $e->getMessage(),
                 ApiResponseConstants::DATA_NULL,
@@ -62,45 +97,7 @@ class GeneratePdfController extends Controller
     }
 
     /**
-     * @param GeneratePdfUseCaseInterface $generatePdfUseCaseInterface
-     * @param int id_user
-     * @return object
-     */
-    public function generatePdfbyId(
-        GeneratePdfByIdFacturesUseCaseInterface $generatePdfByIdFacturesUseCaseInterface,
-        $user_id
-    ): object {
-        try {
-            $response = $generatePdfByIdFacturesUseCaseInterface->generatePdfByIdFacture($user_id);
-
-            // Verifica si la respuesta es un objeto Response
-            if ($response instanceof \Illuminate\Http\Response) {
-                return $response;
-            }
-            // Si no es una respuesta HTTP, entonces asume que es una respuesta de error
-            return response()->json($response, JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
-        } catch (JWTException $e) {
-            // Respuesta en caso de excepción
-            return standardApiReponse(
-                'Currency rates could not be queried: ' . $e->getMessage(),
-                ApiResponseConstants::DATA_NULL,
-                ApiResponseConstants::ERROR,
-                JsonResponse::HTTP_INTERNAL_SERVER_ERROR
-            );
-        }
-
-        return standardApiReponse(
-            $response['message'],
-            $response['data'],
-            $response['status'],
-            JsonResponse::HTTP_OK
-        );
-    }
-
-     /**
-     * @param GeneratePdfTicketByIdUseCaseInterface $generatePdfTicketByIdUseCaseInterface
-     * @param int id_user
-     * @return object
+     * GET /api/generatePdf/generatePdfTicketbyId/{id}
      */
     public function generatePdfTicketbyId(
         GeneratePdfTicketByIdUseCaseInterface $generatePdfTicketByIdUseCaseInterface,
@@ -109,14 +106,12 @@ class GeneratePdfController extends Controller
         try {
             $response = $generatePdfTicketByIdUseCaseInterface->generatePdfTicketbyId($user_id);
 
-            // Verifica si la respuesta es un objeto Response
             if ($response instanceof \Illuminate\Http\Response) {
                 return $response;
             }
-            // Si no es una respuesta HTTP, entonces asume que es una respuesta de error
+
             return response()->json($response, JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
         } catch (JWTException $e) {
-            // Respuesta en caso de excepción
             return standardApiReponse(
                 'Currency rates could not be queried: ' . $e->getMessage(),
                 ApiResponseConstants::DATA_NULL,
@@ -133,30 +128,24 @@ class GeneratePdfController extends Controller
         );
     }
 
+    /**
+     * GET /api/generatePdf/generatePaidPdfbyId/{idFacture}
+     */
     public function generatePaidPdfbyId(
         GeneratePayPdfByIdFacturesUseCaseInterface $generatePayPdfByIdFacturesUseCaseInterface,
         $id_facture, Request $request
     ): object {
         try {
-
-
-            $idFacture = $id_facture;
-
-            // Acceder al parámetro de consulta 'extraParam'
             $extraParam = $request->query('extraParam');
 
-            error_log(">>>>>>>>>>>>>>><<<<<".$extraParam);
+            $response = $generatePayPdfByIdFacturesUseCaseInterface->generatePayPdfByIdFacture($id_facture, $extraParam);
 
-            $response = $generatePayPdfByIdFacturesUseCaseInterface->generatePayPdfByIdFacture($id_facture,$extraParam);
-
-            // Verifica si la respuesta es un objeto Response
             if ($response instanceof \Illuminate\Http\Response) {
                 return $response;
             }
-            // Si no es una respuesta HTTP, entonces asume que es una respuesta de error
+
             return response()->json($response, JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
         } catch (JWTException $e) {
-            // Respuesta en caso de excepción
             return standardApiReponse(
                 'Currency rates could not be queried: ' . $e->getMessage(),
                 ApiResponseConstants::DATA_NULL,
@@ -170,7 +159,7 @@ class GeneratePdfController extends Controller
 
     /**
      * POST /api/generatePdf/sendInvoiceByWhatsApp/{invoiceId}
-     * Generates the invoice PDF and sends it to the client's phone via WhatsApp.
+     * Genera el PDF de factura y lo envía por WhatsApp.
      */
     public function sendInvoiceByWhatsApp(
         GeneratePdfRepositoryInterface $pdfRepo,
@@ -214,5 +203,91 @@ class GeneratePdfController extends Controller
         } catch (\Throwable $e) {
             return response()->json(['status' => 'error', 'message' => $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * POST /api/generatePdf/sendInvoiceByEmail/{invoiceId}
+     * Genera el PDF de factura y lo envía por correo electrónico con Mailjet.
+     */
+    public function sendInvoiceByEmail(
+        GeneratePdfRepositoryInterface $pdfRepo,
+        TemplatesPdf $templatesPdf,
+        string $invoiceId
+    ): JsonResponse {
+        try {
+            $data = $pdfRepo->generatePdfById($invoiceId);
+
+            if (!$data) {
+                return response()->json(['status' => 'error', 'message' => 'Factura no encontrada'], 404);
+            }
+
+            $email = trim($data['email'] ?? '');
+            if (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                return response()->json(['status' => 'error', 'message' => 'El cliente no tiene correo válido registrado'], 422);
+            }
+
+            $saldoAnt = $pdfRepo->getSaldoAnt($data['id'], $data['number_facture']) ?? 0;
+
+            $options = new Options();
+            $options->set('isHtml5ParserEnabled', true);
+            $options->set('isPhpEnabled', true);
+            $pdf = new Dompdf($options);
+            $pdf->loadHtml($templatesPdf->PdfFacturas($data, $saldoAnt));
+            $pdf->render();
+            $pdfContent = $pdf->output();
+
+            $filename = 'factura_' . preg_replace('/[^A-Za-z0-9_\-]/', '_', $data['number_facture']) . '_' . $data['dni'] . '.pdf';
+
+            $emailService = new InvoiceEmailService();
+            $result = $emailService->sendInvoice($data, $pdfContent, $filename);
+
+            $statusCode = $result['status'] === 'ok' ? 200 : 500;
+            return response()->json($result, $statusCode);
+        } catch (\Throwable $e) {
+            return response()->json(['status' => 'error', 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * POST /api/generatePdf/sendInvoice/{invoiceId}
+     * Envía factura por el canal especificado (whatsapp, email o both).
+     *
+     * Query param: channel=whatsapp|email|both (default: whatsapp)
+     */
+    public function sendInvoice(
+        GeneratePdfRepositoryInterface $pdfRepo,
+        TemplatesPdf $templatesPdf,
+        Request $request,
+        string $invoiceId
+    ): JsonResponse {
+        $channel = $request->query('channel', 'whatsapp');
+
+        if (!in_array($channel, ['whatsapp', 'email', 'both'])) {
+            return response()->json([
+                'status' => 'error',
+                'message' => "Canal '{$channel}' no válido. Use: whatsapp, email o both"
+            ], 400);
+        }
+
+        $results = [];
+
+        if (in_array($channel, ['whatsapp', 'both'])) {
+            $waResponse = $this->sendInvoiceByWhatsApp($pdfRepo, $templatesPdf, $invoiceId);
+            $results['whatsapp'] = json_decode($waResponse->getContent(), true);
+        }
+
+        if (in_array($channel, ['email', 'both'])) {
+            $emailResponse = $this->sendInvoiceByEmail($pdfRepo, $templatesPdf, $invoiceId);
+            $results['email'] = json_decode($emailResponse->getContent(), true);
+        }
+
+        // Determinar status general
+        $allOk = collect($results)->every(fn($r) => ($r['status'] ?? 'error') === 'ok');
+
+        return response()->json([
+            'status' => $allOk ? 'ok' : 'partial_error',
+            'message' => 'Factura enviada',
+            'results' => $results,
+        ], $allOk ? 200 : 207); // 207 Multi-Status para resultados parciales
     }
 }

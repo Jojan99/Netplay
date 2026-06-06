@@ -29,8 +29,9 @@ class CreateInventoryMovementRequest extends FormRequest
             'quantity'     => 'required|numeric|min:0.01',
             'unit_price'   => 'nullable|numeric|min:0',
             'description'  => 'nullable|string|max:255',
-            'reference'    => 'nullable|string|max:100',
-            'batch_number' => 'nullable|string|max:50',
+            'reference'     => 'nullable|string|max:100',
+            'serial_number' => 'nullable|string|max:100',
+            'batch_number'  => 'nullable|string|max:50',
             'expiry_date'  => 'nullable|date|after_or_equal:today',
         ];
     }

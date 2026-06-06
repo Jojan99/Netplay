@@ -487,21 +487,25 @@ class FacturationRepository implements FacturationRepositoryInterface
                 ->join('cab_facturations as cb', 'cb.user_id', '=', 'ud.user_id')
                 ->where('cb.id', $cabId)
                 ->where('cb.company_id', $companyId)
-                ->select('ud.phone', 'ud.user_id')
+                ->select('ud.phone', 'ud.user_id', 'ud.names', 'ud.lastname')
                 ->first();
 
             if (!$row || empty($row->phone)) return;
 
             if (!WhatsAppService::isEnabledForUser($row->user_id)) return;
 
-            $wa      = new WhatsAppService($companyId);
-            $amountF = number_format($amount, 0, ',', '.');
+            $wa        = new WhatsAppService($companyId);
+            $humanizer = new \App\Services\WhatsAppMessageHumanizerService();
+            $amountF   = number_format($amount, 0, ',', '.');
 
-            if ($type === 'completo') {
-                $msg = "✅ *Pago recibido*\n\nHola {$clientName}, confirmamos el pago completo de la factura *{$invoiceNumber}* por *\${$amountF} COP*.\n\nGracias por tu pago. 🙏";
-            } else {
-                $msg = "💰 *Abono registrado*\n\nHola {$clientName}, registramos un abono de *\${$amountF} COP* en la factura *{$invoiceNumber}*.\n\nCualquier duda, contáctanos.";
-            }
+            // 🎭 Mensaje ÚNICO y humanizado para cada pago
+            $msg = $humanizer->generatePaymentConfirmation([
+                'names'       => $row->names ?? $clientName,
+                'lastname'    => $row->lastname ?? '',
+                'number_bill' => $invoiceNumber,
+                'amount'      => $amountF . ' COP',
+                'type'        => $type,
+            ]);
 
             $wa->mensajeInformativo($row->phone, $msg);
         } catch (Throwable $e) {
