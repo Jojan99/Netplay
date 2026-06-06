@@ -203,6 +203,34 @@ class ClientInvoiceController extends Controller
      */
     public function sendWhatsapp(int $id): JsonResponse
     {
+        return $this->forwardToGeneratePdf($id, 'sendInvoiceByWhatsApp');
+    }
+
+    /**
+     * POST /api/client/invoices/{id}/send-email
+     * Envía la factura por correo electrónico del cliente.
+     */
+    public function sendEmail(int $id): JsonResponse
+    {
+        return $this->forwardToGeneratePdf($id, 'sendInvoiceByEmail');
+    }
+
+    /**
+     * POST /api/client/invoices/{id}/send
+     * Envía la factura por el canal especificado (whatsapp, email, both).
+     */
+    public function send(Request $request, int $id): JsonResponse
+    {
+        $channel = $request->query('channel', 'whatsapp');
+
+        if (!in_array($channel, ['whatsapp', 'email', 'both'])) {
+            return response()->json([
+                'message' => "Canal '{$channel}' no válido. Use: whatsapp, email o both",
+                'data'    => null,
+                'status'  => ApiResponseConstants::ERROR,
+            ], JsonResponse::HTTP_BAD_REQUEST);
+        }
+
         $user = JWTAuth::user();
 
         // Verificar propiedad de la factura
@@ -222,10 +250,8 @@ class ClientInvoiceController extends Controller
             ], JsonResponse::HTTP_NOT_FOUND);
         }
 
-        // Disparar el endpoint existente internamente
-        // El GeneratePdfController@sendInvoiceByWhatsApp ya maneja el envío
         $internalRequest = Request::create(
-            '/api/generatePdf/sendInvoiceByWhatsApp/' . $id,
+            '/api/generatePdf/sendInvoice/' . $id . '?channel=' . $channel,
             'POST',
             [],
             [],
@@ -239,7 +265,52 @@ class ClientInvoiceController extends Controller
         $body = json_decode($response->getContent(), true);
 
         return response()->json([
-            'message' => $body['message'] ?? 'Factura enviada por WhatsApp',
+            'message' => $body['message'] ?? 'Factura enviada',
+            'data'    => $body['data'] ?? null,
+            'status'  => $body['status'] ?? ApiResponseConstants::SUCCESS,
+        ], $response->getStatusCode());
+    }
+
+    /**
+     * Helper: reenvía la petición al GeneratePdfController internamente.
+     */
+    private function forwardToGeneratePdf(int $id, string $action): JsonResponse
+    {
+        $user = JWTAuth::user();
+
+        // Verificar propiedad de la factura
+        $invoice = DB::table('det_facturations as df')
+            ->join('cab_facturations as cf', 'cf.id', '=', 'df.cab_id')
+            ->where('df.id', $id)
+            ->where('cf.user_id', $user->id)
+            ->where('cf.company_id', $user->company_id)
+            ->select('df.id')
+            ->first();
+
+        if (!$invoice) {
+            return response()->json([
+                'message' => 'Factura no encontrada',
+                'data'    => null,
+                'status'  => ApiResponseConstants::ERROR,
+            ], JsonResponse::HTTP_NOT_FOUND);
+        }
+
+        $internalRequest = Request::create(
+            '/api/generatePdf/' . $action . '/' . $id,
+            'POST',
+            [],
+            [],
+            [],
+            ['HTTP_Authorization' => request()->header('Authorization')]
+        );
+
+        $kernel = app(\Illuminate\Contracts\Http\Kernel::class);
+        $response = $kernel->handle($internalRequest);
+
+        $body = json_decode($response->getContent(), true);
+
+        return response()->json([
+            'message' => $body['message'] ?? 'Factura enviada',
             'data'    => $body['data'] ?? null,
             'status'  => $body['status'] ?? ApiResponseConstants::SUCCESS,
         ], $response->getStatusCode());

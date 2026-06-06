@@ -45,6 +45,8 @@ Route::prefix('client')->middleware(['jwt.client'])->group(function () {
     Route::get('invoices/{id}',                    [ClientInvoiceController::class, 'show']);
     Route::get('invoices/{id}/pdf-url',            [ClientInvoiceController::class, 'pdfUrl']);
     Route::post('invoices/{id}/send-whatsapp',     [ClientInvoiceController::class, 'sendWhatsapp']);
+    Route::post('invoices/{id}/send-email',        [ClientInvoiceController::class, 'sendEmail']);
+    Route::post('invoices/{id}/send',               [ClientInvoiceController::class, 'send']);
 
     // Pago online — iniciar pago (multi-factura, abono parcial)
     Route::post('payment/initiate',    [ClientPaymentController::class, 'initiatePayment']);
