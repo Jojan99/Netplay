@@ -338,6 +338,74 @@ class GeneratePdfController extends Controller
     }
 
     /**
+     * GET /api/generatePdf/send-logs
+     * Lista paginada de logs de envío de facturas con filtros.
+     *
+     * Query params:
+     *  - channel: whatsapp|email|both
+     *  - status: ok|error|partial
+     *  - date_from: YYYY-MM-DD
+     *  - date_to: YYYY-MM-DD
+     *  - sent_to_email: string (partial match)
+     *  - number_facture: string (partial match)
+     *  - page: int
+     *  - per_page: int (max 100)
+     */
+    public function sendLogs(Request $request): JsonResponse
+    {
+        $page     = max(1, (int) $request->query('page', 1));
+        $perPage  = min(100, max(1, (int) $request->query('per_page', 25)));
+        $channel  = $request->query('channel');
+        $status   = $request->query('status');
+        $dateFrom = $request->query('date_from');
+        $dateTo   = $request->query('date_to');
+        $email    = $request->query('sent_to_email');
+        $facture  = $request->query('number_facture');
+
+        $query = DB::table('invoice_send_logs')
+            ->select('invoice_send_logs.*', 'det_facturations.number_facture')
+            ->leftJoin('det_facturations', 'det_facturations.id', '=', 'invoice_send_logs.det_facturation_id');
+
+        if ($channel) {
+            $query->where('invoice_send_logs.channel', $channel);
+        }
+        if ($status) {
+            $query->where('invoice_send_logs.status', $status);
+        }
+        if ($dateFrom) {
+            $query->whereDate('invoice_send_logs.created_at', '>=', $dateFrom);
+        }
+        if ($dateTo) {
+            $query->whereDate('invoice_send_logs.created_at', '<=', $dateTo);
+        }
+        if ($email) {
+            $query->where('invoice_send_logs.sent_to_email', 'like', "%{$email}%");
+        }
+        if ($facture) {
+            $query->where('det_facturations.number_facture', 'like', "%{$facture}%");
+        }
+
+        $total = $query->count();
+
+        $logs = $query
+            ->orderByDesc('invoice_send_logs.created_at')
+            ->offset(($page - 1) * $perPage)
+            ->limit($perPage)
+            ->get();
+
+        return response()->json([
+            'status' => 'ok',
+            'data' => [
+                'items'      => $logs,
+                'total'      => $total,
+                'page'       => $page,
+                'per_page'   => $perPage,
+                'last_page'  => (int) ceil($total / $perPage),
+            ],
+        ]);
+    }
+
+    /**
      * GET /api/generatePdf/sendHistory/{invoiceId}
      * Obtiene el historial de envíos de una factura.
      */

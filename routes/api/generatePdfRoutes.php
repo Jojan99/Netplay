@@ -17,4 +17,7 @@ Route::prefix('generatePdf')->group(function () {
 
     // Historial de envíos
     Route::get('sendHistory/{invoiceId}', [GeneratePdfController::class, 'sendHistory']);
+
+    // Logs de envío paginados (panel admin)
+    Route::get('send-logs', [GeneratePdfController::class, 'sendLogs']);
 });
