@@ -24,6 +24,7 @@ class Company extends Model
         'wa_api_key',
         'wa_instance_id',
         'whatsapp_enabled',
+        'email_enabled',
         // Invoice template config
         'invoice_business_name',
         'invoice_nit',
@@ -56,6 +57,8 @@ class Company extends Model
         'updated_at'        => 'datetime:Y-m-d H:i:s',
         'pg_active'         => 'boolean',
         'pg_sandbox'        => 'boolean',
+        'email_enabled'     => 'boolean',
+        'whatsapp_enabled'  => 'boolean',
     ];
 
     public function invoiceTemplate()

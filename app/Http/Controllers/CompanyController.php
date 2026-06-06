@@ -602,6 +602,8 @@ class CompanyController extends Controller
             'invoice_template_id'       => $company->invoice_template_id,
             'invoice_template'          => $template,
             'invoice_prefix'            => $company->invoice_prefix ?? 'GL',
+            'whatsapp_enabled'          => (bool) $company->whatsapp_enabled,
+            'email_enabled'             => (bool) $company->email_enabled,
         ], false, JsonResponse::HTTP_OK);
     }
 
@@ -626,6 +628,8 @@ class CompanyController extends Controller
             'invoice_footer',
             'invoice_logo_url',
             'invoice_prefix',
+            'whatsapp_enabled',
+            'email_enabled',
         ]);
 
         if (isset($fields['invoice_prefix'])) {

@@ -250,6 +250,20 @@ class ClientInvoiceController extends Controller
             ], JsonResponse::HTTP_NOT_FOUND);
         }
 
+        // Verificar switches de la empresa
+        $company = Company::find($user->company_id);
+        if ($channel === 'whatsapp' && $company && !$company->whatsapp_enabled) {
+            return response()->json(['message' => 'El envío por WhatsApp está deshabilitado', 'status' => ApiResponseConstants::ERROR], 403);
+        }
+        if ($channel === 'email' && $company && !$company->email_enabled) {
+            return response()->json(['message' => 'El envío por correo está deshabilitado', 'status' => ApiResponseConstants::ERROR], 403);
+        }
+        if ($channel === 'both') {
+            if ($company && !$company->whatsapp_enabled && !$company->email_enabled) {
+                return response()->json(['message' => 'El envío por WhatsApp y correo está deshabilitado', 'status' => ApiResponseConstants::ERROR], 403);
+            }
+        }
+
         $internalRequest = Request::create(
             '/api/generatePdf/sendInvoice/' . $id . '?channel=' . $channel,
             'POST',
