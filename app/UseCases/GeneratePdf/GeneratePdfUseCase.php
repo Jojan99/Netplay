@@ -15,6 +15,7 @@ use App\Services\WhatsAppService;
 use App\Services\WhatsAppMessageHumanizerService;
 use App\Services\InvoiceEmailService;
 use Illuminate\Support\Facades\Log;
+use App\Models\Company;
 
 /**
  *
@@ -82,11 +83,34 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
         ini_set('memory_limit', '512M');
 
         try {
+            // ── Verificar configuración de canales de la empresa ─────────────────────
+            $company = $companyId > 0 ? Company::find($companyId) : null;
+            $waEnabled = $company ? $company->whatsapp_enabled : true;
+            $emailEnabled = $company ? $company->email_enabled : true;
+
+            // Si ambos están desactivados, abortar
+            if (!$waEnabled && !$emailEnabled) {
+                return [
+                    'message' => 'WhatsApp y Email están deshabilitados para esta empresa',
+                    'status' => 1,
+                ];
+            }
+
+            // Si WhatsApp está desactivado pero el canal incluye WhatsApp, solo enviar Email
+            if (!$waEnabled && in_array($sendChannel, ['whatsapp', 'both'])) {
+                $sendChannel = 'email';
+            }
+
+            // Si Email está desactivado pero el canal incluye Email, solo enviar WhatsApp
+            if (!$emailEnabled && in_array($sendChannel, ['email', 'both'])) {
+                $sendChannel = 'whatsapp';
+            }
+
             $getUserPeriode1 = $this->generatePdfRepository->getUserPeriode1($Periodo, $companyId);
             $generatePdf     = $this->generatePdfRepository->generatePdf($getUserPeriode1);
 
             $fecha = date('Y-m-d', strtotime('+1 days'));
-            $waService = new WhatsAppService($companyId);
+            $waService = $waEnabled ? new WhatsAppService($companyId) : null;
             $humanizer = new WhatsAppMessageHumanizerService();
             $emailService = new InvoiceEmailService();
 
@@ -95,7 +119,7 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
 
             foreach ($generatePdf as $user) {
                 // Preparar mensaje de WhatsApp
-                if (in_array($sendChannel, ['whatsapp', 'both'])) {
+                if ($waEnabled && in_array($sendChannel, ['whatsapp', 'both'])) {
                     $phoneNumbers = explode(' - ', $user['phone']);
                     foreach ($phoneNumbers as $phone) {
                         $phone = trim($phone);
@@ -119,7 +143,7 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
                 }
 
                 // Preparar correo electrónico
-                if (in_array($sendChannel, ['email', 'both'])) {
+                if ($emailEnabled && in_array($sendChannel, ['email', 'both'])) {
                     $pdfContent = $this->generateIndividualPdf($user, 0);
                     $filename = 'factura_' . preg_replace('/[^A-Za-z0-9_\-]/', '_', $user['number_facture'] ?? '') . '_' . ($user['dni'] ?? '') . '.pdf';
 
@@ -133,7 +157,7 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
 
             // Enviar por WhatsApp
             $waResult = ['queued' => 0, 'invalid' => 0, 'chunks' => 0];
-            if (in_array($sendChannel, ['whatsapp', 'both']) && count($waMessages) > 0) {
+            if ($waEnabled && in_array($sendChannel, ['whatsapp', 'both']) && count($waMessages) > 0) {
                 if (!$waService) {
                     return [
                         'message' => 'WhatsApp no configurado para esta empresa',
@@ -151,7 +175,7 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
 
             // Enviar por Correo
             $emailResult = ['sent' => 0, 'failed' => 0, 'errors' => []];
-            if (in_array($sendChannel, ['email', 'both']) && count($emailInvoices) > 0) {
+            if ($emailEnabled && in_array($sendChannel, ['email', 'both']) && count($emailInvoices) > 0) {
                 $emailResult = $emailService->sendBulkInvoices($emailInvoices);
                 Log::info('[EMAIL_BILLING] Envío masivo completado', [
                     'company_id' => $companyId,
