@@ -55,11 +55,13 @@ class AutoSuspendService
             $router = $this->routerRepo->getRouterByCompany($companyId);
             if (!$router) return null;
 
+            $parsed = \App\Helpers\RouterHostParser::parse($router->host, $router->port ?? null);
+
             return new \RouterOS\Client([
-                'host'    => $router->host,
+                'host'    => $parsed['host'],
                 'user'    => $router->user,
                 'pass'    => $router->pass,
-                'port'    => (int) ($router->port ?? 8728),
+                'port'    => $parsed['port'],
                 'timeout' => 30,
             ]);
         } catch (\Throwable $e) {

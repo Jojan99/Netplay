@@ -15,7 +15,9 @@ use App\Services\WhatsAppService;
 use App\Services\WhatsAppMessageHumanizerService;
 use App\Services\InvoiceEmailService;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 use App\Models\Company;
+use App\Models\DetFacturation;
 
 /**
  *
@@ -76,7 +78,7 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
      * @param string $sendChannel 'whatsapp' | 'email' | 'both'
      * @return mixed
      */
-    public function generatePdf($Periodo, int $companyId = 0, int $billingDay = 0, string $sendChannel = 'whatsapp'): mixed
+    public function generatePdf($Periodo, int $companyId = 0, int $billingDay = 0, string $sendChannel = 'whatsapp', ?int $emailDailyLimit = null): mixed
     {
         set_time_limit(0);
         ini_set('max_execution_time', 0);
@@ -85,7 +87,7 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
         try {
             // ── Verificar configuración de canales de la empresa ─────────────────────
             $company = $companyId > 0 ? Company::find($companyId) : null;
-            $waEnabled = $company ? $company->whatsapp_enabled : true;
+            $waEnabled = $company ? $company->invoice_whatsapp_enabled : true;
             $emailEnabled = $company ? $company->email_enabled : true;
 
             // Si ambos están desactivados, abortar
@@ -110,12 +112,13 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
             $generatePdf     = $this->generatePdfRepository->generatePdf($getUserPeriode1);
 
             $fecha = date('Y-m-d', strtotime('+1 days'));
-            $waService = $waEnabled ? new WhatsAppService($companyId) : null;
+            $waService = $waEnabled ? new WhatsAppService($companyId, true) : null;
             $humanizer = new WhatsAppMessageHumanizerService();
             $emailService = new InvoiceEmailService();
 
             $waMessages = [];
             $emailInvoices = [];
+            $remainingEmails = $this->remainingEmailLimit($companyId, $emailDailyLimit);
 
             foreach ($generatePdf as $user) {
                 // Preparar mensaje de WhatsApp
@@ -144,14 +147,23 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
 
                 // Preparar correo electrónico
                 if ($emailEnabled && in_array($sendChannel, ['email', 'both'])) {
+                    if ($remainingEmails !== null && $remainingEmails <= 0) {
+                        continue; // límite diario alcanzado
+                    }
+
                     $pdfContent = $this->generateIndividualPdf($user, 0);
                     $filename = 'factura_' . preg_replace('/[^A-Za-z0-9_\-]/', '_', $user['number_facture'] ?? '') . '_' . ($user['dni'] ?? '') . '.pdf';
 
                     $emailInvoices[] = [
+                        'det_facturation_id' => $user['det_facturation_id'] ?? null,
                         'user' => $user,
                         'pdf_content' => $pdfContent,
                         'filename' => $filename,
                     ];
+
+                    if ($remainingEmails !== null) {
+                        $remainingEmails--;
+                    }
                 }
             }
 
@@ -183,6 +195,12 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
                     'failed' => $emailResult['failed'],
                 ]);
                 $this->writeBillingLog($companyId, $Periodo, $emailInvoices, $emailResult, null, 'email');
+
+                // Marcar facturas enviadas exitosamente para control de lote diario
+                if (!empty($emailResult['successful_ids'])) {
+                    DetFacturation::whereIn('id', $emailResult['successful_ids'])
+                        ->update(['email_sent_at' => now()]);
+                }
             }
 
             return [
@@ -212,7 +230,7 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
      * @param string $sendChannel 'whatsapp' | 'email' | 'both'
      * @return mixed
      */
-    public function generatePdfMeta($Periodo, int $companyId = 0, int $billingDay = 0, string $sendChannel = 'whatsapp'): mixed
+    public function generatePdfMeta($Periodo, int $companyId = 0, int $billingDay = 0, string $sendChannel = 'whatsapp', ?int $emailDailyLimit = null): mixed
     {
         try {
             $getUserPeriode1 = $this->generatePdfRepository->getUserPeriode1($Periodo, $companyId);
@@ -224,12 +242,13 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
                 $fecha = Carbon::now()->format('Y-m-d');
             }
 
-            $waService = new WhatsAppService($companyId);
+            $waService = new WhatsAppService($companyId, true);
             $humanizer = new WhatsAppMessageHumanizerService();
             $emailService = new InvoiceEmailService();
 
             $waMessages = [];
             $emailInvoices = [];
+            $remainingEmails = $this->remainingEmailLimit($companyId, $emailDailyLimit);
 
             foreach ($users as $user) {
                 $Cab = $this->generatePdfRepository->getSaldoAnt($user['id'], $user['number_facture']);
@@ -260,14 +279,23 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
                 }
 
                 if (in_array($sendChannel, ['email', 'both'])) {
+                    if ($remainingEmails !== null && $remainingEmails <= 0) {
+                        continue; // límite diario alcanzado
+                    }
+
                     $pdfContent = $this->generateIndividualPdf($user, $Cab);
                     $filename = 'factura_' . preg_replace('/[^A-Za-z0-9_\-]/', '_', $user['number_facture'] ?? '') . '_' . ($user['dni'] ?? '') . '.pdf';
 
                     $emailInvoices[] = [
+                        'det_facturation_id' => $user['det_facturation_id'] ?? null,
                         'user' => $user,
                         'pdf_content' => $pdfContent,
                         'filename' => $filename,
                     ];
+
+                    if ($remainingEmails !== null) {
+                        $remainingEmails--;
+                    }
                 }
             }
 
@@ -297,6 +325,12 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
                     'failed' => $emailResult['failed'],
                 ]);
                 $this->writeBillingLog($companyId, $Periodo, $emailInvoices, $emailResult, null, 'email');
+
+                // Marcar facturas enviadas exitosamente para control de lote diario
+                if (!empty($emailResult['successful_ids'])) {
+                    DetFacturation::whereIn('id', $emailResult['successful_ids'])
+                        ->update(['email_sent_at' => now()]);
+                }
             }
 
             return [
@@ -368,5 +402,25 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
         $pdf->render();
 
         return $pdf->output();
+    }
+
+    /**
+     * Calcula cuántos emails aún se pueden enviar hoy para una empresa.
+     *
+     * @return int|null null si no hay límite configurado
+     */
+    private function remainingEmailLimit(int $companyId, ?int $emailDailyLimit): ?int
+    {
+        if ($emailDailyLimit === null || $emailDailyLimit <= 0) {
+            return null; // sin límite
+        }
+
+        $sentToday = DB::table('det_facturations as dt')
+            ->join('cab_facturations as cb', 'cb.id', '=', 'dt.cab_id')
+            ->where('cb.company_id', $companyId)
+            ->whereDate('dt.email_sent_at', now()->toDateString())
+            ->count();
+
+        return max(0, $emailDailyLimit - $sentToday);
     }
 }

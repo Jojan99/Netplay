@@ -37,7 +37,8 @@ class SendWhatsAppInvoiceJob implements ShouldQueue
         public string $type,
         public array $payload,
         public ?int $companyId = null,
-        public int $delaySeconds = 0
+        public int $delaySeconds = 0,
+        public bool $ignoreEnabledFlag = false,
     ) {
         // Si hay delay, programar el job para más tarde
         if ($delaySeconds > 0) {
@@ -94,8 +95,8 @@ class SendWhatsAppInvoiceJob implements ShouldQueue
     private function sendText(): void
     {
         $wa = $this->companyId
-            ? new WhatsAppService($this->companyId)
-            : new WhatsAppService();
+            ? new WhatsAppService($this->companyId, $this->ignoreEnabledFlag)
+            : new WhatsAppService(null, $this->ignoreEnabledFlag);
 
         $wa->mensajeInformativo($this->phone, $this->payload['message']);
     }
@@ -103,8 +104,8 @@ class SendWhatsAppInvoiceJob implements ShouldQueue
     private function sendDocument(): void
     {
         $wa = $this->companyId
-            ? new WhatsAppService($this->companyId)
-            : new WhatsAppService();
+            ? new WhatsAppService($this->companyId, $this->ignoreEnabledFlag)
+            : new WhatsAppService(null, $this->ignoreEnabledFlag);
 
         $wa->sendDocument(
             $this->phone,
@@ -117,8 +118,8 @@ class SendWhatsAppInvoiceJob implements ShouldQueue
     private function sendImage(): void
     {
         $wa = $this->companyId
-            ? new WhatsAppService($this->companyId)
-            : new WhatsAppService();
+            ? new WhatsAppService($this->companyId, $this->ignoreEnabledFlag)
+            : new WhatsAppService(null, $this->ignoreEnabledFlag);
 
         $wa->sendImage(
             $this->phone,

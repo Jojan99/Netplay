@@ -252,15 +252,15 @@ class ClientInvoiceController extends Controller
 
         // Verificar switches de la empresa
         $company = Company::find($user->company_id);
-        if ($channel === 'whatsapp' && $company && !$company->whatsapp_enabled) {
-            return response()->json(['message' => 'El envío por WhatsApp está deshabilitado', 'status' => ApiResponseConstants::ERROR], 403);
+        if ($channel === 'whatsapp' && $company && !$company->invoice_whatsapp_enabled) {
+            return response()->json(['message' => 'El envío de facturas por WhatsApp está deshabilitado', 'status' => ApiResponseConstants::ERROR], 403);
         }
         if ($channel === 'email' && $company && !$company->email_enabled) {
             return response()->json(['message' => 'El envío por correo está deshabilitado', 'status' => ApiResponseConstants::ERROR], 403);
         }
         if ($channel === 'both') {
-            if ($company && !$company->whatsapp_enabled && !$company->email_enabled) {
-                return response()->json(['message' => 'El envío por WhatsApp y correo está deshabilitado', 'status' => ApiResponseConstants::ERROR], 403);
+            if ($company && !$company->invoice_whatsapp_enabled && !$company->email_enabled) {
+                return response()->json(['message' => 'El envío de facturas por WhatsApp y correo está deshabilitado', 'status' => ApiResponseConstants::ERROR], 403);
             }
         }
 

@@ -18,6 +18,6 @@ interface GeneratePdfUseCaseInterface
      * @param string $sendChannel 'whatsapp' | 'email' | 'both'
      * @return mixed
      */
-    public function generatePdf($Periodo, int $companyId = 0, int $billingDay = 0, string $sendChannel = 'whatsapp'): mixed;
+    public function generatePdf($Periodo, int $companyId = 0, int $billingDay = 0, string $sendChannel = 'whatsapp', ?int $emailDailyLimit = null): mixed;
 
 }

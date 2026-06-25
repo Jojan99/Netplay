@@ -28,6 +28,7 @@ class DetFacturation extends Authenticatable
         'log_id',
         'paid_at',
         'paid_by_user_id',
+        'email_sent_at',
     ];
 
     /**

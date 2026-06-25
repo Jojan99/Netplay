@@ -66,10 +66,14 @@ class HolaMundo extends Command
         $GeneratePdfRepository        = new GeneratePdfRepository();
         $GeneratePdfUseCase           = new GeneratePdfUseCase($GeneratePdfRepository, $FacturationRepository);
 
+        // Leer límite diario de emails configurado para la empresa
+        $company = \App\Models\Company::find($companyId);
+        $emailDailyLimit = $company ? $company->email_daily_limit : null;
+
         // $CreateDetFacturationUseCase->createProcesoDetFacturation(
         //     $CreateFacturationRequest, $resultado, $companyId, $billingDay, $billingMonth, $billingYear
         // );
-        $result = $GeneratePdfUseCase->generatePdf($resultado, $companyId, $billingDay, $channel);
+        $result = $GeneratePdfUseCase->generatePdf($resultado, $companyId, $billingDay, $channel, $emailDailyLimit);
 
         $this->info('Proceso finalizado.');
         $this->info("Resultado: " . json_encode($result));

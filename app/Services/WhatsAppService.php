@@ -12,14 +12,16 @@ class WhatsAppService
     private string $instanceId;
     private string $baseUrl;
 
-    public function __construct(?int $companyId = null)
+    public function __construct(?int $companyId = null, bool $ignoreEnabledFlag = false)
     {
         $id = $companyId ?? getSessionCompanyId();
 
         $company = $id ? Company::find($id) : null;
 
         if ($company && $company->wa_api_key && $company->wa_instance_id) {
-            $this->enabled    = (bool) $company->whatsapp_enabled;
+            // Si ignoreEnabledFlag es true, solo verificamos credenciales (útil para envío de facturas
+            // cuando invoice_whatsapp_enabled está activo pero whatsapp_enabled global no lo está)
+            $this->enabled    = $ignoreEnabledFlag ? true : (bool) $company->whatsapp_enabled;
             $this->apiKey     = $company->wa_api_key;
             $this->instanceId = $company->wa_instance_id;
         } else {

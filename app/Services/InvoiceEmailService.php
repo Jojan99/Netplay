@@ -112,11 +112,15 @@ class InvoiceEmailService
         $sent = 0;
         $failed = 0;
         $errors = [];
+        $successfulIds = [];
 
         foreach ($invoices as $invoice) {
             $result = $this->sendInvoice($invoice['user'], $invoice['pdf_content'], $invoice['filename']);
             if ($result['status'] === 'ok') {
                 $sent++;
+                if (!empty($invoice['det_facturation_id'])) {
+                    $successfulIds[] = $invoice['det_facturation_id'];
+                }
             } else {
                 $failed++;
                 $errors[] = [
@@ -134,6 +138,7 @@ class InvoiceEmailService
             'sent'   => $sent,
             'failed' => $failed,
             'errors' => $errors,
+            'successful_ids' => $successfulIds,
         ];
     }
 

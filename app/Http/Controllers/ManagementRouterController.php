@@ -8,6 +8,7 @@ use App\Services\HuaweiSnmpReader;
 use App\Http\Requests\Gestions\GestionUserRequest;
 use App\Http\Requests\Gestions\OltDataRequest;
 use App\Managers\Interfaces\SSHConnectionManagerInterface;
+use App\Helpers\RouterHostParser;
 use App\Services\SSHConnectionService;
 use App\UseCases\ManagementRouter\Interfaces\GetIpAvaliblesUseCaseInterface;
 use App\UseCases\ManagementRouter\Interfaces\MikrotikInfoUseCaseInterface;
@@ -35,6 +36,9 @@ class ManagementRouterController extends Controller
         if (empty($data['host']) || empty($data['user']) || empty($data['pass'])) {
             return standardApiReponse('host, user y pass son requeridos', null, 1, JsonResponse::HTTP_UNPROCESSABLE_ENTITY);
         }
+        $parsed = RouterHostParser::parse($data['host'], $data['port'] ?? null);
+        $data['host'] = $parsed['host'];
+        $data['port'] = $parsed['port'];
         $result = $uc->createRouter($data);
         return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }
@@ -42,6 +46,11 @@ class ManagementRouterController extends Controller
     public function updateRouterById(Request $request, int $id, MikrotikInfoUseCaseInterface $uc): object
     {
         $data   = $request->only(['name', 'host', 'user', 'pass', 'port']);
+        if (!empty($data['host'])) {
+            $parsed = RouterHostParser::parse($data['host'], $data['port'] ?? null);
+            $data['host'] = $parsed['host'];
+            $data['port'] = $parsed['port'];
+        }
         $result = $uc->updateRouter($id, $data);
         return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }
@@ -136,6 +145,9 @@ class ManagementRouterController extends Controller
         if (empty($data['host']) || empty($data['user']) || empty($data['pass'])) {
             return standardApiReponse('host, user y pass son requeridos', null, 1, JsonResponse::HTTP_UNPROCESSABLE_ENTITY);
         }
+        $parsed = RouterHostParser::parse($data['host'], $data['port'] ?? null);
+        $data['host'] = $parsed['host'];
+        $data['port'] = $parsed['port'];
         $result = $uc->saveRouterConfig($data);
         return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }

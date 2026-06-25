@@ -44,17 +44,14 @@ public function execute(array $payload): array
     ]);
 
     // ─── Teléfono ───
-    $rawFrom = $data['from'] ?? null;
-    if (!$rawFrom) {
+    $phone = $data['phone'] ?? null;
+    if (!$phone) {
         throw new \Exception('Invalid payload: phone');
     }
 
-    // Limpiar el @s.whatsapp.net / @g.us / @lid
-    $phone = explode('@', $rawFrom)[0];
-
     // Ignorar grupos
     if ($data['isGroup'] ?? false) {
-        Log::info('[Webhook grupo ignorado]', ['from' => $rawFrom]);
+        Log::info('[Webhook grupo ignorado]', ['phone' => $phone]);
         return ['status' => 'ignored', 'reason' => 'group_message'];
     }
 
@@ -87,6 +84,34 @@ public function execute(array $payload): array
     // ─── Crear o recuperar conversación ───
     $conversationId = $this->repository
         ->getOrCreateConversationByPhone($phone, $names);
+
+    // ─── Registrar LID / JID → teléfono real en whatsapp-service ───
+    // Cada mensaje que llega le dice al servicio de WhatsApp cuál es
+    // el número real de este remitente, así cuando reenvíe comprobantes
+    // al grupo ya sabe quién es sin depender de búsquedas posteriores.
+    try {
+        $instanceId = $payload['instanceId'] ?? null;
+        $fromJid    = $data['from'] ?? null;
+        if ($instanceId && $fromJid) {
+            $jid = explode('@', $fromJid)[0] ?? null;
+            if ($jid && $jid !== $phone) {
+                $waBaseUrl = rtrim(config('services.netplay_whatsapp.base_url', 'http://181.48.150.43:3001/crm'), '/');
+                $registerUrl = str_replace('/crm', '', $waBaseUrl) . "/instances/{$instanceId}/register-phone";
+                \Illuminate\Support\Facades\Http::timeout(10)->post($registerUrl, [
+                    'lid'   => $jid,
+                    'phone' => $phone,
+                    'name'  => $names,
+                ]);
+                Log::info('[LID Register] Mapeo enviado a whatsapp-service', [
+                    'instance_id' => $instanceId,
+                    'jid'         => $jid,
+                    'phone'       => $phone,
+                ]);
+            }
+        }
+    } catch (\Throwable $e) {
+        Log::warning('[LID Register] Error registrando LID', ['error' => $e->getMessage()]);
+    }
 
     // ─── Detectar tipo de mensaje ───
     $type     = $data['type'] ?? 'text';

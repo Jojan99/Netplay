@@ -26,6 +26,9 @@ class Kernel extends ConsoleKernel
 
         // Sincroniza ARP MikroTik con STATUS de plataforma — corrige desyncs diariamente
         $schedule->command('arp:sync')->dailyAt('06:00')->user('www-data');
+
+        // Envía facturas pendientes por email para todas las empresas (respeta límite diario por empresa)
+        $schedule->command('invoices:send-pending-emails')->dailyAt('08:00')->user('www-data');
         
     }
 

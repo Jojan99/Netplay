@@ -176,10 +176,10 @@ class GeneratePdfController extends Controller
                 return response()->json(['status' => 'error', 'message' => 'Factura no encontrada'], 404);
             }
 
-            // Verificar que la empresa tiene habilitado WhatsApp
+            // Verificar que la empresa tiene habilitado el envío de facturas por WhatsApp
             $company = Company::find($data['company_id'] ?? 0);
-            if ($company && !$company->whatsapp_enabled) {
-                return response()->json(['status' => 'error', 'message' => 'El envío por WhatsApp está deshabilitado para esta empresa', 'error_code' => 'WA_DISABLED'], 403);
+            if ($company && !$company->invoice_whatsapp_enabled) {
+                return response()->json(['status' => 'error', 'message' => 'El envío de facturas por WhatsApp está deshabilitado para esta empresa', 'error_code' => 'WA_DISABLED'], 403);
             }
 
             $phone = trim($data['phone'] ?? '');
@@ -203,7 +203,7 @@ class GeneratePdfController extends Controller
             $names    = $data['names'] . ' ' . $data['lastname'];
             $caption  = "Estimado/a {$names}, adjuntamos su factura #{$data['number_facture']}.\n\nTotal a pagar: $" . number_format($data['price_total'] - $data['price_discount'], 0, '.', ',') . "\n\nFecha límite: {$data['date_facturation']}";
 
-            $whatsapp = new WhatsAppService();
+            $whatsapp = new WhatsAppService(null, true);
             $whatsapp->sendDocumentData($phone, $base64Pdf, $filename, $caption);
 
             $this->logSend($data['id'], 'whatsapp', 'ok', "Factura enviada por WhatsApp al número {$phone}", $phone, null);

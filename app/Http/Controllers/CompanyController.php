@@ -603,7 +603,9 @@ class CompanyController extends Controller
             'invoice_template'          => $template,
             'invoice_prefix'            => $company->invoice_prefix ?? 'GL',
             'whatsapp_enabled'          => (bool) $company->whatsapp_enabled,
+            'invoice_whatsapp_enabled'  => (bool) $company->invoice_whatsapp_enabled,
             'email_enabled'             => (bool) $company->email_enabled,
+            'email_daily_limit'         => (int) $company->email_daily_limit,
         ], false, JsonResponse::HTTP_OK);
     }
 
@@ -629,12 +631,18 @@ class CompanyController extends Controller
             'invoice_logo_url',
             'invoice_prefix',
             'whatsapp_enabled',
+            'invoice_whatsapp_enabled',
             'email_enabled',
+            'email_daily_limit',
         ]);
 
         if (isset($fields['invoice_prefix'])) {
             $fields['invoice_prefix'] = strtoupper(preg_replace('/[^A-Za-z0-9\-]/', '', $fields['invoice_prefix']));
             $fields['invoice_prefix'] = substr($fields['invoice_prefix'], 0, 10) ?: 'GL';
+        }
+
+        if (isset($fields['email_daily_limit'])) {
+            $fields['email_daily_limit'] = max(0, (int) $fields['email_daily_limit']);
         }
 
         $company->update($fields);

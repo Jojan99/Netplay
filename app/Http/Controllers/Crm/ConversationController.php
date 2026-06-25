@@ -475,13 +475,36 @@ public function forwardMessage(Request $request, ConversationRepositoryInterface
 
     $wa = new WhatsAppService();
 
+    // ─── Datos del remitente original ───
+    $sourceConv = DB::table('crm_conversations as c')
+        ->join('crm_customers as cu', 'cu.id', '=', 'c.customer_id')
+        ->where('c.id', $source->conversation_id)
+        ->select('cu.name as customer_name', 'cu.phone as customer_phone')
+        ->first();
+
+    $originName  = $sourceConv->customer_name ?? 'Cliente';
+    $originPhone = $sourceConv->customer_phone ?? 'Desconocido';
+    $forwardPrefix = "📎 De: {$originName} ({$originPhone})\n\n";
+
     foreach ($request->target_conversation_ids as $targetConvId) {
         $phone = $repo->getPhoneByConversationId((int)$targetConvId);
         if (!$phone) continue;
 
         // Reenviar según tipo
         if ($source->message_type === 'text') {
-            $wa->mensajeInformativo($phone, "↪ " . $source->content);
+            $wa->mensajeInformativo($phone, $forwardPrefix . "↪ " . $source->content);
+        } elseif ($source->message_type === 'image' && $source->media_url) {
+            $wa->sendImage($phone, $source->media_url, $forwardPrefix . ($source->content ?? ''));
+        } elseif ($source->message_type === 'document' && $source->media_url) {
+            $filename = basename(parse_url($source->media_url, PHP_URL_PATH)) ?: 'documento';
+            $wa->sendDocument($phone, $source->media_url, $filename, $forwardPrefix . ($source->content ?? ''));
+        } elseif ($source->message_type === 'video' && $source->media_url) {
+            $wa->sendVideo($phone, $source->media_url, $forwardPrefix . ($source->content ?? ''));
+        } elseif ($source->message_type === 'audio' && $source->media_url) {
+            $wa->sendAudio($phone, $source->media_url);
+        } else {
+            // Fallback para cualquier otro tipo sin media
+            $wa->mensajeInformativo($phone, $forwardPrefix . ($source->content ?? '[Mensaje reenviado]'));
         }
 
         // Guardar mensaje reenviado

@@ -27,11 +27,13 @@ class ConectionRouterManager implements ConectionRouterManagerInterface
 {
     $data = $this->getDataConection($token);
 
+    $parsed = \App\Helpers\RouterHostParser::parse($data[0]['host'], $data[0]['port'] ?? null);
+
     $config = [
-        'host' => $data[0]['host'],
+        'host' => $parsed['host'],
         'user' => $data[0]['user'],
         'pass' => $data[0]['pass'],
-        'port' => $data[0]['port'],
+        'port' => $parsed['port'],
         'timeout' => 30,
     ];
 

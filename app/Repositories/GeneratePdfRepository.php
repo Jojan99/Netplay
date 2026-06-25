@@ -106,7 +106,7 @@ class GeneratePdfRepository implements GeneratePdfRepositoryInterface
                 'user_data.names', 'user_data.lastname',
                 'user_data.dni', 'internet_plans.plan_name', 'internet_plans.monthly_price',
                 'user_data.address', 'user_data.phone', 'user_data.email', 'cab_facturations.date_init_facturation',
-                'det_facturations.price_discount', 'det_facturations.number_facture', 'det_facturations.date_facturation',
+                'det_facturations.id as det_facturation_id', 'det_facturations.price_discount', 'det_facturations.number_facture', 'det_facturations.date_facturation',
                 'det_facturations.price_total', 'det_facturations.days_facture', 'det_facturations.create_facture_manual',
                 'det_facturations.porcentage_discount', 'cab_facturations.id','cab_facturations.billing_electronic'
             )
@@ -140,7 +140,7 @@ class GeneratePdfRepository implements GeneratePdfRepositoryInterface
                 'user_data.names', 'user_data.lastname',
                 'user_data.dni', 'internet_plans.plan_name', 'internet_plans.monthly_price',
                 'user_data.address', 'user_data.phone', 'user_data.email', 'cab_facturations.date_init_facturation',
-                'det_facturations.price_discount', 'det_facturations.number_facture', 'det_facturations.date_facturation',
+                'det_facturations.id as det_facturation_id', 'det_facturations.price_discount', 'det_facturations.number_facture', 'det_facturations.date_facturation',
                 'det_facturations.price_total', 'det_facturations.days_facture', 'det_facturations.create_facture_manual',
                 'det_facturations.porcentage_discount', 'cab_facturations.id'
             )
