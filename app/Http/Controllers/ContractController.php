@@ -146,7 +146,7 @@ class ContractController extends Controller
 
     /**
      * POST /api/contracts/upload-pdf
-     * Sube un PDF y devuelve su contenido extraído en HTML.
+     * Sube un PDF y devuelve su contenido extraído en HTML estructurado.
      */
     public function uploadPdf(Request $request): JsonResponse
     {
@@ -160,18 +160,25 @@ class ContractController extends Controller
             $pdf = $parser->parseFile($file->getPathname());
             $text = $pdf->getText();
 
-            // Convertir texto plano a HTML básico con párrafos
-            $paragraphs = array_filter(array_map('trim', explode("\n", $text)));
-            $html = '<div style="font-family: Arial, sans-serif; font-size: 14px; line-height: 1.7; color: #333;">';
-            foreach ($paragraphs as $p) {
-                $html .= '<p style="margin-bottom: 10px; text-align: justify;">' . htmlspecialchars($p, ENT_QUOTES, 'UTF-8') . '</p>';
+            // Guardar PDF temporalmente para que el frontend lo muestre como guía
+            $tempName = uniqid('contract_pdf_') . '.pdf';
+            $tempPath = storage_path('app/public/temp/' . $tempName);
+            if (!is_dir(dirname($tempPath))) {
+                mkdir(dirname($tempPath), 0755, true);
             }
-            $html .= '</div>';
+            copy($file->getPathname(), $tempPath);
+            $pdfUrl = url('storage/temp/' . $tempName);
+
+            // Extraer HTML estructurado intentando detectar títulos, tablas, etc.
+            $html = $this->pdfTextToStructuredHtml($text);
 
             return response()->json([
                 'status'  => 0,
-                'message' => 'PDF convertido a HTML exitosamente.',
-                'data'    => ['html' => $html],
+                'message' => 'PDF procesado exitosamente.',
+                'data'    => [
+                    'html'   => $html,
+                    'pdfUrl' => $pdfUrl,
+                ],
             ]);
         } catch (\Throwable $e) {
             return response()->json([
@@ -179,6 +186,103 @@ class ContractController extends Controller
                 'message' => 'Error al procesar PDF: ' . $e->getMessage(),
             ]);
         }
+    }
+
+    /**
+     * Convierte texto plano extraído de PDF a HTML estructurado.
+     */
+    private function pdfTextToStructuredHtml(string $text): string
+    {
+        $lines = array_filter(array_map('trim', explode("\n", $text)));
+        $html = [];
+        $inTable = false;
+        $tableRows = [];
+
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if (empty($line)) continue;
+
+            // Detectar título: corto, mayúsculas, sin punto final
+            if (strlen($line) <= 80 && strtoupper($line) === $line && !str_ends_with($line, '.')) {
+                if ($inTable && count($tableRows) > 0) {
+                    $html[] = $this->buildTableHtml($tableRows);
+                    $tableRows = [];
+                    $inTable = false;
+                }
+                $html[] = '<h2 style="font-size:16px; font-weight:bold; text-align:center; margin:20px 0 10px; text-transform:uppercase;">' . htmlspecialchars($line, ENT_QUOTES, 'UTF-8') . '</h2>';
+                continue;
+            }
+
+            // Detectar subtítulo: corto, primera letra mayúscula, sin punto final, empieza con número romano o "CLAUSULA"
+            if (preg_match('/^(CLAUSULA|CLÁUSULA|ARTICULO|ARTÍCULO|SECCIÓN|SECCION|CAPITULO|CAPÍTULO|[IVX]+\.?|[0-9]+\.?)/i', $line) && strlen($line) <= 100) {
+                if ($inTable && count($tableRows) > 0) {
+                    $html[] = $this->buildTableHtml($tableRows);
+                    $tableRows = [];
+                    $inTable = false;
+                }
+                $html[] = '<h3 style="font-size:14px; font-weight:bold; margin:15px 0 8px;">' . htmlspecialchars($line, ENT_QUOTES, 'UTF-8') . '</h3>';
+                continue;
+            }
+
+            // Detectar fila de tabla: múltiples tabs o múltiples espacios seguidos (más de 3)
+            if (preg_match('/\t{2,}/', $line) || preg_match('/\s{4,}.+\s{4,}/', $line)) {
+                $inTable = true;
+                $tableRows[] = $line;
+                continue;
+            }
+
+            // Si estábamos en tabla pero ya no, cerrar tabla
+            if ($inTable) {
+                $html[] = $this->buildTableHtml($tableRows);
+                $tableRows = [];
+                $inTable = false;
+            }
+
+            // Detectar lista numerada
+            if (preg_match('/^[0-9]+[\.\)]\s+/', $line)) {
+                $html[] = '<p style="margin-bottom:6px; text-align:justify; padding-left:20px;">' . htmlspecialchars($line, ENT_QUOTES, 'UTF-8') . '</p>';
+                continue;
+            }
+
+            // Detectar línea de firma / espacio en blanco para firma
+            if (preg_match('/(firma|firman|firmado|testigo|TESTIGO|FIRMA|FIRM|f\.)/i', $line)) {
+                $html[] = '<p style="margin-bottom:6px; text-align:justify; font-weight:bold;">' . htmlspecialchars($line, ENT_QUOTES, 'UTF-8') . '</p>';
+                continue;
+            }
+
+            // Párrafo normal
+            $html[] = '<p style="margin-bottom:10px; text-align:justify;">' . htmlspecialchars($line, ENT_QUOTES, 'UTF-8') . '</p>';
+        }
+
+        // Cerrar tabla pendiente
+        if ($inTable && count($tableRows) > 0) {
+            $html[] = $this->buildTableHtml($tableRows);
+        }
+
+        $wrapper = '<div style="font-family: Arial, sans-serif; font-size: 13px; line-height: 1.7; color: #333;">';
+        $wrapper .= '<p style="font-size:11px; color:#888; border-bottom:1px solid #ddd; padding-bottom:8px; margin-bottom:15px;">';
+        $wrapper .= '<strong>Guía:</strong> Reemplace los textos entre corchetes o use las variables rápidas ({{nombre}}, {{dni}}, etc.).';
+        $wrapper .= '</p>';
+        $wrapper .= implode("\n", $html);
+        $wrapper .= '</div>';
+
+        return $wrapper;
+    }
+
+    private function buildTableHtml(array $rows): string
+    {
+        $html = '<table style="width:100%; border-collapse:collapse; margin:10px 0; font-size:12px;">';
+        foreach ($rows as $row) {
+            $html .= '<tr>';
+            // Separar por tabs o múltiples espacios
+            $cells = preg_split('/\t+|\s{4,}/', $row, -1, PREG_SPLIT_NO_EMPTY);
+            foreach ($cells as $cell) {
+                $html .= '<td style="border:1px solid #ccc; padding:6px 8px;">' . htmlspecialchars(trim($cell), ENT_QUOTES, 'UTF-8') . '</td>';
+            }
+            $html .= '</tr>';
+        }
+        $html .= '</table>';
+        return $html;
     }
 
     /**
