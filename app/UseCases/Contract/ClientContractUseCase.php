@@ -155,12 +155,88 @@ class ClientContractUseCase implements ClientContractUseCaseInterface
         <head>
             <meta charset='UTF-8'>
             <style>
-                body { font-family: Arial, sans-serif; font-size: 13px; color: #333; margin: 40px; }
-                h1   { font-size: 20px; text-align: center; margin-bottom: 6px; }
-                .meta { text-align: center; font-size: 11px; color: #888; margin-bottom: 30px; }
-                .badge { display:inline-block; padding:3px 10px; border-radius:4px; font-size:11px; font-weight:bold;
-                         background: " . ($cc->status === 'signed' ? '#d4edda; color:#155724' : '#fff3cd; color:#856404') . "; }
-                .content { line-height: 1.7; }
+                @page { margin: 40px; }
+                body {
+                    font-family: 'Georgia', 'Times New Roman', serif;
+                    font-size: 13px;
+                    color: #222;
+                    line-height: 1.85;
+                    margin: 0;
+                    padding: 0;
+                }
+                h1 {
+                    font-size: 20px;
+                    text-align: center;
+                    font-weight: bold;
+                    color: #1a1a2e;
+                    margin-bottom: 6px;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                }
+                .meta {
+                    text-align: center;
+                    font-size: 11px;
+                    color: #888;
+                    margin-bottom: 30px;
+                    font-family: Arial, sans-serif;
+                }
+                .badge {
+                    display:inline-block;
+                    padding:3px 10px;
+                    border-radius:4px;
+                    font-size:11px;
+                    font-weight:bold;
+                    background: " . ($cc->status === 'signed' ? '#d4edda; color:#155724' : '#fff3cd; color:#856404') . ";
+                }
+                .content {
+                    text-align: justify;
+                }
+                .content h2, .content h3, .content h4 {
+                    font-family: 'Georgia', serif;
+                    text-align: center;
+                    font-weight: bold;
+                    color: #1a1a2e;
+                    margin: 16px 0 10px;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                }
+                .content h2 { font-size: 15px; }
+                .content h3 { font-size: 14px; text-align: left; margin-top: 14px; }
+                .content p {
+                    margin-bottom: 8px;
+                    text-indent: 30px;
+                }
+                .content p:first-of-type { text-indent: 0; }
+                .content table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin: 10px 0;
+                    font-size: 12px;
+                }
+                .content th, .content td {
+                    border: 1px solid #bbb;
+                    padding: 6px 8px;
+                    text-align: left;
+                }
+                .content th {
+                    background: #f5f5f5;
+                    font-weight: bold;
+                }
+                .content strong, .content b { color: #111; }
+                .content ul, .content ol { margin: 8px 0 8px 20px; }
+                .content li { margin-bottom: 4px; }
+                .content hr {
+                    border: none;
+                    border-top: 1px solid #ccc;
+                    margin: 14px 0;
+                }
+                .content blockquote {
+                    border-left: 3px solid #6c63ff;
+                    padding-left: 10px;
+                    margin: 8px 0;
+                    color: #555;
+                    font-style: italic;
+                }
             </style>
         </head>
         <body>

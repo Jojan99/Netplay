@@ -58,15 +58,70 @@
 
         /* Contrato */
         .contract-content {
-            line-height: 1.75;
+            font-family: 'Georgia', 'Times New Roman', serif;
             font-size: 14px;
-            color: #333;
-            max-height: 45vh;
+            line-height: 1.85;
+            color: #222;
+            max-height: 55vh;
             overflow-y: auto;
             padding-right: 4px;
+            text-align: justify;
         }
         .contract-content::-webkit-scrollbar { width: 4px; }
         .contract-content::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
+
+        /* Estilos base de contrato inyectados al contenido */
+        .contract-content h1, .contract-content h2, .contract-content h3 {
+            font-family: 'Georgia', serif;
+            text-align: center;
+            font-weight: bold;
+            color: #1a1a2e;
+            margin: 18px 0 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .contract-content h1 { font-size: 18px; }
+        .contract-content h2 { font-size: 15px; }
+        .contract-content h3 { font-size: 14px; text-align: left; margin-top: 14px; }
+        .contract-content p {
+            margin-bottom: 10px;
+            text-indent: 30px;
+        }
+        .contract-content p:first-of-type { text-indent: 0; }
+        .contract-content table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 12px 0;
+            font-size: 13px;
+        }
+        .contract-content th, .contract-content td {
+            border: 1px solid #bbb;
+            padding: 8px 10px;
+            text-align: left;
+        }
+        .contract-content th {
+            background: #f5f5f5;
+            font-weight: bold;
+        }
+        .contract-content strong, .contract-content b {
+            color: #111;
+        }
+        .contract-content ul, .contract-content ol {
+            margin: 10px 0 10px 25px;
+        }
+        .contract-content li { margin-bottom: 5px; }
+        .contract-content hr {
+            border: none;
+            border-top: 1px solid #ccc;
+            margin: 16px 0;
+        }
+        .contract-content blockquote {
+            border-left: 3px solid #6c63ff;
+            padding-left: 12px;
+            margin: 10px 0;
+            color: #555;
+            font-style: italic;
+        }
 
         /* Área de firma */
         .sign-wrapper {

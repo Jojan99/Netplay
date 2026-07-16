@@ -259,11 +259,32 @@ class ContractController extends Controller
             $html[] = $this->buildTableHtml($tableRows);
         }
 
+        $allHtml = implode("\n", $html);
+
+        // Reemplazar placeholders comunes entre corchetes o paréntesis con variables
+        $placeholderMap = [
+            '/\[NOMBRE\s*COMPLETO\]|\[NOMBRE\s*Y\s*APELLIDO\]/i' => '{{nombre_completo}}',
+            '/\[NOMBRE\]|\[NAME\]/i' => '{{nombre}}',
+            '/\[APELLIDO\]|\[APELLIDOS\]/i' => '{{apellido}}',
+            '/\[DNI\]|\[CEDULA\]|\[CÉDULA\]|\[DOCUMENTO\]|\[CC\]/i' => '{{dni}}',
+            '/\[TELEFONO\]|\[TELÉFONO\]|\[CELULAR\]|\[PHONE\]/i' => '{{telefono}}',
+            '/\[EMAIL\]|\[CORREO\]|\[E-MAIL\]/i' => '{{email}}',
+            '/\[DIRECCION\]|\[DIRECCIÓN\]|\[DOMICILIO\]|\[ADDRESS\]/i' => '{{direccion}}',
+            '/\[FECHA\]|\[DATE\]|\[HOY\]/i' => '{{fecha}}',
+            '/\[NUMERO\s*CONTRATO\]|\[N°\s*CONTRATO\]|\[CONTRATO\s*ID\]/i' => '{{contrato_id}}',
+        ];
+        foreach ($placeholderMap as $pattern => $replacement) {
+            $allHtml = preg_replace($pattern, $replacement, $allHtml);
+        }
+
+        // También convertir líneas que son solo _____ o ----- a líneas horizontales
+        $allHtml = preg_replace('/<p[^>]*>\s*[_-]{5,}\s*<\/p>/i', '<hr>', $allHtml);
+
         $wrapper = '<div style="font-family: Arial, sans-serif; font-size: 13px; line-height: 1.7; color: #333;">';
         $wrapper .= '<p style="font-size:11px; color:#888; border-bottom:1px solid #ddd; padding-bottom:8px; margin-bottom:15px;">';
         $wrapper .= '<strong>Guía:</strong> Reemplace los textos entre corchetes o use las variables rápidas ({{nombre}}, {{dni}}, etc.).';
         $wrapper .= '</p>';
-        $wrapper .= implode("\n", $html);
+        $wrapper .= $allHtml;
         $wrapper .= '</div>';
 
         return $wrapper;
