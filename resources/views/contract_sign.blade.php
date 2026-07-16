@@ -56,71 +56,107 @@
         .card-title { font-size: 15px; font-weight: 600; }
         .card-body  { padding: 20px; }
 
-        /* Contrato */
+        /* Contrato — forzar estilos formales con !important para anular inline styles */
+        .contract-content,
+        .contract-content * {
+            font-family: 'Georgia', 'Times New Roman', serif !important;
+            font-size: 14px !important;
+            line-height: 1.85 !important;
+            color: #222 !important;
+            text-align: justify !important;
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+        }
         .contract-content {
-            font-family: 'Georgia', 'Times New Roman', serif;
-            font-size: 14px;
-            line-height: 1.85;
-            color: #222;
             max-height: 55vh;
             overflow-y: auto;
             padding-right: 4px;
-            text-align: justify;
         }
         .contract-content::-webkit-scrollbar { width: 4px; }
         .contract-content::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
 
-        /* Estilos base de contrato inyectados al contenido */
-        .contract-content h1, .contract-content h2, .contract-content h3 {
-            font-family: 'Georgia', serif;
-            text-align: center;
-            font-weight: bold;
-            color: #1a1a2e;
-            margin: 18px 0 12px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
+        /* Headings */
+        .contract-content h1, .contract-content h2, .contract-content h3, .contract-content h4 {
+            text-align: center !important;
+            font-weight: bold !important;
+            color: #1a1a2e !important;
+            margin: 18px 0 12px !important;
+            text-transform: uppercase !important;
+            letter-spacing: 0.5px !important;
+            border: none !important;
         }
-        .contract-content h1 { font-size: 18px; }
-        .contract-content h2 { font-size: 15px; }
-        .contract-content h3 { font-size: 14px; text-align: left; margin-top: 14px; }
-        .contract-content p {
-            margin-bottom: 10px;
-            text-indent: 30px;
+        .contract-content h1 { font-size: 18px !important; }
+        .contract-content h2 { font-size: 15px !important; }
+        .contract-content h3 { font-size: 14px !important; text-align: left !important; margin-top: 14px !important; }
+
+        /* Párrafos */
+        .contract-content p, .contract-content div {
+            margin-bottom: 10px !important;
+            text-indent: 30px !important;
+            padding: 0 !important;
         }
-        .contract-content p:first-of-type { text-indent: 0; }
+        .contract-content p:first-of-type,
+        .contract-content div:first-of-type { text-indent: 0 !important; }
+
+        /* Tablas */
         .contract-content table {
-            width: 100%;
-            border-collapse: collapse;
-            margin: 12px 0;
-            font-size: 13px;
+            width: 100% !important;
+            border-collapse: collapse !important;
+            margin: 12px 0 !important;
+            font-size: 13px !important;
         }
         .contract-content th, .contract-content td {
-            border: 1px solid #bbb;
-            padding: 8px 10px;
-            text-align: left;
+            border: 1px solid #bbb !important;
+            padding: 8px 10px !important;
+            text-align: left !important;
+            background: #fafafa !important;
         }
         .contract-content th {
-            background: #f5f5f5;
-            font-weight: bold;
+            background: #f0f0f0 !important;
+            font-weight: bold !important;
         }
+
+        /* Negrita */
         .contract-content strong, .contract-content b {
-            color: #111;
+            color: #111 !important;
+            font-weight: bold !important;
         }
+
+        /* Listas */
         .contract-content ul, .contract-content ol {
-            margin: 10px 0 10px 25px;
+            margin: 10px 0 10px 25px !important;
+            padding-left: 15px !important;
         }
-        .contract-content li { margin-bottom: 5px; }
+        .contract-content li { margin-bottom: 5px !important; }
+
+        /* Línea horizontal */
         .contract-content hr {
-            border: none;
-            border-top: 1px solid #ccc;
-            margin: 16px 0;
+            border: none !important;
+            border-top: 1px solid #ccc !important;
+            margin: 16px 0 !important;
+            height: 0 !important;
         }
+
+        /* Blockquote */
         .contract-content blockquote {
-            border-left: 3px solid #6c63ff;
-            padding-left: 12px;
-            margin: 10px 0;
-            color: #555;
-            font-style: italic;
+            border-left: 3px solid #6c63ff !important;
+            padding-left: 12px !important;
+            margin: 10px 0 !important;
+            color: #555 !important;
+            font-style: italic !important;
+        }
+
+        /* Span/badges de variables */
+        .contract-content span {
+            display: inline !important;
+            padding: 0 !important;
+            border-radius: 0 !important;
+            font-size: inherit !important;
+            font-weight: normal !important;
+            background: transparent !important;
+            color: inherit !important;
+            border: none !important;
         }
 
         /* Área de firma */
@@ -216,7 +252,7 @@
         </div>
         <div class="card-body">
             <div class="contract-content">
-                {!! $clientContract->contract->content !!}
+                {!! preg_replace('/\s*style\s*=\s*["\'][^"\']*["\']/i', '', $clientContract->contract->content) !!}
             </div>
         </div>
     </div>
