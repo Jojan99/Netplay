@@ -29,11 +29,14 @@ class ContractSignController extends Controller
             ->where('user_id', $clientContract->user_id)
             ->first();
 
-        $clientContract->contract->content = $this->replaceVars(
-            $clientContract->contract->content,
+        $content = $this->replaceVars(
+            $clientContract->contract->content ?? '',
             $clientContract,
             $ud
         );
+        // Escapar cualquier {{ restante para que Blade no lo interprete como PHP
+        $content = str_replace('{{', '@{{', $content);
+        $clientContract->contract->content = $content;
 
         $logo = $clientContract->contract->logo ?? '';
         $pdfUrl = null;
