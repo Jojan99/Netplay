@@ -17,6 +17,8 @@
         "phpseclib/phpseclib": "^3.0",
         "predis/predis": "*",
         "pusher/pusher-php-server": "^7.2",
+        "setasign/fpdf": "*",
+        "setasign/fpdi": "*",
         "simpod/php-snmp": "^0.2.3",
         "smalot/pdfparser": "*",
         "tymon/jwt-auth": "^2.0"
