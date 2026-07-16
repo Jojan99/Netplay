@@ -306,12 +306,21 @@
         <div class="card-body">
             @if($pdfUrl)
                 <!-- Mostrar PDF original exacto -->
-                <div style="width:100%; height:65vh; border:1px solid #ddd; border-radius:8px; overflow:hidden;">
-                    <iframe src="{{ $pdfUrl }}" style="width:100%; height:100%; border:0;" title="Contrato PDF"></iframe>
+                <div style="width:100%; height:70vh; border:1px solid #ddd; border-radius:8px; overflow:hidden; background:#525659;">
+                    <embed src="{{ $pdfUrl }}#toolbar=1&navpanes=1&scrollbar=1" 
+                           type="application/pdf" 
+                           style="width:100%; height:100%; border:0; display:block;"
+                           title="Contrato PDF" />
                 </div>
-                <p style="font-size:12px; color:#666; margin-top:8px; text-align:center;">
-                    Este es su contrato original. Por favor léalo y firme al final.
-                </p>
+                <div style="margin-top:10px; text-align:center;">
+                    <a href="{{ $pdfUrl }}" target="_blank" 
+                       style="display:inline-block; padding:8px 16px; background:#6c63ff; color:#fff; text-decoration:none; border-radius:6px; font-size:13px; font-weight:600;">
+                        Ver contrato completo
+                    </a>
+                    <p style="font-size:12px; color:#666; margin-top:6px;">
+                        Este es su contrato original. Por favor léalo y firme al final.
+                    </p>
+                </div>
             @else
                 <!-- Mostrar HTML renderizado -->
                 <div id="contract-view">
