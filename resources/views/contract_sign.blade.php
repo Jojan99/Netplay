@@ -304,9 +304,20 @@
             </span>
         </div>
         <div class="card-body">
-            <div id="contract-view">
-                {!! preg_replace('/\s*style\s*=\s*["\'][^"\']*["\']/i', '', $clientContract->contract->content) !!}
-            </div>
+            @if($pdfUrl)
+                <!-- Mostrar PDF original exacto -->
+                <div style="width:100%; height:65vh; border:1px solid #ddd; border-radius:8px; overflow:hidden;">
+                    <iframe src="{{ $pdfUrl }}" style="width:100%; height:100%; border:0;" title="Contrato PDF"></iframe>
+                </div>
+                <p style="font-size:12px; color:#666; margin-top:8px; text-align:center;">
+                    Este es su contrato original. Por favor léalo y firme al final.
+                </p>
+            @else
+                <!-- Mostrar HTML renderizado -->
+                <div id="contract-view">
+                    {!! preg_replace('/\s*style\s*=\s*["\'][^"\']*["\']/i', '', $clientContract->contract->content) !!}
+                </div>
+            @endif
         </div>
     </div>
 

@@ -36,7 +36,14 @@ class ContractSignController extends Controller
         );
 
         $logo = $clientContract->contract->logo ?? '';
-        return view('contract_sign', compact('clientContract', 'token', 'logo'));
+        $pdfUrl = null;
+        if ($clientContract->contract->pdf_path) {
+            $fullPath = storage_path('app/public/' . $clientContract->contract->pdf_path);
+            if (file_exists($fullPath)) {
+                $pdfUrl = url('storage/' . $clientContract->contract->pdf_path);
+            }
+        }
+        return view('contract_sign', compact('clientContract', 'token', 'logo', 'pdfUrl'));
     }
 
     private function replaceVars(string $content, object $cc, ?object $ud): string
