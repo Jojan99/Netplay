@@ -307,6 +307,43 @@ class ContractController extends Controller
     }
 
     /**
+     * POST /api/contracts/{id}/pdf-base
+     * Sube el PDF original como base del contrato (para mantener diseño exacto).
+     */
+    public function uploadPdfBase(int $id, Request $request): JsonResponse
+    {
+        $request->validate([
+            'pdf' => 'required|file|mimes:pdf|max:5120',
+        ]);
+
+        try {
+            $contract = \App\Models\Contract::findOrFail($id);
+            $companyId = getSessionCompanyId();
+            $file = $request->file('pdf');
+
+            $dir = "contracts/{$companyId}";
+            $filename = "contract_{$id}_base.pdf";
+            $path = $file->storeAs($dir, $filename, 'public');
+
+            $contract->pdf_path = $path;
+            $contract->save();
+
+            $pdfUrl = url('storage/' . $path);
+
+            return response()->json([
+                'status'  => 0,
+                'message' => 'PDF base guardado. Se usará como fondo exacto del contrato.',
+                'data'    => ['pdf_path' => $path, 'pdf_url' => $pdfUrl],
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'status'  => 1,
+                'message' => 'Error al guardar PDF base: ' . $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
      * POST /api/contracts/{id}/logo
      * Sube logo de la plantilla de contrato (base64 o URL).
      */

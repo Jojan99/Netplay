@@ -77,7 +77,21 @@ class ClientContractUseCase implements ClientContractUseCaseInterface
     {
         try {
             $cc = $this->contractRepository->getClientContract($clientContractId);
+            $clientName = $cc->user->username ?? 'contrato';
+            $filename   = 'contrato-' . $clientContractId . '-' . $clientName . '.pdf';
 
+            // Si existe PDF base original, usar FPDI para combinarlo con la firma
+            if ($cc->contract->pdf_path && file_exists(storage_path('app/public/' . $cc->contract->pdf_path))) {
+                $service = new \App\Services\ContractPdfService();
+                $signature = $cc->signature ?? '';
+                $output = $service->combineWithSignature($cc->contract->pdf_path, $signature, $clientName);
+
+                return response($output)
+                    ->header('Content-Type', 'application/pdf')
+                    ->header('Content-Disposition', 'attachment; filename="' . $filename . '"');
+            }
+
+            // Fallback: generar PDF desde HTML con dompdf
             $html = $this->buildHtml($cc);
 
             $options = new Options();
@@ -91,9 +105,6 @@ class ClientContractUseCase implements ClientContractUseCaseInterface
             $pdf->loadHtml($html);
             $pdf->render();
             $output = $pdf->output();
-
-            $clientName = $cc->user->username ?? 'contrato';
-            $filename   = 'contrato-' . $clientContractId . '-' . $clientName . '.pdf';
 
             return response($output)
                 ->header('Content-Type', 'application/pdf')

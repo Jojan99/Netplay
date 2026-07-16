@@ -31,6 +31,9 @@ Route::prefix('contracts')->middleware(['jwt.verify'])->group(function () {
     // Subir PDF y convertir a HTML
     Route::post('/upload-pdf',                          [ContractController::class, 'uploadPdf']);
 
+    // Subir PDF base (fondo exacto del contrato)
+    Route::post('/{id}/pdf-base',                       [ContractController::class, 'uploadPdfBase']);
+
     // Logo de plantilla
     Route::post('/{id}/logo',                           [ContractController::class, 'uploadLogo']);
 });
