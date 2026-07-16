@@ -10,6 +10,7 @@ class Contract extends Model
         'company_id',
         'title',
         'content',
+        'logo',
         'active',
     ];
 

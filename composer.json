@@ -18,6 +18,7 @@
         "predis/predis": "*",
         "pusher/pusher-php-server": "^7.2",
         "simpod/php-snmp": "^0.2.3",
+        "smalot/pdfparser": "*",
         "tymon/jwt-auth": "^2.0"
     },
     "require-dev": {

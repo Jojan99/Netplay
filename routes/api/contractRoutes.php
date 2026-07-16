@@ -27,4 +27,10 @@ Route::prefix('contracts')->middleware(['jwt.verify'])->group(function () {
     // Envío de link
     Route::post('/send-email/{clientContractId}',       [ContractController::class, 'sendEmail']);
     Route::post('/send-whatsapp/{clientContractId}',    [ContractController::class, 'sendWhatsApp']);
+
+    // Subir PDF y convertir a HTML
+    Route::post('/upload-pdf',                          [ContractController::class, 'uploadPdf']);
+
+    // Logo de plantilla
+    Route::post('/{id}/logo',                           [ContractController::class, 'uploadLogo']);
 });

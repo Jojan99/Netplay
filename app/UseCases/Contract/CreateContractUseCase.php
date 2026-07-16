@@ -34,7 +34,7 @@ class CreateContractUseCase implements CreateContractUseCaseInterface
             if (!sessionUserHasProfile('ADMIN', 'CONTADOR')) {
                 return ['message' => 'Acción no permitida', 'status' => 1, 'data' => ApiResponseConstants::DATA_NULL];
             }
-            $data = $this->contractRepository->update($id, $request->only(['title', 'content', 'active']));
+            $data = $this->contractRepository->update($id, $request->only(['title', 'content', 'logo', 'active']));
         } catch (ModelNotFoundException) {
             return ['message' => 'Contrato no encontrado', 'status' => 1, 'data' => ApiResponseConstants::DATA_NULL];
         } catch (QueryException $e) {

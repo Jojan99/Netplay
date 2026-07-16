@@ -143,4 +143,74 @@ class ContractController extends Controller
     {
         return $uc->generatePdf($clientContractId);
     }
+
+    /**
+     * POST /api/contracts/upload-pdf
+     * Sube un PDF y devuelve su contenido extraído en HTML.
+     */
+    public function uploadPdf(Request $request): JsonResponse
+    {
+        $request->validate([
+            'pdf' => 'required|file|mimes:pdf|max:5120',
+        ]);
+
+        try {
+            $file = $request->file('pdf');
+            $parser = new \Smalot\PdfParser\Parser();
+            $pdf = $parser->parseFile($file->getPathname());
+            $text = $pdf->getText();
+
+            // Convertir texto plano a HTML básico con párrafos
+            $paragraphs = array_filter(array_map('trim', explode("\n", $text)));
+            $html = '<div style="font-family: Arial, sans-serif; font-size: 14px; line-height: 1.7; color: #333;">';
+            foreach ($paragraphs as $p) {
+                $html .= '<p style="margin-bottom: 10px; text-align: justify;">' . htmlspecialchars($p, ENT_QUOTES, 'UTF-8') . '</p>';
+            }
+            $html .= '</div>';
+
+            return response()->json([
+                'status'  => 0,
+                'message' => 'PDF convertido a HTML exitosamente.',
+                'data'    => ['html' => $html],
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'status'  => 1,
+                'message' => 'Error al procesar PDF: ' . $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * POST /api/contracts/{id}/logo
+     * Sube logo de la plantilla de contrato (base64 o URL).
+     */
+    public function uploadLogo(int $id, Request $request): JsonResponse
+    {
+        $request->validate([
+            'logo' => 'required|image|max:2048',
+        ]);
+
+        try {
+            $contract = \App\Models\Contract::findOrFail($id);
+            $file = $request->file('logo');
+            $content = file_get_contents($file->getRealPath());
+            $mime = $file->getMimeType();
+            $base64 = "data:{$mime};base64," . base64_encode($content);
+
+            $contract->logo = $base64;
+            $contract->save();
+
+            return response()->json([
+                'status'  => 0,
+                'message' => 'Logo actualizado.',
+                'data'    => ['logo' => $base64],
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'status'  => 1,
+                'message' => 'Error al subir logo: ' . $e->getMessage(),
+            ]);
+        }
+    }
 }

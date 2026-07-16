@@ -35,7 +35,8 @@ class ContractSignController extends Controller
             $ud
         );
 
-        return view('contract_sign', compact('clientContract', 'token'));
+        $logo = $clientContract->contract->logo ?? '';
+        return view('contract_sign', compact('clientContract', 'token', 'logo'));
     }
 
     private function replaceVars(string $content, object $cc, ?object $ud): string

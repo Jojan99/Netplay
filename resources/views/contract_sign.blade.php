@@ -137,6 +137,11 @@
 <body>
 
 <div class="header">
+    @if($logo)
+        <div style="margin-bottom: 10px;">
+            <img src="{{ $logo }}" alt="Logo" style="max-height: 60px; max-width: 180px; display: block; margin: 0 auto;">
+        </div>
+    @endif
     <h1>{{ $clientContract->contract->title }}</h1>
     <p>Por favor lea el contrato y firme al final</p>
 </div>

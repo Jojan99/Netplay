@@ -131,6 +131,12 @@ class ClientContractUseCase implements ClientContractUseCaseInterface
         $title     = $cc->contract->title ?? 'Contrato';
         $signedAt  = $cc->signed_at ? $cc->signed_at->format('d/m/Y H:i') : 'Pendiente';
         $status    = $cc->status === 'signed' ? 'FIRMADO' : 'PENDIENTE';
+        $logo      = $cc->contract->logo ?? '';
+
+        $logoBlock = '';
+        if ($logo) {
+            $logoBlock = "<div style='text-align:center; margin-bottom:20px;'><img src='{$logo}' style='max-height:80px; max-width:200px;' /></div>";
+        }
 
         $signatureBlock = '';
         if ($cc->status === 'signed' && $cc->signature) {
@@ -158,6 +164,7 @@ class ClientContractUseCase implements ClientContractUseCaseInterface
             </style>
         </head>
         <body>
+            {$logoBlock}
             <h1>{$title}</h1>
             <p class='meta'>Estado: <span class='badge'>{$status}</span></p>
             <hr>
