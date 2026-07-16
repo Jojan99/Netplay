@@ -203,7 +203,7 @@
             font-style: italic;
         }
 
-        /* Variables {{xxx}} */
+        /* Variables de contrato */
         #contract-view span {
             color: #c0392b;
             font-weight: bold;
