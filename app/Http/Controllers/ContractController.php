@@ -209,22 +209,23 @@ class ContractController extends Controller
                     $tableRows = [];
                     $inTable = false;
                 }
-                $html[] = '<h2 style="font-size:16px; font-weight:bold; text-align:center; margin:20px 0 10px; text-transform:uppercase;">' . htmlspecialchars($line, ENT_QUOTES, 'UTF-8') . '</h2>';
+                // HTML semántico LIMPIO — sin inline styles
+                $html[] = '<h2>' . htmlspecialchars($line, ENT_QUOTES, 'UTF-8') . '</h2>';
                 continue;
             }
 
-            // Detectar subtítulo: corto, primera letra mayúscula, sin punto final, empieza con número romano o "CLAUSULA"
+            // Detectar subtítulo: corto, empieza con "CLAUSULA", número romano, etc.
             if (preg_match('/^(CLAUSULA|CLÁUSULA|ARTICULO|ARTÍCULO|SECCIÓN|SECCION|CAPITULO|CAPÍTULO|[IVX]+\.?|[0-9]+\.?)/i', $line) && strlen($line) <= 100) {
                 if ($inTable && count($tableRows) > 0) {
                     $html[] = $this->buildTableHtml($tableRows);
                     $tableRows = [];
                     $inTable = false;
                 }
-                $html[] = '<h3 style="font-size:14px; font-weight:bold; margin:15px 0 8px;">' . htmlspecialchars($line, ENT_QUOTES, 'UTF-8') . '</h3>';
+                $html[] = '<h3>' . htmlspecialchars($line, ENT_QUOTES, 'UTF-8') . '</h3>';
                 continue;
             }
 
-            // Detectar fila de tabla: múltiples tabs o múltiples espacios seguidos (más de 3)
+            // Detectar fila de tabla: múltiples tabs o múltiples espacios seguidos
             if (preg_match('/\t{2,}/', $line) || preg_match('/\s{4,}.+\s{4,}/', $line)) {
                 $inTable = true;
                 $tableRows[] = $line;
@@ -240,18 +241,18 @@ class ContractController extends Controller
 
             // Detectar lista numerada
             if (preg_match('/^[0-9]+[\.\)]\s+/', $line)) {
-                $html[] = '<p style="margin-bottom:6px; text-align:justify; padding-left:20px;">' . htmlspecialchars($line, ENT_QUOTES, 'UTF-8') . '</p>';
+                $html[] = '<p class="list-item">' . htmlspecialchars($line, ENT_QUOTES, 'UTF-8') . '</p>';
                 continue;
             }
 
-            // Detectar línea de firma / espacio en blanco para firma
+            // Detectar línea de firma
             if (preg_match('/(firma|firman|firmado|testigo|TESTIGO|FIRMA|FIRM|f\.)/i', $line)) {
-                $html[] = '<p style="margin-bottom:6px; text-align:justify; font-weight:bold;">' . htmlspecialchars($line, ENT_QUOTES, 'UTF-8') . '</p>';
+                $html[] = '<p class="signature-line">' . htmlspecialchars($line, ENT_QUOTES, 'UTF-8') . '</p>';
                 continue;
             }
 
             // Párrafo normal
-            $html[] = '<p style="margin-bottom:10px; text-align:justify;">' . htmlspecialchars($line, ENT_QUOTES, 'UTF-8') . '</p>';
+            $html[] = '<p>' . htmlspecialchars($line, ENT_QUOTES, 'UTF-8') . '</p>';
         }
 
         // Cerrar tabla pendiente
@@ -261,7 +262,7 @@ class ContractController extends Controller
 
         $allHtml = implode("\n", $html);
 
-        // Reemplazar placeholders comunes entre corchetes o paréntesis con variables
+        // Reemplazar placeholders comunes entre corchetes con variables
         $placeholderMap = [
             '/\[NOMBRE\s*COMPLETO\]|\[NOMBRE\s*Y\s*APELLIDO\]/i' => '{{nombre_completo}}',
             '/\[NOMBRE\]|\[NAME\]/i' => '{{nombre}}',
@@ -277,13 +278,12 @@ class ContractController extends Controller
             $allHtml = preg_replace($pattern, $replacement, $allHtml);
         }
 
-        // También convertir líneas que son solo _____ o ----- a líneas horizontales
+        // Convertir líneas que son solo _____ o ----- a <hr>
         $allHtml = preg_replace('/<p[^>]*>\s*[_-]{5,}\s*<\/p>/i', '<hr>', $allHtml);
 
-        $wrapper = '<div style="font-family: Arial, sans-serif; font-size: 13px; line-height: 1.7; color: #333;">';
-        $wrapper .= '<p style="font-size:11px; color:#888; border-bottom:1px solid #ddd; padding-bottom:8px; margin-bottom:15px;">';
-        $wrapper .= '<strong>Guía:</strong> Reemplace los textos entre corchetes o use las variables rápidas ({{nombre}}, {{dni}}, etc.).';
-        $wrapper .= '</p>';
+        // HTML limpio con clases semánticas, SIN inline styles
+        $wrapper = '<div class="contract-body">';
+        $wrapper .= '<p class="contract-guide"><strong>Guía:</strong> Reemplace los textos entre corchetes o use las variables rápidas ({{nombre}}, {{dni}}, etc.).</p>';
         $wrapper .= $allHtml;
         $wrapper .= '</div>';
 
@@ -292,13 +292,12 @@ class ContractController extends Controller
 
     private function buildTableHtml(array $rows): string
     {
-        $html = '<table style="width:100%; border-collapse:collapse; margin:10px 0; font-size:12px;">';
+        $html = '<table>';
         foreach ($rows as $row) {
             $html .= '<tr>';
-            // Separar por tabs o múltiples espacios
             $cells = preg_split('/\t+|\s{4,}/', $row, -1, PREG_SPLIT_NO_EMPTY);
             foreach ($cells as $cell) {
-                $html .= '<td style="border:1px solid #ccc; padding:6px 8px;">' . htmlspecialchars(trim($cell), ENT_QUOTES, 'UTF-8') . '</td>';
+                $html .= '<td>' . htmlspecialchars(trim($cell), ENT_QUOTES, 'UTF-8') . '</td>';
             }
             $html .= '</tr>';
         }
