@@ -56,9 +56,9 @@
         .card-title { font-size: 15px; font-weight: 600; }
         .card-body  { padding: 20px; }
 
-        /* ── Contrato — estilos formales ── */
-        .contract-content {
-            font-family: Georgia, 'Times New Roman', serif;
+        /* ── Contrato — estilos formales INJECTED ── */
+        #contract-view {
+            font-family: Georgia, 'Times New Roman', Times, serif;
             font-size: 14px;
             line-height: 1.85;
             color: #222;
@@ -66,23 +66,27 @@
             overflow-y: auto;
             padding-right: 4px;
             text-align: justify;
+            background: #fff;
+            padding: 12px 8px;
+            border-radius: 6px;
         }
-        .contract-content::-webkit-scrollbar { width: 4px; }
-        .contract-content::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
+        #contract-view::-webkit-scrollbar { width: 4px; }
+        #contract-view::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
 
-        /* Wrapper interno */
-        .contract-content .contract-body { padding: 0; }
-        .contract-content .contract-guide {
+        /* Guía */
+        #contract-view .contract-guide {
             font-size: 11px;
-            color: #888;
+            color: #666;
             border-bottom: 1px solid #ddd;
             padding-bottom: 8px;
             margin-bottom: 15px;
             text-indent: 0;
+            display: block;
         }
 
-        /* Headings */
-        .contract-content h1 {
+        /* Headings — con bordes y fondos OBVIOS */
+        #contract-view h1 {
+            font-family: Georgia, serif;
             font-size: 20px;
             font-weight: bold;
             text-align: center;
@@ -90,9 +94,11 @@
             margin: 24px 0 14px;
             text-transform: uppercase;
             letter-spacing: 0.5px;
-            font-family: Georgia, serif;
+            border-bottom: 2px solid #1a1a2e;
+            padding-bottom: 6px;
         }
-        .contract-content h2 {
+        #contract-view h2 {
+            font-family: Georgia, serif;
             font-size: 16px;
             font-weight: bold;
             text-align: center;
@@ -100,92 +106,110 @@
             margin: 20px 0 10px;
             text-transform: uppercase;
             letter-spacing: 0.5px;
-            font-family: Georgia, serif;
+            border-bottom: 1px solid #ccc;
+            padding-bottom: 4px;
         }
-        .contract-content h3 {
+        #contract-view h3 {
+            font-family: Georgia, serif;
             font-size: 14px;
             font-weight: bold;
             text-align: left;
             color: #333;
             margin: 16px 0 8px;
-            font-family: Georgia, serif;
+            background: #f5f5f5;
+            padding: 4px 8px;
+            border-left: 3px solid #6c63ff;
         }
-        .contract-content h4 {
+        #contract-view h4 {
+            font-family: Georgia, serif;
             font-size: 13px;
             font-weight: bold;
             color: #444;
             margin: 12px 0 6px;
-            font-family: Georgia, serif;
         }
 
         /* Párrafos */
-        .contract-content p {
+        #contract-view p {
+            font-size: 14px;
+            line-height: 1.85;
             margin-bottom: 10px;
             text-indent: 30px;
+            color: #222;
+            text-align: justify;
         }
-        .contract-content p:first-child,
-        .contract-content h2 + p,
-        .contract-content h3 + p {
-            text-indent: 0;
-        }
+        #contract-view p:first-child { text-indent: 0; }
+        #contract-view h2 + p,
+        #contract-view h3 + p { text-indent: 0; }
 
         /* Clases especiales */
-        .contract-content .list-item {
+        #contract-view .list-item {
             margin-bottom: 6px;
             padding-left: 20px;
             text-indent: 0;
         }
-        .contract-content .signature-line {
+        #contract-view .signature-line {
             margin-bottom: 6px;
             font-weight: bold;
             text-indent: 0;
+            background: #f5f5f5;
+            padding: 4px 8px;
+            border-radius: 4px;
         }
 
         /* Tablas */
-        .contract-content table {
+        #contract-view table {
             width: 100%;
             border-collapse: collapse;
             margin: 12px 0;
             font-size: 13px;
         }
-        .contract-content td, .contract-content th {
+        #contract-view td, #contract-view th {
             border: 1px solid #bbb;
             padding: 8px 10px;
             text-align: left;
             background: #fafafa;
         }
-        .contract-content th {
+        #contract-view th {
             background: #f0f0f0;
             font-weight: bold;
         }
 
         /* Negrita */
-        .contract-content strong, .contract-content b {
+        #contract-view strong, #contract-view b {
             color: #111;
             font-weight: bold;
         }
 
         /* Listas */
-        .contract-content ul, .contract-content ol {
+        #contract-view ul, #contract-view ol {
             margin: 10px 0 10px 25px;
             padding-left: 15px;
         }
-        .contract-content li { margin-bottom: 5px; }
+        #contract-view li { margin-bottom: 5px; }
 
         /* HR */
-        .contract-content hr {
+        #contract-view hr {
             border: none;
             border-top: 1px solid #ccc;
             margin: 16px 0;
         }
 
         /* Blockquote */
-        .contract-content blockquote {
+        #contract-view blockquote {
             border-left: 3px solid #6c63ff;
             padding-left: 12px;
             margin: 10px 0;
             color: #555;
             font-style: italic;
+        }
+
+        /* Variables {{xxx}} */
+        #contract-view span {
+            color: #c0392b;
+            font-weight: bold;
+            background: #fdecea;
+            padding: 1px 4px;
+            border-radius: 3px;
         }
 
         /* Área de firma */
@@ -280,7 +304,7 @@
             </span>
         </div>
         <div class="card-body">
-            <div class="contract-content">
+            <div id="contract-view">
                 {!! preg_replace('/\s*style\s*=\s*["\'][^"\']*["\']/i', '', $clientContract->contract->content) !!}
             </div>
         </div>
