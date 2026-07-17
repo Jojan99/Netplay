@@ -10,6 +10,7 @@ use Dompdf\Options;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class ClientContractUseCase implements ClientContractUseCaseInterface
 {
@@ -80,15 +81,47 @@ class ClientContractUseCase implements ClientContractUseCaseInterface
             $clientName = $cc->user->username ?? 'contrato';
             $filename   = 'contrato-' . $clientContractId . '-' . $clientName . '.pdf';
 
-            // Si existe PDF base original, usar FPDI para combinarlo con la firma
-            if ($cc->contract->pdf_path && file_exists(storage_path('app/public/' . $cc->contract->pdf_path))) {
-                $service = new \App\Services\ContractPdfService();
-                $signature = $cc->signature ?? '';
-                $output = $service->combineWithSignature($cc->contract->pdf_path, $signature, $clientName);
+            // Si ya existe el PDF firmado guardado permanentemente, devolverlo directamente
+            $signedPath = storage_path("app/public/contracts/signed/contract_{$clientContractId}_signed.pdf");
+            if (file_exists($signedPath)) {
+                return response()->file($signedPath, [
+                    'Content-Type'        => 'application/pdf',
+                    'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+                ]);
+            }
 
-                return response($output)
-                    ->header('Content-Type', 'application/pdf')
-                    ->header('Content-Disposition', 'attachment; filename="' . $filename . '"');
+            $pdfBasePath = storage_path('app/public/' . ($cc->contract->pdf_path ?? ''));
+            $hasPdfBase = $cc->contract->pdf_path && file_exists($pdfBasePath);
+
+            if ($hasPdfBase) {
+                try {
+                    $service = new \App\Services\ContractPdfService();
+                    $signature = $cc->signature ?? '';
+
+                    $pdfFields = \App\Models\ContractPdfField::where('contract_id', $cc->contract_id)
+                        ->orderBy('page')->orderBy('id')
+                        ->get();
+
+                    $fieldValues = $this->buildFieldValues(
+                        $cc->user_id,
+                        $cc->id,
+                        $cc->contract->installation_value ?? null
+                    );
+
+                    $output = $service->combineWithSignature(
+                        $cc->contract->pdf_path,
+                        $signature,
+                        $clientName,
+                        $fieldValues,
+                        $pdfFields->toArray()
+                    );
+
+                    return response($output)
+                        ->header('Content-Type', 'application/pdf')
+                        ->header('Content-Disposition', 'attachment; filename="' . $filename . '"');
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::error('FPDI Error: ' . $e->getMessage());
+                }
             }
 
             // Fallback: generar PDF desde HTML con dompdf
@@ -117,11 +150,51 @@ class ClientContractUseCase implements ClientContractUseCaseInterface
         }
     }
 
-    private function replaceVars(string $content, object $cc): string
+    /**
+     * Construye el array completo de valores de variables incluyendo
+     * datos del cliente, plan de internet e instalación.
+     */
+    public function buildFieldValues(int $userId, int $clientContractId, ?float $installationValue = null): array
     {
-        $ud  = \Illuminate\Support\Facades\DB::table('user_data')->where('user_id', $cc->user_id)->first();
+        $ud = DB::table('user_data')->where('user_id', $userId)->first();
         $now = now();
-        $vars = [
+
+        // Datos del plan de internet
+        $plan = null;
+        if ($ud && $ud->internet_plans_id) {
+            $plan = DB::table('internet_plans')->where('id', $ud->internet_plans_id)->first();
+        }
+
+        // Orden de instalación más reciente del cliente
+        $installOrder = DB::table('installation_orders')
+            ->where('user_data_id', $ud->id ?? 0)
+            ->orderByDesc('created_at')
+            ->first();
+
+        // Determinar si es OS Nuevo o Modificación
+        $installCount = DB::table('installation_orders')
+            ->where('user_data_id', $ud->id ?? 0)
+            ->count();
+
+        $speed = (int) ($plan->download_speed ?? 0);
+
+        // Tipo de documento (CC, NIT, etc.)
+        $tipoDoc = '';
+        if ($ud && $ud->dni_id) {
+            $dniType = DB::table('dnis')->where('id', $ud->dni_id)->first();
+            $tipoDoc = $dniType->name ?? '';
+        }
+
+        // Valor de instalación: prioridad al valor fijo de la plantilla, fallback a la orden
+        $valorInstalacion = '';
+        if ($installationValue && $installationValue > 0) {
+            $valorInstalacion = '$' . number_format($installationValue, 0, ',', '.');
+        } elseif ($installOrder && $installOrder->installation_cost > 0) {
+            $valorInstalacion = '$' . number_format((float) $installOrder->installation_cost, 0, ',', '.');
+        }
+
+        $fieldValues = [
+            // ── Cliente ──────────────────────────────────────────
             '{{nombre}}'          => $ud->names    ?? '',
             '{{apellido}}'        => $ud->lastname  ?? '',
             '{{nombre_completo}}' => trim(($ud->names ?? '') . ' ' . ($ud->lastname ?? '')),
@@ -131,9 +204,53 @@ class ClientContractUseCase implements ClientContractUseCaseInterface
             '{{direccion}}'       => $ud->address   ?? '',
             '{{fecha}}'           => $now->format('d/m/Y'),
             '{{fecha_hora}}'      => $now->format('d/m/Y H:i'),
-            '{{contrato_id}}'     => $cc->id,
+            '{{contrato_id}}'     => (string) $clientContractId,
+
+            // ── Fecha separada ───────────────────────────────────
+            '{{dia}}'             => $now->format('d'),
+            '{{mes}}'             => $now->format('m'),
+            '{{anio}}'            => $now->format('Y'),
+
+            // ── Plan de internet ─────────────────────────────────
+            '{{plan_nombre}}'     => $plan->plan_name ?? '',
+            '{{plan_velocidad}}'  => $speed > 0 ? $speed . ' Mb' : '',
+            '{{plan_precio}}'     => $plan->monthly_price > 0 ? '$' . number_format($plan->monthly_price, 0, ',', '.') : '',
+            '{{plan_instalacion}}'=> $installOrder && $installOrder->installation_cost > 0
+                ? '$' . number_format((float) $installOrder->installation_cost, 0, ',', '.')
+                : '',
+            '{{promocion_nombre}}'=> $plan->description ?? $plan->plan_name ?? '',
+
+            // ── Checks velocidad ─────────────────────────────────
+            '{{check_200mb}}'     => $speed == 200 ? 'X' : '',
+            '{{check_300mb}}'     => $speed == 300 ? 'X' : '',
+            '{{check_400mb}}'     => $speed == 400 ? 'X' : '',
+            '{{check_otra}}'      => ($speed > 0 && !in_array($speed, [200, 300, 400])) ? 'X' : '',
+
+            // ── Checks OS ─────────────────────────────────────────
+            '{{check_os_nuevo}}'  => $installCount <= 1 ? 'X' : '',
+            '{{check_os_mod}}'    => $installCount > 1  ? 'X' : '',
+
+            // ── Check simple (siempre X) ──────────────────────────
+            '{{check}}'           => 'X',
+
+            // ── Tipo de documento ─────────────────────────────────
+            '{{tipo_documento}}'  => $tipoDoc,
+
+            // ── Valor de instalación parametrizable ───────────────
+            '{{valor_instalacion}}' => $valorInstalacion,
         ];
-        return str_replace(array_keys($vars), array_values($vars), $content);
+
+        return $fieldValues;
+    }
+
+    private function replaceVars(string $content, object $cc): string
+    {
+        $fieldValues = $this->buildFieldValues(
+            $cc->user_id,
+            $cc->id,
+            $cc->contract->installation_value ?? null
+        );
+        return str_replace(array_keys($fieldValues), array_values($fieldValues), $content);
     }
 
     private function buildHtml(object $cc): string

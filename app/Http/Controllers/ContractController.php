@@ -105,16 +105,71 @@ class ContractController extends Controller
     public function sendWhatsApp(int $clientContractId, Request $request, ContractRepositoryInterface $repo): JsonResponse
     {
         try {
+            \Illuminate\Support\Facades\Log::info('[ContractSendWA] Petición recibida', [
+                'client_contract_id' => $clientContractId,
+                'phone_raw' => $request->input('phone'),
+                'session_company_id' => getSessionCompanyId(),
+            ]);
+
             $cc      = $repo->getClientContract($clientContractId);
             $signUrl = url("/contrato/firmar/{$cc->token}");
             $phone   = $request->input('phone');
+
+            // Normalizar: quitar todo excepto dígitos
+            $phone = preg_replace('/\D/', '', $phone);
+
+            \Illuminate\Support\Facades\Log::info('[ContractSendWA] Teléfono normalizado', [
+                'client_contract_id' => $clientContractId,
+                'phone_normalized' => $phone,
+            ]);
+
+            // Aceptar formato colombiano: 10 dígitos (3xxxxxxxxx) o 12 dígitos (57xxxxxxxxxx)
+            if (!preg_match('/^(57\d{10}|3\d{9})$/', $phone)) {
+                return response()->json([
+                    'status'  => 1,
+                    'message' => 'El número de teléfono no es válido. Use 10 dígitos (3XX...) o 12 dígitos (57...).',
+                ]);
+            }
+
             $message = "Hola 👋, le compartimos el link para firmar su contrato *{$cc->contract->title}*:\n\n{$signUrl}\n\nAbra el link desde su teléfono para completar su firma.";
 
-            (new WhatsAppService())->mensajeInformativo($phone, $message);
+            // Usar company_id del contrato para garantizar credenciales correctas
+            $wa = new WhatsAppService($cc->company_id);
+            $waResponse = $wa->mensajeInformativo($phone, $message);
 
-            return response()->json(['status' => 0, 'message' => 'Mensaje enviado por WhatsApp.']);
+            \Illuminate\Support\Facades\Log::info('[ContractSendWA] Respuesta WA', [
+                'client_contract_id' => $clientContractId,
+                'phone' => $phone,
+                'wa_response' => $waResponse,
+            ]);
+
+            // Si la API de WA respondió con error dentro del body JSON, reflejarlo
+            if (isset($waResponse['error']) || ($waResponse['success'] ?? true) === false) {
+                $apiMsg = $waResponse['message'] ?? $waResponse['error'] ?? 'Error desconocido de la API de WhatsApp';
+                return response()->json([
+                    'status'   => 1,
+                    'message'  => 'La API de WhatsApp respondió con error: ' . $apiMsg,
+                    'wa_debug' => $waResponse,
+                ]);
+            }
+
+            return response()->json([
+                'status'   => 0,
+                'message'  => 'Mensaje enviado por WhatsApp.',
+                'wa_debug' => $waResponse,
+            ]);
+        } catch (\RuntimeException $e) {
+            \Illuminate\Support\Facades\Log::error('[ContractSendWA] RuntimeException: ' . $e->getMessage());
+            return response()->json([
+                'status'  => 1,
+                'message' => 'Error de la API de WhatsApp: ' . $e->getMessage(),
+            ]);
         } catch (\Throwable $e) {
-            return response()->json(['status' => 1, 'message' => 'Error al enviar WhatsApp: ' . $e->getMessage()]);
+            \Illuminate\Support\Facades\Log::error('[ContractSendWA] Throwable: ' . $e->getMessage());
+            return response()->json([
+                'status'  => 1,
+                'message' => 'Error al enviar WhatsApp: ' . $e->getMessage(),
+            ]);
         }
     }
 
@@ -371,6 +426,200 @@ class ContractController extends Controller
             return response()->json([
                 'status'  => 1,
                 'message' => 'Error al subir logo: ' . $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * GET /api/contracts/{id}/pdf-fields
+     * Devuelve las coordenadas guardadas de variables sobre el PDF.
+     */
+    public function getPdfFields(int $id): JsonResponse
+    {
+        try {
+            $fields = \App\Models\ContractPdfField::where('contract_id', $id)
+                ->orderBy('page')->orderBy('id')
+                ->get();
+
+            return response()->json([
+                'status' => 0,
+                'data'   => $fields,
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'status'  => 1,
+                'message' => 'Error al obtener campos: ' . $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * POST /api/contracts/{id}/pdf-fields
+     * Guarda o actualiza coordenadas de variables sobre el PDF.
+     */
+    public function savePdfFields(int $id, Request $request): JsonResponse
+    {
+        $request->validate([
+            'fields'   => 'required|array',
+            'fields.*.variable'   => 'required|string',
+            'fields.*.page'      => 'required|integer|min:1',
+            'fields.*.x'         => 'required|numeric',
+            'fields.*.y'         => 'required|numeric',
+            'fields.*.font_size' => 'nullable|integer|min:6|max:72',
+            'fields.*.color'     => 'nullable|string|size:6',
+            'fields.*.max_width' => 'nullable|integer|min:10',
+        ]);
+
+        try {
+            // Borrar campos anteriores y guardar los nuevos
+            \App\Models\ContractPdfField::where('contract_id', $id)->delete();
+
+            foreach ($request->input('fields') as $f) {
+                \App\Models\ContractPdfField::create([
+                    'contract_id' => $id,
+                    'variable'    => $f['variable'],
+                    'page'        => $f['page'],
+                    'x'           => $f['x'],
+                    'y'           => $f['y'],
+                    'font_size'   => $f['font_size'] ?? 10,
+                    'color'       => $f['color']     ?? '000000',
+                    'max_width'   => $f['max_width'] ?? 200,
+                ]);
+            }
+
+            return response()->json([
+                'status'  => 0,
+                'message' => 'Coordenadas guardadas.',
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'status'  => 1,
+                'message' => 'Error al guardar campos: ' . $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * GET /api/contracts/{id}/pdf-dimensions
+     * Devuelve las dimensiones de cada página del PDF base en puntos.
+     */
+    public function getPdfDimensions(int $id): JsonResponse
+    {
+        try {
+            $contract = \App\Models\Contract::findOrFail($id);
+            if (!$contract->pdf_path) {
+                return response()->json([
+                    'status'  => 1,
+                    'message' => 'No hay PDF base cargado.',
+                ]);
+            }
+
+            $fullPath = storage_path('app/public/' . $contract->pdf_path);
+            if (!file_exists($fullPath)) {
+                return response()->json([
+                    'status'  => 1,
+                    'message' => 'Archivo PDF no encontrado en servidor.',
+                ]);
+            }
+
+            $pdf = new \setasign\Fpdi\Fpdi();
+            $pageCount = $pdf->setSourceFile($fullPath);
+            $pages = [];
+            for ($i = 1; $i <= $pageCount; $i++) {
+                $tpl = $pdf->importPage($i);
+                $size = $pdf->getTemplateSize($tpl);
+                $pages[] = [
+                    'page'   => $i,
+                    'width'  => $size['width'],
+                    'height' => $size['height'],
+                    'orientation' => $size['orientation'],
+                ];
+            }
+
+            return response()->json([
+                'status' => 0,
+                'data'   => ['pageCount' => $pageCount, 'pages' => $pages],
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'status'  => 1,
+                'message' => 'Error al leer dimensiones: ' . $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * GET /api/contracts/{id}/pdf-preview
+     * Genera un PDF de preview con datos dummy para verificar coordenadas.
+     */
+    public function pdfPreview(int $id): mixed
+    {
+        try {
+            $contract = \App\Models\Contract::findOrFail($id);
+            if (!$contract->pdf_path) {
+                return response()->json([
+                    'status'  => 1,
+                    'message' => 'No hay PDF base cargado.',
+                ]);
+            }
+
+            $pdfFields = \App\Models\ContractPdfField::where('contract_id', $id)
+                ->orderBy('page')->orderBy('id')
+                ->get();
+
+            $dummyValues = [
+                '{{nombre}}'          => 'JUAN PEREZ',
+                '{{apellido}}'        => 'GOMEZ',
+                '{{nombre_completo}}' => 'JUAN PEREZ GOMEZ',
+                '{{dni}}'             => '12345678',
+                '{{telefono}}'        => '3001234567',
+                '{{email}}'           => 'juan@ejemplo.com',
+                '{{direccion}}'       => 'Calle 123 # 45-67',
+                '{{fecha}}'           => now()->format('d/m/Y'),
+                '{{fecha_hora}}'      => now()->format('d/m/Y H:i'),
+                '{{contrato_id}}'     => '999',
+                // Fecha separada
+                '{{dia}}'             => now()->format('d'),
+                '{{mes}}'             => now()->format('m'),
+                '{{anio}}'            => now()->format('Y'),
+                // Plan
+                '{{plan_nombre}}'     => 'INTERNET 200MG PLUS',
+                '{{plan_velocidad}}'  => '200 Mb',
+                '{{plan_precio}}'     => '$70.000',
+                '{{plan_instalacion}}'=> '$60.000',
+                '{{promocion_nombre}}'=> 'Promoción verano 200Mb',
+                // Checks
+                '{{check_200mb}}'     => 'X',
+                '{{check_300mb}}'     => '',
+                '{{check_400mb}}'     => '',
+                '{{check_otra}}'      => '',
+                '{{check_os_nuevo}}'  => 'X',
+                '{{check_os_mod}}'    => '',
+                // Check simple
+                '{{check}}'           => 'X',
+                // Tipo documento
+                '{{tipo_documento}}'  => 'CC',
+                // Valor instalación
+                '{{valor_instalacion}}' => '$60.000',
+                // Firma placeholder
+                '{{firma}}'           => '',
+            ];
+
+            $service = new \App\Services\ContractPdfService();
+            $output = $service->fillPdfBase(
+                $contract->pdf_path,
+                $dummyValues,
+                $pdfFields->toArray()
+            );
+
+            return response($output)
+                ->header('Content-Type', 'application/pdf')
+                ->header('Content-Disposition', 'inline; filename="preview.pdf"');
+
+        } catch (\Throwable $e) {
+            return response()->json([
+                'status'  => 1,
+                'message' => 'Error al generar preview: ' . $e->getMessage(),
             ]);
         }
     }

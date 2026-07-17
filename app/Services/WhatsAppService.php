@@ -35,65 +35,58 @@ class WhatsAppService
     }
 
     // ── TEXTO ────────────────────────────────────────
-    public function mensajeInformativo(string $to, string $body): bool
+    public function mensajeInformativo(string $to, string $body): array
     {
-        if (!$this->enabled) return false;
-        $this->sendRequest('send', ['number' => $to, 'message' => $body]);
-        return true;
+        if (!$this->enabled) return ['success' => false, 'error' => 'WhatsApp deshabilitado para esta empresa.'];
+        return $this->sendRequest('send', ['number' => $to, 'message' => $body]);
     }
 
     // ── DOCUMENTO / PDF ──────────────────────────────
-    public function sendDocument(string $to, string $documentUrl, string $filename, string $caption = ''): bool
+    public function sendDocument(string $to, string $documentUrl, string $filename, string $caption = ''): array
     {
-        if (!$this->enabled) return false;
-        $this->sendRequest('send/document', ['number' => $to, 'url' => $documentUrl, 'filename' => $filename, 'caption' => $caption]);
-        return true;
+        if (!$this->enabled) return ['success' => false, 'error' => 'WhatsApp deshabilitado para esta empresa.'];
+        return $this->sendRequest('send/document', ['number' => $to, 'url' => $documentUrl, 'filename' => $filename, 'caption' => $caption]);
     }
 
     // ── DOCUMENTO / PDF (por contenido base64) ────────────────────────
-    public function sendDocumentData(string $to, string $base64Content, string $filename, string $caption = '', string $mimetype = 'application/pdf'): bool
+    public function sendDocumentData(string $to, string $base64Content, string $filename, string $caption = '', string $mimetype = 'application/pdf'): array
     {
-        if (!$this->enabled) return false;
-        $this->sendRequest('send/document-data', [
+        if (!$this->enabled) return ['success' => false, 'error' => 'WhatsApp deshabilitado para esta empresa.'];
+        return $this->sendRequest('send/document-data', [
             'number'   => $to,
             'data'     => $base64Content,
             'filename' => $filename,
             'mimetype' => $mimetype,
             'caption'  => $caption,
         ]);
-        return true;
     }
 
     // ── IMAGEN ───────────────────────────────────────
-    public function sendImage(string $to, string $mediaUrl, string $caption = ''): bool
+    public function sendImage(string $to, string $mediaUrl, string $caption = ''): array
     {
-        if (!$this->enabled) return false;
-        $this->sendRequest('send/image', ['number' => $to, 'url' => $mediaUrl, 'caption' => $caption]);
-        return true;
+        if (!$this->enabled) return ['success' => false, 'error' => 'WhatsApp deshabilitado para esta empresa.'];
+        return $this->sendRequest('send/image', ['number' => $to, 'url' => $mediaUrl, 'caption' => $caption]);
     }
 
     // ── VIDEO ────────────────────────────────────────
-    public function sendVideo(string $to, string $mediaUrl, string $caption = ''): bool
+    public function sendVideo(string $to, string $mediaUrl, string $caption = ''): array
     {
-        if (!$this->enabled) return false;
-        $this->sendRequest('send/video', ['number' => $to, 'url' => $mediaUrl, 'caption' => $caption]);
-        return true;
+        if (!$this->enabled) return ['success' => false, 'error' => 'WhatsApp deshabilitado para esta empresa.'];
+        return $this->sendRequest('send/video', ['number' => $to, 'url' => $mediaUrl, 'caption' => $caption]);
     }
 
     // ── AUDIO ────────────────────────────────────────
-    public function sendAudio(string $to, string $mediaUrl): bool
+    public function sendAudio(string $to, string $mediaUrl): array
     {
-        if (!$this->enabled) return false;
-        $this->sendRequest('send/audio', ['number' => $to, 'url' => $mediaUrl, 'ptt' => false]);
-        return true;
+        if (!$this->enabled) return ['success' => false, 'error' => 'WhatsApp deshabilitado para esta empresa.'];
+        return $this->sendRequest('send/audio', ['number' => $to, 'url' => $mediaUrl, 'ptt' => false]);
     }
 
     // ── NOTA DE VOZ ──────────────────────────────────
-    public function sendVoice(string $to, string $mediaUrl): bool
+    public function sendVoice(string $to, string $mediaUrl): array
     {
-        if (!$this->enabled) return false;
-        $this->sendRequest('send/audio', ['number' => $to, 'url' => $mediaUrl, 'ptt' => true]);
-        return true;
+        if (!$this->enabled) return ['success' => false, 'error' => 'WhatsApp deshabilitado para esta empresa.'];
+        return $this->sendRequest('send/audio', ['number' => $to, 'url' => $mediaUrl, 'ptt' => true]);
     }
 
     // ── ENVÍO MASIVO / BATCH ─────────────────────────
@@ -180,7 +173,7 @@ class WhatsAppService
     }
 
     // ── CORE ─────────────────────────────────────────
-    private function sendRequest(string $endpoint, array $params): void
+    private function sendRequest(string $endpoint, array $params): array
     {
         $url  = "{$this->baseUrl}/instances/{$this->instanceId}/{$endpoint}";
         $curl = curl_init();
@@ -211,8 +204,23 @@ class WhatsAppService
         $json = @json_decode($response, true);
 
         if ($httpCode < 200 || $httpCode >= 300) {
-            $msg = $json['message'] ?? $response;
+            $msg = $json['message'] ?? $json['error'] ?? $response;
             throw new \RuntimeException("Error WA {$httpCode}: {$msg}");
         }
+
+        // Algunas APIs devuelven HTTP 200 pero indican error en el body
+        if (is_array($json) && (isset($json['error']) || ($json['success'] ?? true) === false)) {
+            $msg = $json['message'] ?? $json['error'] ?? json_encode($json);
+            throw new \RuntimeException("Error WA API: {$msg}");
+        }
+
+        // Loguear respuesta para debug (éxitos incluidos)
+        \Illuminate\Support\Facades\Log::info('[WhatsAppService] Respuesta API', [
+            'endpoint' => $endpoint,
+            'httpCode' => $httpCode,
+            'response' => $json ?? $response,
+        ]);
+
+        return is_array($json) ? $json : ['raw_response' => $response];
     }
 }

@@ -12,6 +12,7 @@ class Contract extends Model
         'content',
         'logo',
         'pdf_path',
+        'installation_value',
         'active',
     ];
 

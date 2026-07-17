@@ -25,10 +25,11 @@ class ContractRepository implements ContractRepositoryInterface
     public function create(array $data): mixed
     {
         return Contract::create([
-            'company_id' => getSessionCompanyId(),
-            'title'      => $data['title'],
-            'content'    => $data['content'],
-            'active'     => $data['active'] ?? true,
+            'company_id'          => getSessionCompanyId(),
+            'title'               => $data['title'],
+            'content'             => $data['content'],
+            'active'              => $data['active'] ?? true,
+            'installation_value'  => $data['installation_value'] ?? null,
         ]);
     }
 

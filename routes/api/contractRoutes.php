@@ -36,4 +36,10 @@ Route::prefix('contracts')->middleware(['jwt.verify'])->group(function () {
 
     // Logo de plantilla
     Route::post('/{id}/logo',                           [ContractController::class, 'uploadLogo']);
+
+    // Campos / coordenadas sobre PDF base
+    Route::get('/{id}/pdf-fields',                      [ContractController::class, 'getPdfFields']);
+    Route::post('/{id}/pdf-fields',                      [ContractController::class, 'savePdfFields']);
+    Route::get('/{id}/pdf-dimensions',                   [ContractController::class, 'getPdfDimensions']);
+    Route::get('/{id}/pdf-preview',                      [ContractController::class, 'pdfPreview']);
 });

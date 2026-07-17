@@ -305,22 +305,34 @@
         </div>
         <div class="card-body">
             @if($pdfUrl)
-                <!-- Mostrar PDF original exacto -->
-                <div style="width:100%; height:70vh; border:1px solid #ddd; border-radius:8px; overflow:hidden; background:#525659;">
-                    <embed src="{{ $pdfUrl }}#toolbar=1&navpanes=1&scrollbar=1" 
+                <!-- Mostrar PDF original exacto relleno con datos del cliente -->
+                <div style="width:100%; height:78vh; border:1px solid #ddd; border-radius:8px; overflow:hidden; background:#525659; position:relative;">
+                    <object data="{{ $pdfUrl }}#toolbar=1&navpanes=0&scrollbar=1&zoom=page-width" 
                            type="application/pdf" 
                            style="width:100%; height:100%; border:0; display:block;"
-                           title="Contrato PDF" />
+                           title="Contrato PDF">
+                        <div style="padding:40px; text-align:center; color:#fff; background:#525659; height:100%; display:flex; flex-direction:column; justify-content:center; align-items:center;">
+                            <p style="font-size:16px; margin-bottom:20px;">Tu navegador no puede mostrar PDFs.</p>
+                            <a href="{{ $pdfUrl }}" target="_blank" download
+                               style="display:inline-block; padding:12px 24px; background:#6c63ff; color:#fff; text-decoration:none; border-radius:8px; font-size:15px; font-weight:600;">
+                                Descargar contrato PDF
+                            </a>
+                        </div>
+                    </object>
                 </div>
-                <div style="margin-top:10px; text-align:center;">
+                <div style="margin-top:12px; text-align:center; display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
                     <a href="{{ $pdfUrl }}" target="_blank" 
-                       style="display:inline-block; padding:8px 16px; background:#6c63ff; color:#fff; text-decoration:none; border-radius:6px; font-size:13px; font-weight:600;">
-                        Ver contrato completo
+                       style="display:inline-block; padding:10px 18px; background:#6c63ff; color:#fff; text-decoration:none; border-radius:6px; font-size:13px; font-weight:600;">
+                        Ver en pantalla completa
                     </a>
-                    <p style="font-size:12px; color:#666; margin-top:6px;">
-                        Este es su contrato original. Por favor léalo y firme al final.
-                    </p>
+                    <a href="{{ $pdfUrl }}" download
+                       style="display:inline-block; padding:10px 18px; background:#fff; color:#6c63ff; text-decoration:none; border-radius:6px; font-size:13px; font-weight:600; border:2px solid #6c63ff;">
+                        Descargar PDF
+                    </a>
                 </div>
+                <p style="font-size:12px; color:#666; margin-top:8px; text-align:center;">
+                    Este contrato contiene sus datos personales. Por favor revíselo y firme al final.
+                </p>
             @else
                 <!-- Mostrar HTML renderizado -->
                 <div id="contract-view">
