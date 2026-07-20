@@ -12,55 +12,75 @@
             min-height: 100vh; overflow-x: hidden;
         }
 
-        /* Header */
+        /* Header compacto */
         .header {
             background: linear-gradient(135deg, #1a1a2e, #16213e); color: #fff;
-            padding: 18px 20px; text-align: center;
+            padding: 10px 16px; text-align: center;
             position: sticky; top: 0; z-index: 100;
             box-shadow: 0 2px 12px rgba(0,0,0,.3);
         }
-        .header h1 { font-size: 17px; font-weight: 600; }
-        .header p  { font-size: 12px; color: #aac; margin-top: 3px; }
+        .header h1 { font-size: 15px; font-weight: 600; }
+        .header p  { font-size: 11px; color: #aac; margin-top: 2px; }
 
-        .container { max-width: 720px; margin: 0 auto; padding: 16px; }
+        .container { max-width: 720px; margin: 0 auto; padding: 12px 16px 40px; }
 
         /* Badge */
         .badge {
             display: inline-flex; align-items: center; gap: 6px;
-            padding: 5px 12px; border-radius: 20px; font-size: 12px; font-weight: 600;
+            padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 600;
         }
         .badge.pending  { background: #fff3cd; color: #856404; }
         .badge.signed   { background: #d4edda; color: #155724; }
-        .badge .dot     { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+        .badge .dot     { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 
         /* Card */
         .card {
             background: #fff; border-radius: 14px;
             box-shadow: 0 2px 12px rgba(0,0,0,.07);
-            margin-bottom: 16px; overflow: hidden;
+            margin-bottom: 14px; overflow: hidden;
         }
         .card-header {
-            padding: 16px 20px 12px; border-bottom: 1px solid #f0f0f0;
+            padding: 12px 16px 10px; border-bottom: 1px solid #f0f0f0;
             display: flex; align-items: center; justify-content: space-between;
         }
-        .card-title { font-size: 15px; font-weight: 600; }
-        .card-body  { padding: 20px; }
+        .card-title { font-size: 14px; font-weight: 600; }
+        .card-body  { padding: 16px; }
 
-        /* PDF: desktop iframe / mobile buttons */
-        .pdf-frame {
-            width:100%; height:65vh; border:1px solid #ddd;
-            border-radius:8px; overflow:hidden; background:#525659;
+        /* Acordeón contrato */
+        .contract-toggle {
+            background: none; border: none; color: #6c63ff;
+            font-size: 12px; font-weight: 600; cursor: pointer;
+            display: inline-flex; align-items: center; gap: 4px;
         }
-        .pdf-actions {
-            display: flex; flex-direction: column; gap: 10px;
-            align-items: center; padding: 20px;
+        .contract-content {
+            max-height: 0; overflow: hidden;
+            transition: max-height .35s ease;
+        }
+        .contract-content.open {
+            max-height: 2000px;
+        }
+        .contract-content iframe {
+            width: 100%; height: 60vh; border: 0; border-radius: 6px;
+            background: #525659;
+        }
+        .contract-content .html-view {
+            font-family: Georgia, 'Times New Roman', Times, serif;
+            font-size: 13px; line-height: 1.75; color: #222;
+            text-align: justify; max-height: 55vh; overflow-y: auto;
+            padding: 8px;
+        }
+        .pdf-actions-inline {
+            display: flex; gap: 8px; flex-wrap: wrap; justify-content: center;
+            padding: 12px;
+        }
+        .pdf-actions-inline .pdf-btn {
+            padding: 10px 16px; font-size: 13px;
         }
         .pdf-btn {
-            display: inline-flex; align-items: center; gap: 8px;
-            padding: 14px 24px; border-radius: 10px;
-            font-size: 15px; font-weight: 600; text-decoration: none;
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 12px 20px; border-radius: 8px;
+            font-size: 14px; font-weight: 600; text-decoration: none;
             color: #fff; background: linear-gradient(135deg, #6c63ff, #4a42d6);
-            width: 100%; justify-content: center; max-width: 320px;
             border: none; cursor: pointer;
         }
         .pdf-btn.outline {
@@ -70,25 +90,23 @@
         .pdf-btn.view-inline {
             background: linear-gradient(135deg, #3b82f6, #2563eb);
         }
-        @media (max-width: 768px) { .pdf-frame { display: none !important; } }
-        @media (min-width: 769px) { .pdf-actions { display: none !important; } }
 
         /* PDF modal inline */
         .pdf-modal {
             display: none; position: fixed; inset: 0; z-index: 300;
-            background: rgba(0,0,0,.85); flex-direction: column;
+            background: rgba(0,0,0,.9); flex-direction: column;
         }
         .pdf-modal.active { display: flex; }
         .pdf-modal-bar {
-            height: 50px; background: #1a1a2e; color: #fff;
+            height: 48px; background: #1a1a2e; color: #fff;
             display: flex; align-items: center; justify-content: space-between;
-            padding: 0 16px;
+            padding: 0 14px; flex-shrink: 0;
         }
-        .pdf-modal-bar h3 { font-size: 14px; font-weight: 600; }
+        .pdf-modal-bar h3 { font-size: 13px; font-weight: 600; }
         .pdf-modal-bar button {
             background: rgba(255,255,255,.15); color: #fff;
-            border: none; border-radius: 6px; padding: 6px 14px;
-            font-size: 13px; font-weight: 600; cursor: pointer;
+            border: none; border-radius: 6px; padding: 6px 12px;
+            font-size: 12px; font-weight: 600; cursor: pointer;
         }
         .pdf-modal iframe {
             flex: 1; width: 100%; border: 0; background: #525659;
@@ -96,34 +114,25 @@
 
         /* Documentos */
         .doc-grid {
-            display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+            display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
         }
         @media (max-width: 480px) { .doc-grid { grid-template-columns: 1fr; } }
         .doc-box {
             border: 1.5px dashed #c4c4e0; border-radius: 10px;
-            padding: 12px; text-align: center; background: #fafaff;
-            position: relative;
+            padding: 10px; text-align: center; background: #fafaff;
         }
-        .doc-label { display: block; font-size: 12px; font-weight: 600; color: #444; margin-bottom: 8px; }
+        .doc-label { display: block; font-size: 11px; font-weight: 600; color: #444; margin-bottom: 6px; }
         .doc-preview {
-            max-width: 100%; max-height: 160px; border-radius: 6px;
-            margin-bottom: 8px; object-fit: contain;
+            max-width: 100%; max-height: 140px; border-radius: 6px;
+            margin-bottom: 6px; object-fit: contain;
             border: 1px solid #e0e0e0; display: block;
         }
-        .doc-upload-btn {
-            display: inline-flex; align-items: center; gap: 6px;
-            padding: 8px 14px; background: #6c63ff; color: #fff;
-            border-radius: 8px; font-size: 12px; font-weight: 600;
-            cursor: pointer; transition: opacity .2s;
-        }
-        .doc-upload-btn:active { opacity: .8; }
         .doc-status {
-            font-size: 11px; font-weight: 600; margin-top: 6px;
-            padding: 4px 8px; border-radius: 6px; display: inline-block;
+            font-size: 10px; font-weight: 600;
+            padding: 3px 8px; border-radius: 6px; display: inline-block;
         }
         .doc-status.ok { background: #d1fae5; color: #065f46; }
         .doc-status.pending { background: #fef3c7; color: #92400e; }
-        .doc-status.auto { background: #dbeafe; color: #1e40af; }
 
         /* Cámara */
         .cam-modal {
@@ -139,12 +148,12 @@
         .cam-video-wrap video {
             width: 100%; height: 100%; object-fit: cover;
         }
-        /* Overlay horizontal para cédula landscape */
+        /* Overlay horizontal para cédula */
         .cam-guide-overlay {
             position: absolute;
             top: 50%; left: 50%;
             transform: translate(-50%, -50%);
-            width: 94%; height: 36%; /* cédula es horizontal */
+            width: 94%; height: 36%;
             border: 3px dashed #10b981;
             border-radius: 10px;
             pointer-events: none;
@@ -153,74 +162,75 @@
         .cam-guide-overlay::before {
             content: 'Enmarque el documento aquí';
             position: absolute;
-            top: -28px; left: 50%;
+            top: -26px; left: 50%;
             transform: translateX(-50%);
             background: #10b981; color: #fff;
-            font-size: 11px; font-weight: 700;
-            padding: 4px 12px; border-radius: 6px;
+            font-size: 10px; font-weight: 700;
+            padding: 3px 10px; border-radius: 4px;
             white-space: nowrap;
         }
         .cam-guide-overlay .corner {
-            position: absolute; width: 16px; height: 16px;
+            position: absolute; width: 14px; height: 14px;
             border-color: #10b981; border-style: solid;
         }
-        .cam-guide-overlay .corner.tl { top: -3px; left: -3px; border-width: 4px 0 0 4px; }
-        .cam-guide-overlay .corner.tr { top: -3px; right: -3px; border-width: 4px 4px 0 0; }
-        .cam-guide-overlay .corner.bl { bottom: -3px; left: -3px; border-width: 0 0 4px 4px; }
-        .cam-guide-overlay .corner.br { bottom: -3px; right: -3px; border-width: 0 4px 4px 0; }
+        .cam-guide-overlay .corner.tl { top: -3px; left: -3px; border-width: 3px 0 0 3px; }
+        .cam-guide-overlay .corner.tr { top: -3px; right: -3px; border-width: 3px 3px 0 0; }
+        .cam-guide-overlay .corner.bl { bottom: -3px; left: -3px; border-width: 0 0 3px 3px; }
+        .cam-guide-overlay .corner.br { bottom: -3px; right: -3px; border-width: 0 3px 3px 0; }
 
         .cam-bottom-bar {
-            height: 120px; background: #000;
+            height: 110px; background: #000;
             display: flex; align-items: center; justify-content: center;
-            gap: 30px; padding: 0 20px;
+            gap: 24px; padding: 0 16px; flex-shrink: 0;
         }
         .cam-btn-capture {
-            width: 66px; height: 66px; border-radius: 50%;
-            border: 4px solid #fff; background: transparent;
+            width: 60px; height: 60px; border-radius: 50%;
+            border: 3px solid #fff; background: transparent;
             cursor: pointer; position: relative;
         }
         .cam-btn-capture::after {
             content: ''; position: absolute;
-            top: 4px; left: 4px; right: 4px; bottom: 4px;
+            top: 3px; left: 3px; right: 3px; bottom: 3px;
             border-radius: 50%; background: #fff;
             transition: transform .1s;
         }
         .cam-btn-capture:active::after { transform: scale(.85); }
         .cam-btn-close {
-            color: #fff; font-size: 14px; font-weight: 600;
-            background: rgba(255,255,255,.15); border: none;
-            border-radius: 20px; padding: 8px 16px; cursor: pointer;
-        }
-        .cam-btn-flip {
             color: #fff; font-size: 13px; font-weight: 600;
             background: rgba(255,255,255,.15); border: none;
-            border-radius: 20px; padding: 8px 16px; cursor: pointer;
+            border-radius: 20px; padding: 8px 14px; cursor: pointer;
+        }
+        .cam-btn-flip {
+            color: #fff; font-size: 12px; font-weight: 600;
+            background: rgba(255,255,255,.15); border: none;
+            border-radius: 20px; padding: 8px 14px; cursor: pointer;
         }
 
-        /* Confirmación cara */
-        .confirm-modal {
-            display: none; position: fixed; inset: 0; z-index: 210;
-            background: rgba(0,0,0,.92);
-            flex-direction: column; align-items: center;
-            justify-content: center; padding: 20px;
+        /* Toast de detección */
+        .cam-toast {
+            position: fixed; top: 50%; left: 50%;
+            transform: translate(-50%, -50%) scale(.9);
+            background: rgba(0,0,0,.85); color: #fff;
+            padding: 20px 28px; border-radius: 14px;
+            font-size: 14px; font-weight: 600; text-align: center;
+            z-index: 220; opacity: 0; pointer-events: none;
+            transition: all .25s ease;
+            min-width: 200px;
         }
-        .confirm-modal.active { display: flex; }
-        .confirm-img {
-            max-width: 100%; max-height: 45vh;
-            border-radius: 10px; border: 2px solid #fff;
-            margin-bottom: 14px;
+        .cam-toast.show {
+            opacity: 1; transform: translate(-50%, -50%) scale(1);
         }
-        .confirm-title { color: #fff; font-size: 16px; font-weight: 600; margin-bottom: 4px; text-align: center; }
-        .confirm-detected { color: #10b981; font-size: 14px; font-weight: 700; margin-bottom: 8px; text-align: center; }
-        .confirm-hint { color: #aaa; font-size: 12px; margin-bottom: 16px; text-align: center; }
-        .confirm-btns { display: flex; gap: 10px; width: 100%; max-width: 360px; }
-        .confirm-btn {
-            flex: 1; padding: 12px; border: none; border-radius: 10px;
-            font-size: 13px; font-weight: 700; cursor: pointer;
+        .cam-toast .toast-icon {
+            width: 36px; height: 36px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            margin: 0 auto 8px;
         }
-        .confirm-btn.accept { background: #10b981; color: #fff; }
-        .confirm-btn.switch  { background: #3b82f6; color: #fff; }
-        .confirm-btn.retake  { background: #ef4444; color: #fff; }
+        .cam-toast .toast-icon.ok { background: #10b981; }
+        .cam-toast .toast-icon.spin {
+            border: 3px solid #fff3; border-top-color: #6c63ff;
+            animation: spin .7s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
 
         /* Firma */
         .sign-wrapper {
@@ -237,8 +247,8 @@
         .canvas-label {
             position: absolute; bottom: 10px; left: 50%;
             transform: translateX(-50%);
-            font-size: 11px; color: #bbb; pointer-events: none; white-space: nowrap;
-            transition: opacity .3s;
+            font-size: 11px; color: #bbb; pointer-events: none;
+            white-space: nowrap; transition: opacity .3s;
         }
         .btn-row { display: flex; gap: 10px; width: 100%; }
         .btn {
@@ -267,14 +277,13 @@
         .alert.error   { background: #f8d7da; color: #721c24; }
         .alert.show    { display: block; }
 
-        /* Spinner */
+        /* Spinner botón */
         .spinner {
             display: none; width: 20px; height: 20px;
             border: 3px solid #fff4; border-top-color: #fff;
             border-radius: 50; animation: spin .7s linear infinite;
             margin: auto;
         }
-        @keyframes spin { to { transform: rotate(360deg); } }
         .loading .spinner { display: inline-block; }
         .loading .btn-text { display: none; }
     </style>
@@ -283,58 +292,49 @@
 
 <div class="header">
     @if($logo)
-        <div style="margin-bottom: 10px;">
-            <img src="{{ $logo }}" alt="Logo" style="max-height: 60px; max-width: 180px; display: block; margin: 0 auto;">
+        <div style="margin-bottom: 4px;">
+            <img src="{{ $logo }}" alt="Logo" style="max-height: 44px; max-width: 160px; display: block; margin: 0 auto;">
         </div>
     @endif
     <h1>{{ $clientContract->contract->title }}</h1>
-    <p>Por favor lea el contrato y firme al final</p>
+    <p>Revise el contrato y firme al final</p>
 </div>
 
 <div class="container">
 
     <div id="alert" class="alert"></div>
 
-    <!-- Contrato -->
-    <div class="card">
+    <!-- Contrato (acordeón) -->
+    <div class="card" id="contractCard">
         <div class="card-header">
             <span class="card-title">Contrato</span>
             <span class="badge {{ $clientContract->status }}">
                 <span class="dot"></span>
-                {{ $clientContract->status === 'signed' ? 'Firmado' : 'Pendiente de firma' }}
+                {{ $clientContract->status === 'signed' ? 'Firmado' : 'Pendiente' }}
             </span>
         </div>
-        <div class="card-body" style="padding:0;">
+        <div style="padding: 10px 16px; border-bottom: 1px solid #f0f0f0;">
+            <button class="contract-toggle" id="btnToggleContract" onclick="toggleContract()">
+                <svg id="iconChevron" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="transition: transform .3s;">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                </svg>
+                <span id="toggleText">Ocultar contrato</span>
+            </button>
+        </div>
+        <div class="contract-content open" id="contractContent">
             @if($pdfUrl)
-                <!-- Desktop: iframe -->
-                <div class="pdf-frame">
-                    <object data="{{ $pdfUrl }}#toolbar=1&navpanes=0&scrollbar=1&zoom=page-width"
-                           type="application/pdf"
-                           style="width:100%; height:100%; border:0; display:block;"
-                           title="Contrato PDF">
-                    </object>
-                </div>
-                <!-- Mobile: botones -->
-                <div class="pdf-actions">
-                    <p style="font-size:13px; color:#666; text-align:center;">
-                        Este contrato contiene sus datos personales.
-                    </p>
+                <div class="pdf-actions-inline">
                     <button class="pdf-btn view-inline" onclick="openPdfModal()">
-                        <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
-                        </svg>
-                        Ver contrato aquí
+                        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                        Ver en pantalla completa
                     </button>
                     <a href="{{ $pdfUrl }}" download class="pdf-btn outline">
-                        <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-                        </svg>
+                        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
                         Descargar PDF
                     </a>
                 </div>
             @else
-                <div id="contract-view" style="padding:12px 8px;">
+                <div class="html-view" id="contract-view">
                     {!! preg_replace('/\s*style\s*=\s*["\'][^"\']*["\']/i', '', $clientContract->contract->content) !!}
                 </div>
             @endif
@@ -348,8 +348,9 @@
             <span class="card-title">Documento de identidad</span>
         </div>
         <div class="card-body">
-            <p style="font-size:12px; color:#666; margin-bottom:12px;">
-                Requerimos fotos claras de <strong>ambas caras</strong>. El sistema detectará automáticamente la cara del documento. Documento registrado: <strong>{{ $clientDni ?? '---' }}</strong>
+            <p style="font-size:11px; color:#666; margin-bottom:10px;">
+                Enmarque el documento en el recuadro verde. El sistema detectará automáticamente la cara.
+                Documento registrado: <strong>{{ $clientDni ?? '---' }}</strong>
             </p>
 
             <div class="doc-grid">
@@ -374,25 +375,20 @@
                 </div>
             </div>
 
-            <div style="text-align:center; margin-top:14px;">
+            <div style="text-align:center; margin-top:12px;">
                 <label class="doc-upload-btn" id="btnOpenCam">
-                    <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/>
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/>
-                    </svg>
+                    <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
                     <span id="camBtnText">{{ ($documentFrontUrl && $documentBackUrl) ? 'Cambiar documentos' : 'Capturar documento' }}</span>
                 </label>
             </div>
 
-            <!-- Fallback galería -->
             <input type="file" id="inputGallery" accept="image/*" style="display:none;">
-
             <div class="doc-validation" id="docValidationMsg" style="display:none;"></div>
         </div>
     </div>
     @endif
 
-    <!-- Documentos firmados (lectura) -->
+    <!-- Documentos ya firmados (lectura) -->
     @if($clientContract->status === 'signed' && ($documentFrontUrl || $documentBackUrl))
     <div class="card">
         <div class="card-header"><span class="card-title">Documentos adjuntos</span></div>
@@ -449,17 +445,17 @@
 <!-- PDF Modal inline -->
 <div class="pdf-modal" id="pdfModal">
     <div class="pdf-modal-bar">
-        <h3>Contrato</h3>
+        <h3>{{ $clientContract->contract->title }}</h3>
         <button onclick="closePdfModal()">✕ Cerrar</button>
     </div>
-    <iframe id="pdfIframe" src="{{ $pdfUrl ?? '' }}" title="Contrato PDF"></iframe>
+    <iframe id="pdfIframe" src="{{ $pdfUrl ? $pdfUrl . '#toolbar=1&navpanes=0&scrollbar=1&zoom=page-fit' : '' }}" title="Contrato PDF"></iframe>
 </div>
 
 <!-- Cámara modal -->
 <div class="cam-modal" id="camModal">
     <div class="cam-video-wrap">
         <video id="camVideo" autoplay playsinline></video>
-        <div class="cam-guide-overlay">
+        <div class="cam-guide-overlay" id="camOverlay">
             <div class="corner tl"></div><div class="corner tr"></div>
             <div class="corner bl"></div><div class="corner br"></div>
         </div>
@@ -471,19 +467,10 @@
     </div>
 </div>
 
-<!-- Confirmación detección automática -->
-<div class="confirm-modal" id="confirmModal">
-    <img src="" class="confirm-img" id="confirmImg" alt="Preview">
-    <p class="confirm-title" id="confirmTitle">Analizando documento…</p>
-    <p class="confirm-detected" id="confirmDetected" style="display:none;"></p>
-    <p class="confirm-hint" id="confirmHint">El sistema detectó automáticamente la cara del documento.</p>
-    <div class="confirm-btns" id="confirmBtns" style="display:none;">
-        <button class="confirm-btn accept" id="btnAccept">✓ Correcto</button>
-        <button class="confirm-btn switch" id="btnSwitch">↔ Es la otra cara</button>
-    </div>
-    <div style="margin-top:10px;">
-        <button class="confirm-btn retake" id="btnRetake">↺ Tomar otra</button>
-    </div>
+<!-- Toast -->
+<div class="cam-toast" id="camToast">
+    <div class="toast-icon spin" id="toastIcon"></div>
+    <div id="toastText">Analizando…</div>
 </div>
 
 <script>
@@ -496,20 +483,34 @@
     const hasBackSaved  = @json((bool) $documentBackUrl);
     const STORAGE_KEY = 'contract_sig_' + token;
 
-    // ══ Estado ═══════════════════════════════════════════════════════════════
+    // ══ Estado documentos ════════════════════════════════════════════════════
     let documentFrontBase64 = null;
     let documentBackBase64  = null;
     let documentFrontValid  = hasFrontSaved;
     let documentBackValid   = hasBackSaved;
-    let lastCapturedBase64  = null;
-    let lastDetectedSide    = null; // 'front' o 'back' según el backend
-    let pendingManualSide   = null; // para cuando el usuario corrige
 
     const previewFront = document.getElementById('previewFront');
     const previewBack  = document.getElementById('previewBack');
     const frontStatus = document.getElementById('frontStatus');
     const backStatus  = document.getElementById('backStatus');
     const docValidationMsg = document.getElementById('docValidationMsg');
+
+    // ══ Acordeón contrato ═══════════════════════════════════════════════════
+    window.toggleContract = function() {
+        const content = document.getElementById('contractContent');
+        const text = document.getElementById('toggleText');
+        const icon = document.getElementById('iconChevron');
+        const isOpen = content.classList.contains('open');
+        if (isOpen) {
+            content.classList.remove('open');
+            text.textContent = 'Mostrar contrato';
+            icon.style.transform = 'rotate(0deg)';
+        } else {
+            content.classList.add('open');
+            text.textContent = 'Ocultar contrato';
+            icon.style.transform = 'rotate(180deg)';
+        }
+    };
 
     // ══ PDF modal inline ════════════════════════════════════════════════════
     window.openPdfModal = function() {
@@ -521,21 +522,31 @@
         document.body.style.overflow = '';
     };
 
-    // ══ Cámara ══════════════════════════════════════════════════════════════
+    // ══ Toast ══════════════════════════════════════════════════════════════
+    function showToast(text, type) {
+        const toast = document.getElementById('camToast');
+        const icon = document.getElementById('toastIcon');
+        const txt = document.getElementById('toastText');
+        txt.textContent = text;
+        icon.className = 'toast-icon ' + (type === 'ok' ? 'ok' : 'spin');
+        if (type === 'ok') {
+            icon.innerHTML = '<svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>';
+        } else {
+            icon.innerHTML = '';
+        }
+        toast.classList.add('show');
+    }
+    function hideToast() {
+        document.getElementById('camToast').classList.remove('show');
+    }
+
+    // ══ Cámara + recorte overlay ═══════════════════════════════════════════
     const camModal   = document.getElementById('camModal');
     const camVideo   = document.getElementById('camVideo');
     const camCapture = document.getElementById('camCapture');
     const camClose   = document.getElementById('camClose');
     const camFlip    = document.getElementById('camFlip');
-    const confirmModal = document.getElementById('confirmModal');
-    const confirmImg   = document.getElementById('confirmImg');
-    const confirmTitle = document.getElementById('confirmTitle');
-    const confirmDetected = document.getElementById('confirmDetected');
-    const confirmHint  = document.getElementById('confirmHint');
-    const confirmBtns  = document.getElementById('confirmBtns');
-    const btnAccept    = document.getElementById('btnAccept');
-    const btnSwitch    = document.getElementById('btnSwitch');
-    const btnRetake    = document.getElementById('btnRetake');
+    const camOverlay = document.getElementById('camOverlay');
 
     let camStream = null;
     let facingMode = 'environment';
@@ -573,29 +584,53 @@
         camVideo.srcObject = null;
     }
 
-    function captureFromCamera() {
-        if (!camStream) return;
-        const track = camStream.getVideoTracks()[0];
-        const settings = track.getSettings();
-        const w = settings.width || camVideo.videoWidth || 1280;
-        const h = settings.height || camVideo.videoHeight || 720;
-        const canvas = document.createElement('canvas');
-        canvas.width = w; canvas.height = h;
-        canvas.getContext('2d').drawImage(camVideo, 0, 0, w, h);
-        lastCapturedBase64 = canvas.toDataURL('image/jpeg', 0.92);
-        closeCamera();
-        analyzeAndConfirm(lastCapturedBase64);
-    }
-    function flipCamera() { facingMode = facingMode === 'environment' ? 'user' : 'environment'; startCamera(); }
+    /**
+     * Recorta exactamente la región del overlay verde del video
+     * y retorna base64 de la porción recortada.
+     */
+    function captureAndCrop() {
+        if (!camStream) return null;
 
-    // Detección automática con backend
-    async function analyzeAndConfirm(base64) {
-        confirmImg.src = base64;
-        confirmModal.classList.add('active');
-        confirmTitle.textContent = 'Analizando documento…';
-        confirmDetected.style.display = 'none';
-        confirmHint.textContent = 'Espere un momento mientras el sistema detecta la cara del documento.';
-        confirmBtns.style.display = 'none';
+        // Canvas completo del frame actual
+        const fullW = camVideo.videoWidth || 1280;
+        const fullH = camVideo.videoHeight || 720;
+        const fullCanvas = document.createElement('canvas');
+        fullCanvas.width = fullW;
+        fullCanvas.height = fullH;
+        fullCanvas.getContext('2d').drawImage(camVideo, 0, 0, fullW, fullH);
+
+        // Calcular coordenadas del overlay en píxeles del video
+        const videoRect = camVideo.getBoundingClientRect();
+        const overlayRect = camOverlay.getBoundingClientRect();
+
+        const scaleX = fullW / videoRect.width;
+        const scaleY = fullH / videoRect.height;
+
+        const cropX = Math.max(0, Math.round((overlayRect.left - videoRect.left) * scaleX));
+        const cropY = Math.max(0, Math.round((overlayRect.top - videoRect.top) * scaleY));
+        const cropW = Math.round(overlayRect.width * scaleX);
+        const cropH = Math.round(overlayRect.height * scaleY);
+
+        // Crear canvas recortado
+        const cropCanvas = document.createElement('canvas');
+        cropCanvas.width = cropW;
+        cropCanvas.height = cropH;
+        cropCanvas.getContext('2d').drawImage(
+            fullCanvas,
+            cropX, cropY, cropW, cropH, // source
+            0, 0, cropW, cropH           // dest
+        );
+
+        return cropCanvas.toDataURL('image/jpeg', 0.92);
+    }
+
+    async function onCapture() {
+        const base64 = captureAndCrop();
+        if (!base64) return;
+        closeCamera();
+
+        // Mostrar spinner
+        showToast('Analizando documento…', 'spin');
 
         try {
             const res = await fetch(apiBase + '/api/contracts/detect-document-side', {
@@ -605,106 +640,112 @@
             });
             const data = await res.json();
 
+            let side = 'front'; // default
             if (data.status === 0 && data.side && data.side !== 'unknown') {
-                lastDetectedSide = data.side;
-                confirmTitle.textContent = 'Documento detectado';
-                confirmDetected.textContent = data.side === 'front' ? 'Cara frontal detectada' : 'Cara trasera detectada';
-                confirmDetected.style.display = 'block';
-                confirmHint.textContent = 'Si la detección es correcta, presione "Correcto". Si es la otra cara, presione "Es la otra cara".';
-                confirmBtns.style.display = 'flex';
-            } else {
-                // No pudo detectar, pedir al usuario
-                lastDetectedSide = null;
-                confirmTitle.textContent = 'No se pudo detectar automáticamente';
-                confirmDetected.textContent = '';
-                confirmDetected.style.display = 'none';
-                confirmHint.textContent = 'Por favor indique qué cara del documento es.';
-                confirmBtns.style.display = 'flex';
-                btnAccept.textContent = '✓ Es cara frontal';
-                btnSwitch.textContent = '✓ Es cara trasera';
+                side = data.side;
             }
+
+            // Si el lado detectado ya está lleno, y el otro está vacío, asignar al otro
+            if (side === 'front' && documentFrontValid && !documentBackValid) {
+                side = 'back';
+            } else if (side === 'back' && documentBackValid && !documentFrontValid) {
+                side = 'front';
+            }
+            // Si ambos están llenos, reemplazar el detectado directamente
+
+            // Asignar sin preguntar
+            if (side === 'front') {
+                documentFrontBase64 = base64; documentFrontValid = true;
+                previewFront.src = base64; previewFront.style.display = 'block';
+                setDocStatus(frontStatus, 'ok', 'Cargado ✓');
+            } else {
+                documentBackBase64 = base64; documentBackValid = true;
+                previewBack.src = base64; previewBack.style.display = 'block';
+                setDocStatus(backStatus, 'ok', 'Cargado ✓');
+            }
+
+            hideToast();
+            showToast((side === 'front' ? 'Cara frontal' : 'Cara trasera') + ' guardada', 'ok');
+            setTimeout(hideToast, 2000);
+
+            updateCamBtnText();
+            hideDocValidation();
+            updateSignButton();
+
         } catch (err) {
-            lastDetectedSide = null;
-            confirmTitle.textContent = 'Error de detección';
-            confirmDetected.style.display = 'none';
-            confirmHint.textContent = 'Por favor indique manualmente qué cara del documento es.';
-            confirmBtns.style.display = 'flex';
-            btnAccept.textContent = '✓ Es cara frontal';
-            btnSwitch.textContent = '✓ Es cara trasera';
-        }
-    }
-
-    function acceptDetectedSide() {
-        const side = lastDetectedSide || 'front';
-        assignToSide(side);
-    }
-    function switchDetectedSide() {
-        const side = lastDetectedSide === 'front' ? 'back' : 'front';
-        assignToSide(side);
-    }
-
-    function assignToSide(side) {
-        confirmModal.classList.remove('active');
-        if (side === 'front') {
-            if (documentFrontValid) { if (!confirm('Ya tiene frontal. ¿Reemplazar?')) return; }
-            documentFrontBase64 = lastCapturedBase64;
-            documentFrontValid = true;
-            previewFront.src = lastCapturedBase64;
-            previewFront.style.display = 'block';
+            hideToast();
+            // Si falla el backend, asignar como frontal por defecto
+            documentFrontBase64 = base64; documentFrontValid = true;
+            previewFront.src = base64; previewFront.style.display = 'block';
             setDocStatus(frontStatus, 'ok', 'Cargado ✓');
-        } else {
-            if (documentBackValid) { if (!confirm('Ya tiene trasera. ¿Reemplazar?')) return; }
-            documentBackBase64 = lastCapturedBase64;
-            documentBackValid = true;
-            previewBack.src = lastCapturedBase64;
-            previewBack.style.display = 'block';
-            setDocStatus(backStatus, 'ok', 'Cargado ✓');
-        }
-        updateCamBtnText();
-        hideDocValidation();
-        updateSignButton();
-    }
-
-    function retakePhoto() {
-        confirmModal.classList.remove('active');
-        openCamera();
-    }
-
-    function updateCamBtnText() {
-        const btnText = document.getElementById('camBtnText');
-        if (documentFrontValid && documentBackValid) {
-            btnText.textContent = 'Cambiar documentos';
-        } else {
-            const missing = !documentFrontValid ? 'frontal' : 'trasera';
-            btnText.textContent = 'Capturar cara ' + missing;
+            showToast('Documento guardado', 'ok');
+            setTimeout(hideToast, 2000);
+            updateCamBtnText();
+            updateSignButton();
         }
     }
 
-    // Eventos
+    function flipCamera() { facingMode = facingMode === 'environment' ? 'user' : 'environment'; startCamera(); }
+
+    // Eventos cámara
     document.getElementById('btnOpenCam').addEventListener('click', openCamera);
-    camCapture.addEventListener('click', captureFromCamera);
+    camCapture.addEventListener('click', onCapture);
     camClose.addEventListener('click', closeCamera);
     camFlip.addEventListener('click', flipCamera);
-    btnAccept.addEventListener('click', acceptDetectedSide);
-    btnSwitch.addEventListener('click', switchDetectedSide);
-    btnRetake.addEventListener('click', retakePhoto);
 
     // Fallback galería
     document.getElementById('inputGallery').addEventListener('change', function() {
         if (!this.files || !this.files[0]) return;
         const file = this.files[0];
         const reader = new FileReader();
-        reader.onload = () => { lastCapturedBase64 = reader.result; analyzeAndConfirm(lastCapturedBase64); };
+        reader.onload = () => {
+            const base64 = reader.result;
+            showToast('Analizando…', 'spin');
+            // Enviamos al backend para detectar cara
+            fetch(apiBase + '/api/contracts/detect-document-side', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                body: JSON.stringify({ image: base64 }),
+            })
+            .then(r => r.json())
+            .then(data => {
+                let side = (data.status === 0 && data.side) ? data.side : 'front';
+                if (side === 'front' && documentFrontValid && !documentBackValid) side = 'back';
+                else if (side === 'back' && documentBackValid && !documentFrontValid) side = 'front';
+
+                if (side === 'front') {
+                    documentFrontBase64 = base64; documentFrontValid = true;
+                    previewFront.src = base64; previewFront.style.display = 'block';
+                    setDocStatus(frontStatus, 'ok', 'Cargado ✓');
+                } else {
+                    documentBackBase64 = base64; documentBackValid = true;
+                    previewBack.src = base64; previewBack.style.display = 'block';
+                    setDocStatus(backStatus, 'ok', 'Cargado ✓');
+                }
+                hideToast();
+                showToast((side === 'front' ? 'Frontal' : 'Trasera') + ' guardada', 'ok');
+                setTimeout(hideToast, 2000);
+                updateCamBtnText(); updateSignButton();
+            })
+            .catch(() => {
+                hideToast();
+                documentFrontBase64 = base64; documentFrontValid = true;
+                previewFront.src = base64; previewFront.style.display = 'block';
+                setDocStatus(frontStatus, 'ok', 'Cargado ✓');
+                showToast('Guardado', 'ok'); setTimeout(hideToast, 2000);
+                updateCamBtnText(); updateSignButton();
+            });
+        };
         reader.readAsDataURL(file);
     });
 
-    function hideDocValidation() {
-        docValidationMsg.style.display = 'none';
+    function updateCamBtnText() {
+        const txt = document.getElementById('camBtnText');
+        if (documentFrontValid && documentBackValid) txt.textContent = 'Cambiar documentos';
+        else txt.textContent = !documentFrontValid ? 'Capturar cara frontal' : 'Capturar cara trasera';
     }
-    function canSign() {
-        if (!requireDocuments) return true;
-        return documentFrontValid && documentBackValid;
-    }
+    function hideDocValidation() { docValidationMsg.style.display = 'none'; }
+    function canSign() { if (!requireDocuments) return true; return documentFrontValid && documentBackValid; }
 
     // ══ Canvas firma + persistencia ══════════════════════════════════════════
     const canvas = document.getElementById('signatureCanvas');
