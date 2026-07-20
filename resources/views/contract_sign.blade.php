@@ -577,9 +577,10 @@
             pdfDoc = pdf;
             loading.style.display = 'none';
 
-            // Escala adaptativa: móvil = 0.6, desktop = 1.2
+            // Escala alta para nitidez: móvil = 1.5, desktop = 2.0
+            // El canvas interno es grande pero CSS lo muestra a max-width:100%
             const isMobile = window.innerWidth < 768;
-            const scale = isMobile ? 0.65 : 1.3;
+            const scale = isMobile ? 1.5 : 2.0;
 
             for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
                 const page = await pdf.getPage(pageNum);
