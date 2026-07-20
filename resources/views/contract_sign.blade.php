@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Firma de Contrato</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.5.136/pdf.min.mjs" type="module"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -91,16 +92,17 @@
             background: linear-gradient(135deg, #3b82f6, #2563eb);
         }
 
-        /* PDF modal inline */
+        /* PDF modal con pdf.js */
         .pdf-modal {
             display: none; position: fixed; inset: 0; z-index: 300;
-            background: rgba(0,0,0,.9); flex-direction: column;
+            background: #1a1a2e; flex-direction: column;
         }
         .pdf-modal.active { display: flex; }
         .pdf-modal-bar {
             height: 48px; background: #1a1a2e; color: #fff;
             display: flex; align-items: center; justify-content: space-between;
             padding: 0 14px; flex-shrink: 0;
+            border-bottom: 1px solid #333;
         }
         .pdf-modal-bar h3 { font-size: 13px; font-weight: 600; }
         .pdf-modal-bar button {
@@ -108,8 +110,28 @@
             border: none; border-radius: 6px; padding: 6px 12px;
             font-size: 12px; font-weight: 600; cursor: pointer;
         }
-        .pdf-modal iframe {
-            flex: 1; width: 100%; border: 0; background: #525659;
+        .pdf-pages-container {
+            flex: 1; overflow-y: auto; overflow-x: hidden;
+            background: #2a2a3e; padding: 16px 0;
+            display: flex; flex-direction: column; align-items: center; gap: 16px;
+        }
+        .pdf-page-wrap {
+            background: #fff; border-radius: 4px;
+            box-shadow: 0 4px 20px rgba(0,0,0,.4);
+            max-width: 95vw;
+        }
+        .pdf-page-wrap canvas {
+            display: block; max-width: 100%; height: auto;
+        }
+        .pdf-loading {
+            color: #fff; text-align: center; padding: 40px;
+            font-size: 14px;
+        }
+        .pdf-loading .spinner-pdf {
+            width: 32px; height: 32px;
+            border: 3px solid #fff3; border-top-color: #6c63ff;
+            border-radius: 50%; animation: spin .8s linear infinite;
+            margin: 0 auto 12px;
         }
 
         /* Documentos */
@@ -442,13 +464,18 @@
 
 </div>
 
-<!-- PDF Modal inline -->
+<!-- PDF Modal con pdf.js -->
 <div class="pdf-modal" id="pdfModal">
     <div class="pdf-modal-bar">
         <h3>{{ $clientContract->contract->title }}</h3>
         <button onclick="closePdfModal()">✕ Cerrar</button>
     </div>
-    <iframe id="pdfIframe" src="{{ $pdfUrl ? $pdfUrl . '#toolbar=1&navpanes=0&scrollbar=1&zoom=page-fit' : '' }}" title="Contrato PDF"></iframe>
+    <div class="pdf-pages-container" id="pdfPagesContainer">
+        <div class="pdf-loading" id="pdfLoading">
+            <div class="spinner-pdf"></div>
+            <p>Cargando contrato…</p>
+        </div>
+    </div>
 </div>
 
 <!-- Cámara modal -->
@@ -512,15 +539,62 @@
         }
     };
 
-    // ══ PDF modal inline ════════════════════════════════════════════════════
-    window.openPdfModal = function() {
+    // ══ PDF modal con pdf.js renderer ══════════════════════════════════════
+    const pdfUrl = @json($pdfUrl);
+    let pdfDoc = null;
+
+    window.openPdfModal = async function() {
         document.getElementById('pdfModal').classList.add('active');
         document.body.style.overflow = 'hidden';
+        if (pdfUrl && !pdfDoc) {
+            await renderPdfWithPdfJs();
+        }
     };
     window.closePdfModal = function() {
         document.getElementById('pdfModal').classList.remove('active');
         document.body.style.overflow = '';
     };
+
+    async function renderPdfWithPdfJs() {
+        const container = document.getElementById('pdfPagesContainer');
+        const loading = document.getElementById('pdfLoading');
+        if (!pdfUrl) return;
+
+        try {
+            // Configurar worker de pdf.js desde CDN
+            if (typeof pdfjsLib !== 'undefined') {
+                pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.5.136/pdf.worker.min.mjs';
+            }
+
+            const pdf = await pdfjsLib.getDocument(pdfUrl).promise;
+            pdfDoc = pdf;
+            loading.style.display = 'none';
+
+            // Escala adaptativa: móvil = 0.6, desktop = 1.2
+            const isMobile = window.innerWidth < 768;
+            const scale = isMobile ? 0.65 : 1.3;
+
+            for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+                const page = await pdf.getPage(pageNum);
+                const viewport = page.getViewport({ scale });
+
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+
+                const wrap = document.createElement('div');
+                wrap.className = 'pdf-page-wrap';
+                wrap.appendChild(canvas);
+                container.appendChild(wrap);
+
+                await page.render({ canvasContext: ctx, viewport }).promise;
+            }
+        } catch (err) {
+            console.error('PDF render error:', err);
+            loading.innerHTML = '<p style="color:#ff6b6b;">Error al cargar el PDF. Intente descargarlo.</p>';
+        }
+    }
 
     // ══ Toast ══════════════════════════════════════════════════════════════
     function showToast(text, type) {
