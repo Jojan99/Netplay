@@ -257,6 +257,72 @@
         .signed-signature img { max-width: 260px; max-height: 120px; }
         .signed-info { font-size: 12px; color: #888; margin-top: 8px; }
 
+        /* Documentos de identidad */
+        .doc-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 14px;
+        }
+        @media (max-width: 480px) {
+            .doc-grid { grid-template-columns: 1fr; }
+        }
+        .doc-box {
+            border: 1.5px dashed #c4c4e0;
+            border-radius: 10px;
+            padding: 12px;
+            text-align: center;
+            background: #fafaff;
+        }
+        .doc-label {
+            display: block;
+            font-size: 12px;
+            font-weight: 600;
+            color: #444;
+            margin-bottom: 8px;
+        }
+        .doc-preview {
+            max-width: 100%;
+            max-height: 180px;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            object-fit: contain;
+            border: 1px solid #e0e0e0;
+            display: block;
+        }
+        .doc-upload-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            background: #6c63ff;
+            color: #fff;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity .2s;
+        }
+        .doc-upload-btn:active { opacity: .8; }
+        .doc-input {
+            margin-top: 8px;
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 13px;
+            text-align: center;
+        }
+        .doc-validation {
+            margin-top: 10px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            text-align: center;
+        }
+        .doc-validation.doc-error { background: #f8d7da; color: #721c24; }
+        .doc-validation.doc-warning { background: #fff3cd; color: #856404; }
+
         /* Alerta */
         .alert {
             padding: 12px 16px; border-radius: 10px; font-size: 13px;
@@ -342,6 +408,80 @@
         </div>
     </div>
 
+    <!-- Documentos de identidad -->
+    @if($clientContract->status !== 'signed')
+    <div class="card" id="documentsCard" style="display: {{ $clientContract->require_documents ? 'block' : 'none' }};">
+        <div class="card-header">
+            <span class="card-title">Documento de identidad</span>
+        </div>
+        <div class="card-body">
+            <p style="font-size:12px; color:#666; margin-bottom:12px;">
+                Para su seguridad y la validez del contrato, requerimos fotos claras de <strong>ambas caras</strong> de su documento de identidad. El número del documento debe coincidir con el registrado en el contrato.
+            </p>
+
+            <div class="doc-grid">
+                <!-- Cara frontal -->
+                <div class="doc-box">
+                    <label class="doc-label">Cara frontal del documento</label>
+                    @if($documentFrontUrl)
+                        <img src="{{ $documentFrontUrl }}" class="doc-preview" id="previewFront" alt="Documento frontal">
+                    @else
+                        <img src="" class="doc-preview" id="previewFront" alt="Documento frontal" style="display:none;">
+                    @endif
+                    <label class="doc-upload-btn">
+                        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                        <span id="frontBtnText">{{ $documentFrontUrl ? 'Cambiar foto' : 'Tomar o subir foto' }}</span>
+                        <input type="file" id="inputFront" accept="image/*" capture="environment" style="display:none;">
+                    </label>
+                    <input type="text" id="docNumberFront" placeholder="Número del documento (frontal)" class="doc-input" value="{{ $clientContract->document_number_front ?? '' }}">
+                </div>
+
+                <!-- Cara trasera -->
+                <div class="doc-box">
+                    <label class="doc-label">Cara trasera del documento</label>
+                    @if($documentBackUrl)
+                        <img src="{{ $documentBackUrl }}" class="doc-preview" id="previewBack" alt="Documento trasero">
+                    @else
+                        <img src="" class="doc-preview" id="previewBack" alt="Documento trasero" style="display:none;">
+                    @endif
+                    <label class="doc-upload-btn">
+                        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                        <span id="backBtnText">{{ $documentBackUrl ? 'Cambiar foto' : 'Tomar o subir foto' }}</span>
+                        <input type="file" id="inputBack" accept="image/*" capture="environment" style="display:none;">
+                    </label>
+                    <input type="text" id="docNumberBack" placeholder="Número del documento (trasero)" class="doc-input" value="{{ $clientContract->document_number_back ?? '' }}">
+                </div>
+            </div>
+
+            <div class="doc-validation" id="docValidationMsg" style="display:none;"></div>
+        </div>
+    </div>
+    @endif
+
+    @if($clientContract->status === 'signed' && ($documentFrontUrl || $documentBackUrl))
+    <div class="card">
+        <div class="card-header">
+            <span class="card-title">Documentos de identidad adjuntos</span>
+        </div>
+        <div class="card-body">
+            <div class="doc-grid">
+                @if($documentFrontUrl)
+                <div class="doc-box">
+                    <label class="doc-label">Cara frontal</label>
+                    <img src="{{ $documentFrontUrl }}" class="doc-preview" alt="Documento frontal" style="display:block;">
+                </div>
+                @endif
+                @if($documentBackUrl)
+                <div class="doc-box">
+                    <label class="doc-label">Cara trasera</label>
+                    <img src="{{ $documentBackUrl }}" class="doc-preview" alt="Documento trasero" style="display:block;">
+                </div>
+                @endif
+            </div>
+        </div>
+    </div>
+    @endif
+
     <!-- Firma -->
     <div class="card">
         <div class="card-header">
@@ -383,6 +523,102 @@
 (function () {
     const token    = @json($token);
     const apiBase  = @json(config('app.url'));
+    const requireDocuments = @json((bool) $clientContract->require_documents);
+    const clientDni = @json($clientDni ?? '');
+    const hasFrontSaved = @json((bool) $documentFrontUrl);
+    const hasBackSaved  = @json((bool) $documentBackUrl);
+
+    // ── Documentos setup ─────────────────────────────────────────────────────
+    let documentFrontBase64 = null;
+    let documentBackBase64  = null;
+    let documentFrontValid  = hasFrontSaved;
+    let documentBackValid   = hasBackSaved;
+
+    const inputFront = document.getElementById('inputFront');
+    const inputBack  = document.getElementById('inputBack');
+    const previewFront = document.getElementById('previewFront');
+    const previewBack  = document.getElementById('previewBack');
+    const frontBtnText = document.getElementById('frontBtnText');
+    const backBtnText  = document.getElementById('backBtnText');
+    const docNumberFront = document.getElementById('docNumberFront');
+    const docNumberBack  = document.getElementById('docNumberBack');
+    const docValidationMsg = document.getElementById('docValidationMsg');
+
+    function fileToBase64(file) {
+        return new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.readAsDataURL(file);
+        });
+    }
+
+    function validateDocumentNumber() {
+        if (!requireDocuments) return true;
+        const frontNum = (docNumberFront.value || '').trim();
+        const backNum  = (docNumberBack.value || '').trim();
+
+        if (!frontNum && !backNum) {
+            showDocValidation('Ingrese el número del documento en al menos uno de los campos.', 'warning');
+            return false;
+        }
+        if (clientDni && frontNum && frontNum !== clientDni) {
+            showDocValidation('El número del documento frontal no coincide con el registrado en el contrato (' + clientDni + ').', 'error');
+            return false;
+        }
+        if (clientDni && backNum && backNum !== clientDni) {
+            showDocValidation('El número del documento trasero no coincide con el registrado en el contrato (' + clientDni + ').', 'error');
+            return false;
+        }
+        hideDocValidation();
+        return true;
+    }
+
+    function showDocValidation(msg, type) {
+        docValidationMsg.textContent = msg;
+        docValidationMsg.style.display = 'block';
+        docValidationMsg.className = 'doc-validation doc-' + type;
+    }
+    function hideDocValidation() {
+        docValidationMsg.style.display = 'none';
+    }
+
+    if (inputFront) {
+        inputFront.addEventListener('change', async function () {
+            if (!this.files || !this.files[0]) return;
+            const base64 = await fileToBase64(this.files[0]);
+            documentFrontBase64 = base64;
+            documentFrontValid = true;
+            previewFront.src = base64;
+            previewFront.style.display = 'block';
+            frontBtnText.textContent = 'Cambiar foto';
+            validateDocumentNumber();
+        });
+    }
+
+    if (inputBack) {
+        inputBack.addEventListener('change', async function () {
+            if (!this.files || !this.files[0]) return;
+            const base64 = await fileToBase64(this.files[0]);
+            documentBackBase64 = base64;
+            documentBackValid = true;
+            previewBack.src = base64;
+            previewBack.style.display = 'block';
+            backBtnText.textContent = 'Cambiar foto';
+            validateDocumentNumber();
+        });
+    }
+
+    if (docNumberFront) {
+        docNumberFront.addEventListener('input', validateDocumentNumber);
+    }
+    if (docNumberBack) {
+        docNumberBack.addEventListener('input', validateDocumentNumber);
+    }
+
+    function canSign() {
+        if (!requireDocuments) return true;
+        return documentFrontValid && documentBackValid;
+    }
 
     // ── Canvas setup ─────────────────────────────────────────────────────────
     const canvas    = document.getElementById('signatureCanvas');
@@ -436,13 +672,17 @@
         if (!hasStrokes) {
             hasStrokes = true;
             label.style.opacity = '0';
-            btnSign.disabled    = false;
+            updateSignButton();
         }
     }
 
     function onEnd(e) {
         e.preventDefault();
         drawing = false;
+    }
+
+    function updateSignButton() {
+        btnSign.disabled = !hasStrokes || !canSign();
     }
 
     // Touch
@@ -458,7 +698,7 @@
     btnClear.addEventListener('click', function () {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         hasStrokes         = false;
-        btnSign.disabled   = true;
+        updateSignButton();
         label.style.opacity = '1';
     });
 
@@ -466,16 +706,35 @@
     btnSign.addEventListener('click', async function () {
         if (!hasStrokes) return;
 
+        if (requireDocuments) {
+            if (!documentFrontValid || !documentBackValid) {
+                showAlert('Debe subir fotos de ambas caras del documento de identidad antes de firmar.', 'error');
+                return;
+            }
+            if (!validateDocumentNumber()) {
+                showAlert('Verifique el número del documento de identidad.', 'error');
+                return;
+            }
+        }
+
         const signature = canvas.toDataURL('image/png');
 
         btnSign.classList.add('loading');
         btnSign.disabled = true;
 
+        const payload = { signature };
+        if (requireDocuments) {
+            if (documentFrontBase64) payload.document_front = documentFrontBase64;
+            if (documentBackBase64)  payload.document_back  = documentBackBase64;
+            payload.document_number_front = (docNumberFront.value || '').trim();
+            payload.document_number_back  = (docNumberBack.value || '').trim();
+        }
+
         try {
             const res = await fetch(apiBase + '/api/contracts/sign-token/' + token, {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                body:    JSON.stringify({ signature }),
+                body:    JSON.stringify(payload),
             });
             const data = await res.json();
 
@@ -485,12 +744,12 @@
             } else {
                 showAlert(data.message || 'Error al firmar.', 'error');
                 btnSign.classList.remove('loading');
-                btnSign.disabled = false;
+                updateSignButton();
             }
         } catch (err) {
             showAlert('Error de conexión. Intente nuevamente.', 'error');
             btnSign.classList.remove('loading');
-            btnSign.disabled = false;
+            updateSignButton();
         }
     });
 
@@ -503,6 +762,7 @@
 
     resize();
     window.addEventListener('resize', resize);
+    updateSignButton();
 })();
 </script>
 </body>

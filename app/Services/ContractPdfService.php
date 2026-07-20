@@ -8,13 +8,15 @@ use App\Models\ContractPdfField;
 class ContractPdfService
 {
     /**
-     * Combina el PDF base original con los datos del cliente y la firma.
+     * Combina el PDF base original con los datos del cliente, la firma y los documentos.
      *
      * @param string $pdfBasePath Ruta del PDF original (storage/public)
      * @param string $signatureBase64 Firma en base64
      * @param string $clientName Nombre del cliente
      * @param array $fieldValues Valores de variables: ['{{nombre}}' => 'Juan', ...]
      * @param array $pdfFields Configuraciones de posición
+     * @param string|null $documentFrontPath Ruta de la foto frontal del documento
+     * @param string|null $documentBackPath Ruta de la foto trasera del documento
      * @return string Contenido binario del PDF generado
      */
     public function combineWithSignature(
@@ -22,7 +24,9 @@ class ContractPdfService
         string $signatureBase64,
         string $clientName,
         array $fieldValues = [],
-        array $pdfFields = []
+        array $pdfFields = [],
+        ?string $documentFrontPath = null,
+        ?string $documentBackPath = null
     ): string {
         $pdf = $this->buildFilledPdf($pdfBasePath, $fieldValues, $pdfFields, $signatureBase64);
 
@@ -52,6 +56,31 @@ class ContractPdfService
         $pdf->Line(60, 180, 150, 180);
         $pdf->SetY(182);
         $pdf->Cell(0, 8, 'Firma del cliente', 0, 1, 'C');
+
+        // Página de documentos de identidad
+        if ($documentFrontPath || $documentBackPath) {
+            $pdf->AddPage();
+            $pdf->SetFont('Helvetica', 'B', 16);
+            $pdf->Cell(0, 16, 'DOCUMENTOS DE IDENTIDAD', 0, 1, 'C');
+            $pdf->Ln(4);
+
+            $pdf->SetFont('Helvetica', '', 10);
+            $pdf->Cell(0, 8, 'Se anexan las fotografias de ambas caras del documento de identidad del cliente.', 0, 1, 'C');
+            $pdf->Ln(4);
+
+            if ($documentFrontPath && file_exists(storage_path('app/public/' . $documentFrontPath))) {
+                $pdf->SetFont('Helvetica', 'B', 11);
+                $pdf->Cell(0, 8, 'CARA FRONTAL', 0, 1, 'C');
+                $pdf->Image(storage_path('app/public/' . $documentFrontPath), 35, $pdf->GetY(), 140, 0, pathinfo($documentFrontPath, PATHINFO_EXTENSION));
+                $pdf->Ln(90);
+            }
+
+            if ($documentBackPath && file_exists(storage_path('app/public/' . $documentBackPath))) {
+                $pdf->SetFont('Helvetica', 'B', 11);
+                $pdf->Cell(0, 8, 'CARA TRASERA', 0, 1, 'C');
+                $pdf->Image(storage_path('app/public/' . $documentBackPath), 35, $pdf->GetY(), 140, 0, pathinfo($documentBackPath, PATHINFO_EXTENSION));
+            }
+        }
 
         return $pdf->Output('', 'S');
     }

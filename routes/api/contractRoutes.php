@@ -28,6 +28,10 @@ Route::prefix('contracts')->middleware(['jwt.verify'])->group(function () {
     Route::post('/send-email/{clientContractId}',       [ContractController::class, 'sendEmail']);
     Route::post('/send-whatsapp/{clientContractId}',    [ContractController::class, 'sendWhatsApp']);
 
+    // Documentos de identidad
+    Route::post('/client-contract/{clientContractId}/documents', [ContractController::class, 'uploadDocument']);
+    Route::get('/client-contract/{clientContractId}/documents',    [ContractController::class, 'getDocuments']);
+
     // Subir PDF y convertir a HTML
     Route::post('/upload-pdf',                          [ContractController::class, 'uploadPdf']);
 

@@ -85,7 +85,16 @@ class ContractSignController extends Controller
                 }
             }
         }
-        return view('contract_sign', compact('clientContract', 'token', 'logo', 'pdfUrl'));
+
+        // Documentos
+        $documentFrontUrl = $clientContract->document_front_path ? url('storage/' . $clientContract->document_front_path) : null;
+        $documentBackUrl  = $clientContract->document_back_path ? url('storage/' . $clientContract->document_back_path) : null;
+        $clientDni = $fieldValues['{{dni}}'] ?? '';
+
+        return view('contract_sign', compact(
+            'clientContract', 'token', 'logo', 'pdfUrl',
+            'documentFrontUrl', 'documentBackUrl', 'clientDni'
+        ));
     }
 
     /**
@@ -105,7 +114,67 @@ class ContractSignController extends Controller
                 return response()->json(['message' => 'La firma es requerida', 'status' => 1]);
             }
 
+            // ── Validación de documentos si se requieren ─────────────────────────
+            if ($cc->require_documents) {
+                // Si ya tiene documentos guardados previamente, solo verificar firma
+                $hasFront = $cc->document_front_path && file_exists(storage_path('app/public/' . $cc->document_front_path));
+                $hasBack  = $cc->document_back_path && file_exists(storage_path('app/public/' . $cc->document_back_path));
+
+                if (!$hasFront || !$hasBack) {
+                    // Aceptar documentos en este request si aún no están guardados
+                    $frontData = $request->input('document_front');
+                    $backData  = $request->input('document_back');
+
+                    if (!$frontData || !$backData) {
+                        return response()->json(['message' => 'Se requieren fotos de ambas caras del documento de identidad.', 'status' => 1]);
+                    }
+
+                    // Validar que sean imágenes base64 válidas
+                    if (!$this->isValidImageBase64($frontData) || !$this->isValidImageBase64($backData)) {
+                        return response()->json(['message' => 'Las fotos del documento deben ser imágenes válidas (JPG/PNG).', 'status' => 1]);
+                    }
+
+                    // Guardar documentos
+                    $companyId = $cc->company_id;
+                    $dir = "contracts/{$companyId}/documents";
+                    $updateData = [];
+
+                    $frontExt = $this->getBase64ImageExtension($frontData) ?: 'jpg';
+                    $frontName = "cc_{$cc->id}_front_" . uniqid() . '.' . $frontExt;
+                    $frontPath = $dir . '/' . $frontName;
+                    file_put_contents(storage_path('app/public/' . $frontPath), $this->extractBase64Image($frontData));
+                    $updateData['document_front_path'] = $frontPath;
+
+                    $backExt = $this->getBase64ImageExtension($backData) ?: 'jpg';
+                    $backName = "cc_{$cc->id}_back_" . uniqid() . '.' . $backExt;
+                    $backPath = $dir . '/' . $backName;
+                    file_put_contents(storage_path('app/public/' . $backPath), $this->extractBase64Image($backData));
+                    $updateData['document_back_path'] = $backPath;
+
+                    // Validar número de documento
+                    $docNumberFront = trim($request->input('document_number_front', ''));
+                    $docNumberBack  = trim($request->input('document_number_back', ''));
+                    $clientDni = \Illuminate\Support\Facades\DB::table('user_data')
+                        ->where('user_id', $cc->user_id)
+                        ->value('dni') ?? '';
+
+                    if ($docNumberFront && $clientDni && $docNumberFront !== $clientDni) {
+                        return response()->json(['message' => 'El número del documento frontal no coincide con el registrado en el contrato (' . $clientDni . ').', 'status' => 1]);
+                    }
+                    if ($docNumberBack && $clientDni && $docNumberBack !== $clientDni) {
+                        return response()->json(['message' => 'El número del documento trasero no coincide con el registrado en el contrato (' . $clientDni . ').', 'status' => 1]);
+                    }
+
+                    $updateData['document_number_front'] = $docNumberFront ?: $clientDni;
+                    $updateData['document_number_back']  = $docNumberBack ?: $clientDni;
+
+                    $cc->update($updateData);
+                    $cc->refresh();
+                }
+            }
+
             $this->contractRepository->sign($cc->id, $request->input('signature'));
+            $cc->refresh();
 
             // ── Generar PDF firmado permanentemente ──────────────────────────────
             $logCtx = ['client_contract_id' => $cc->id, 'company_id' => $cc->company_id];
@@ -131,7 +200,9 @@ class ContractSignController extends Controller
                         $request->input('signature'),
                         $cc->user->username ?? 'Cliente',
                         $fieldValues,
-                        $pdfFields->toArray()
+                        $pdfFields->toArray(),
+                        $cc->document_front_path,
+                        $cc->document_back_path
                     );
 
                     $signedPath = "contracts/signed/contract_{$cc->id}_signed.pdf";
@@ -196,5 +267,35 @@ class ContractSignController extends Controller
         } catch (ModelNotFoundException) {
             return response()->json(['message' => 'Contrato no encontrado', 'status' => 1], 404);
         }
+    }
+
+    /**
+     * Valida que un string base64 sea una imagen válida.
+     */
+    private function isValidImageBase64(string $base64): bool
+    {
+        $data = $this->extractBase64Image($base64);
+        if (empty($data)) return false;
+
+        $finfo = new \finfo(FILEINFO_MIME_TYPE);
+        $mime = $finfo->buffer($data);
+        return in_array($mime, ['image/jpeg', 'image/png', 'image/jpg']);
+    }
+
+    private function getBase64ImageExtension(string $base64): ?string
+    {
+        if (str_starts_with($base64, 'data:image/jpeg')) return 'jpg';
+        if (str_starts_with($base64, 'data:image/jpg')) return 'jpg';
+        if (str_starts_with($base64, 'data:image/png')) return 'png';
+        return null;
+    }
+
+    private function extractBase64Image(string $base64): string
+    {
+        if (str_starts_with($base64, 'data:image')) {
+            $parts = explode(',', $base64, 2);
+            return isset($parts[1]) ? base64_decode($parts[1]) : '';
+        }
+        return base64_decode($base64);
     }
 }

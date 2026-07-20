@@ -13,6 +13,7 @@ class Contract extends Model
         'logo',
         'pdf_path',
         'installation_value',
+        'plazo',
         'active',
     ];
 

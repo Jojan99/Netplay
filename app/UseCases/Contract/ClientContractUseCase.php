@@ -26,7 +26,8 @@ class ClientContractUseCase implements ClientContractUseCaseInterface
             }
             $data = $this->contractRepository->assignToClient(
                 $request->input('contract_id'),
-                $request->input('user_id')
+                $request->input('user_id'),
+                (bool) $request->input('require_documents', false)
             );
         } catch (QueryException $e) {
             return ['message' => 'Error al asignar contrato: ' . $e->getMessage(), 'status' => 1, 'data' => ApiResponseConstants::DATA_NULL];
@@ -105,7 +106,8 @@ class ClientContractUseCase implements ClientContractUseCaseInterface
                     $fieldValues = $this->buildFieldValues(
                         $cc->user_id,
                         $cc->id,
-                        $cc->contract->installation_value ?? null
+                        $cc->contract->installation_value ?? null,
+                        $cc->plazo->plazo ?? 12
                     );
 
                     $output = $service->combineWithSignature(
@@ -154,7 +156,7 @@ class ClientContractUseCase implements ClientContractUseCaseInterface
      * Construye el array completo de valores de variables incluyendo
      * datos del cliente, plan de internet e instalación.
      */
-    public function buildFieldValues(int $userId, int $clientContractId, ?float $installationValue = null): array
+    public function buildFieldValues(int $userId, int $clientContractId, ?float $installationValue = null,?int $plazo = 12): array
     {
         $ud = DB::table('user_data')->where('user_id', $userId)->first();
         $now = now();
@@ -213,6 +215,7 @@ class ClientContractUseCase implements ClientContractUseCaseInterface
 
             // ── Plan de internet ─────────────────────────────────
             '{{plan_nombre}}'     => $plan->plan_name ?? '',
+            '{{plazo}}' => (string)$plazo,
             '{{plan_velocidad}}'  => $speed > 0 ? $speed . ' Mb' : '',
             '{{plan_precio}}'     => $plan->monthly_price > 0 ? '$' . number_format($plan->monthly_price, 0, ',', '.') : '',
             '{{plan_instalacion}}'=> $installOrder && $installOrder->installation_cost > 0

@@ -48,6 +48,97 @@ class ContractController extends Controller
         return response()->json($uc->assign($request));
     }
 
+    /**
+     * POST /api/contracts/client-contract/{clientContractId}/documents
+     * Sube fotos de documento de identidad (cara frontal y trasera).
+     */
+    public function uploadDocument(int $clientContractId, Request $request, ContractRepositoryInterface $repo): JsonResponse
+    {
+        try {
+            $cc = $repo->getClientContract($clientContractId);
+
+            $request->validate([
+                'document_front' => 'nullable|image|mimes:jpeg,jpg,png|max:5120',
+                'document_back'  => 'nullable|image|mimes:jpeg,jpg,png|max:5120',
+                'document_number_front' => 'nullable|string|max:50',
+                'document_number_back'  => 'nullable|string|max:50',
+            ]);
+
+            $companyId = getSessionCompanyId();
+            $dir = "contracts/{$companyId}/documents";
+
+            $updateData = [];
+
+            if ($request->hasFile('document_front')) {
+                $frontFile = $request->file('document_front');
+                $frontName = "cc_{$clientContractId}_front_" . uniqid() . '.' . $frontFile->getClientOriginalExtension();
+                $frontPath = $frontFile->storeAs($dir, $frontName, 'public');
+                $updateData['document_front_path'] = $frontPath;
+            }
+
+            if ($request->hasFile('document_back')) {
+                $backFile = $request->file('document_back');
+                $backName = "cc_{$clientContractId}_back_" . uniqid() . '.' . $backFile->getClientOriginalExtension();
+                $backPath = $backFile->storeAs($dir, $backName, 'public');
+                $updateData['document_back_path'] = $backPath;
+            }
+
+            if ($request->filled('document_number_front')) {
+                $updateData['document_number_front'] = $request->input('document_number_front');
+            }
+            if ($request->filled('document_number_back')) {
+                $updateData['document_number_back'] = $request->input('document_number_back');
+            }
+
+            if (!empty($updateData)) {
+                $cc->update($updateData);
+            }
+
+            return response()->json([
+                'status'  => 0,
+                'message' => 'Documentos actualizados.',
+                'data'    => [
+                    'document_front_url' => $cc->document_front_path ? url('storage/' . $cc->document_front_path) : null,
+                    'document_back_url'  => $cc->document_back_path ? url('storage/' . $cc->document_back_path) : null,
+                    'document_number_front' => $cc->document_number_front,
+                    'document_number_back'  => $cc->document_number_back,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'status'  => 1,
+                'message' => 'Error al subir documentos: ' . $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * GET /api/contracts/client-contract/{clientContractId}/documents
+     * Devuelve URLs seguras de los documentos subidos.
+     */
+    public function getDocuments(int $clientContractId, ContractRepositoryInterface $repo): JsonResponse
+    {
+        try {
+            $cc = $repo->getClientContract($clientContractId);
+
+            return response()->json([
+                'status' => 0,
+                'data'   => [
+                    'require_documents'     => $cc->require_documents,
+                    'document_front_url'    => $cc->document_front_path ? url('storage/' . $cc->document_front_path) : null,
+                    'document_back_url'     => $cc->document_back_path ? url('storage/' . $cc->document_back_path) : null,
+                    'document_number_front' => $cc->document_number_front,
+                    'document_number_back'  => $cc->document_number_back,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'status'  => 1,
+                'message' => 'Error al obtener documentos: ' . $e->getMessage(),
+            ]);
+        }
+    }
+
     public function clientContracts(int $userId, ClientContractUseCaseInterface $uc, ContractRepositoryInterface $repo): JsonResponse
     {
         // userId=0 → devuelve todos los contratos asignados de la empresa
@@ -58,6 +149,8 @@ class ContractController extends Controller
                 ->leftJoin('user_data as ud', 'ud.user_id', '=', 'cc.user_id')
                 ->where('cc.company_id', getSessionCompanyId())
                 ->select('cc.id', 'cc.status', 'cc.token', 'cc.signed_at',
+                         'cc.require_documents', 'cc.document_front_path', 'cc.document_back_path',
+                         'cc.document_number_front', 'cc.document_number_back',
                          'c.id as contract_id', 'c.title as contract_title',
                          'users.id as user_id', 'users.username',
                          'ud.names', 'ud.lastname', 'ud.phone', 'ud.email', 'ud.dni')
@@ -68,6 +161,11 @@ class ContractController extends Controller
                     'status'    => $r->status,
                     'token'     => $r->token,
                     'signed_at' => $r->signed_at,
+                    'require_documents'      => (bool) $r->require_documents,
+                    'document_front_path'    => $r->document_front_path,
+                    'document_back_path'     => $r->document_back_path,
+                    'document_number_front'  => $r->document_number_front,
+                    'document_number_back'   => $r->document_number_back,
                     'contract'  => ['id' => $r->contract_id, 'title' => $r->contract_title],
                     'user'      => [
                         'id'       => $r->user_id,
