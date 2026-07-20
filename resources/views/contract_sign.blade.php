@@ -6,12 +6,12 @@
     <title>Firma de Contrato</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
-
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: #f0f2f5;
             color: #1a1a2e;
             min-height: 100vh;
+            overflow-x: hidden;
         }
 
         /* ── Header ── */
@@ -56,208 +56,47 @@
         .card-title { font-size: 15px; font-weight: 600; }
         .card-body  { padding: 20px; }
 
-        /* ── Contrato — estilos formales INJECTED ── */
-        #contract-view {
-            font-family: Georgia, 'Times New Roman', Times, serif;
-            font-size: 14px;
-            line-height: 1.85;
-            color: #222;
-            max-height: 55vh;
-            overflow-y: auto;
-            padding-right: 4px;
-            text-align: justify;
-            background: #fff;
-            padding: 12px 8px;
-            border-radius: 6px;
+        /* ── Contrato PDF en móvil: NO iframe, solo botón ── */
+        .pdf-mobile-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            align-items: center;
+            padding: 20px;
         }
-        #contract-view::-webkit-scrollbar { width: 4px; }
-        #contract-view::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
-
-        /* Guía */
-        #contract-view .contract-guide {
-            font-size: 11px;
-            color: #666;
-            border-bottom: 1px solid #ddd;
-            padding-bottom: 8px;
-            margin-bottom: 15px;
-            text-indent: 0;
-            display: block;
-        }
-
-        /* Headings — con bordes y fondos OBVIOS */
-        #contract-view h1 {
-            font-family: Georgia, serif;
-            font-size: 20px;
-            font-weight: bold;
-            text-align: center;
-            color: #1a1a2e;
-            margin: 24px 0 14px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            border-bottom: 2px solid #1a1a2e;
-            padding-bottom: 6px;
-        }
-        #contract-view h2 {
-            font-family: Georgia, serif;
-            font-size: 16px;
-            font-weight: bold;
-            text-align: center;
-            color: #1a1a2e;
-            margin: 20px 0 10px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            border-bottom: 1px solid #ccc;
-            padding-bottom: 4px;
-        }
-        #contract-view h3 {
-            font-family: Georgia, serif;
-            font-size: 14px;
-            font-weight: bold;
-            text-align: left;
-            color: #333;
-            margin: 16px 0 8px;
-            background: #f5f5f5;
-            padding: 4px 8px;
-            border-left: 3px solid #6c63ff;
-        }
-        #contract-view h4 {
-            font-family: Georgia, serif;
-            font-size: 13px;
-            font-weight: bold;
-            color: #444;
-            margin: 12px 0 6px;
-        }
-
-        /* Párrafos */
-        #contract-view p {
-            font-size: 14px;
-            line-height: 1.85;
-            margin-bottom: 10px;
-            text-indent: 30px;
-            color: #222;
-            text-align: justify;
-        }
-        #contract-view p:first-child { text-indent: 0; }
-        #contract-view h2 + p,
-        #contract-view h3 + p { text-indent: 0; }
-
-        /* Clases especiales */
-        #contract-view .list-item {
-            margin-bottom: 6px;
-            padding-left: 20px;
-            text-indent: 0;
-        }
-        #contract-view .signature-line {
-            margin-bottom: 6px;
-            font-weight: bold;
-            text-indent: 0;
-            background: #f5f5f5;
-            padding: 4px 8px;
-            border-radius: 4px;
-        }
-
-        /* Tablas */
-        #contract-view table {
-            width: 100%;
-            border-collapse: collapse;
-            margin: 12px 0;
-            font-size: 13px;
-        }
-        #contract-view td, #contract-view th {
-            border: 1px solid #bbb;
-            padding: 8px 10px;
-            text-align: left;
-            background: #fafafa;
-        }
-        #contract-view th {
-            background: #f0f0f0;
-            font-weight: bold;
-        }
-
-        /* Negrita */
-        #contract-view strong, #contract-view b {
-            color: #111;
-            font-weight: bold;
-        }
-
-        /* Listas */
-        #contract-view ul, #contract-view ol {
-            margin: 10px 0 10px 25px;
-            padding-left: 15px;
-        }
-        #contract-view li { margin-bottom: 5px; }
-
-        /* HR */
-        #contract-view hr {
-            border: none;
-            border-top: 1px solid #ccc;
-            margin: 16px 0;
-        }
-
-        /* Blockquote */
-        #contract-view blockquote {
-            border-left: 3px solid #6c63ff;
-            padding-left: 12px;
-            margin: 10px 0;
-            color: #555;
-            font-style: italic;
-        }
-
-        /* Variables de contrato */
-        #contract-view span {
-            color: #c0392b;
-            font-weight: bold;
-            background: #fdecea;
-            padding: 1px 4px;
-            border-radius: 3px;
-        }
-
-        /* Área de firma */
-        .sign-wrapper {
-            display: flex; flex-direction: column; align-items: center; gap: 12px;
-        }
-        .canvas-container {
-            width: 100%; position: relative;
-            border: 2px dashed #6c63ff;
-            border-radius: 12px;
-            background: #fafafa;
-            touch-action: none;
-            overflow: hidden;
-        }
-        .canvas-container canvas {
-            display: block;
-            width: 100%;
-            cursor: crosshair;
-        }
-        .canvas-label {
-            position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
-            font-size: 11px; color: #bbb; pointer-events: none; white-space: nowrap;
-            transition: opacity .3s;
-        }
-
-        /* Botones */
-        .btn-row { display: flex; gap: 10px; width: 100%; }
-        .btn {
-            flex: 1; padding: 14px; border: none; border-radius: 10px;
-            font-size: 15px; font-weight: 600; cursor: pointer;
-            transition: opacity .2s, transform .1s;
-        }
-        .btn:active { transform: scale(.97); opacity: .85; }
-        .btn-clear   { background: #f0f0f0; color: #555; }
-        .btn-sign    { background: linear-gradient(135deg, #6c63ff, #4a42d6); color: #fff; }
-        .btn-sign:disabled { opacity: .5; cursor: not-allowed; }
-
-        /* Ya firmado */
-        .signed-signature {
-            border: 1px solid #e0e0e0;
+        .pdf-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 14px 24px;
             border-radius: 10px;
-            padding: 12px;
-            text-align: center;
+            font-size: 15px;
+            font-weight: 600;
+            text-decoration: none;
+            color: #fff;
+            background: linear-gradient(135deg, #6c63ff, #4a42d6);
+            width: 100%;
+            justify-content: center;
+            max-width: 320px;
         }
-        .signed-signature img { max-width: 260px; max-height: 120px; }
-        .signed-info { font-size: 12px; color: #888; margin-top: 8px; }
+        .pdf-btn.outline {
+            background: #fff;
+            color: #6c63ff;
+            border: 2px solid #6c63ff;
+        }
 
-        /* Documentos de identidad */
+        /* PDF iframe solo en desktop */
+        .pdf-desktop-frame {
+            width:100%; height:65vh; border:1px solid #ddd; border-radius:8px; overflow:hidden; background:#525659;
+        }
+        @media (max-width: 768px) {
+            .pdf-desktop-frame { display: none !important; }
+        }
+        @media (min-width: 769px) {
+            .pdf-mobile-actions { display: none !important; }
+        }
+
+        /* ── Documentos ── */
         .doc-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -272,56 +111,174 @@
             padding: 12px;
             text-align: center;
             background: #fafaff;
+            position: relative;
         }
-        .doc-label {
-            display: block;
-            font-size: 12px;
-            font-weight: 600;
-            color: #444;
-            margin-bottom: 8px;
-        }
+        .doc-label { display: block; font-size: 12px; font-weight: 600; color: #444; margin-bottom: 8px; }
         .doc-preview {
-            max-width: 100%;
-            max-height: 180px;
-            border-radius: 6px;
-            margin-bottom: 8px;
-            object-fit: contain;
-            border: 1px solid #e0e0e0;
-            display: block;
+            max-width: 100%; max-height: 180px; border-radius: 6px; margin-bottom: 8px;
+            object-fit: contain; border: 1px solid #e0e0e0; display: block;
         }
         .doc-upload-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 8px 14px;
-            background: #6c63ff;
-            color: #fff;
-            border-radius: 8px;
-            font-size: 12px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: opacity .2s;
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 8px 14px; background: #6c63ff; color: #fff;
+            border-radius: 8px; font-size: 12px; font-weight: 600;
+            cursor: pointer; transition: opacity .2s;
         }
         .doc-upload-btn:active { opacity: .8; }
-        .doc-input {
-            margin-top: 8px;
-            width: 100%;
-            padding: 8px 10px;
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            font-size: 13px;
-            text-align: center;
+        .doc-status {
+            font-size: 11px; font-weight: 600; margin-top: 6px;
+            padding: 4px 8px; border-radius: 6px; display: inline-block;
         }
-        .doc-validation {
-            margin-top: 10px;
-            padding: 10px 12px;
-            border-radius: 8px;
-            font-size: 12px;
-            font-weight: 600;
-            text-align: center;
+        .doc-status.ok { background: #d1fae5; color: #065f46; }
+        .doc-status.pending { background: #fef3c7; color: #92400e; }
+
+        /* ── Cámara modal ── */
+        .cam-modal {
+            display: none;
+            position: fixed; inset: 0; z-index: 200;
+            background: #000;
+            flex-direction: column;
         }
-        .doc-validation.doc-error { background: #f8d7da; color: #721c24; }
-        .doc-validation.doc-warning { background: #fff3cd; color: #856404; }
+        .cam-modal.active { display: flex; }
+        .cam-video-wrap {
+            flex: 1; position: relative; overflow: hidden;
+            display: flex; align-items: center; justify-content: center;
+            background: #111;
+        }
+        .cam-video-wrap video {
+            width: 100%; height: 100%; object-fit: cover;
+        }
+        /* Overlay de enmarcado verde */
+        .cam-guide-overlay {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 86%; height: 52%;
+            border: 3px dashed #10b981;
+            border-radius: 10px;
+            pointer-events: none;
+            z-index: 10;
+        }
+        .cam-guide-overlay::before {
+            content: 'Enmarque el documento aquí';
+            position: absolute;
+            top: -28px; left: 50%;
+            transform: translateX(-50%);
+            background: #10b981; color: #fff;
+            font-size: 11px; font-weight: 700;
+            padding: 4px 12px; border-radius: 6px;
+            white-space: nowrap;
+        }
+        .cam-guide-overlay .corner {
+            position: absolute; width: 16px; height: 16px;
+            border-color: #10b981; border-style: solid;
+        }
+        .cam-guide-overlay .corner.tl { top: -3px; left: -3px; border-width: 4px 0 0 4px; }
+        .cam-guide-overlay .corner.tr { top: -3px; right: -3px; border-width: 4px 4px 0 0; }
+        .cam-guide-overlay .corner.bl { bottom: -3px; left: -3px; border-width: 0 0 4px 4px; }
+        .cam-guide-overlay .corner.br { bottom: -3px; right: -3px; border-width: 0 4px 4px 0; }
+
+        .cam-bottom-bar {
+            height: 120px; background: #000;
+            display: flex; align-items: center; justify-content: center;
+            gap: 30px; padding: 0 20px;
+        }
+        .cam-btn-capture {
+            width: 66px; height: 66px; border-radius: 50%;
+            border: 4px solid #fff; background: transparent;
+            cursor: pointer; position: relative;
+        }
+        .cam-btn-capture::after {
+            content: ''; position: absolute;
+            top: 4px; left: 4px; right: 4px; bottom: 4px;
+            border-radius: 50%; background: #fff;
+            transition: transform .1s;
+        }
+        .cam-btn-capture:active::after { transform: scale(.85); }
+        .cam-btn-close {
+            color: #fff; font-size: 14px; font-weight: 600;
+            background: rgba(255,255,255,.15);
+            border: none; border-radius: 20px;
+            padding: 8px 16px; cursor: pointer;
+        }
+        .cam-btn-flip {
+            color: #fff; font-size: 13px; font-weight: 600;
+            background: rgba(255,255,255,.15);
+            border: none; border-radius: 20px;
+            padding: 8px 16px; cursor: pointer;
+        }
+
+        /* ── Confirmación de cara ── */
+        .confirm-modal {
+            display: none;
+            position: fixed; inset: 0; z-index: 210;
+            background: rgba(0,0,0,.92);
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .confirm-modal.active { display: flex; }
+        .confirm-img {
+            max-width: 100%; max-height: 50vh;
+            border-radius: 10px; border: 2px solid #fff;
+            margin-bottom: 16px;
+        }
+        .confirm-title {
+            color: #fff; font-size: 16px; font-weight: 600;
+            margin-bottom: 6px; text-align: center;
+        }
+        .confirm-hint {
+            color: #aaa; font-size: 12px; margin-bottom: 20px; text-align: center;
+        }
+        .confirm-btns {
+            display: flex; gap: 12px; width: 100%; max-width: 340px;
+        }
+        .confirm-btn {
+            flex: 1; padding: 14px; border: none; border-radius: 10px;
+            font-size: 14px; font-weight: 700; cursor: pointer;
+        }
+        .confirm-btn.front { background: #10b981; color: #fff; }
+        .confirm-btn.back  { background: #3b82f6; color: #fff; }
+        .confirm-btn.retake { background: #ef4444; color: #fff; }
+
+        /* ── Firma ── */
+        .sign-wrapper {
+            display: flex; flex-direction: column; align-items: center; gap: 12px;
+        }
+        .canvas-container {
+            width: 100%; position: relative;
+            border: 2px dashed #6c63ff;
+            border-radius: 12px;
+            background: #fafafa;
+            touch-action: none;
+            overflow: hidden;
+        }
+        .canvas-container canvas {
+            display: block; width: 100%; cursor: crosshair;
+        }
+        .canvas-label {
+            position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+            font-size: 11px; color: #bbb; pointer-events: none; white-space: nowrap;
+            transition: opacity .3s;
+        }
+        .btn-row { display: flex; gap: 10px; width: 100%; }
+        .btn {
+            flex: 1; padding: 14px; border: none; border-radius: 10px;
+            font-size: 15px; font-weight: 600; cursor: pointer;
+            transition: opacity .2s, transform .1s;
+        }
+        .btn:active { transform: scale(.97); opacity: .85; }
+        .btn-clear   { background: #f0f0f0; color: #555; }
+        .btn-sign    { background: linear-gradient(135deg, #6c63ff, #4a42d6); color: #fff; }
+        .btn-sign:disabled { opacity: .5; cursor: not-allowed; }
+
+        .signed-signature {
+            border: 1px solid #e0e0e0; border-radius: 10px;
+            padding: 12px; text-align: center;
+        }
+        .signed-signature img { max-width: 260px; max-height: 120px; }
+        .signed-info { font-size: 12px; color: #888; margin-top: 8px; }
 
         /* Alerta */
         .alert {
@@ -339,7 +296,6 @@
             margin: auto;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
-
         .loading .spinner { display: inline-block; }
         .loading .btn-text { display: none; }
     </style>
@@ -369,46 +325,44 @@
                 {{ $clientContract->status === 'signed' ? 'Firmado' : 'Pendiente de firma' }}
             </span>
         </div>
-        <div class="card-body">
+        <div class="card-body" style="padding:0;">
             @if($pdfUrl)
-                <!-- Mostrar PDF original exacto relleno con datos del cliente -->
-                <div style="width:100%; height:78vh; border:1px solid #ddd; border-radius:8px; overflow:hidden; background:#525659; position:relative;">
-                    <object data="{{ $pdfUrl }}#toolbar=1&navpanes=0&scrollbar=1&zoom=page-width" 
-                           type="application/pdf" 
+                <!-- Desktop: iframe -->
+                <div class="pdf-desktop-frame">
+                    <object data="{{ $pdfUrl }}#toolbar=1&navpanes=0&scrollbar=1&zoom=page-width"
+                           type="application/pdf"
                            style="width:100%; height:100%; border:0; display:block;"
                            title="Contrato PDF">
-                        <div style="padding:40px; text-align:center; color:#fff; background:#525659; height:100%; display:flex; flex-direction:column; justify-content:center; align-items:center;">
-                            <p style="font-size:16px; margin-bottom:20px;">Tu navegador no puede mostrar PDFs.</p>
-                            <a href="{{ $pdfUrl }}" target="_blank" download
-                               style="display:inline-block; padding:12px 24px; background:#6c63ff; color:#fff; text-decoration:none; border-radius:8px; font-size:15px; font-weight:600;">
-                                Descargar contrato PDF
-                            </a>
-                        </div>
                     </object>
                 </div>
-                <div style="margin-top:12px; text-align:center; display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
-                    <a href="{{ $pdfUrl }}" target="_blank" 
-                       style="display:inline-block; padding:10px 18px; background:#6c63ff; color:#fff; text-decoration:none; border-radius:6px; font-size:13px; font-weight:600;">
-                        Ver en pantalla completa
+                <!-- Mobile: botones -->
+                <div class="pdf-mobile-actions">
+                    <p style="font-size:13px; color:#666; text-align:center; margin-bottom:4px;">
+                        Este contrato contiene sus datos personales.
+                    </p>
+                    <a href="{{ $pdfUrl }}" target="_blank" class="pdf-btn">
+                        <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                        </svg>
+                        Ver contrato
                     </a>
-                    <a href="{{ $pdfUrl }}" download
-                       style="display:inline-block; padding:10px 18px; background:#fff; color:#6c63ff; text-decoration:none; border-radius:6px; font-size:13px; font-weight:600; border:2px solid #6c63ff;">
+                    <a href="{{ $pdfUrl }}" download class="pdf-btn outline">
+                        <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                        </svg>
                         Descargar PDF
                     </a>
                 </div>
-                <p style="font-size:12px; color:#666; margin-top:8px; text-align:center;">
-                    Este contrato contiene sus datos personales. Por favor revíselo y firme al final.
-                </p>
             @else
-                <!-- Mostrar HTML renderizado -->
-                <div id="contract-view">
+                <div id="contract-view" style="padding:12px 8px;">
                     {!! preg_replace('/\s*style\s*=\s*["\'][^"\']*["\']/i', '', $clientContract->contract->content) !!}
                 </div>
             @endif
         </div>
     </div>
 
-    <!-- Documentos de identidad -->
+    <!-- Documentos de identidad (pendiente) -->
     @if($clientContract->status !== 'signed')
     <div class="card" id="documentsCard" style="display: {{ $clientContract->require_documents ? 'block' : 'none' }};">
         <div class="card-header">
@@ -416,48 +370,50 @@
         </div>
         <div class="card-body">
             <p style="font-size:12px; color:#666; margin-bottom:12px;">
-                Para su seguridad y la validez del contrato, requerimos fotos claras de <strong>ambas caras</strong> de su documento de identidad. El número del documento debe coincidir con el registrado en el contrato.
+                Requerimos fotos claras de <strong>ambas caras</strong>. Documento registrado: <strong style="color:#1a1a2e;">{{ $clientDni ?? '---' }}</strong>
             </p>
 
             <div class="doc-grid">
                 <!-- Cara frontal -->
-                <div class="doc-box">
-                    <label class="doc-label">Cara frontal del documento</label>
+                <div class="doc-box" id="boxFront">
+                    <label class="doc-label">Cara frontal</label>
                     @if($documentFrontUrl)
                         <img src="{{ $documentFrontUrl }}" class="doc-preview" id="previewFront" alt="Documento frontal">
                     @else
                         <img src="" class="doc-preview" id="previewFront" alt="Documento frontal" style="display:none;">
                     @endif
-                    <label class="doc-upload-btn">
-                        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-                        <span id="frontBtnText">{{ $documentFrontUrl ? 'Cambiar foto' : 'Tomar o subir foto' }}</span>
-                        <input type="file" id="inputFront" accept="image/*" capture="environment" style="display:none;">
+                    <label class="doc-upload-btn" id="btnOpenCamFront">
+                        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                        <span id="frontBtnText">{{ $documentFrontUrl ? 'Cambiar foto' : 'Tomar foto frontal' }}</span>
                     </label>
-                    <input type="text" id="docNumberFront" placeholder="Número del documento (frontal)" class="doc-input" value="{{ $clientContract->document_number_front ?? '' }}">
+                    <span class="doc-status {{ $documentFrontUrl ? 'ok' : 'pending' }}" id="frontStatus">{{ $documentFrontUrl ? 'Documento cargado ✓' : 'Pendiente' }}</span>
                 </div>
 
                 <!-- Cara trasera -->
-                <div class="doc-box">
-                    <label class="doc-label">Cara trasera del documento</label>
+                <div class="doc-box" id="boxBack">
+                    <label class="doc-label">Cara trasera</label>
                     @if($documentBackUrl)
                         <img src="{{ $documentBackUrl }}" class="doc-preview" id="previewBack" alt="Documento trasero">
                     @else
                         <img src="" class="doc-preview" id="previewBack" alt="Documento trasero" style="display:none;">
                     @endif
-                    <label class="doc-upload-btn">
-                        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-                        <span id="backBtnText">{{ $documentBackUrl ? 'Cambiar foto' : 'Tomar o subir foto' }}</span>
-                        <input type="file" id="inputBack" accept="image/*" capture="environment" style="display:none;">
+                    <label class="doc-upload-btn" id="btnOpenCamBack">
+                        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                        <span id="backBtnText">{{ $documentBackUrl ? 'Cambiar foto' : 'Tomar foto trasera' }}</span>
                     </label>
-                    <input type="text" id="docNumberBack" placeholder="Número del documento (trasero)" class="doc-input" value="{{ $clientContract->document_number_back ?? '' }}">
+                    <span class="doc-status {{ $documentBackUrl ? 'ok' : 'pending' }}" id="backStatus">{{ $documentBackUrl ? 'Documento cargado ✓' : 'Pendiente' }}</span>
                 </div>
             </div>
+
+            <!-- Fallback galería (oculto, para accesibilidad) -->
+            <input type="file" id="inputGallery" accept="image/*" style="display:none;">
 
             <div class="doc-validation" id="docValidationMsg" style="display:none;"></div>
         </div>
     </div>
     @endif
 
+    <!-- Documentos ya firmados (solo lectura) -->
     @if($clientContract->status === 'signed' && ($documentFrontUrl || $documentBackUrl))
     <div class="card">
         <div class="card-header">
@@ -490,7 +446,6 @@
             </span>
         </div>
         <div class="card-body">
-
             @if($clientContract->status === 'signed')
                 <div class="signed-signature">
                     <img src="{{ $clientContract->signature }}" alt="Firma">
@@ -513,10 +468,43 @@
                     </div>
                 </div>
             @endif
-
         </div>
     </div>
 
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- MODAL: Cámara con overlay verde             -->
+<!-- ═══════════════════════════════════════════ -->
+<div class="cam-modal" id="camModal">
+    <div class="cam-video-wrap">
+        <video id="camVideo" autoplay playsinline></video>
+        <div class="cam-guide-overlay" id="camGuide">
+            <div class="corner tl"></div><div class="corner tr"></div>
+            <div class="corner bl"></div><div class="corner br"></div>
+        </div>
+    </div>
+    <div class="cam-bottom-bar">
+        <button class="cam-btn-close" id="camClose">✕ Cerrar</button>
+        <button class="cam-btn-capture" id="camCapture"></button>
+        <button class="cam-btn-flip" id="camFlip">↻ Voltear</button>
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- MODAL: Confirmar cara frontal/trasera     -->
+<!-- ═══════════════════════════════════════════ -->
+<div class="confirm-modal" id="confirmModal">
+    <img src="" class="confirm-img" id="confirmImg" alt="Preview">
+    <p class="confirm-title">¿Qué cara del documento es?</p>
+    <p class="confirm-hint">Seleccione la opción correcta para continuar</p>
+    <div class="confirm-btns">
+        <button class="confirm-btn front" id="btnConfirmFront">✓ Cara frontal</button>
+        <button class="confirm-btn back" id="btnConfirmBack">✓ Cara trasera</button>
+    </div>
+    <div style="margin-top:12px;">
+        <button class="confirm-btn retake" id="btnRetake">↺ Tomar otra foto</button>
+    </div>
 </div>
 
 <script>
@@ -527,51 +515,38 @@
     const clientDni = @json($clientDni ?? '');
     const hasFrontSaved = @json((bool) $documentFrontUrl);
     const hasBackSaved  = @json((bool) $documentBackUrl);
+    const STORAGE_KEY = 'contract_sig_' + token;
 
-    // ── Documentos setup ─────────────────────────────────────────────────────
+    // ══ Estado documentos ════════════════════════════════════════════════════
     let documentFrontBase64 = null;
     let documentBackBase64  = null;
     let documentFrontValid  = hasFrontSaved;
     let documentBackValid   = hasBackSaved;
+    let pendingConfirmSide = null; // 'front' o 'back' — lado que se está capturando
+    let lastCapturedBase64 = null;
 
-    const inputFront = document.getElementById('inputFront');
-    const inputBack  = document.getElementById('inputBack');
     const previewFront = document.getElementById('previewFront');
     const previewBack  = document.getElementById('previewBack');
     const frontBtnText = document.getElementById('frontBtnText');
     const backBtnText  = document.getElementById('backBtnText');
-    const docNumberFront = document.getElementById('docNumberFront');
-    const docNumberBack  = document.getElementById('docNumberBack');
+    const frontStatus = document.getElementById('frontStatus');
+    const backStatus  = document.getElementById('backStatus');
     const docValidationMsg = document.getElementById('docValidationMsg');
 
-    function fileToBase64(file) {
-        return new Promise((resolve) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result);
-            reader.readAsDataURL(file);
-        });
-    }
+    // ══ Cámara ══════════════════════════════════════════════════════════════
+    const camModal   = document.getElementById('camModal');
+    const camVideo   = document.getElementById('camVideo');
+    const camCapture = document.getElementById('camCapture');
+    const camClose   = document.getElementById('camClose');
+    const camFlip    = document.getElementById('camFlip');
+    const confirmModal = document.getElementById('confirmModal');
+    const confirmImg   = document.getElementById('confirmImg');
+    const btnConfirmFront = document.getElementById('btnConfirmFront');
+    const btnConfirmBack  = document.getElementById('btnConfirmBack');
+    const btnRetake       = document.getElementById('btnRetake');
 
-    function validateDocumentNumber() {
-        if (!requireDocuments) return true;
-        const frontNum = (docNumberFront.value || '').trim();
-        const backNum  = (docNumberBack.value || '').trim();
-
-        if (!frontNum && !backNum) {
-            showDocValidation('Ingrese el número del documento en al menos uno de los campos.', 'warning');
-            return false;
-        }
-        if (clientDni && frontNum && frontNum !== clientDni) {
-            showDocValidation('El número del documento frontal no coincide con el registrado en el contrato (' + clientDni + ').', 'error');
-            return false;
-        }
-        if (clientDni && backNum && backNum !== clientDni) {
-            showDocValidation('El número del documento trasero no coincide con el registrado en el contrato (' + clientDni + ').', 'error');
-            return false;
-        }
-        hideDocValidation();
-        return true;
-    }
+    let camStream = null;
+    let facingMode = 'environment'; // cámara trasera por defecto
 
     function showDocValidation(msg, type) {
         docValidationMsg.textContent = msg;
@@ -582,45 +557,141 @@
         docValidationMsg.style.display = 'none';
     }
 
-    if (inputFront) {
-        inputFront.addEventListener('change', async function () {
-            if (!this.files || !this.files[0]) return;
-            const base64 = await fileToBase64(this.files[0]);
-            documentFrontBase64 = base64;
+    function setDocStatus(el, type, text) {
+        el.textContent = text;
+        el.className = 'doc-status ' + type;
+    }
+
+    function openCamera(forSide) {
+        pendingConfirmSide = forSide;
+        camModal.classList.add('active');
+        document.body.style.overflow = 'hidden';
+        startCamera();
+    }
+
+    function closeCamera() {
+        camModal.classList.remove('active');
+        document.body.style.overflow = '';
+        stopCamera();
+    }
+
+    async function startCamera() {
+        try {
+            if (camStream) stopCamera();
+            camStream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: facingMode, width: { ideal: 1920 }, height: { ideal: 1080 } },
+                audio: false
+            });
+            camVideo.srcObject = camStream;
+        } catch (err) {
+            alert('No se pudo acceder a la cámara. Asegúrese de dar permisos o use la galería.');
+            closeCamera();
+            // Fallback: abrir galería
+            document.getElementById('inputGallery').click();
+        }
+    }
+
+    function stopCamera() {
+        if (camStream) {
+            camStream.getTracks().forEach(t => t.stop());
+            camStream = null;
+        }
+        camVideo.srcObject = null;
+    }
+
+    function captureFromCamera() {
+        if (!camStream) return;
+        const track = camStream.getVideoTracks()[0];
+        const settings = track.getSettings();
+        const w = settings.width || camVideo.videoWidth || 1280;
+        const h = settings.height || camVideo.videoHeight || 720;
+
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(camVideo, 0, 0, w, h);
+
+        // Convertir a base64 con calidad 0.92
+        lastCapturedBase64 = canvas.toDataURL('image/jpeg', 0.92);
+        closeCamera();
+
+        // Mostrar confirmación de cara
+        confirmImg.src = lastCapturedBase64;
+        confirmModal.classList.add('active');
+    }
+
+    function flipCamera() {
+        facingMode = facingMode === 'environment' ? 'user' : 'environment';
+        startCamera();
+    }
+
+    function confirmSide(side) {
+        // Validar que no sea duplicado accidental
+        if (side === 'front' && documentFrontValid) {
+            if (!confirm('Ya tiene una foto de la cara frontal. ¿Desea reemplazarla?')) return;
+        }
+        if (side === 'back' && documentBackValid) {
+            if (!confirm('Ya tiene una foto de la cara trasera. ¿Desea reemplazarla?')) return;
+        }
+
+        confirmModal.classList.remove('active');
+
+        if (side === 'front') {
+            documentFrontBase64 = lastCapturedBase64;
             documentFrontValid = true;
-            previewFront.src = base64;
+            previewFront.src = lastCapturedBase64;
             previewFront.style.display = 'block';
             frontBtnText.textContent = 'Cambiar foto';
-            validateDocumentNumber();
-        });
-    }
-
-    if (inputBack) {
-        inputBack.addEventListener('change', async function () {
-            if (!this.files || !this.files[0]) return;
-            const base64 = await fileToBase64(this.files[0]);
-            documentBackBase64 = base64;
+            setDocStatus(frontStatus, 'ok', 'Documento cargado ✓');
+        } else {
+            documentBackBase64 = lastCapturedBase64;
             documentBackValid = true;
-            previewBack.src = base64;
+            previewBack.src = lastCapturedBase64;
             previewBack.style.display = 'block';
             backBtnText.textContent = 'Cambiar foto';
-            validateDocumentNumber();
-        });
+            setDocStatus(backStatus, 'ok', 'Documento cargado ✓');
+        }
+
+        hideDocValidation();
+        updateSignButton();
     }
 
-    if (docNumberFront) {
-        docNumberFront.addEventListener('input', validateDocumentNumber);
+    function retakePhoto() {
+        confirmModal.classList.remove('active');
+        openCamera(pendingConfirmSide);
     }
-    if (docNumberBack) {
-        docNumberBack.addEventListener('input', validateDocumentNumber);
-    }
+
+    // Eventos cámara
+    document.getElementById('btnOpenCamFront').addEventListener('click', () => openCamera('front'));
+    document.getElementById('btnOpenCamBack').addEventListener('click', () => openCamera('back'));
+    camCapture.addEventListener('click', captureFromCamera);
+    camClose.addEventListener('click', closeCamera);
+    camFlip.addEventListener('click', flipCamera);
+    btnConfirmFront.addEventListener('click', () => confirmSide('front'));
+    btnConfirmBack.addEventListener('click', () => confirmSide('back'));
+    btnRetake.addEventListener('click', retakePhoto);
+
+    // Fallback galería (por si la cámara no funciona)
+    document.getElementById('inputGallery').addEventListener('change', function() {
+        if (!this.files || !this.files[0]) return;
+        const file = this.files[0];
+        const reader = new FileReader();
+        reader.onload = () => {
+            lastCapturedBase64 = reader.result;
+            confirmImg.src = lastCapturedBase64;
+            pendingConfirmSide = null; // el usuario elegirá en el modal
+            confirmModal.classList.add('active');
+        };
+        reader.readAsDataURL(file);
+    });
 
     function canSign() {
         if (!requireDocuments) return true;
         return documentFrontValid && documentBackValid;
     }
 
-    // ── Canvas setup ─────────────────────────────────────────────────────────
+    // ══ Canvas firma + persistencia ════════════════════════════════════════
     const canvas    = document.getElementById('signatureCanvas');
     if (!canvas) return; // ya firmado
 
@@ -632,10 +703,34 @@
     let drawing     = false;
     let hasStrokes  = false;
 
+    function saveSignature() {
+        if (!hasStrokes) { sessionStorage.removeItem(STORAGE_KEY); return; }
+        try { sessionStorage.setItem(STORAGE_KEY, canvas.toDataURL('image/png')); } catch(e) {}
+    }
+
+    function restoreSignature() {
+        try {
+            const saved = sessionStorage.getItem(STORAGE_KEY);
+            if (!saved) return;
+            const img = new Image();
+            img.onload = function () {
+                ctx.drawImage(img, 0, 0, canvas.width / (window.devicePixelRatio || 1), canvas.height / (window.devicePixelRatio || 1));
+                hasStrokes = true;
+                label.style.opacity = '0';
+                updateSignButton();
+            };
+            img.src = saved;
+        } catch(e) {}
+    }
+
     function resize() {
         const ratio  = window.devicePixelRatio || 1;
         const w      = container.clientWidth;
         const h      = Math.round(w * 0.45);
+        let saved = null;
+        if (hasStrokes) {
+            try { saved = canvas.toDataURL('image/png'); } catch(e) {}
+        }
         canvas.width  = w * ratio;
         canvas.height = h * ratio;
         canvas.style.height = h + 'px';
@@ -644,6 +739,11 @@
         ctx.lineWidth   = 2.2;
         ctx.lineCap     = 'round';
         ctx.lineJoin    = 'round';
+        if (saved) {
+            const img = new Image();
+            img.onload = function () { ctx.drawImage(img, 0, 0, w, h); };
+            img.src = saved;
+        }
     }
 
     function getPos(e) {
@@ -679,46 +779,39 @@
     function onEnd(e) {
         e.preventDefault();
         drawing = false;
+        saveSignature();
     }
 
     function updateSignButton() {
         btnSign.disabled = !hasStrokes || !canSign();
     }
 
-    // Touch
     canvas.addEventListener('touchstart', onStart, { passive: false });
     canvas.addEventListener('touchmove',  onMove,  { passive: false });
     canvas.addEventListener('touchend',   onEnd,   { passive: false });
-    // Mouse
     canvas.addEventListener('mousedown', onStart);
     canvas.addEventListener('mousemove', onMove);
     canvas.addEventListener('mouseup',   onEnd);
 
-    // Limpiar
     btnClear.addEventListener('click', function () {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        hasStrokes         = false;
+        hasStrokes = false;
         updateSignButton();
         label.style.opacity = '1';
+        saveSignature();
     });
 
-    // ── Enviar firma ─────────────────────────────────────────────────────────
+    // ══ Enviar firma ════════════════════════════════════════════════════════
     btnSign.addEventListener('click', async function () {
         if (!hasStrokes) return;
-
         if (requireDocuments) {
             if (!documentFrontValid || !documentBackValid) {
-                showAlert('Debe subir fotos de ambas caras del documento de identidad antes de firmar.', 'error');
-                return;
-            }
-            if (!validateDocumentNumber()) {
-                showAlert('Verifique el número del documento de identidad.', 'error');
+                showAlert('Debe subir fotos de ambas caras del documento antes de firmar.', 'error');
                 return;
             }
         }
 
         const signature = canvas.toDataURL('image/png');
-
         btnSign.classList.add('loading');
         btnSign.disabled = true;
 
@@ -726,8 +819,6 @@
         if (requireDocuments) {
             if (documentFrontBase64) payload.document_front = documentFrontBase64;
             if (documentBackBase64)  payload.document_back  = documentBackBase64;
-            payload.document_number_front = (docNumberFront.value || '').trim();
-            payload.document_number_back  = (docNumberBack.value || '').trim();
         }
 
         try {
@@ -739,6 +830,7 @@
             const data = await res.json();
 
             if (data.status === 0) {
+                sessionStorage.removeItem(STORAGE_KEY);
                 showAlert('¡Contrato firmado exitosamente! Gracias.', 'success');
                 setTimeout(() => location.reload(), 1800);
             } else {
@@ -762,6 +854,7 @@
 
     resize();
     window.addEventListener('resize', resize);
+    setTimeout(restoreSignature, 100);
     updateSignButton();
 })();
 </script>

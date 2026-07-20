@@ -66,6 +66,10 @@ class ContractController extends Controller
 
             $companyId = getSessionCompanyId();
             $dir = "contracts/{$companyId}/documents";
+            $fullDir = storage_path('app/public/' . $dir);
+            if (!is_dir($fullDir)) {
+                mkdir($fullDir, 0755, true);
+            }
 
             $updateData = [];
 

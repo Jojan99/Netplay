@@ -137,6 +137,10 @@ class ContractSignController extends Controller
                     // Guardar documentos
                     $companyId = $cc->company_id;
                     $dir = "contracts/{$companyId}/documents";
+                    $fullDir = storage_path('app/public/' . $dir);
+                    if (!is_dir($fullDir)) {
+                        mkdir($fullDir, 0755, true);
+                    }
                     $updateData = [];
 
                     $frontExt = $this->getBase64ImageExtension($frontData) ?: 'jpg';
@@ -151,22 +155,13 @@ class ContractSignController extends Controller
                     file_put_contents(storage_path('app/public/' . $backPath), $this->extractBase64Image($backData));
                     $updateData['document_back_path'] = $backPath;
 
-                    // Validar número de documento
-                    $docNumberFront = trim($request->input('document_number_front', ''));
-                    $docNumberBack  = trim($request->input('document_number_back', ''));
+                    // Número de documento: usar el DNI registrado del cliente directamente
                     $clientDni = \Illuminate\Support\Facades\DB::table('user_data')
                         ->where('user_id', $cc->user_id)
                         ->value('dni') ?? '';
 
-                    if ($docNumberFront && $clientDni && $docNumberFront !== $clientDni) {
-                        return response()->json(['message' => 'El número del documento frontal no coincide con el registrado en el contrato (' . $clientDni . ').', 'status' => 1]);
-                    }
-                    if ($docNumberBack && $clientDni && $docNumberBack !== $clientDni) {
-                        return response()->json(['message' => 'El número del documento trasero no coincide con el registrado en el contrato (' . $clientDni . ').', 'status' => 1]);
-                    }
-
-                    $updateData['document_number_front'] = $docNumberFront ?: $clientDni;
-                    $updateData['document_number_back']  = $docNumberBack ?: $clientDni;
+                    $updateData['document_number_front'] = $clientDni;
+                    $updateData['document_number_back']  = $clientDni;
 
                     $cc->update($updateData);
                     $cc->refresh();
