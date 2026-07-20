@@ -265,6 +265,41 @@ class ContractSignController extends Controller
     }
 
     /**
+     * POST /api/contracts/detect-document-side
+     * Detecta automáticamente si una imagen es cara frontal o trasera de cédula.
+     * Sin autenticación — usado en la vista de firma del cliente.
+     */
+    public function detectDocumentSide(Request $request): \Illuminate\Http\JsonResponse
+    {
+        try {
+            $imageData = $request->input('image');
+            if (!$imageData) {
+                return response()->json(['status' => 1, 'message' => 'Imagen requerida.']);
+            }
+
+            $binary = $this->extractBase64Image($imageData);
+            if (empty($binary)) {
+                return response()->json(['status' => 1, 'message' => 'Imagen inválida.']);
+            }
+
+            $tmpFile = tempnam(sys_get_temp_dir(), 'doc_detect_') . '.jpg';
+            file_put_contents($tmpFile, $binary);
+
+            $side = \App\Services\DocumentSideDetector::detect($tmpFile);
+            unlink($tmpFile);
+
+            return response()->json([
+                'status' => 0,
+                'side'   => $side, // 'front', 'back', 'unknown'
+                'confidence' => $side === 'unknown' ? 'low' : 'medium',
+            ]);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('[DetectDocSide] Error: ' . $e->getMessage());
+            return response()->json(['status' => 1, 'message' => 'Error al analizar imagen.']);
+        }
+    }
+
+    /**
      * Valida que un string base64 sea una imagen válida.
      */
     private function isValidImageBase64(string $base64): bool

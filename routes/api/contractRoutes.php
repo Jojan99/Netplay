@@ -7,6 +7,9 @@ use Illuminate\Support\Facades\Route;
 // Firma por token — sin JWT (el cliente accede desde el link)
 Route::post('/contracts/sign-token/{token}', [ContractSignController::class, 'sign']);
 
+// Pre-detección de cara de documento (sin JWT, usado en vista de firma)
+Route::post('/contracts/detect-document-side', [ContractSignController::class, 'detectDocumentSide']);
+
 Route::prefix('contracts')->middleware(['jwt.verify'])->group(function () {
 
     // Plantillas de contrato (ADMIN / CONTADOR)
