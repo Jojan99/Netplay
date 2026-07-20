@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Firma de Contrato</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.5.136/pdf.min.mjs" type="module"></script>
     <style>
@@ -19,6 +19,10 @@
             padding: 10px 16px; text-align: center;
             position: sticky; top: 0; z-index: 100;
             box-shadow: 0 2px 12px rgba(0,0,0,.3);
+        }
+        /* Cuando la cámara está abierta, header NO debe ser sticky para evitar saltos */
+        body.cam-open .header {
+            position: relative;
         }
         .header h1 { font-size: 15px; font-weight: 600; }
         .header p  { font-size: 11px; color: #aac; margin-top: 2px; }
@@ -158,8 +162,9 @@
 
         /* Cámara */
         .cam-modal {
-            display: none; position: fixed; inset: 0; z-index: 200;
-            background: #000; flex-direction: column;
+            display: none; position: fixed; top: 0; left: 0;
+            width: 100vw; height: 100vh; height: 100dvh;
+            z-index: 200; background: #000; flex-direction: column;
         }
         .cam-modal.active { display: flex; }
         .cam-video-wrap {
@@ -168,7 +173,9 @@
             background: #111;
         }
         .cam-video-wrap video {
-            width: 100%; height: 100%; object-fit: cover;
+            width: 100%; height: 100%;
+            object-fit: contain; /* MUESTRA TODA LA IMAGEN DE LA CÁMARA sin recortar */
+            background: #000;
         }
         /* Overlay horizontal para cédula */
         .cam-guide-overlay {
@@ -629,15 +636,22 @@
         el.textContent = text; el.className = 'doc-status ' + type;
     }
 
+    let savedScrollY = 0;
+
     function openCamera() {
-        camModal.classList.add('active');
+        savedScrollY = window.scrollY || window.pageYOffset || 0;
+        document.body.classList.add('cam-open');
         document.body.style.overflow = 'hidden';
+        camModal.classList.add('active');
         startCamera();
     }
     function closeCamera() {
         camModal.classList.remove('active');
+        document.body.classList.remove('cam-open');
         document.body.style.overflow = '';
         stopCamera();
+        // Restaurar scroll sin salto visual
+        window.scrollTo({ top: savedScrollY, behavior: 'instant' });
     }
 
     async function startCamera() {
@@ -659,41 +673,67 @@
     }
 
     /**
-     * Recorta exactamente la región del overlay verde del video
-     * y retorna base64 de la porción recortada.
+     * Recorta exactamente la región del overlay verde del video.
+     * Corrige por object-fit:contain para que el recorte sea preciso.
      */
     function captureAndCrop() {
-        if (!camStream) return null;
+        if (!camStream || !camVideo.videoWidth) return null;
 
-        // Canvas completo del frame actual
-        const fullW = camVideo.videoWidth || 1280;
-        const fullH = camVideo.videoHeight || 720;
-        const fullCanvas = document.createElement('canvas');
-        fullCanvas.width = fullW;
-        fullCanvas.height = fullH;
-        fullCanvas.getContext('2d').drawImage(camVideo, 0, 0, fullW, fullH);
+        const vidW = camVideo.videoWidth;
+        const vidH = camVideo.videoHeight;
+        const vidAspect = vidW / vidH;
 
-        // Calcular coordenadas del overlay en píxeles del video
-        const videoRect = camVideo.getBoundingClientRect();
+        // Dimensiones del elemento video en pantalla
+        const rectW = camVideo.clientWidth;
+        const rectH = camVideo.clientHeight;
+        const rectAspect = rectW / rectH;
+
+        // Calcular área visible del video dentro del elemento (object-fit:contain)
+        let renderedW, renderedH, offsetX, offsetY;
+        if (rectAspect > vidAspect) {
+            // Contenedor más ancho: barras negras a los lados
+            renderedH = rectH;
+            renderedW = rectH * vidAspect;
+            offsetX = (rectW - renderedW) / 2;
+            offsetY = 0;
+        } else {
+            // Contenedor más alto: barras negras arriba/abajo
+            renderedW = rectW;
+            renderedH = rectW / vidAspect;
+            offsetX = 0;
+            offsetY = (rectH - renderedH) / 2;
+        }
+
+        // Overlay rect relativo al elemento video
         const overlayRect = camOverlay.getBoundingClientRect();
+        const videoRect = camVideo.getBoundingClientRect();
 
-        const scaleX = fullW / videoRect.width;
-        const scaleY = fullH / videoRect.height;
+        // Overlay coords dentro del área visible del video
+        const olLeft = overlayRect.left - videoRect.left - offsetX;
+        const olTop  = overlayRect.top  - videoRect.top  - offsetY;
+        const olW    = overlayRect.width;
+        const olH    = overlayRect.height;
 
-        const cropX = Math.max(0, Math.round((overlayRect.left - videoRect.left) * scaleX));
-        const cropY = Math.max(0, Math.round((overlayRect.top - videoRect.top) * scaleY));
-        const cropW = Math.round(overlayRect.width * scaleX);
-        const cropH = Math.round(overlayRect.height * scaleY);
+        // Mapear a coordenadas nativas del video
+        const scaleX = vidW / renderedW;
+        const scaleY = vidH / renderedH;
 
-        // Crear canvas recortado
+        const cropX = Math.max(0, Math.round(olLeft * scaleX));
+        const cropY = Math.max(0, Math.round(olTop  * scaleY));
+        const cropW = Math.round(Math.min(olW, renderedW - olLeft) * scaleX);
+        const cropH = Math.round(Math.min(olH, renderedH - olTop)  * scaleY);
+
+        if (cropW <= 0 || cropH <= 0) return null;
+
+        // Dibujar frame completo
+        const fullCanvas = document.createElement('canvas');
+        fullCanvas.width = vidW; fullCanvas.height = vidH;
+        fullCanvas.getContext('2d').drawImage(camVideo, 0, 0, vidW, vidH);
+
+        // Recortar
         const cropCanvas = document.createElement('canvas');
-        cropCanvas.width = cropW;
-        cropCanvas.height = cropH;
-        cropCanvas.getContext('2d').drawImage(
-            fullCanvas,
-            cropX, cropY, cropW, cropH, // source
-            0, 0, cropW, cropH           // dest
-        );
+        cropCanvas.width = cropW; cropCanvas.height = cropH;
+        cropCanvas.getContext('2d').drawImage(fullCanvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
 
         return cropCanvas.toDataURL('image/jpeg', 0.92);
     }
