@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Client;
 
 use App\Constants\ApiResponseConstants;
 use App\Http\Controllers\Controller;
+use App\Services\NotificationRouterService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -39,7 +40,7 @@ class ClientTicketController extends Controller
             ->select(
                 't.id',
                 't.category',
-                // 'observation' omitido: contiene notas internas del admin, no visibles al cliente
+                't.observation',
                 't.source',
                 't.created_at',
                 't.updated_at',
@@ -100,8 +101,23 @@ class ClientTicketController extends Controller
         $ticket = DB::table('tickets as t')
             ->leftJoin('ticket_status as ts', 'ts.id', '=', 't.status_id')
             ->where('t.id', $ticketId)
-            ->select('t.id', 't.category', 't.source', 't.created_at', 't.updated_at', 'ts.name as status')
+            ->select('t.id', 't.category', 't.observation', 't.source', 't.created_at', 't.updated_at', 'ts.name as status')
             ->first();
+
+        // Notificar a admins vía WhatsApp
+        $userData = DB::table('user_data')->where('user_id', $user->id)->first(['names', 'lastname', 'phone', 'address']);
+        $clientName = trim(($userData->names ?? '') . ' ' . ($userData->lastname ?? '')) ?: $user->username;
+        $hora = now()->toDateTimeString();
+        $message =
+            "🆕 *NUEVO REPORTE DE CLIENTE*\n\n" .
+            "🆔 *ID:* {$ticketId}\n" .
+            "👤 *Cliente:* {$clientName}\n" .
+            "📞 *Teléfono:* " . ($userData->phone ?? 'N/A') . "\n" .
+            "📍 *Dirección:* " . ($userData->address ?? 'N/A') . "\n" .
+            "📂 *Categoría:* {$request->category}\n\n" .
+            "📝 *Descripción:*\n{$request->description}\n\n" .
+            "⏰ *Fecha:* {$hora}";
+        NotificationRouterService::dispatch($user->company_id, 'ticket_support', $message);
 
         return response()->json([
             'message' => 'Reporte enviado correctamente. Nuestro equipo lo atenderá pronto.',
@@ -114,16 +130,16 @@ class ClientTicketController extends Controller
      * GET /api/client/tickets/{id}
      * Detalle de un ticket específico (solo si pertenece al cliente).
      */
-    public function show(int $id): JsonResponse
+    public function show(string|int $id): JsonResponse
     {
         $user = JWTAuth::user();
 
         $ticket = DB::table('tickets as t')
             ->leftJoin('ticket_status as ts', 'ts.id', '=', 't.status_id')
-            ->where('t.id', $id)
+            ->where('t.id', (int) $id)
             ->where('t.user_id', $user->id)
             ->where('t.company_id', $user->company_id)
-            ->select('t.id', 't.category', 't.source', 't.created_at', 't.updated_at', 'ts.name as status')
+            ->select('t.id', 't.category', 't.observation', 't.source', 't.created_at', 't.updated_at', 'ts.name as status')
             ->first();
 
         if (!$ticket) {

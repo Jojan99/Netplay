@@ -103,17 +103,23 @@ class ClientInvoiceController extends Controller
      * GET /api/client/invoices/{id}
      * Detalle de una factura específica (solo si pertenece al cliente).
      */
-    public function show(int $id): JsonResponse
+    public function show(string|int $id): JsonResponse
     {
         $user = JWTAuth::user();
 
-        $invoice = DB::table('det_facturations as df')
+        $query = DB::table('det_facturations as df')
             ->join('cab_facturations as cf', 'cf.id', '=', 'df.cab_id')
-            ->where('df.id', $id)
             ->where('cf.user_id', $user->id)
             ->where('cf.company_id', $user->company_id)
-            ->select('df.*', 'cf.user_id', 'cf.company_id')
-            ->first();
+            ->select('df.*', 'cf.user_id', 'cf.company_id');
+
+        if (is_numeric($id)) {
+            $query->where('df.id', (int) $id);
+        } else {
+            $query->where('df.number_facture', $id);
+        }
+
+        $invoice = $query->first();
 
         if (!$invoice) {
             return response()->json([
@@ -164,18 +170,24 @@ class ClientInvoiceController extends Controller
      * Devuelve la URL del PDF de una factura (reutiliza endpoint existente).
      * El frontend usará esta URL para descargar directamente.
      */
-    public function pdfUrl(int $id): JsonResponse
+    public function pdfUrl(string|int $id): JsonResponse
     {
         $user = JWTAuth::user();
 
-        // Verificar que la factura pertenece al cliente y obtener number_facture
-        $invoice = DB::table('det_facturations as df')
+        // Soportar tanto ID numérico como number_facture (ej: NT9607)
+        $query = DB::table('det_facturations as df')
             ->join('cab_facturations as cf', 'cf.id', '=', 'df.cab_id')
-            ->where('df.id', $id)
             ->where('cf.user_id', $user->id)
             ->where('cf.company_id', $user->company_id)
-            ->select('df.id', 'df.number_facture')
-            ->first();
+            ->select('df.id', 'df.number_facture');
+
+        if (is_numeric($id)) {
+            $query->where('df.id', (int) $id);
+        } else {
+            $query->where('df.number_facture', $id);
+        }
+
+        $invoice = $query->first();
 
         if (!$invoice) {
             return response()->json([
@@ -201,7 +213,7 @@ class ClientInvoiceController extends Controller
      * Envía la factura al número de WhatsApp del cliente.
      * Reutiliza el endpoint existente de GeneratePdfController.
      */
-    public function sendWhatsapp(int $id): JsonResponse
+    public function sendWhatsapp(string|int $id): JsonResponse
     {
         return $this->forwardToGeneratePdf($id, 'sendInvoiceByWhatsApp');
     }
@@ -210,7 +222,7 @@ class ClientInvoiceController extends Controller
      * POST /api/client/invoices/{id}/send-email
      * Envía la factura por correo electrónico del cliente.
      */
-    public function sendEmail(int $id): JsonResponse
+    public function sendEmail(string|int $id): JsonResponse
     {
         return $this->forwardToGeneratePdf($id, 'sendInvoiceByEmail');
     }
@@ -219,7 +231,7 @@ class ClientInvoiceController extends Controller
      * POST /api/client/invoices/{id}/send
      * Envía la factura por el canal especificado (whatsapp, email, both).
      */
-    public function send(Request $request, int $id): JsonResponse
+    public function send(Request $request, string|int $id): JsonResponse
     {
         $channel = $request->query('channel', 'whatsapp');
 
@@ -233,14 +245,20 @@ class ClientInvoiceController extends Controller
 
         $user = JWTAuth::user();
 
-        // Verificar propiedad de la factura
-        $invoice = DB::table('det_facturations as df')
+        // Soportar tanto ID numérico como number_facture
+        $query = DB::table('det_facturations as df')
             ->join('cab_facturations as cf', 'cf.id', '=', 'df.cab_id')
-            ->where('df.id', $id)
             ->where('cf.user_id', $user->id)
             ->where('cf.company_id', $user->company_id)
-            ->select('df.id')
-            ->first();
+            ->select('df.id');
+
+        if (is_numeric($id)) {
+            $query->where('df.id', (int) $id);
+        } else {
+            $query->where('df.number_facture', $id);
+        }
+
+        $invoice = $query->first();
 
         if (!$invoice) {
             return response()->json([
@@ -249,6 +267,9 @@ class ClientInvoiceController extends Controller
                 'status'  => ApiResponseConstants::ERROR,
             ], JsonResponse::HTTP_NOT_FOUND);
         }
+
+        // Usar el ID numérico real para la petición interna
+        $numericId = $invoice->id;
 
         // Verificar switches de la empresa
         $company = Company::find($user->company_id);
@@ -265,7 +286,7 @@ class ClientInvoiceController extends Controller
         }
 
         $internalRequest = Request::create(
-            '/api/generatePdf/sendInvoice/' . $id . '?channel=' . $channel,
+            '/api/generatePdf/sendInvoice/' . $numericId . '?channel=' . $channel,
             'POST',
             [],
             [],
@@ -289,17 +310,24 @@ class ClientInvoiceController extends Controller
      * GET /api/client/invoices/{id}/send-history
      * Historial de envíos de una factura.
      */
-    public function sendHistory(int $id): JsonResponse
+    public function sendHistory(string|int $id): JsonResponse
     {
         $user = JWTAuth::user();
 
-        $invoice = DB::table('det_facturations as df')
+        // Soportar tanto ID numérico como number_facture
+        $query = DB::table('det_facturations as df')
             ->join('cab_facturations as cf', 'cf.id', '=', 'df.cab_id')
-            ->where('df.id', $id)
             ->where('cf.user_id', $user->id)
             ->where('cf.company_id', $user->company_id)
-            ->select('df.id')
-            ->first();
+            ->select('df.id');
+
+        if (is_numeric($id)) {
+            $query->where('df.id', (int) $id);
+        } else {
+            $query->where('df.number_facture', $id);
+        }
+
+        $invoice = $query->first();
 
         if (!$invoice) {
             return response()->json([
@@ -310,7 +338,7 @@ class ClientInvoiceController extends Controller
         }
 
         $logs = DB::table('invoice_send_logs')
-            ->where('det_facturation_id', $id)
+            ->where('det_facturation_id', $invoice->id)
             ->orderByDesc('created_at')
             ->limit(20)
             ->get();
@@ -325,18 +353,24 @@ class ClientInvoiceController extends Controller
     /**
      * Helper: reenvía la petición al GeneratePdfController internamente.
      */
-    private function forwardToGeneratePdf(int $id, string $action): JsonResponse
+    private function forwardToGeneratePdf(string|int $id, string $action): JsonResponse
     {
         $user = JWTAuth::user();
 
-        // Verificar propiedad de la factura
-        $invoice = DB::table('det_facturations as df')
+        // Soportar tanto ID numérico como number_facture
+        $query = DB::table('det_facturations as df')
             ->join('cab_facturations as cf', 'cf.id', '=', 'df.cab_id')
-            ->where('df.id', $id)
             ->where('cf.user_id', $user->id)
             ->where('cf.company_id', $user->company_id)
-            ->select('df.id')
-            ->first();
+            ->select('df.id');
+
+        if (is_numeric($id)) {
+            $query->where('df.id', (int) $id);
+        } else {
+            $query->where('df.number_facture', $id);
+        }
+
+        $invoice = $query->first();
 
         if (!$invoice) {
             return response()->json([
@@ -346,8 +380,11 @@ class ClientInvoiceController extends Controller
             ], JsonResponse::HTTP_NOT_FOUND);
         }
 
+        // Usar el ID numérico real para la petición interna
+        $numericId = $invoice->id;
+
         $internalRequest = Request::create(
-            '/api/generatePdf/' . $action . '/' . $id,
+            '/api/generatePdf/' . $action . '/' . $numericId,
             'POST',
             [],
             [],

@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use Tymon\JWTAuth\Facades\JWTAuth;
 
@@ -109,6 +110,52 @@ class ClientProfileController extends Controller
 
         return response()->json([
             'message' => 'Perfil actualizado correctamente',
+            'data'    => null,
+            'status'  => ApiResponseConstants::SUCCESS,
+        ], JsonResponse::HTTP_OK);
+    }
+
+    /**
+     * POST /api/client/change-password
+     * Cambia la contraseña del cliente autenticado.
+     */
+    public function changePassword(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'current_password' => 'required|string|min:4',
+            'new_password'     => 'required|string|min:6|confirmed',
+        ], [
+            'current_password.required' => 'La contraseña actual es obligatoria',
+            'new_password.required'     => 'La nueva contraseña es obligatoria',
+            'new_password.min'          => 'La nueva contraseña debe tener al menos 6 caracteres',
+            'new_password.confirmed'    => 'Las contraseñas no coinciden',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => 'Datos inválidos',
+                'data'    => $validator->errors(),
+                'status'  => ApiResponseConstants::ERROR,
+            ], JsonResponse::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $user = JWTAuth::user();
+
+        if (!Hash::check($request->input('current_password'), $user->password)) {
+            return response()->json([
+                'message' => 'La contraseña actual es incorrecta',
+                'data'    => null,
+                'status'  => ApiResponseConstants::ERROR,
+            ], JsonResponse::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        DB::table('users')->where('id', $user->id)->update([
+            'password'   => Hash::make($request->input('new_password')),
+            'updated_at' => now(),
+        ]);
+
+        return response()->json([
+            'message' => 'Contraseña actualizada correctamente',
             'data'    => null,
             'status'  => ApiResponseConstants::SUCCESS,
         ], JsonResponse::HTTP_OK);

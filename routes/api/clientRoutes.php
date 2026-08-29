@@ -62,4 +62,5 @@ Route::prefix('client')->middleware(['jwt.client'])->group(function () {
     // Perfil
     Route::get('profile', [ClientProfileController::class, 'show']);
     Route::put('profile', [ClientProfileController::class, 'update']);
+    Route::post('change-password', [ClientProfileController::class, 'changePassword']);
 });
