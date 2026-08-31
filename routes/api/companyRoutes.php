@@ -83,6 +83,18 @@ Route::prefix('company')->group(function () {
 
             // Toggle WA por usuario
             Route::put('users/{userId}/toggle', [CompanyController::class, 'toggleUserWhatsApp']);
+
+            // ── Meta WhatsApp API Official ─────────────────────────────────────
+            Route::prefix('meta')->group(function () {
+                Route::get('phone-info',            [\App\Http\Controllers\MetaWhatsAppController::class, 'getPhoneInfo']);
+                Route::get('templates',             [\App\Http\Controllers\MetaWhatsAppController::class, 'getTemplates']);
+                Route::post('templates',            [\App\Http\Controllers\MetaWhatsAppController::class, 'createTemplate']);
+                Route::delete('templates/{name}',   [\App\Http\Controllers\MetaWhatsAppController::class, 'deleteTemplate']);
+                Route::get('conversation-window/{phone}', [\App\Http\Controllers\MetaWhatsAppController::class, 'checkConversationWindow']);
+                Route::post('send-test',            [\App\Http\Controllers\MetaWhatsAppController::class, 'sendTest']);
+                Route::get('logs',                  [\App\Http\Controllers\MetaWhatsAppController::class, 'getLogs']);
+                Route::post('validate-phone',       [\App\Http\Controllers\MetaWhatsAppController::class, 'validatePhone']);
+            });
         });
     });
 });
