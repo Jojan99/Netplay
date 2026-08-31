@@ -39,7 +39,7 @@ class MetaWhatsAppController extends Controller
         try {
             $url = "https://graph.facebook.com/{$config['api_version']}/{$config['phone_number_id']}";
             $response = Http::withToken($config['access_token'])
-                ->get($url, ['fields' => 'id,display_phone_number,quality_rating,verified_name,account_mode,code_verification_status,certificate,about,phone_number,quality_score']);
+                ->get($url, ['fields' => 'id,display_phone_number,verified_name,quality_rating,account_mode,code_verification_status,certificate,status']);
 
             if ($response->failed()) {
                 return response()->json([
