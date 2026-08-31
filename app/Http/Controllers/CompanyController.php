@@ -222,7 +222,7 @@ class CompanyController extends Controller
         $company = Company::findOrFail(getSessionCompanyId());
 
         $subscription = null;
-        if ($company->wa_api_key) {
+        if ($company->wa_api_key && $company->wa_provider !== 'meta') {
             try {
                 $me = (new WhatsAppApiService())->getCompanyMe($company->wa_api_key);
                 $subscription = [
@@ -236,24 +236,39 @@ class CompanyController extends Controller
         }
 
         return standardApiReponse('OK', [
-            'wa_company_id'    => $company->wa_company_id,
-            'wa_instance_id'   => $company->wa_instance_id,
-            'whatsapp_enabled' => (bool) $company->whatsapp_enabled,
-            'has_credentials'  => !empty($company->wa_api_key),
-            'subscription'     => $subscription,
+            'wa_provider'         => $company->wa_provider ?? 'netplay',
+            'wa_company_id'       => $company->wa_company_id,
+            'wa_instance_id'      => $company->wa_instance_id,
+            'wa_phone_number_id'  => $company->wa_phone_number_id,
+            'wa_access_token'     => $company->wa_access_token ? $this->maskToken($company->wa_access_token) : null,
+            'whatsapp_enabled'    => (bool) $company->whatsapp_enabled,
+            'has_credentials'     => !empty($company->wa_api_key) || ($company->wa_provider === 'meta' && $company->wa_access_token),
+            'subscription'        => $subscription,
         ], false, JsonResponse::HTTP_OK);
     }
 
     /**
      * PUT /api/company/whatsapp/config
      * Actualiza instancia por defecto y/o habilita/deshabilita WA.
-     * body: { wa_instance_id?, whatsapp_enabled? }
+     * body: { wa_provider?, wa_instance_id?, wa_phone_number_id?, wa_access_token?, whatsapp_enabled? }
      */
     public function updateWhatsAppConfig(Request $request): object
     {
         $company = Company::findOrFail(getSessionCompanyId());
 
-        $fields = $request->only(['wa_instance_id', 'whatsapp_enabled']);
+        $fields = $request->only([
+            'wa_provider',
+            'wa_instance_id',
+            'wa_phone_number_id',
+            'wa_access_token',
+            'whatsapp_enabled',
+        ]);
+
+        // Validar provider
+        if (isset($fields['wa_provider']) && !in_array($fields['wa_provider'], ['netplay', 'meta'])) {
+            return standardApiReponse('Provider inválido. Use: netplay o meta', null, true, JsonResponse::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
         $company->update($fields);
 
         return standardApiReponse('Configuración actualizada', null, false, JsonResponse::HTTP_OK);
@@ -898,5 +913,15 @@ class CompanyController extends Controller
         } catch (\Throwable $e) {
             return standardApiReponse('No se pudieron obtener grupos: ' . $e->getMessage(), [], false, JsonResponse::HTTP_OK);
         }
+    }
+
+    /**
+     * Enmascara un token para mostrar solo los últimos 4 caracteres.
+     */
+    private function maskToken(?string $token): ?string
+    {
+        if (!$token) return null;
+        if (strlen($token) <= 8) return '***';
+        return substr($token, 0, 4) . '...' . substr($token, -4);
     }
 }

@@ -49,6 +49,10 @@ Route::prefix('webhooks')->group(function () {
     Route::post('wompi',    [PaymentGatewayController::class, 'webhookWompi']);
     Route::post('epayco',   [PaymentGatewayController::class, 'webhookEpayco']);
     Route::post('zonapago', [PaymentGatewayController::class, 'webhookZonapago']);
+
+    // 📥 Webhook oficial de Meta (WhatsApp Business API)
+    Route::get('whatsapp-meta',  [\App\Http\Controllers\WhatsAppWebhookController::class, 'verify']);
+    Route::post('whatsapp-meta', [\App\Http\Controllers\WhatsAppWebhookController::class, 'receive']);
 });
 
 // ── Portal cliente: generar link de pago ─────────────────────────────────────

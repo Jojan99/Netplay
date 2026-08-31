@@ -217,10 +217,19 @@ public function execute(array $payload): array
 
     // ─── Auto mensaje solo en primer mensaje ───
     if ($this->repository->isFirstMessage($conversationId)) {
-        $this->whatsAppService->mensajeInformativo(
-            $phone,
-            "👋 Hola, gracias por contactar a *Netplay*.\n\nEn breve uno de nuestros asesores continuará la conversación contigo."
-        );
+        try {
+            $this->whatsAppService->mensajeInformativo(
+                $phone,
+                "👋 Hola, gracias por contactar a *Netplay*.\n\nEn breve uno de nuestros asesores continuará la conversación contigo."
+            );
+        } catch (\Throwable $e) {
+            Log::warning('[Auto-mensaje] No se pudo enviar mensaje de bienvenida', [
+                'conversation_id' => $conversationId,
+                'phone'           => $phone,
+                'error'           => $e->getMessage(),
+            ]);
+            // No fallar el webhook si el auto-mensaje no se puede enviar
+        }
     }
 
     // ─── Broadcast mensaje nuevo ───

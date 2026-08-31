@@ -5,161 +5,84 @@ namespace App\Services;
 use App\Models\Company;
 use App\Models\UserData;
 
+/**
+ * WhatsAppService actúa como router/proxy según el provider configurado:
+ * - 'netplay'  → Usa el servicio interno (WhatsApp Web con QR, 181.48.150.43:3001)
+ * - 'meta'     → Usa la API oficial de Meta (WhatsApp Business API)
+ * - null/otro  → Fallback al servicio interno (compatibilidad hacia atrás)
+ */
 class WhatsAppService
 {
-    private bool   $enabled;
-    private string $apiKey;
-    private string $instanceId;
-    private string $baseUrl;
+    private NetplayWhatsAppService|null $netplayService = null;
+    private MetaWhatsAppService|null    $metaService    = null;
+    private string                      $provider       = 'netplay';
 
     public function __construct(?int $companyId = null, bool $ignoreEnabledFlag = false)
     {
         $id = $companyId ?? getSessionCompanyId();
-
         $company = $id ? Company::find($id) : null;
 
-        if ($company && $company->wa_api_key && $company->wa_instance_id) {
-            // Si ignoreEnabledFlag es true, solo verificamos credenciales (útil para envío de facturas
-            // cuando invoice_whatsapp_enabled está activo pero whatsapp_enabled global no lo está)
-            $this->enabled    = $ignoreEnabledFlag ? true : (bool) $company->whatsapp_enabled;
-            $this->apiKey     = $company->wa_api_key;
-            $this->instanceId = $company->wa_instance_id;
-        } else {
-            // Fallback a config global (.env) para compatibilidad
-            $this->enabled    = (bool) config('services.netplay_whatsapp.enabled', false);
-            $this->apiKey     = config('services.netplay_whatsapp.api_key', '');
-            $this->instanceId = config('services.netplay_whatsapp.instance_id', '');
+        // Determinar provider
+        if ($company && $company->wa_provider) {
+            $this->provider = $company->wa_provider;
+        } elseif (config('services.meta_whatsapp.enabled')) {
+            $this->provider = 'meta';
         }
 
-        $this->baseUrl = rtrim(config('services.netplay_whatsapp.base_url', 'http://181.48.150.43:3001/crm'), '/');
+        // Instanciar el servicio correspondiente
+        if ($this->provider === 'meta') {
+            $this->metaService = new MetaWhatsAppService($companyId);
+        } else {
+            $this->netplayService = new NetplayWhatsAppService($companyId, $ignoreEnabledFlag);
+        }
     }
 
     // ── TEXTO ────────────────────────────────────────
     public function mensajeInformativo(string $to, string $body): array
     {
-        if (!$this->enabled) return ['success' => false, 'error' => 'WhatsApp deshabilitado para esta empresa.'];
-        return $this->sendRequest('send', ['number' => $to, 'message' => $body]);
+        return $this->delegate(__FUNCTION__, func_get_args());
     }
 
     // ── DOCUMENTO / PDF ──────────────────────────────
     public function sendDocument(string $to, string $documentUrl, string $filename, string $caption = ''): array
     {
-        if (!$this->enabled) return ['success' => false, 'error' => 'WhatsApp deshabilitado para esta empresa.'];
-        return $this->sendRequest('send/document', ['number' => $to, 'url' => $documentUrl, 'filename' => $filename, 'caption' => $caption]);
+        return $this->delegate(__FUNCTION__, func_get_args());
     }
 
     // ── DOCUMENTO / PDF (por contenido base64) ────────────────────────
     public function sendDocumentData(string $to, string $base64Content, string $filename, string $caption = '', string $mimetype = 'application/pdf'): array
     {
-        if (!$this->enabled) return ['success' => false, 'error' => 'WhatsApp deshabilitado para esta empresa.'];
-        return $this->sendRequest('send/document-data', [
-            'number'   => $to,
-            'data'     => $base64Content,
-            'filename' => $filename,
-            'mimetype' => $mimetype,
-            'caption'  => $caption,
-        ]);
+        return $this->delegate(__FUNCTION__, func_get_args());
     }
 
     // ── IMAGEN ───────────────────────────────────────
     public function sendImage(string $to, string $mediaUrl, string $caption = ''): array
     {
-        if (!$this->enabled) return ['success' => false, 'error' => 'WhatsApp deshabilitado para esta empresa.'];
-        return $this->sendRequest('send/image', ['number' => $to, 'url' => $mediaUrl, 'caption' => $caption]);
+        return $this->delegate(__FUNCTION__, func_get_args());
     }
 
     // ── VIDEO ────────────────────────────────────────
     public function sendVideo(string $to, string $mediaUrl, string $caption = ''): array
     {
-        if (!$this->enabled) return ['success' => false, 'error' => 'WhatsApp deshabilitado para esta empresa.'];
-        return $this->sendRequest('send/video', ['number' => $to, 'url' => $mediaUrl, 'caption' => $caption]);
+        return $this->delegate(__FUNCTION__, func_get_args());
     }
 
     // ── AUDIO ────────────────────────────────────────
     public function sendAudio(string $to, string $mediaUrl): array
     {
-        if (!$this->enabled) return ['success' => false, 'error' => 'WhatsApp deshabilitado para esta empresa.'];
-        return $this->sendRequest('send/audio', ['number' => $to, 'url' => $mediaUrl, 'ptt' => false]);
+        return $this->delegate(__FUNCTION__, func_get_args());
     }
 
     // ── NOTA DE VOZ ──────────────────────────────────
     public function sendVoice(string $to, string $mediaUrl): array
     {
-        if (!$this->enabled) return ['success' => false, 'error' => 'WhatsApp deshabilitado para esta empresa.'];
-        return $this->sendRequest('send/audio', ['number' => $to, 'url' => $mediaUrl, 'ptt' => true]);
+        return $this->delegate(__FUNCTION__, func_get_args());
     }
 
     // ── ENVÍO MASIVO / BATCH ─────────────────────────
-    /**
-     * Encola múltiples mensajes en el whatsapp-service para envío con rate limiting automático.
-     * Divide en chunks para evitar error 413 Payload Too Large.
-     *
-     * @param array $messages Array de mensajes: [['number' => '...', 'message' => '...', 'type' => 'text'], ...]
-     * @return array Respuesta acumulada: ['queued' => N, 'invalid' => N, 'chunks' => N]
-     */
     public function sendBulk(array $messages): array
     {
-        if (!$this->enabled) return ['queued' => 0, 'invalid' => count($messages), 'chunks' => 0];
-
-        $chunkSize = 50; // Máximo mensajes por request para evitar 413
-        $chunks = array_chunk($messages, $chunkSize);
-
-        $totalQueued = 0;
-        $totalInvalid = 0;
-        $chunkCount = 0;
-
-        // El whatsapp-service monta sus rutas en /instances/, no en /crm/instances/
-        $baseUrl = preg_replace('#/crm$#', '', $this->baseUrl);
-        $url = "{$baseUrl}/instances/{$this->instanceId}/send/batch";
-
-        foreach ($chunks as $index => $chunk) {
-            $chunkCount++;
-
-            $curl = curl_init();
-            curl_setopt_array($curl, [
-                CURLOPT_URL            => $url,
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_POST           => true,
-                CURLOPT_POSTFIELDS     => json_encode(['messages' => $chunk]),
-                CURLOPT_HTTPHEADER     => [
-                    'Content-Type: application/json',
-                    'Accept: application/json',
-                    "x-api-key: {$this->apiKey}",
-                ],
-                CURLOPT_TIMEOUT        => 60,
-                CURLOPT_SSL_VERIFYPEER => false,
-            ]);
-
-            $response = curl_exec($curl);
-            $err      = curl_error($curl);
-            $httpCode = curl_getinfo($curl, CURLINFO_HTTP_CODE);
-            curl_close($curl);
-
-            if ($err) {
-                throw new \RuntimeException("Error de conexión WA Batch chunk {$chunkCount}: {$err}");
-            }
-
-            $json = @json_decode($response, true);
-
-            if ($httpCode < 200 || $httpCode >= 300) {
-                $msg = $json['message'] ?? $response;
-                throw new \RuntimeException("Error WA Batch chunk {$chunkCount} HTTP {$httpCode}: {$msg}");
-            }
-
-            $totalQueued  += $json['queued'] ?? 0;
-            $totalInvalid += $json['invalid'] ?? 0;
-
-            // Pequeña pausa entre chunks para no saturar
-            if ($index < count($chunks) - 1) {
-                sleep(2);
-            }
-        }
-
-        return [
-            'queued'  => $totalQueued,
-            'invalid' => $totalInvalid,
-            'chunks'  => $chunkCount,
-        ];
+        return $this->delegate(__FUNCTION__, func_get_args());
     }
 
     // ── HELPER ESTÁTICO ──────────────────────────────
@@ -172,55 +95,25 @@ class WhatsAppService
         return $ud ? (bool) $ud->whatsapp_enabled : true;
     }
 
-    // ── CORE ─────────────────────────────────────────
-    private function sendRequest(string $endpoint, array $params): array
+    /**
+     * Obtiene el provider activo para la empresa actual.
+     */
+    public function getProvider(): string
     {
-        $url  = "{$this->baseUrl}/instances/{$this->instanceId}/{$endpoint}";
-        $curl = curl_init();
+        return $this->provider;
+    }
 
-        curl_setopt_array($curl, [
-            CURLOPT_URL            => $url,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_POST           => true,
-            CURLOPT_POSTFIELDS     => json_encode($params),
-            CURLOPT_HTTPHEADER     => [
-                'Content-Type: application/json',
-                'Accept: application/json',
-                "x-api-key: {$this->apiKey}",
-            ],
-            CURLOPT_TIMEOUT        => 30,
-            CURLOPT_SSL_VERIFYPEER => false,
-        ]);
-
-        $response = curl_exec($curl);
-        $err      = curl_error($curl);
-        $httpCode = curl_getinfo($curl, CURLINFO_HTTP_CODE);
-        curl_close($curl);
-
-        if ($err) {
-            throw new \RuntimeException("Error de conexión WA: {$err}");
+    // ── DELEGACIÓN INTERNA ───────────────────────────
+    private function delegate(string $method, array $args): mixed
+    {
+        if ($this->provider === 'meta' && $this->metaService) {
+            return $this->metaService->$method(...$args);
         }
 
-        $json = @json_decode($response, true);
-
-        if ($httpCode < 200 || $httpCode >= 300) {
-            $msg = $json['message'] ?? $json['error'] ?? $response;
-            throw new \RuntimeException("Error WA {$httpCode}: {$msg}");
+        if ($this->netplayService) {
+            return $this->netplayService->$method(...$args);
         }
 
-        // Algunas APIs devuelven HTTP 200 pero indican error en el body
-        if (is_array($json) && (isset($json['error']) || ($json['success'] ?? true) === false)) {
-            $msg = $json['message'] ?? $json['error'] ?? json_encode($json);
-            throw new \RuntimeException("Error WA API: {$msg}");
-        }
-
-        // Loguear respuesta para debug (éxitos incluidos)
-        \Illuminate\Support\Facades\Log::info('[WhatsAppService] Respuesta API', [
-            'endpoint' => $endpoint,
-            'httpCode' => $httpCode,
-            'response' => $json ?? $response,
-        ]);
-
-        return is_array($json) ? $json : ['raw_response' => $response];
+        return ['success' => false, 'error' => 'Ningún servicio de WhatsApp está configurado.'];
     }
 }

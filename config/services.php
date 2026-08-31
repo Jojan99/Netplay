@@ -47,6 +47,14 @@ return [
     'master_key'  => env('NETPLAY_WS_MASTER_KEY', 'netplay_master_2026_xK9pLmQr'),
 ],
 
+'meta_whatsapp' => [
+    'enabled'          => env('META_WS_ENABLED', false),
+    'phone_number_id'  => env('META_WS_PHONE_NUMBER_ID'),
+    'access_token'     => env('META_WS_ACCESS_TOKEN'),
+    'business_id'      => env('META_WS_BUSINESS_ID'),
+    'api_version'      => env('META_WS_API_VERSION', 'v18.0'),
+],
+
 'netplay_payments' => [
     'nequi_number' => env('NETPLAY_NEQUI_NUMBER', ''), // Ej: 3221234567
     'daviplata_number' => env('NETPLAY_DAVIPLATA_NUMBER', ''),
