@@ -240,6 +240,7 @@ class CompanyController extends Controller
             'wa_company_id'       => $company->wa_company_id,
             'wa_instance_id'      => $company->wa_instance_id,
             'wa_phone_number_id'  => $company->wa_phone_number_id,
+            'wa_business_id'      => $company->wa_business_id,
             'wa_access_token'     => $company->wa_access_token ? $this->maskToken($company->wa_access_token) : null,
             'whatsapp_enabled'    => (bool) $company->whatsapp_enabled,
             'has_credentials'     => !empty($company->wa_api_key) || ($company->wa_provider === 'meta' && $company->wa_access_token),
@@ -260,6 +261,7 @@ class CompanyController extends Controller
             'wa_provider',
             'wa_instance_id',
             'wa_phone_number_id',
+            'wa_business_id',
             'wa_access_token',
             'whatsapp_enabled',
         ]);

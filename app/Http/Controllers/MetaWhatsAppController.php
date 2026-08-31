@@ -18,6 +18,7 @@ class MetaWhatsAppController extends Controller
         }
         return [
             'phone_number_id' => $company->wa_phone_number_id,
+            'business_id'     => $company->wa_business_id,
             'access_token'    => $company->wa_access_token,
             'api_version'     => config('services.meta_whatsapp.api_version', 'v18.0'),
         ];
@@ -374,16 +375,31 @@ class MetaWhatsAppController extends Controller
 
     private function getWabaId(array $config): ?string
     {
+        // Si ya está configurado en la DB, usarlo directamente
+        if (!empty($config['business_id'])) {
+            return $config['business_id'];
+        }
+
         try {
             $url = "https://graph.facebook.com/{$config['api_version']}/{$config['phone_number_id']}";
             $response = Http::withToken($config['access_token'])
                 ->get($url, ['fields' => 'id,whatsapp_business_account']);
 
             if ($response->successful()) {
-                return $response->json('whatsapp_business_account.id');
+                $data = $response->json();
+                $wabaId = $data['whatsapp_business_account']['id'] ?? null;
+                if ($wabaId) {
+                    return $wabaId;
+                }
+                Log::warning('[MetaWhatsAppController] WABA ID not found in response', ['response' => $data]);
+            } else {
+                Log::error('[MetaWhatsAppController] Failed to get WABA ID', [
+                    'status' => $response->status(),
+                    'body' => $response->json(),
+                ]);
             }
         } catch (\Throwable $e) {
-            Log::error('[MetaWhatsAppController] Error getting WABA ID', ['error' => $e->getMessage()]);
+            Log::error('[MetaWhatsAppController] Exception getting WABA ID', ['error' => $e->getMessage()]);
         }
 
         return null;

@@ -25,6 +25,7 @@ class Company extends Model
         'wa_instance_id',
         'wa_provider',
         'wa_phone_number_id',
+        'wa_business_id',
         'wa_access_token',
         'whatsapp_enabled',
         'invoice_whatsapp_enabled',
