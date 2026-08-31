@@ -182,6 +182,7 @@ class MetaWhatsAppController extends Controller
     /**
      * GET /api/company/whatsapp/conversation-window/{phone}
      * Verificar si hay una ventana de conversación abierta (24h).
+     * Consulta la base de datos local en lugar de la API de Meta.
      */
     public function checkConversationWindow(string $phone): JsonResponse
     {
@@ -193,38 +194,30 @@ class MetaWhatsAppController extends Controller
         }
 
         try {
-            $url = "https://graph.facebook.com/{$config['api_version']}/{$config['phone_number_id']}/conversations";
-            $response = Http::withToken($config['access_token'])
-                ->get($url, [
-                    'limit'  => 1,
-                    'fields' => 'id,conversation_start_time,expiration_timestamp',
-                    'user_address' => $this->normalizePhone($phone),
-                ]);
+            $normalizedPhone = $this->normalizePhone($phone);
+            
+            // Buscar mensajes recibidos del cliente en los últimos 24 horas
+            $lastMessage = \DB::table('wa_meta_logs')
+                ->where('company_id', $companyId)
+                ->where('phone', $normalizedPhone)
+                ->where('direction', 'inbound')
+                ->where('created_at', '>=', now()->subHours(24))
+                ->orderByDesc('created_at')
+                ->first();
 
-            if ($response->failed()) {
-                return response()->json([
-                    'ok'    => false,
-                    'error' => $response->json('error.message') ?? 'Error de Meta',
-                ], 400);
-            }
-
-            $conversations = $response->json('data') ?? [];
             $hasWindow = false;
             $expiresAt = null;
 
-            if (count($conversations) > 0) {
-                $conv = $conversations[0];
-                $expiration = $conv['expiration_timestamp'] ?? null;
-                if ($expiration) {
-                    $hasWindow = (int)$expiration > time();
-                    $expiresAt = date('Y-m-d H:i:s', (int)$expiration);
-                }
+            if ($lastMessage) {
+                $hasWindow = true;
+                $expiresAt = date('Y-m-d H:i:s', strtotime($lastMessage->created_at . ' +24 hours'));
             }
 
             return response()->json([
                 'ok'         => true,
                 'has_window' => $hasWindow,
                 'expires_at' => $expiresAt,
+                'last_message_at' => $lastMessage?->created_at,
             ]);
         } catch (\Throwable $e) {
             Log::error('[MetaWhatsAppController] Error conversation window', ['error' => $e->getMessage()]);
