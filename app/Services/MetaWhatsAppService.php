@@ -164,6 +164,74 @@ class MetaWhatsAppService
         return $this->sendAudio($to, $mediaUrl);
     }
 
+    // ── BOTONES INTERACTIVOS ────────────────────────
+    /**
+     * Envía un mensaje con botones de respuesta rápida
+     * $buttons: array de ['id' => 'btn_id', 'title' => 'Texto del botón']
+     */
+    public function sendInteractiveButtons(string $to, string $bodyText, array $buttons, string $headerText = ''): array
+    {
+        if (!$this->isEnabled()) return ['success' => false, 'error' => 'Meta WhatsApp deshabilitado.'];
+
+        if (empty($buttons) || count($buttons) > 3) {
+            return ['success' => false, 'error' => 'Máximo 3 botones permitidos'];
+        }
+
+        $payload = [
+            'messaging_product' => 'whatsapp',
+            'recipient_type'    => 'individual',
+            'to'                => $this->normalizePhone($to),
+            'type'              => 'interactive',
+            'interactive'       => [
+                'type' => 'button',
+                'body' => ['text' => $bodyText],
+                'action' => [
+                    'buttons' => array_map(static fn (array $btn) => [
+                        'type'  => 'reply',
+                        'reply' => [
+                            'id'    => $btn['id'] ?? '',
+                            'title' => $btn['title'] ?? $btn['label'] ?? '',
+                        ],
+                    ], $buttons),
+                ],
+            ],
+        ];
+
+        if (!empty($headerText)) {
+            $payload['interactive']['header'] = [
+                'type' => 'text',
+                'text' => $headerText,
+            ];
+        }
+
+        return $this->sendRequest($payload);
+    }
+
+    /**
+     * Envía un mensaje con menú de lista (solo en Meta, máx 10 opciones)
+     */
+    public function sendInteractiveList(string $to, string $bodyText, array $sections, string $buttonText = 'Opciones'): array
+    {
+        if (!$this->isEnabled()) return ['success' => false, 'error' => 'Meta WhatsApp deshabilitado.'];
+
+        $payload = [
+            'messaging_product' => 'whatsapp',
+            'recipient_type'    => 'individual',
+            'to'                => $this->normalizePhone($to),
+            'type'              => 'interactive',
+            'interactive'       => [
+                'type' => 'list',
+                'body' => ['text' => $bodyText],
+                'action' => [
+                    'button' => $buttonText,
+                    'sections' => $sections,
+                ],
+            ],
+        ];
+
+        return $this->sendRequest($payload);
+    }
+
     // ── ENVÍO MASIVO / BATCH ─────────────────────────
     public function sendBulk(array $messages): array
     {

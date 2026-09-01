@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\WaBotService;
 use App\UseCases\Crm\Interfaces\ReceiveConversationMessageUseCaseInterface;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -13,7 +14,8 @@ class WhatsAppWebhookController extends Controller
     private const VERIFY_TOKEN = 'netplay_verify_token_2026';
 
     public function __construct(
-        private ReceiveConversationMessageUseCaseInterface $useCase
+        private ReceiveConversationMessageUseCaseInterface $useCase,
+        private WaBotService $botService
     ) {}
 
     /**
@@ -68,6 +70,7 @@ class WhatsAppWebhookController extends Controller
         }
 
         $results = [];
+        $databaseUnavailable = false;
 
         foreach ($payload['entry'] ?? [] as $entry) {
             foreach ($entry['changes'] ?? [] as $change) {
@@ -88,12 +91,44 @@ class WhatsAppWebhookController extends Controller
                     }
                 }
 
+                $metadata = $value['metadata'] ?? [];
+                $phoneNumberId = $metadata['phone_number_id'] ?? null;
+
                 foreach ($messages as $message) {
                     try {
+                        // Intentar manejar con el bot primero
+                        $handledByBot = false;
+                        if ($phoneNumberId && in_array($message['type'] ?? '', ['text', 'interactive', 'image', 'document'], true)) {
+                            $metaMessage = $message;
+                            if (($message['type'] ?? null) === 'interactive') {
+                                $buttonId = $message['interactive']['button_reply']['id']
+                                    ?? $message['interactive']['list_reply']['id']
+                                    ?? null;
+
+                                if ($buttonId) {
+                                    $metaMessage['text'] = ['body' => $buttonId];
+                                }
+                            }
+
+                            if (in_array(($message['type'] ?? null), ['image', 'document'], true)) {
+                                $caption = $message['image']['caption'] ?? $message['document']['caption'] ?? $message['document']['filename'] ?? null;
+                                $metaMessage['text'] = ['body' => $caption ?: 'comprobante'];
+                                $metaMessage['payment_proof_media'] = $message[$message['type']];
+                            }
+
+                            $handledByBot = $this->botService->handleIncomingMessage($metaMessage, $phoneNumberId);
+                        }
+
+                        if ($handledByBot) {
+                            $results[] = ['status' => 'bot_handled', 'message_id' => $message['id'] ?? null];
+                            continue;
+                        }
+
                         $internalPayload = $this->transformMetaToInternal($message, $contactMap);
                         $result = $this->useCase->execute($internalPayload);
                         $results[] = $result;
                     } catch (\Throwable $e) {
+                        $databaseUnavailable = $databaseUnavailable || $this->isDatabaseUnavailable($e);
                         Log::error('[Meta Webhook] Error procesando mensaje', [
                             'message_id' => $message['id'] ?? null,
                             'error'      => $e->getMessage(),
@@ -112,11 +147,26 @@ class WhatsAppWebhookController extends Controller
             }
         }
 
-        // Meta espera siempre 200 OK, incluso si hubo errores internos
+        // Un 503 permite que Meta reintente el webhook cuando MySQL estuvo temporalmente fuera de servicio.
+        if ($databaseUnavailable) {
+            return response()->json([
+                'status' => 'retry',
+                'reason' => 'database_unavailable',
+                'results' => $results,
+            ], 503);
+        }
+
         return response()->json([
             'status'  => 'processed',
             'results' => $results,
         ]);
+    }
+
+    private function isDatabaseUnavailable(\Throwable $exception): bool
+    {
+        return str_contains($exception->getMessage(), 'SQLSTATE[HY000] [2002] Connection refused')
+            || str_contains($exception->getMessage(), 'SQLSTATE[HY000] [2006] MySQL server has gone away')
+            || str_contains($exception->getMessage(), 'SQLSTATE[HY000] [2013] Lost connection');
     }
 
     /**
@@ -151,6 +201,19 @@ class WhatsAppWebhookController extends Controller
         switch ($msgType) {
             case 'text':
                 $content = $message['text']['body'] ?? null;
+                break;
+
+            case 'interactive':
+                // Extraer ID del botón o respuesta interactiva
+                if (isset($message['interactive']['button_reply']['id'])) {
+                    $content = $message['interactive']['button_reply']['id'];
+                    $internalType = 'text'; // Tratar como texto para procesar en bot
+                } elseif (isset($message['interactive']['list_reply']['id'])) {
+                    $content = $message['interactive']['list_reply']['id'];
+                    $internalType = 'text'; // Tratar como texto para procesar en bot
+                } else {
+                    $content = "[Respuesta interactiva recibida]";
+                }
                 break;
 
             case 'image':

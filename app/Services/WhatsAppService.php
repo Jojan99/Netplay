@@ -85,6 +85,17 @@ class WhatsAppService
         return $this->delegate(__FUNCTION__, func_get_args());
     }
 
+    // ── BOTONES INTERACTIVOS ────────────────────────
+    public function sendInteractiveButtons(string $to, string $bodyText, array $buttons, string $headerText = ''): array
+    {
+        return $this->delegate(__FUNCTION__, func_get_args());
+    }
+
+    public function sendInteractiveList(string $to, string $bodyText, array $sections, string $buttonText = 'Opciones'): array
+    {
+        return $this->delegate(__FUNCTION__, func_get_args());
+    }
+
     // ── HELPER ESTÁTICO ──────────────────────────────
     /**
      * Verifica si un usuario tiene WhatsApp habilitado (campo user_data.whatsapp_enabled).

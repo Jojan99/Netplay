@@ -95,6 +95,11 @@ Route::prefix('company')->group(function () {
                 Route::get('logs',                  [\App\Http\Controllers\MetaWhatsAppController::class, 'getLogs']);
                 Route::post('validate-phone',       [\App\Http\Controllers\MetaWhatsAppController::class, 'validatePhone']);
             });
+
+            // ── Bot WhatsApp ───────────────────────────────────────────────────
+            Route::get('bot-config',  [\App\Http\Controllers\WaBotController::class, 'getConfig']);
+            Route::put('bot-config',  [\App\Http\Controllers\WaBotController::class, 'updateConfig']);
+            Route::delete('bot-config', [\App\Http\Controllers\WaBotController::class, 'deleteConfig']);
         });
     });
 });

@@ -32,6 +32,7 @@ class RouteServiceProvider extends ServiceProvider
                 ->prefix('api')
                 ->namespace('App\Http\Controllers')
                 ->group(function () {
+                    require base_path('routes/api.php');
                     require base_path('routes/api/userRoutes.php');
                     require base_path('routes/api/oauthRoutes.php');
                     require base_path('routes/api/facturationRoutes.php');
