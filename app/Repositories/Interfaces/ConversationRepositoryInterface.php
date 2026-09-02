@@ -17,7 +17,7 @@ interface ConversationRepositoryInterface
      */
     public function getInbox(array $filters = []): array;
     public function getByConversation(int $conversationId): array;
-    public function getOrCreateConversationByPhone(string $phone, string $names): int;
+    public function getOrCreateConversationByPhone(string $phone, string $names, ?int $companyId = null, string $provider = 'netplay'): int;
     public function getConversationStatus(string $phone): bool;
     public function storeMessage(array $data): CrmMessage;
     public function find(int $id);

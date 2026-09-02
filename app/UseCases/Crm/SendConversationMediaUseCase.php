@@ -12,9 +12,10 @@ use Illuminate\Support\Facades\Storage;
 
 class SendConversationMediaUseCase implements SendConversationMediaUseCaseInterface
 {
+    private WhatsAppService $whatsAppService;
+
     public function __construct(
-        private ConversationRepository $conversationRepository,
-        private WhatsAppService $whatsAppService
+        private ConversationRepository $conversationRepository
     ) {}
 
     public function execute(
@@ -26,8 +27,16 @@ class SendConversationMediaUseCase implements SendConversationMediaUseCaseInterf
 
         $conversation = $this->conversationRepository->find($conversationId);
         if (!$conversation) {
-            throw new \Exception('Conversaci��n no encontrada');
+            throw new \Exception('Conversación no encontrada');
         }
+
+        // Misma empresa, dos mecanismos posibles (Meta API o Netplay WhatsApp): usar
+        // siempre el provider real de ESTA conversación, nunca un valor global de la empresa.
+        $this->whatsAppService = new WhatsAppService(
+            $conversation->company_id,
+            false,
+            $conversation->provider ?? 'netplay'
+        );
 
         $originalName = $file->getClientOriginalName();
         $extension    = strtolower($file->getClientOriginalExtension());

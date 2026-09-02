@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Services\WaBotService;
+use App\Models\Company;
 use App\UseCases\Crm\Interfaces\ReceiveConversationMessageUseCaseInterface;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -93,6 +94,9 @@ class WhatsAppWebhookController extends Controller
 
                 $metadata = $value['metadata'] ?? [];
                 $phoneNumberId = $metadata['phone_number_id'] ?? null;
+                $companyId = $phoneNumberId
+                    ? Company::where('wa_phone_number_id', $phoneNumberId)->value('id')
+                    : null;
 
                 foreach ($messages as $message) {
                     try {
@@ -107,6 +111,9 @@ class WhatsAppWebhookController extends Controller
 
                                 if ($buttonId) {
                                     $metaMessage['text'] = ['body' => $buttonId];
+                                    $metaMessage['bot_selection_label'] = $message['interactive']['button_reply']['title']
+                                        ?? $message['interactive']['list_reply']['title']
+                                        ?? $buttonId;
                                 }
                             }
 
@@ -124,7 +131,7 @@ class WhatsAppWebhookController extends Controller
                             continue;
                         }
 
-                        $internalPayload = $this->transformMetaToInternal($message, $contactMap);
+                        $internalPayload = $this->transformMetaToInternal($message, $contactMap, $companyId);
                         $result = $this->useCase->execute($internalPayload);
                         $results[] = $result;
                     } catch (\Throwable $e) {
@@ -172,7 +179,7 @@ class WhatsAppWebhookController extends Controller
     /**
      * Transforma un mensaje del formato de Meta al formato interno del sistema.
      */
-    private function transformMetaToInternal(array $message, array $contactMap): array
+    private function transformMetaToInternal(array $message, array $contactMap, ?int $companyId = null): array
     {
         $phone   = $message['from'] ?? null;
         $name    = $contactMap[$phone] ?? 'Cliente';
@@ -264,6 +271,8 @@ class WhatsAppWebhookController extends Controller
         return [
             'event'      => 'message.received',
             'instanceId' => 'meta_official_api',
+            'provider'   => 'meta',
+            'company_id' => $companyId,
             'data'       => [
                 'type'      => $internalType,
                 'phone'     => $phone,

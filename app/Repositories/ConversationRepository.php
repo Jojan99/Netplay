@@ -25,6 +25,7 @@ class ConversationRepository implements ConversationRepositoryInterface
         $mine    = $filters['mine']    ?? null;   // 1/true => solo asignadas a mi
         $userId  = $filters['user_id'] ?? null;   // si mandas user_id explícito (opcional)
         $limit   = (int)($filters['limit'] ?? 50);
+        $provider = $filters['provider'] ?? null;
 
 
 
@@ -58,6 +59,7 @@ class ConversationRepository implements ConversationRepositoryInterface
                 'c.id',
                 'c.status',
                 'c.priority',
+                'c.provider',
                 'c.assigned_user_id',
                 'c.created_at',
 
@@ -87,6 +89,10 @@ class ConversationRepository implements ConversationRepositoryInterface
                 $qq->where('c.status', $status);
             })
 
+            ->when(in_array($provider, ['meta', 'netplay'], true), function ($qq) use ($provider) {
+                $qq->where('c.provider', $provider);
+            })
+
             ->when($search, function ($qq) use ($search) {
                 $s = '%' . $search . '%';
                 $qq->where(function ($w) use ($s) {
@@ -111,6 +117,7 @@ class ConversationRepository implements ConversationRepositoryInterface
                 'id' => (int)$row->id,
                 'status' => $row->status,
                 'priority' => $row->priority,
+                'provider' => $row->provider,
                 'assigned_user_id' => $row->assigned_user_id ? (int)$row->assigned_user_id : null,
 
                 'customer' => [
@@ -144,6 +151,8 @@ class ConversationRepository implements ConversationRepositoryInterface
             ->where('c.id', $conversationId)
             ->select([
                 'c.id',
+                'c.company_id',
+                'c.provider',
                 'cu.name as customer_name',
                 'cu.phone',
                 'c.status',
@@ -155,6 +164,10 @@ class ConversationRepository implements ConversationRepositoryInterface
         if (!$conversation) {
             throw new \Exception('Conversation not found');
         }
+
+        $botPaused = $conversation->provider === 'meta' && DB::table('wa_bot_pauses')
+            ->where(['company_id' => $conversation->company_id, 'provider' => 'meta', 'phone' => $conversation->phone])
+            ->exists();
 
         // 2️⃣ Obtener mensajes
         $messages = DB::table('crm_messages')
@@ -193,6 +206,8 @@ class ConversationRepository implements ConversationRepositoryInterface
                 'phone' => $conversation->phone,
                 'status' => $conversation->status,
                 'priority' => $conversation->priority,
+                'provider' => $conversation->provider,
+                'bot_paused' => $botPaused,
             ],
             'data' => $messages,
             'error' => 0,
@@ -229,12 +244,16 @@ public function getPhoneByConversationId(int $conversationId): ?string
         ->value('cu.phone'); // devuelve solo el campo phone
 }
 
-    public function getOrCreateConversationByPhone(string $phone, string $names): int
+    public function getOrCreateConversationByPhone(string $phone, string $names, ?int $companyId = null, string $provider = 'netplay'): int
     {
+        $companyId = $companyId ?? getSessionCompanyId();
+        $provider = in_array($provider, ['meta', 'netplay'], true) ? $provider : 'netplay';
 
         // 1) Buscar conversación ACTIVA (no cerrada) para ese teléfono
         $activeConversation = DB::table('crm_conversations as c')
             ->join('crm_customers as cu', 'cu.id', '=', 'c.customer_id')
+            ->where('c.company_id', $companyId)
+            ->where('c.provider', $provider)
             ->where('cu.phone', $phone)
             ->whereIn('c.status', ['new', 'in_progress'])
             ->orderByDesc('c.id')
@@ -253,6 +272,7 @@ public function getPhoneByConversationId(int $conversationId): ?string
 
         // 2) Buscar cliente por teléfono (puede existir aunque no haya conversación activa)
         $customer = DB::table('crm_customers')
+            ->where('company_id', $companyId)
             ->where('phone', $phone)
             ->select('id')
             ->first();
@@ -266,6 +286,7 @@ Log::info('Intentando insertar cliente', [
         $customerId = $customer
             ? (int) $customer->id
             : (int) DB::table('crm_customers')->insertGetId([
+                'company_id' => $companyId,
                 'phone'      => $phone,
                 'name'       => $names,
                 'created_at' => now(),
@@ -278,6 +299,8 @@ Log::info('Intentando insertar cliente', [
 
         // 3) Crear nueva conversación (porque la anterior estaba cerrada o no existía)
         return (int) DB::table('crm_conversations')->insertGetId([
+            'company_id'       => $companyId,
+            'provider'         => $provider,
             'customer_id'      => $customerId,
             'status'           => 'new',
             'priority'         => 'normal',
@@ -368,6 +391,8 @@ DB::table('crm_conversations')
                 'c.priority',
                 'c.assigned_user_id',
                 'c.created_at',
+                'c.company_id',
+                'c.provider',
 
                 // 🔥 datos del cliente
                 'cu.phone',

@@ -16,10 +16,7 @@ class ReceiveConversationMessageUseCase
 {
     public function __construct(
         private ConversationRepositoryInterface $repository
-    ) {
-        $this->whatsAppService = new WhatsAppService();
-
-    }
+    ) {}
 
 public function execute(array $payload): array
 {
@@ -82,8 +79,12 @@ public function execute(array $payload): array
     }
 
     // ─── Crear o recuperar conversación ───
+    $provider = ($payload['provider'] ?? null) === 'meta' || ($payload['instanceId'] ?? null) === 'meta_official_api'
+        ? 'meta'
+        : 'netplay';
+    $companyId = isset($payload['company_id']) ? (int) $payload['company_id'] : null;
     $conversationId = $this->repository
-        ->getOrCreateConversationByPhone($phone, $names);
+        ->getOrCreateConversationByPhone($phone, $names, $companyId, $provider);
 
     // ─── Registrar LID / JID → teléfono real en whatsapp-service ───
     // Cada mensaje que llega le dice al servicio de WhatsApp cuál es
@@ -218,7 +219,9 @@ public function execute(array $payload): array
     // ─── Auto mensaje solo en primer mensaje ───
     if ($this->repository->isFirstMessage($conversationId)) {
         try {
-            $this->whatsAppService->mensajeInformativo(
+            // Misma empresa, dos mecanismos posibles: responder siempre por el provider
+            // real de este webhook (meta o netplay), nunca por un valor global de la empresa.
+            (new WhatsAppService($companyId, false, $provider))->mensajeInformativo(
                 $phone,
                 "👋 Hola, gracias por contactar a *Netplay*.\n\nEn breve uno de nuestros asesores continuará la conversación contigo."
             );

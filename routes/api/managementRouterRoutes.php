@@ -138,6 +138,7 @@ Route::delete('conversations/{conversationId}/labels/{labelId}', [ConversationCo
 
 // ── PRIORIDAD ─────────────────────────────────────────────────────────────────
 Route::patch('conversations/{conversationId}/priority', [ConversationController::class, 'updatePriority']);
+Route::patch('conversations/{conversationId}/bot-pause', [ConversationController::class, 'toggleBotPause']);
 
 // ── DASHBOARD MÉTRICAS ────────────────────────────────────────────────────────
 Route::get('crm/dashboard', [ConversationController::class, 'dashboard']);

@@ -409,7 +409,7 @@ class MikrotikInfoUseCase implements MikrotikInfoUseCaseInterface
                 if ($userData->phone) {
                     $balance = $this->getPendingBalance($userId);
                     $wa      = new WhatsAppService();
-                    $wa->mensajeInformativo($userData->phone, $this->resolveSuspensionTemplate($userData, $balance));
+                   // $wa->mensajeInformativo($userData->phone, $this->resolveSuspensionTemplate($userData, $balance));
                 }
             } catch (\Throwable $waErr) {
                 error_log("WA suspension notify user $userId: " . $waErr->getMessage());

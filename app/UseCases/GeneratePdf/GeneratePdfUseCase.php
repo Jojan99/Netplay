@@ -90,6 +90,14 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
             $waEnabled = $company ? $company->invoice_whatsapp_enabled : true;
             $emailEnabled = $company ? $company->email_enabled : true;
 
+            if ($company?->wa_provider === 'meta' && in_array($sendChannel, ['whatsapp', 'both'], true) && !(new \App\Services\MetaWhatsAppService($companyId))->isInvoiceTemplateApproved()) {
+                return [
+                    'message' => 'La plantilla envio_factura aún no está aprobada por Meta. Publica la plantilla y espera su aprobación antes de realizar envíos masivos.',
+                    'status' => 1,
+                    'code' => 'META_TEMPLATE_REQUIRED',
+                ];
+            }
+
             // Si ambos están desactivados, abortar
             if (!$waEnabled && !$emailEnabled) {
                 return [
@@ -128,19 +136,9 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
                         $phone = trim($phone);
                         if (empty($phone)) continue;
 
-                        $msgBody = $humanizer->generateInvoiceMessage([
-                            'names' => $user['names'] ?? '',
-                            'lastname' => $user['lastname'] ?? '',
-                            'number_bill' => $user['number_facture'] ?? '',
-                            'monthly_price' => '$' . number_format($user['monthly_price'] ?? 0, 0, ',', '.'),
-                            'date_finish_bill' => $fecha,
-                            'billing_electronic' => $user['billing_electronic'] ?? 0,
-                        ]);
-
                         $waMessages[] = [
                             'number' => $phone,
-                            'message' => $msgBody,
-                            'type' => 'text',
+                            'parameters' => $this->invoiceTemplateParameters($user, $company, $fecha),
                         ];
                     }
                 }
@@ -176,7 +174,9 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
                         'status' => 1,
                     ];
                 }
-                $waResult = $waService->sendBulk($waMessages);
+                $waResult = $company?->wa_provider === 'meta'
+                    ? $this->sendMetaInvoiceTemplateBatch($waMessages, $companyId)
+                    : $waService->sendBulk($waMessages);
                 Log::info('[WA_BILLING] Batch encolado en whatsapp-service', [
                     'company_id' => $companyId,
                     'queued' => $waResult['queued'] ?? 0,
@@ -233,6 +233,15 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
     public function generatePdfMeta($Periodo, int $companyId = 0, int $billingDay = 0, string $sendChannel = 'whatsapp', ?int $emailDailyLimit = null): mixed
     {
         try {
+            $company = $companyId > 0 ? Company::find($companyId) : null;
+            if ($company?->wa_provider === 'meta' && in_array($sendChannel, ['whatsapp', 'both'], true)) {
+                return [
+                    'message' => 'El envío masivo por Meta requiere una plantilla aprobada y un mapeo de variables. El envío por texto libre está bloqueado.',
+                    'status' => 1,
+                    'code' => 'META_TEMPLATE_REQUIRED',
+                ];
+            }
+
             $getUserPeriode1 = $this->generatePdfRepository->getUserPeriode1($Periodo, $companyId);
             $users           = $this->generatePdfRepository->generatePdf($getUserPeriode1);
 
@@ -402,6 +411,40 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
         $pdf->render();
 
         return $pdf->output();
+    }
+
+    private function invoiceTemplateParameters(array $user, Company $company, string $dueDate): array
+    {
+        $total = max(0, (float) ($user['price_total'] ?? $user['monthly_price'] ?? 0) - (float) ($user['price_discount'] ?? 0));
+        $issueDate = !empty($user['date_facturation']) ? Carbon::parse($user['date_facturation'])->format('Y-m-d') : now('America/Bogota')->format('Y-m-d');
+
+        return [
+            trim(($user['names'] ?? '') . ' ' . ($user['lastname'] ?? '')) ?: 'Cliente',
+            (string) ($user['number_facture'] ?? ''),
+            number_format($total, 0, ',', '.'),
+            $issueDate,
+            $dueDate,
+            $company->invoice_business_name ?: $company->name,
+        ];
+    }
+
+    private function sendMetaInvoiceTemplateBatch(array $messages, int $companyId): array
+    {
+        $meta = new \App\Services\MetaWhatsAppService($companyId);
+        $queued = 0;
+        $invalid = 0;
+
+        foreach ($messages as $message) {
+            try {
+                $meta->sendInvoiceTemplate($message['number'], $message['parameters']);
+                $queued++;
+            } catch (\Throwable $exception) {
+                Log::warning('[META_INVOICE_TEMPLATE] Error enviando factura', ['phone' => $message['number'], 'error' => $exception->getMessage()]);
+                $invalid++;
+            }
+        }
+
+        return ['queued' => $queued, 'invalid' => $invalid, 'chunks' => 1, 'template' => 'envio_factura'];
     }
 
     /**

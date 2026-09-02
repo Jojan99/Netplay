@@ -35,6 +35,7 @@ public function inbox(
     $filters = $request->only([
         'status',
         'search',
+        'provider',
     ]);
 
     // 🔥 SIEMPRE usar el usuario autenticado REAL
@@ -352,6 +353,29 @@ public function updatePriority(int $conversationId, Request $request, Conversati
     return response()->json(['ok' => true]);
 }
 
+public function toggleBotPause(int $conversationId, Request $request): JsonResponse
+{
+    $conversation = DB::table('crm_conversations as c')
+        ->join('crm_customers as cu', 'cu.id', '=', 'c.customer_id')
+        ->where('c.id', $conversationId)
+        ->where('c.company_id', getSessionCompanyId())
+        ->where('c.provider', 'meta')
+        ->select('c.company_id', 'cu.phone')
+        ->firstOrFail();
+    $paused = $request->boolean('paused');
+
+    if ($paused) {
+        DB::table('wa_bot_pauses')->updateOrInsert(
+            ['company_id' => $conversation->company_id, 'provider' => 'meta', 'phone' => $conversation->phone],
+            ['paused_by' => getSessionUserId(), 'paused_at' => now(), 'updated_at' => now(), 'created_at' => now()]
+        );
+    } else {
+        DB::table('wa_bot_pauses')->where(['company_id' => $conversation->company_id, 'provider' => 'meta', 'phone' => $conversation->phone])->delete();
+    }
+
+    return response()->json(['ok' => true, 'paused' => $paused]);
+}
+
 /* =====================================================================
  * DASHBOARD MÉTRICAS
  * =================================================================== */
@@ -392,7 +416,7 @@ public function sendBroadcast(Request $request, ConversationRepositoryInterface 
 
     $sent   = 0;
     $failed = 0;
-    $wa     = new WhatsAppService();
+    $wa     = new WhatsAppService($companyId);
 
     foreach ($customers as $customer) {
         try {
@@ -473,8 +497,6 @@ public function forwardMessage(Request $request, ConversationRepositoryInterface
         return response()->json(['ok' => false, 'message' => 'Mensaje no encontrado'], 404);
     }
 
-    $wa = new WhatsAppService();
-
     // ─── Datos del remitente original ───
     $sourceConv = DB::table('crm_conversations as c')
         ->join('crm_customers as cu', 'cu.id', '=', 'c.customer_id')
@@ -487,8 +509,18 @@ public function forwardMessage(Request $request, ConversationRepositoryInterface
     $forwardPrefix = "📎 De: {$originName} ({$originPhone})\n\n";
 
     foreach ($request->target_conversation_ids as $targetConvId) {
-        $phone = $repo->getPhoneByConversationId((int)$targetConvId);
-        if (!$phone) continue;
+        $target = DB::table('crm_conversations as c')
+            ->join('crm_customers as cu', 'cu.id', '=', 'c.customer_id')
+            ->where('c.id', (int)$targetConvId)
+            ->select('cu.phone', 'c.company_id', 'c.provider')
+            ->first();
+
+        if (!$target || !$target->phone) continue;
+        $phone = $target->phone;
+
+        // Cada conversación puede pertenecer a un provider distinto (Meta API o Netplay
+        // WhatsApp) dentro de la misma empresa; se reenvía siempre por su provider real.
+        $wa = new WhatsAppService($target->company_id, false, $target->provider ?? 'netplay');
 
         // Reenviar según tipo
         if ($source->message_type === 'text') {

@@ -164,7 +164,7 @@ public function UpdateStatus(GestionUserRequest $gestionUserRequest): array
                     . "📩 Envíanos el comprobante en tu siguiente mensaje.";
 
                         $message = str_replace(array_keys($vars), array_values($vars), $template);
-                        (new WhatsAppService())->sendImage($userData->phone, "https://netplay.com.co/storage/Qr/QrNetplay.jpeg", $message);
+                        //(new WhatsAppService())->sendImage($userData->phone, "https://netplay.com.co/storage/Qr/QrNetplay.jpeg", $message);
                     } else {
                                    $template = "🚫 Estimado/a {nombre} {apellido}, le informamos que su servicio de internet ha sido *suspendido* por falta de pago.🚫\n\n"
                                   . "💰 Saldo pendiente: *\${deuda}*\n\n"
@@ -175,7 +175,7 @@ public function UpdateStatus(GestionUserRequest $gestionUserRequest): array
                                   . "NEQUI 3245127869 (Joj Pom)";
 
                         $message = str_replace(array_keys($vars), array_values($vars), $template);
-                        (new WhatsAppService())->mensajeInformativo($userData->phone, $message);
+                        //(new WhatsAppService())->mensajeInformativo($userData->phone, $message);
                     }
                 }
                    

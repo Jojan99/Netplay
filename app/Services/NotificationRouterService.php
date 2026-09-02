@@ -31,7 +31,7 @@ class NotificationRouterService
 
             if ($routes->isEmpty()) return;
 
-            $wa = new WhatsAppService($companyId);
+            $wa = new WhatsAppService($companyId, false, 'netplay');
 
             foreach ($routes as $route) {
                 try {

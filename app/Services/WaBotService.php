@@ -11,6 +11,8 @@ use App\Models\DetFacturation;
 use App\Models\PaymentProof;
 use App\Models\PaymentProofAudit;
 use App\Models\Ticket;
+use App\Models\CrmMessage;
+use App\Events\NewMessageEvent;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -37,6 +39,11 @@ class WaBotService
             return false;
         }
 
+        $from = $payload['from'] ?? '';
+        if ($from && DB::table('wa_bot_pauses')->where(['company_id' => $company->id, 'provider' => 'meta', 'phone' => $from])->exists()) {
+            return false;
+        }
+
         $message = $payload['text']['body'] ?? null;
         if (!$message && (($payload['type'] ?? null) === 'interactive')) {
             $message = $payload['interactive']['button_reply']['id']
@@ -50,7 +57,6 @@ class WaBotService
             $payload['text'] = ['body' => $message];
         }
 
-        $from = $payload['from'] ?? '';
         if (!$from || !$message) {
             return false;
         }
@@ -68,6 +74,10 @@ class WaBotService
             ->first();
 
         $invoiceIntent = preg_match('/\b(factura|facturas|facturacion|facturación)\b/u', $normalizedMessage) === 1;
+
+        if (in_array($normalizedMessage, $triggerWords, true) || $invoiceIntent || $session) {
+            $this->recordBotConversationMessage($company, $from, 'customer', $payload['bot_selection_label'] ?? $message, $payload['id'] ?? null);
+        }
 
         // A menu session is required so the next message can be routed to a flow.
         if (in_array($normalizedMessage, $triggerWords, true) || $invoiceIntent || !$session) {
@@ -151,7 +161,7 @@ class WaBotService
             $buttons[] = ['id' => $key, 'title' => $label];
         }
 
-        $wa = new WhatsAppService($company->id);
+        $wa = new WhatsAppService($company->id, false, 'meta');
         $wa->sendInteractiveButtons($to, $menuText, $buttons);
     }
 
@@ -258,7 +268,7 @@ class WaBotService
                 'expires_at' => now()->addMinutes(10),
             ]);
 
-            $wa = new WhatsAppService($company->id);
+            $wa = new WhatsAppService($company->id, false, 'meta');
             $wa->sendInteractiveButtons(
                 $phone,
                 "¿Es correcta tu cédula: {$dni}?",
@@ -327,6 +337,7 @@ class WaBotService
                 $discount = $inv->price_discount ?? 0;
                 $balance = max(0, (float) $total - (float) $discount - (float) ($inv->price_abone ?? 0));
                 $status = ($inv->paid ?? false) ? 'Pagada' : 'Pendiente';
+                $fecha = $inv->date_facturation;
 
                 $buttons[] = [
                     'id' => "invoice_{$number}",
@@ -339,6 +350,7 @@ class WaBotService
                     'id' => $inv->id,
                     'status' => $status,
                     'balance' => $balance,
+                    'date_facturation' => $fecha,
                 ];
             }
 
@@ -348,7 +360,7 @@ class WaBotService
                 'expires_at' => now()->addMinutes(10),
             ]);
 
-            $wa = new WhatsAppService($company->id);
+            $wa = new WhatsAppService($company->id, false, 'meta');
             if (count($invoiceList) > 3) {
                 $sections = [[
                     'title' => 'Tus facturas',
@@ -371,7 +383,8 @@ class WaBotService
                     "Hola {$clientName}, selecciona la factura que deseas descargar:",
                     array_map(fn ($inv) => [
                         'id' => "invoice_{$inv['option']}",
-                        'title' => $inv['option'] . '. Fac. #' . $inv['number_facture'],
+                        'title' => '$' . number_format($inv['balance'] ?? 0, 0, ',', '.')
+    . ' - ' . date('d/m/Y', strtotime($inv['date_facturation'])),
                     ], $invoiceList)
                 );
             }
@@ -389,11 +402,6 @@ class WaBotService
             } else {
                 // Fallback: accept numeric input directly
                 $selectedOption = (int) trim($message);
-            }
-
-            if ($selectedOption <= 0) {
-                $this->sendTextMessage($company, $phone, "Por favor, escribe el número de la factura que deseas (1, 2, 3...)");
-                return true;
             }
 
             $invoices = $data['invoices'] ?? [];
@@ -428,7 +436,7 @@ class WaBotService
                 'expires_at' => now()->addMinutes(10),
             ]);
 
-            $wa = new WhatsAppService($company->id);
+            $wa = new WhatsAppService($company->id, false, 'meta');
             $wa->sendInteractiveButtons(
                 $phone,
                 "¿Descargar factura #{$selectedInvoice['number_facture']}?",
@@ -447,13 +455,14 @@ class WaBotService
             if ($message === 'download_no' || $message === 'no' || $message === '2' || $message === 'otra') {
                 $session->update(['current_step' => 'select_invoice', 'expires_at' => now()->addMinutes(10)]);
 
-                $wa = new WhatsAppService($company->id);
+                $wa = new WhatsAppService($company->id, false, 'meta');
                 $wa->sendInteractiveButtons(
                     $phone,
                     "Está bien, selecciona otra factura:",
                     array_map(fn ($inv) => [
                         'id' => "invoice_{$inv['option']}",
-                        'title' => $inv['option'] . '. Fac. #' . $inv['number_facture'],
+                        'title' => '$' . number_format($inv['balance'] ?? 0, 0, ',', '.')
+    . ' - ' . date('d/m/Y', strtotime($inv['date_facturation'])),
                     ], $data['invoices'] ?? [])
                 );
                 return true;
@@ -489,7 +498,7 @@ class WaBotService
                 'expires_at' => now()->addMinutes(10),
             ]);
 
-            $wa = new WhatsAppService($company->id);
+            $wa = new WhatsAppService($company->id, false, 'meta');
             $wa->sendInteractiveButtons(
                 $phone,
                 "¿Deseas descargar otra factura?",
@@ -510,7 +519,7 @@ class WaBotService
                 $session->update(['current_step' => 'select_invoice', 'expires_at' => now()->addMinutes(10)]);
 
                 $invoices = $data['invoices'] ?? [];
-                $wa = new WhatsAppService($company->id);
+                $wa = new WhatsAppService($company->id, false, 'meta');
 
                 if (count($invoices) > 3) {
                     $sections = [[
@@ -529,8 +538,9 @@ class WaBotService
                         'Selecciona otra factura:',
                         array_map(fn ($inv) => [
                             'id' => "invoice_{$inv['option']}",
-                            'title' => $inv['option'] . '. Fac. #' . $inv['number_facture'],
-                        ], $invoices)
+                              'title' => '$' . number_format($inv['balance'] ?? 0, 0, ',', '.')
+    . ' - ' . date('d/m/Y', strtotime($inv['date_facturation'])),
+                    ], $data['invoices'] ?? [])
                     );
                 }
                 return true;
@@ -597,7 +607,7 @@ class WaBotService
             }
 
             if (!$client) {
-                $this->sendTextMessage($company, $phone, "No pudimos validar esa cédula con este número de WhatsApp. Verifica los datos del titular o contacta soporte.");
+                $this->sendTextMessage($company, $phone, "No pudimos validar esa cédula con este número de WhatsApp. Verifica los datos del titular y vuelve a ingresar el numero de cedula.");
                 return true;
             }
 
@@ -655,7 +665,7 @@ class WaBotService
             ], $invoiceList);
 
             try {
-                (new WhatsAppService($company->id))->sendInteractiveList(
+                (new WhatsAppService($company->id, false, 'meta'))->sendInteractiveList(
                     $phone,
                     'Selecciona la factura que deseas pagar. Verás el abono acumulado y el saldo pendiente.',
                     [['title' => 'Facturas pendientes', 'rows' => $rows]],
@@ -716,7 +726,7 @@ class WaBotService
                     'current_step' => 'payment_complete',
                     'expires_at' => now()->addMinutes(10),
                 ]);
-                (new WhatsAppService($company->id))->sendInteractiveButtons(
+                (new WhatsAppService($company->id, false, 'meta'))->sendInteractiveButtons(
                     $phone,
                     '¿Qué deseas hacer ahora?',
                     [
@@ -732,7 +742,7 @@ class WaBotService
                     'current_step' => 'payment_complete',
                     'expires_at' => now()->addMinutes(10),
                 ]);
-                (new WhatsAppService($company->id))->sendInteractiveButtons(
+                (new WhatsAppService($company->id, false, 'meta'))->sendInteractiveButtons(
                     $phone,
                     'Puedes reenviar el comprobante, elegir otra factura pendiente o volver al menú principal.',
                     [
@@ -1153,8 +1163,10 @@ class WaBotService
 
     private function sendTextMessage(Company $company, string $to, string $text): void
     {
+        $this->recordBotConversationMessage($company, $to, 'system', $text);
+
         try {
-            $result = (new WhatsAppService($company->id))->mensajeInformativo($to, $text);
+            $result = (new WhatsAppService($company->id, false, 'meta'))->mensajeInformativo($to, $text);
             if (($result['success'] ?? true) === false) {
                 Log::error('[WaBotService] Error enviando mensaje', [
                     'company_id' => $company->id,
@@ -1169,6 +1181,57 @@ class WaBotService
         }
     }
 
+    private function recordBotConversationMessage(Company $company, string $phone, string $senderType, string $content, ?string $externalId = null): void
+    {
+        if ($externalId && DB::table('crm_messages')->where('external_id', $externalId)->exists()) {
+            return;
+        }
+
+        $customer = DB::table('crm_customers')
+            ->where('company_id', $company->id)
+            ->where('phone', $phone)
+            ->first();
+        $customerId = $customer?->id ?? DB::table('crm_customers')->insertGetId([
+            'company_id' => $company->id,
+            'phone' => $phone,
+            'name' => 'Cliente WhatsApp',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $conversation = DB::table('crm_conversations')
+            ->where('company_id', $company->id)
+            ->where('provider', 'meta')
+            ->where('customer_id', $customerId)
+            ->whereIn('status', ['new', 'in_progress'])
+            ->latest('id')
+            ->first();
+        $conversationId = $conversation?->id ?? DB::table('crm_conversations')->insertGetId([
+            'company_id' => $company->id,
+            'provider' => 'meta',
+            'customer_id' => $customerId,
+            'status' => 'new',
+            'priority' => 'normal',
+            'last_message_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $messageId = DB::table('crm_messages')->insertGetId([
+            'conversation_id' => $conversationId,
+            'sender_type' => $senderType,
+            'message_type' => 'text',
+            'content' => $content,
+            'external_id' => $externalId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('crm_conversations')->where('id', $conversationId)->update(['last_message_at' => now(), 'updated_at' => now()]);
+        if ($message = CrmMessage::find($messageId)) {
+            broadcast(new NewMessageEvent($message, $conversationId));
+        }
+    }
+
     private function sendInvoicePdf(Company $company, string $to, object $invoice): void
     {
         $number = (string) ($invoice->number_facture ?? '');
@@ -1176,7 +1239,7 @@ class WaBotService
 
         $filename = 'factura_' . preg_replace('/[^A-Za-z0-9_-]/', '_', $number) . '.pdf';
         $pdfUrl = url('/api/generatePdf/generatePdfbyId/' . rawurlencode($number));
-        $result = (new WhatsAppService($company->id))->sendDocument(
+        $result = (new WhatsAppService($company->id, false, 'meta'))->sendDocument(
             $to,
             $pdfUrl,
             $filename,

@@ -17,13 +17,17 @@ class WhatsAppService
     private MetaWhatsAppService|null    $metaService    = null;
     private string                      $provider       = 'netplay';
 
-    public function __construct(?int $companyId = null, bool $ignoreEnabledFlag = false)
+    public function __construct(?int $companyId = null, bool $ignoreEnabledFlag = false, ?string $forceProvider = null)
     {
         $id = $companyId ?? getSessionCompanyId();
         $company = $id ? Company::find($id) : null;
 
-        // Determinar provider
-        if ($company && $company->wa_provider) {
+        // Una misma empresa puede tener ambos mecanismos activos (Meta API y Netplay WhatsApp)
+        // simultáneamente. $forceProvider permite indicar explícitamente cuál usar (p.ej. según
+        // el "provider" de la conversación de CRM) en lugar de asumir un único valor por empresa.
+        if ($forceProvider === 'meta' || $forceProvider === 'netplay') {
+            $this->provider = $forceProvider;
+        } elseif ($company && $company->wa_provider) {
             $this->provider = $company->wa_provider;
         } elseif (config('services.meta_whatsapp.enabled')) {
             $this->provider = 'meta';

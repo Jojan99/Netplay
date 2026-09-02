@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Company;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 
 class MetaWhatsAppService
 {
@@ -12,10 +13,12 @@ class MetaWhatsAppService
     private string $phoneNumberId;
     private string $accessToken;
     private string $apiVersion = 'v18.0';
+    private ?int $companyId = null;
 
     public function __construct(?int $companyId = null)
     {
         $id = $companyId ?? getSessionCompanyId();
+        $this->companyId = $id;
         $company = $id ? Company::find($id) : null;
 
         if ($company && $company->wa_provider === 'meta' && $company->wa_phone_number_id && $company->wa_access_token) {
@@ -39,6 +42,7 @@ class MetaWhatsAppService
     public function mensajeInformativo(string $to, string $body): array
     {
         if (!$this->isEnabled()) return ['success' => false, 'error' => 'Meta WhatsApp deshabilitado.'];
+        if (!$this->hasOpenCustomerWindow($to)) return $this->closedWindowResponse();
 
         return $this->sendRequest([
             'messaging_product' => 'whatsapp',
@@ -53,6 +57,7 @@ class MetaWhatsAppService
     public function sendDocument(string $to, string $documentUrl, string $filename, string $caption = ''): array
     {
         if (!$this->isEnabled()) return ['success' => false, 'error' => 'Meta WhatsApp deshabilitado.'];
+        if (!$this->hasOpenCustomerWindow($to)) return $this->closedWindowResponse();
 
         $payload = [
             'messaging_product' => 'whatsapp',
@@ -172,6 +177,7 @@ class MetaWhatsAppService
     public function sendInteractiveButtons(string $to, string $bodyText, array $buttons, string $headerText = ''): array
     {
         if (!$this->isEnabled()) return ['success' => false, 'error' => 'Meta WhatsApp deshabilitado.'];
+        if (!$this->hasOpenCustomerWindow($to)) return $this->closedWindowResponse();
 
         if (empty($buttons) || count($buttons) > 3) {
             return ['success' => false, 'error' => 'Máximo 3 botones permitidos'];
@@ -213,6 +219,7 @@ class MetaWhatsAppService
     public function sendInteractiveList(string $to, string $bodyText, array $sections, string $buttonText = 'Opciones'): array
     {
         if (!$this->isEnabled()) return ['success' => false, 'error' => 'Meta WhatsApp deshabilitado.'];
+        if (!$this->hasOpenCustomerWindow($to)) return $this->closedWindowResponse();
 
         $payload = [
             'messaging_product' => 'whatsapp',
@@ -230,6 +237,46 @@ class MetaWhatsAppService
         ];
 
         return $this->sendRequest($payload);
+    }
+
+    public function sendInvoiceTemplate(string $to, array $parameters): array
+    {
+        if (!$this->isEnabled()) return ['success' => false, 'error' => 'Meta WhatsApp deshabilitado.'];
+
+        return $this->sendRequest([
+            'messaging_product' => 'whatsapp',
+            'recipient_type' => 'individual',
+            'to' => $this->normalizePhone($to),
+            'type' => 'template',
+            'template' => [
+                'name' => 'envio_factura',
+                'language' => ['code' => 'es_CO'],
+                'components' => [[
+                    'type' => 'body',
+                    'parameters' => array_map(static fn (string $value): array => ['type' => 'text', 'text' => $value], $parameters),
+                ]],
+            ],
+        ]);
+    }
+
+    public function isInvoiceTemplateApproved(): bool
+    {
+        if (!$this->isEnabled() || !$this->companyId) return false;
+
+        $company = Company::find($this->companyId);
+        if (!$company?->wa_business_id) return false;
+
+        $response = Http::withToken($this->accessToken)
+            ->get("https://graph.facebook.com/{$this->apiVersion}/{$company->wa_business_id}/message_templates", [
+                'name' => 'envio_factura',
+                'limit' => 20,
+            ]);
+        if ($response->failed()) return false;
+
+        return collect($response->json('data') ?? [])
+            ->contains(fn (array $template): bool => $template['name'] === 'envio_factura'
+                && $template['language'] === 'es_CO'
+                && $template['status'] === 'APPROVED');
     }
 
     // ── ENVÍO MASIVO / BATCH ─────────────────────────
@@ -297,6 +344,34 @@ class MetaWhatsAppService
         ]);
 
         return $response->json();
+    }
+
+    private function hasOpenCustomerWindow(string $phone): bool
+    {
+        if (!$this->companyId) return false;
+
+        $normalizedPhone = $this->normalizePhone($phone);
+        $lastCustomerMessage = DB::table('crm_messages as message')
+            ->join('crm_conversations as conversation', 'conversation.id', '=', 'message.conversation_id')
+            ->join('crm_customers as customer', 'customer.id', '=', 'conversation.customer_id')
+            ->where('conversation.company_id', $this->companyId)
+            ->where('conversation.provider', 'meta')
+            ->where('message.sender_type', 'customer')
+            ->whereRaw("REPLACE(REPLACE(REPLACE(customer.phone, '+', ''), ' ', ''), '-', '') = ?", [$normalizedPhone])
+            ->orderByDesc('message.created_at')
+            ->value('message.created_at');
+
+        return $lastCustomerMessage !== null
+            && \Carbon\Carbon::parse($lastCustomerMessage, 'UTC')->setTimezone('America/Bogota')->greaterThanOrEqualTo(now('America/Bogota')->subHours(24));
+    }
+
+    private function closedWindowResponse(): array
+    {
+        return [
+            'success' => false,
+            'error' => 'La ventana de atención de 24 horas de WhatsApp Meta está cerrada. Usa una plantilla aprobada para iniciar la conversación.',
+            'code' => 'META_WINDOW_CLOSED',
+        ];
     }
 
     /**

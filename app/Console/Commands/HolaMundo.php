@@ -70,18 +70,18 @@ class HolaMundo extends Command
         $company = \App\Models\Company::find($companyId);
         $emailDailyLimit = $company ? $company->email_daily_limit : null;
 
-        // $CreateDetFacturationUseCase->createProcesoDetFacturation(
-        //     $CreateFacturationRequest, $resultado, $companyId, $billingDay, $billingMonth, $billingYear
-        // );
+        $CreateDetFacturationUseCase->createProcesoDetFacturation(
+            $CreateFacturationRequest, $resultado, $companyId, $billingDay, $billingMonth, $billingYear
+        );
         $result = $GeneratePdfUseCase->generatePdf($resultado, $companyId, $billingDay, $channel, $emailDailyLimit);
 
         $this->info('Proceso finalizado.');
-        $this->info("Resultado: " . json_encode($result));
+        //$this->info("Resultado: " . json_encode($result));
 
         try {
             $whatsapp->mensajeInformativo(
                 '3245127869',
-                "✅ *Se Finaliza Proceso* '{$hora}', '{$resultado}', '{$companyId}', '{$billingDay}'. Canal: {$channel}. Resultado: " . json_encode($result)
+                "✅ *Se Finaliza Proceso* '{$hora}', '{$resultado}', '{$companyId}', '{$billingDay}'. Canal: {$channel}"
             );
         } catch (\Throwable) {}
 

@@ -108,6 +108,7 @@ class MetaWhatsAppController extends Controller
 
         $request->validate([
             'name'       => 'required|string|max:512',
+            'parameter_format' => 'nullable|in:POSITIONAL,NAMED',
             'category'   => 'required|in:UTILITY,MARKETING,AUTHENTICATION',
             'language'   => 'required|string|size:5',
             'components' => 'required|array',
@@ -123,6 +124,7 @@ class MetaWhatsAppController extends Controller
             $response = Http::withToken($config['access_token'])
                 ->post($url, [
                     'name'       => $request->name,
+                    'parameter_format' => $request->input('parameter_format', 'POSITIONAL'),
                     'category'   => $request->category,
                     'language'   => $request->language,
                     'components' => $request->components,

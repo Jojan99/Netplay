@@ -13,13 +13,9 @@ use App\Services\WatchChimpService;
 
 class SendMessageUseCase implements SendMessageUseCaseInterface
 {
-    private WhatsAppService $whatsAppService;
-
     public function __construct(
         private ConversationRepositoryInterface $conversationRepository
-    ) {
-        $this->whatsAppService = new WhatsAppService();
-    }
+    ) {}
 
     public function execute(
     int $conversationId,
@@ -101,7 +97,15 @@ class SendMessageUseCase implements SendMessageUseCaseInterface
         // );
 
     //WhatsApp
-    $whats = $this->whatsAppService->mensajeInformativo(
+    // Misma empresa, dos mecanismos posibles (Meta API o Netplay WhatsApp): se debe usar
+    // el provider real de ESTA conversación, nunca un valor global de la empresa.
+    $whatsAppService = new WhatsAppService(
+        $conversation->company_id,
+        false,
+        $conversation->provider ?? 'netplay'
+    );
+
+    $whats = $whatsAppService->mensajeInformativo(
         $conversation->phone,
         $content,
     );
