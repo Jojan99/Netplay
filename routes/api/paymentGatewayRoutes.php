@@ -17,6 +17,7 @@ use Illuminate\Support\Facades\Route;
 |   POST /api/webhooks/wompi
 |   POST /api/webhooks/epayco
 |   POST /api/webhooks/zonapago
+|   POST /api/webhooks/efipay
 |
 | Rutas públicas — checkout intermedio ePayco:
 |   GET  /api/payment-gateway/epayco/checkout/{token}
@@ -42,13 +43,19 @@ Route::get('payment-gateway/epayco/checkout/{token}', [PaymentGatewayController:
 // URL preferida (por empresa): POST /api/webhooks/{gateway}/{company_slug}
 // URL legacy (fallback):       POST /api/webhooks/{gateway}
 Route::prefix('webhooks')->group(function () {
-    Route::post('wompi/{company_slug}',    [PaymentGatewayController::class, 'webhookWompi']);
-    Route::post('epayco/{company_slug}',   [PaymentGatewayController::class, 'webhookEpayco']);
-    Route::post('zonapago/{company_slug}', [PaymentGatewayController::class, 'webhookZonapago']);
+    // Throttle: acota intentos de fuerza bruta contra la verificación de firma
+    // sin estorbar el reintento legítimo de las pasarelas.
+    Route::middleware('throttle:120,1')->group(function () {
+        Route::post('wompi/{company_slug}',    [PaymentGatewayController::class, 'webhookWompi']);
+        Route::post('epayco/{company_slug}',   [PaymentGatewayController::class, 'webhookEpayco']);
+        Route::post('zonapago/{company_slug}', [PaymentGatewayController::class, 'webhookZonapago']);
+        Route::post('efipay/{company_slug}',   [PaymentGatewayController::class, 'webhookEfipay']);
 
-    Route::post('wompi',    [PaymentGatewayController::class, 'webhookWompi']);
-    Route::post('epayco',   [PaymentGatewayController::class, 'webhookEpayco']);
-    Route::post('zonapago', [PaymentGatewayController::class, 'webhookZonapago']);
+        Route::post('wompi',    [PaymentGatewayController::class, 'webhookWompi']);
+        Route::post('epayco',   [PaymentGatewayController::class, 'webhookEpayco']);
+        Route::post('zonapago', [PaymentGatewayController::class, 'webhookZonapago']);
+        Route::post('efipay',   [PaymentGatewayController::class, 'webhookEfipay']);
+    });
 
     // 📥 Webhook oficial de Meta (WhatsApp Business API)
     Route::get('whatsapp-meta',  [\App\Http\Controllers\WhatsAppWebhookController::class, 'verify']);

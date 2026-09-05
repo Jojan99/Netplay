@@ -81,6 +81,12 @@ class EPaycoGateway implements PaymentGatewayInterface
         };
     }
 
+    /** ePayco asigna el x_ref_payco al confirmar, no al construir el link. */
+    public function getLastGatewayReference(): ?string
+    {
+        return null;
+    }
+
     /** Datos del formulario para renderizar el checkout. */
     public function buildFormData(array $payload): array
     {

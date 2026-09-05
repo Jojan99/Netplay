@@ -50,4 +50,9 @@ class ZonaPagoGateway implements PaymentGatewayInterface
     {
         return 'pending';
     }
+
+    public function getLastGatewayReference(): ?string
+    {
+        return null;
+    }
 }

@@ -55,6 +55,7 @@ class Company extends Model
         'pg_events_secret',
         'pg_integrity_secret',
         'pg_client_id',
+        'pg_office_id',
     ];
 
     protected $casts = [

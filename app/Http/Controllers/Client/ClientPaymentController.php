@@ -7,10 +7,14 @@ use App\Models\CabFacturation;
 use App\Models\Company;
 use App\Models\DetFacturation;
 use App\Models\OnlinePaymentTransaction;
+use App\Services\PaymentGateways\EfiPayGateway;
+use App\Services\PaymentGateways\PaymentAllocationService;
 use App\Services\PaymentGateways\PaymentGatewayFactory;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class ClientPaymentController extends Controller
 {
@@ -78,35 +82,52 @@ class ClientPaymentController extends Controller
         $userData      = DB::table('user_data')->where('user_id', $clientUser->id)->first(['names', 'lastname', 'email']);
         $customerEmail = $userData->email ?? '';
         $customerName  = trim(($userData->names ?? '') . ' ' . ($userData->lastname ?? '')) ?: ($clientUser->username ?? '');
-        $baseRedirect  = $request->input('redirect_url', url('/portal/facturas'));
+        // El redirect_url llega del cliente: solo se acepta si apunta a nuestro
+        // propio dominio, para que no pueda usarse como redirección abierta.
+        $baseRedirect  = $this->safeRedirectUrl($request->input('redirect_url'));
         $redirectUrl   = rtrim($baseRedirect, '/') . '?tx=' . urlencode($reference);
 
         $description = count($orderedIds) > 1
             ? 'Pago ' . count($orderedIds) . ' facturas'
             : 'Factura #' . $firstInvoice->number_facture;
 
-        $gateway = PaymentGatewayFactory::make($company);
-        $link    = $gateway->generatePaymentLink([
-            'reference'      => $reference,
-            'amount'         => $amount,
-            'description'    => $description,
-            'customer_email' => $customerEmail,
-            'customer_name'  => $customerName,
-            'redirect_url'   => $redirectUrl,
-        ]);
+        try {
+            $gateway = PaymentGatewayFactory::make($company);
+            $link    = $gateway->generatePaymentLink([
+                'reference'      => $reference,
+                'amount'         => $amount,
+                'description'    => $description,
+                'customer_email' => $customerEmail,
+                'customer_name'  => $customerName,
+                'redirect_url'   => $redirectUrl,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Pago online: no se pudo generar el link', [
+                'company_id' => $company->id,
+                'gateway'    => $company->pg_gateway,
+                'reference'  => $reference,
+                'error'      => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'status'  => 1,
+                'message' => 'No pudimos generar el link de pago en este momento. Intenta de nuevo en unos minutos.',
+            ], 502);
+        }
 
         OnlinePaymentTransaction::create([
-            'company_id'         => $company->id,
-            'det_facturation_id' => $firstInvoice->id,
-            'invoice_ids'        => $orderedIds,
-            'reference'          => $reference,
-            'gateway'            => $company->pg_gateway,
-            'sandbox'            => (bool) $company->pg_sandbox,
-            'amount'             => $amount,
-            'status'             => 'pending',
-            'customer_name'      => $customerName,
-            'customer_email'     => $customerEmail,
-            'initiated_at'       => now(),
+            'company_id'             => $company->id,
+            'det_facturation_id'     => $firstInvoice->id,
+            'invoice_ids'            => $orderedIds,
+            'reference'              => $reference,
+            'gateway'                => $company->pg_gateway,
+            'sandbox'                => (bool) $company->pg_sandbox,
+            'amount'                 => $amount,
+            'status'                 => 'pending',
+            'customer_name'          => $customerName,
+            'customer_email'         => $customerEmail,
+            'gateway_transaction_id' => $gateway->getLastGatewayReference(),
+            'initiated_at'           => now(),
         ]);
 
         return response()->json([
@@ -197,6 +218,13 @@ class ClientPaymentController extends Controller
             return response()->json(['status' => 1, 'message' => 'Sin acceso.'], 403);
         }
 
+        // Si el webhook aún no llegó, preguntamos directamente a la pasarela.
+        // Así el cliente ve el resultado real sin esperar al reintento de EfiPay.
+        if ($tx->status === 'pending') {
+            $this->reconcilePending($tx);
+            $tx->refresh();
+        }
+
         return response()->json([
             'status' => 0,
             'data'   => [
@@ -210,6 +238,78 @@ class ClientPaymentController extends Controller
                 'invoice_ids' => $tx->invoice_ids ?? [$tx->det_facturation_id],
             ],
         ]);
+    }
+
+    /**
+     * Devuelve una URL de retorno segura: la solicitada solo si comparte host
+     * con la aplicación; en cualquier otro caso, el portal de facturas.
+     */
+    private function safeRedirectUrl(?string $requested): string
+    {
+        $default = url('/portal/facturas');
+
+        if (!is_string($requested) || trim($requested) === '') {
+            return $default;
+        }
+
+        $requested = trim($requested);
+
+        if (!filter_var($requested, FILTER_VALIDATE_URL)) {
+            return $default;
+        }
+
+        $host    = parse_url($requested, PHP_URL_HOST);
+        $appHost = parse_url(config('app.url'), PHP_URL_HOST);
+
+        if (!$host || !$appHost || strcasecmp($host, $appHost) !== 0) {
+            return $default;
+        }
+
+        return $requested;
+    }
+
+    /**
+     * Consulta el estado real en la pasarela cuando la transacción sigue pendiente.
+     * Solo EfiPay expone hoy un endpoint de estado; el resto se deja intacto.
+     */
+    private function reconcilePending(OnlinePaymentTransaction $tx): void
+    {
+        if ($tx->gateway !== 'efipay' || empty($tx->gateway_transaction_id)) {
+            return;
+        }
+
+        // El portal reintenta cada 3 s; limitamos la consulta externa a una
+        // cada 8 s por transacción para no saturar la API de EfiPay.
+        if (!Cache::add('efipay:reconcile:' . $tx->id, 1, 8)) {
+            return;
+        }
+
+        try {
+            $company = Company::find($tx->company_id);
+            if (!$company || !$company->pg_active) return;
+
+            $result = (new EfiPayGateway($company))->fetchStatus((string) $tx->gateway_transaction_id);
+            if (!$result || $result['status'] === 'pending') return;
+
+            $tx->update([
+                'status'  => $result['status'],
+                'paid_at' => $result['status'] === 'approved' ? ($tx->paid_at ?? now()) : $tx->paid_at,
+            ]);
+
+            if ($result['status'] === 'approved') {
+                // Si la consulta no trae monto, se usa el autorizado al iniciar el pago.
+                $paid = $result['amount'] > 0 ? $result['amount'] : (float) $tx->amount;
+
+                app(PaymentAllocationService::class)
+                    ->allocate($company->id, $tx->reference, $paid, 'efipay');
+            }
+        } catch (\Throwable $e) {
+            // La conciliación es best-effort: el webhook sigue siendo la vía principal.
+            Log::warning('Pago online: conciliación fallida', [
+                'reference' => $tx->reference,
+                'error'     => $e->getMessage(),
+            ]);
+        }
     }
 
     private function computeBreakdown($invoices, float $amount): array

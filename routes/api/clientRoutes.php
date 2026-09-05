@@ -50,9 +50,11 @@ Route::prefix('client')->middleware(['jwt.client'])->group(function () {
     Route::get('invoices/{id}/send-history',       [ClientInvoiceController::class, 'sendHistory']);
 
     // Pago online — iniciar pago (multi-factura, abono parcial)
-    Route::post('payment/initiate',    [ClientPaymentController::class, 'initiatePayment']);
+    Route::post('payment/initiate',    [ClientPaymentController::class, 'initiatePayment'])
+        ->middleware('throttle:10,1');
     // Pago online — resultado (retorno de pasarela)
-    Route::get('payment/result/{ref}', [ClientPaymentController::class, 'paymentResult']);
+    Route::get('payment/result/{ref}', [ClientPaymentController::class, 'paymentResult'])
+        ->middleware('throttle:60,1');
 
     // Reportes de falla
     Route::get('tickets',      [ClientTicketController::class, 'index']);

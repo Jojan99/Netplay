@@ -86,6 +86,12 @@ class WompiGateway implements PaymentGatewayInterface
         };
     }
 
+    /** Wompi no entrega un id de transacción al construir el link. */
+    public function getLastGatewayReference(): ?string
+    {
+        return null;
+    }
+
     private function buildIntegrityHash(string $reference, int $amountCents): string
     {
         $secret = $this->company->pg_integrity_secret;

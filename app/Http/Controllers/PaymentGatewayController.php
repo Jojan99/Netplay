@@ -6,8 +6,8 @@ use App\Models\CabFacturation;
 use App\Models\Company;
 use App\Models\DetFacturation;
 use App\Models\OnlinePaymentTransaction;
-use App\Models\PaymentLog;
 use App\Services\PaymentGateways\EPaycoGateway;
+use App\Services\PaymentGateways\PaymentAllocationService;
 use App\Services\PaymentGateways\PaymentGatewayFactory;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -41,13 +41,19 @@ class PaymentGatewayController extends Controller
                 'has_events_secret'    => !empty($company->pg_events_secret),
                 'has_integrity_secret' => !empty($company->pg_integrity_secret),
                 'has_client_id'        => !empty($company->pg_client_id),
+                'has_office_id'        => !empty($company->pg_office_id),
                 // Valores actuales (solo admin autenticado)
                 'public_key'           => $company->pg_public_key,
                 'private_key'          => $company->pg_private_key,
                 'events_secret'        => $company->pg_events_secret,
                 'integrity_secret'     => $company->pg_integrity_secret,
                 'client_id'            => $company->pg_client_id,
+                'office_id'            => $company->pg_office_id,
                 'webhook_url'          => $webhookUrl,
+                // Permite al panel mostrar la URL de la pasarela seleccionada
+                // antes de guardar la configuración.
+                'webhook_base'         => url('/api/webhooks'),
+                'company_slug'         => $company->slug,
                 'available'            => PaymentGatewayFactory::availableGateways(),
             ],
         ]);
@@ -56,9 +62,10 @@ class PaymentGatewayController extends Controller
     public function saveConfig(Request $request): JsonResponse
     {
         $request->validate([
-            'gateway' => 'required|in:wompi,epayco,zonapago',
-            'sandbox' => 'boolean',
-            'active'  => 'boolean',
+            'gateway'   => 'required|in:wompi,epayco,zonapago,efipay',
+            'sandbox'   => 'boolean',
+            'active'    => 'boolean',
+            'office_id' => 'nullable|string|max:32',
         ]);
 
         $company = Company::findOrFail(getSessionCompanyId());
@@ -69,7 +76,7 @@ class PaymentGatewayController extends Controller
             'pg_active'  => $request->boolean('active', false),
         ];
 
-        foreach (['public_key', 'private_key', 'events_secret', 'integrity_secret', 'client_id'] as $f) {
+        foreach (['public_key', 'private_key', 'events_secret', 'integrity_secret', 'client_id', 'office_id'] as $f) {
             if ($request->filled($f)) {
                 $data["pg_{$f}"] = $request->input($f);
             }
@@ -194,16 +201,17 @@ class PaymentGatewayController extends Controller
         ]);
 
         OnlinePaymentTransaction::create([
-            'company_id'         => $company->id,
-            'det_facturation_id' => $det->id,
-            'reference'          => $reference,
-            'gateway'            => $company->pg_gateway,
-            'sandbox'            => $company->pg_sandbox,
-            'amount'             => $amount,
-            'status'             => 'pending',
-            'customer_name'      => $customerName,
-            'customer_email'     => $customerEmail,
-            'initiated_at'       => now(),
+            'company_id'             => $company->id,
+            'det_facturation_id'     => $det->id,
+            'reference'              => $reference,
+            'gateway'                => $company->pg_gateway,
+            'sandbox'                => $company->pg_sandbox,
+            'amount'                 => $amount,
+            'status'                 => 'pending',
+            'customer_name'          => $customerName,
+            'customer_email'         => $customerEmail,
+            'gateway_transaction_id' => $gateway->getLastGatewayReference(),
+            'initiated_at'           => now(),
         ]);
 
         return response()->json([
@@ -256,6 +264,11 @@ class PaymentGatewayController extends Controller
         return $this->processWebhook($request, 'zonapago', $companySlug);
     }
 
+    public function webhookEfipay(Request $request, string $companySlug = null): JsonResponse
+    {
+        return $this->processWebhook($request, 'efipay', $companySlug);
+    }
+
     private function processWebhook(Request $request, string $gatewayName, ?string $companySlug = null): JsonResponse
     {
         try {
@@ -275,6 +288,7 @@ class PaymentGatewayController extends Controller
                     'wompi'    => $request->input('data.transaction.reference'),
                     'epayco'   => $request->input('x_id_factura') ?: $request->input('x_ref_payco'),
                     'zonapago' => $request->input('referencia'),
+                    'efipay'   => $request->input('checkout.payment_gateway.advanced_option.references.0'),
                     default    => null,
                 };
 
@@ -314,15 +328,33 @@ class PaymentGatewayController extends Controller
             $gatewayTxId = match ($gatewayName) {
                 'wompi'  => $request->input('data.transaction.id'),
                 'epayco' => $request->input('x_ref_payco'),
+                'efipay' => $request->input('checkout.pivot.transaction_id')
+                            ?? $request->input('transaction.transaction_id'),
                 default  => null,
             };
 
+            // La transacción debe existir y pertenecer a la empresa notificada:
+            // evita que un webhook de una empresa cierre facturas de otra.
+            $tx = OnlinePaymentTransaction::where('reference', $reference)
+                ->where('company_id', $company->id)
+                ->first();
+
+            if (!$tx) {
+                Log::warning("Webhook {$gatewayName}: referencia desconocida para la empresa", [
+                    'reference'  => $reference,
+                    'company_id' => $company->id,
+                    'ip'         => $request->ip(),
+                ]);
+                return response()->json(['ok' => false], 200);
+            }
+
             // Siempre persistir el estado (aprobado, rechazado, cancelado, fallido…)
-            OnlinePaymentTransaction::where('reference', $reference)->update([
+            $tx->update([
                 'status'                 => $txStatus,
-                'gateway_transaction_id' => $gatewayTxId,
+                // No borrar el id que ya se guardó al generar el link.
+                'gateway_transaction_id' => $gatewayTxId ?: $tx->gateway_transaction_id,
                 'gateway_payload'        => $request->all(),
-                'paid_at'                => $txStatus === 'approved' ? now() : null,
+                'paid_at'                => $txStatus === 'approved' ? now() : $tx->paid_at,
             ]);
 
             if ($txStatus === 'approved') {
@@ -339,83 +371,6 @@ class PaymentGatewayController extends Controller
 
     private function markInvoicePaid(int $companyId, string $reference, float $amountPaid, string $gateway): void
     {
-        $tx = OnlinePaymentTransaction::where('reference', $reference)->first();
-        if (!$tx) return;
-
-        // Idempotencia: si ya se distribuyó este pago, no volver a procesar
-        if ($tx->allocation_done) return;
-
-        // Determinar facturas a pagar (multi o single)
-        $invoiceIds = !empty($tx->invoice_ids) ? $tx->invoice_ids : [$tx->det_facturation_id];
-        $invoiceIds = array_filter($invoiceIds);
-
-        if (empty($invoiceIds)) return;
-
-        $invoices = DetFacturation::whereIn('id', $invoiceIds)->get()
-            ->sortBy(fn($inv) => array_search($inv->id, $invoiceIds))
-            ->values();
-
-        $clientName = 'Portal (online)';
-        $cabResolved = false;
-
-        DB::transaction(function () use (
-            $invoices, $amountPaid, $tx, $gateway, $companyId, &$clientName, &$cabResolved
-        ) {
-            $remaining = round($amountPaid, 2);
-
-            foreach ($invoices as $invoice) {
-                if ($remaining <= 0) break;
-
-                // Resolver nombre de cliente (solo una vez)
-                if (!$cabResolved) {
-                    $cab = CabFacturation::find($invoice->cab_id);
-                    if ($cab) {
-                        $ud = DB::table('user_data')->where('user_id', $cab->user_id)->first(['names', 'lastname']);
-                        if ($ud) {
-                            $clientName = trim(($ud->names ?? '') . ' ' . ($ud->lastname ?? '')) ?: $clientName;
-                        }
-                    }
-                    $cabResolved = true;
-                }
-
-                $alreadyPaid = round((float) ($invoice->abone ?? 0), 2);
-                $stillOwed   = round($invoice->price_total - $alreadyPaid, 2);
-
-                if ($stillOwed <= 0) continue;
-
-                if ($remaining >= $stillOwed) {
-                    // Pago completo de esta factura
-                    $invoice->update([
-                        'paid'    => 1,
-                        'paid_at' => now(),
-                        'abone'   => $invoice->price_total,
-                    ]);
-                    $applied   = $stillOwed;
-                    $remaining = round($remaining - $stillOwed, 2);
-                } else {
-                    // Abono parcial
-                    $invoice->update([
-                        'abone' => $alreadyPaid + $remaining,
-                    ]);
-                    $applied   = $remaining;
-                    $remaining = 0;
-                }
-
-                PaymentLog::create([
-                    'company_id'          => $companyId,
-                    'det_facturation_id'  => $invoice->id,
-                    'cab_id'              => $invoice->cab_id,
-                    'number_facture'      => $invoice->number_facture,
-                    'client_name'         => $clientName,
-                    'recorded_by_user_id' => null,
-                    'amount'              => $applied,
-                    'type'                => 'ingreso',
-                    'notes'               => 'Pago online vía ' . strtoupper($gateway) . ". Ref: {$tx->reference}",
-                    'payment_method_id'   => null,
-                ]);
-            }
-
-            $tx->update(['allocation_done' => true]);
-        });
+        app(PaymentAllocationService::class)->allocate($companyId, $reference, $amountPaid, $gateway);
     }
 }

@@ -34,4 +34,11 @@ interface PaymentGatewayInterface
 
     /** Retorna el estado normalizado: approved | declined | cancelled | failed | pending */
     public function getTransactionStatus(Request $request): string;
+
+    /**
+     * Identificador que la pasarela asignó al pago en la última llamada a
+     * generatePaymentLink(). Se persiste para poder conciliar por API.
+     * Null si la pasarela no entrega uno en ese momento.
+     */
+    public function getLastGatewayReference(): ?string;
 }
