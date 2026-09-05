@@ -5,6 +5,7 @@ namespace App\Services\PaymentGateways;
 use App\Models\CabFacturation;
 use App\Models\Company;
 use App\Models\DetFacturation;
+use App\Exceptions\PaymentLinkException;
 use App\Models\PaymentLink;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
@@ -57,33 +58,33 @@ class PaymentLinkService
      * Convierte el token en una URL de checkout lista para redirigir.
      *
      * @return array{url: string, reference: string, amount: float}
-     * @throws \RuntimeException con un mensaje apto para mostrarle al cliente
+     * @throws PaymentLinkException con un mensaje apto para mostrarle al cliente
      */
     public function resolveToCheckout(string $token): array
     {
         $link = PaymentLink::where('token', $token)->first();
 
         if (!$link) {
-            throw new \RuntimeException('Este link de pago no es válido.');
+            throw new PaymentLinkException('Este link de pago no es válido.');
         }
 
         if ($link->isExpired()) {
-            throw new \RuntimeException('Este link de pago ya venció. Pídele uno nuevo a tu proveedor.');
+            throw new PaymentLinkException('Este link de pago ya venció. Pídele uno nuevo a tu proveedor.');
         }
 
         if ($link->isExhausted()) {
-            throw new \RuntimeException('Este link de pago ya fue utilizado.');
+            throw new PaymentLinkException('Este link de pago ya fue utilizado.');
         }
 
         $company = Company::find($link->company_id);
         if (!$company || !$company->pg_active || !$company->pg_gateway) {
-            throw new \RuntimeException('El pago en línea no está disponible en este momento.');
+            throw new PaymentLinkException('El pago en línea no está disponible en este momento.');
         }
 
         $invoices = $this->pendingInvoices($link);
 
         if ($invoices->isEmpty()) {
-            throw new \RuntimeException('No tienes facturas pendientes por pagar. ¡Estás al día!');
+            throw new PaymentLinkException('No tienes facturas pendientes por pagar. ¡Estás al día!');
         }
 
         $amount = round(
@@ -92,7 +93,7 @@ class PaymentLinkService
         );
 
         if ($amount <= 0) {
-            throw new \RuntimeException('No tienes facturas pendientes por pagar. ¡Estás al día!');
+            throw new PaymentLinkException('No tienes facturas pendientes por pagar. ¡Estás al día!');
         }
 
         $result = $this->initiator->initiate(

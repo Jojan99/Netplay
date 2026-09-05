@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Exceptions\PaymentLinkException;
 use App\Services\PaymentGateways\PaymentLinkService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -21,8 +22,8 @@ class PaymentLinkController extends Controller
     {
         try {
             $result = $this->links->resolveToCheckout($token);
-        } catch (\RuntimeException $e) {
-            // Mensajes redactados para el cliente final.
+        } catch (PaymentLinkException $e) {
+            // Única vía por la que un mensaje llega literal al cliente final.
             return response()->view('payment.link_message', [
                 'message' => $e->getMessage(),
             ], 200);
