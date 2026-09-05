@@ -1461,7 +1461,11 @@ class WaBotService
     /** Saldo pendiente de una factura, descontando abonos. */
     private function invoiceBalance(object $invoice): float
     {
-        return round((float) $invoice->price_total - (float) ($invoice->abone ?? 0), 2);
+        return method_exists($invoice, 'outstanding')
+            ? $invoice->outstanding()
+            : round(max(0, (float) $invoice->price_total
+                - (float) ($invoice->price_discount ?? 0)
+                - (float) ($invoice->price_abone ?? 0)), 2);
     }
 
     private function formatMoney(float $value): string

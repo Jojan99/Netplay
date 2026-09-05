@@ -32,6 +32,34 @@ class DetFacturation extends Authenticatable
     ];
 
     /**
+     * Saldo pendiente de la factura.
+     *
+     * Ojo con la convención de columnas, es fácil equivocarse:
+     *   price_abone → monto abonado (dinero)
+     *   abone       → bandera 0/1 de "tiene abono", NO es un monto
+     */
+    public function outstanding(): float
+    {
+        return round(max(0.0,
+            (float) $this->price_total
+            - (float) ($this->price_discount ?? 0)
+            - (float) ($this->price_abone ?? 0)
+        ), 2);
+    }
+
+    /** Monto ya abonado a esta factura. */
+    public function amountPaid(): float
+    {
+        return round((float) ($this->price_abone ?? 0), 2);
+    }
+
+    /** Total neto de la factura, ya descontado. */
+    public function netTotal(): float
+    {
+        return round(max(0.0, (float) $this->price_total - (float) ($this->price_discount ?? 0)), 2);
+    }
+
+    /**
      * The attributes that should be cast.
      *
      * @var array<string, string>

@@ -87,10 +87,7 @@ class PaymentLinkService
             throw new PaymentLinkException('No tienes facturas pendientes por pagar. ¡Estás al día!');
         }
 
-        $amount = round(
-            $invoices->sum(fn($inv) => $inv->price_total - (float) ($inv->abone ?? 0)),
-            2
-        );
+        $amount = round($invoices->sum(fn($inv) => $inv->outstanding()), 2);
 
         if ($amount <= 0) {
             throw new PaymentLinkException('No tienes facturas pendientes por pagar. ¡Estás al día!');
@@ -142,7 +139,7 @@ class PaymentLinkService
         }
 
         return $query->orderBy('date_facturation')->orderBy('id')->get()
-            ->filter(fn($inv) => round($inv->price_total - (float) ($inv->abone ?? 0), 2) > 0)
+            ->filter(fn($inv) => $inv->outstanding() > 0)
             ->values();
     }
 

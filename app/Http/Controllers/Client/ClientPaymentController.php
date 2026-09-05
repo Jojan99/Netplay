@@ -60,7 +60,7 @@ class ClientPaymentController extends Controller
             return response()->json(['status' => 1, 'message' => 'Una o más facturas no son válidas o ya están pagadas.'], 400);
         }
 
-        $totalDue = $invoices->sum(fn($inv) => $inv->price_total - (float) ($inv->abone ?? 0));
+        $totalDue = $invoices->sum(fn($inv) => $inv->outstanding());
         if ($amount > round($totalDue + 0.01, 2)) {
             return response()->json(['status' => 1, 'message' => 'El monto supera el total adeudado (' . number_format($totalDue, 0, ',', '.') . ').'], 400);
         }

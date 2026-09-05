@@ -96,24 +96,29 @@ class PaymentAllocationService
                     $cabResolved = true;
                 }
 
-                $alreadyPaid = round((float) ($invoice->abone ?? 0), 2);
-                $stillOwed   = round($invoice->price_total - $alreadyPaid, 2);
+                // `price_abone` guarda el dinero abonado; `abone` es solo la
+                // bandera 0/1 de "tiene abono". Confundirlas hacía que el pago
+                // online nunca cerrara una factura.
+                $alreadyPaid = $invoice->amountPaid();
+                $stillOwed   = $invoice->outstanding();
 
                 if ($stillOwed <= 0) continue;
 
                 if ($remaining >= $stillOwed) {
                     // Pago completo de esta factura
                     $invoice->update([
-                        'paid'    => 1,
-                        'paid_at' => now(),
-                        'abone'   => $invoice->price_total,
+                        'paid'        => 1,
+                        'paid_at'     => now(),
+                        'price_abone' => $invoice->netTotal(),
+                        'abone'       => 1,
                     ]);
                     $applied   = $stillOwed;
                     $remaining = round($remaining - $stillOwed, 2);
                 } else {
                     // Abono parcial
                     $invoice->update([
-                        'abone' => $alreadyPaid + $remaining,
+                        'price_abone' => round($alreadyPaid + $remaining, 2),
+                        'abone'       => 1,
                     ]);
                     $applied   = $remaining;
                     $remaining = 0;

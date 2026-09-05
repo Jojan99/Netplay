@@ -105,8 +105,8 @@ class PaymentInitiationService
         foreach ($invoices as $invoice) {
             if ($remaining <= 0) break;
 
-            $alreadyPaid = (float) ($invoice->abone ?? 0);
-            $stillOwed   = round($invoice->price_total - $alreadyPaid, 2);
+            $alreadyPaid = $invoice->amountPaid();
+            $stillOwed   = $invoice->outstanding();
             $toPay       = min($remaining, $stillOwed);
 
             $result[] = [
