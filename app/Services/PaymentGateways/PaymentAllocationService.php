@@ -114,6 +114,7 @@ class PaymentAllocationService
                     ]);
                     $applied   = $stillOwed;
                     $remaining = round($remaining - $stillOwed, 2);
+                    $fullyPaid = true;
                 } else {
                     // Abono parcial
                     $invoice->update([
@@ -122,6 +123,7 @@ class PaymentAllocationService
                     ]);
                     $applied   = $remaining;
                     $remaining = 0;
+                    $fullyPaid = false;
                 }
 
                 PaymentLog::create([
@@ -132,7 +134,9 @@ class PaymentAllocationService
                     'client_name'         => $clientName,
                     'recorded_by_user_id' => null,
                     'amount'              => $applied,
-                    'type'                => 'ingreso',
+                    // payment_logs.type es un enum: pago_completo|abono|descuento|ajuste.
+                    // Escribir cualquier otra cosa hace que MySQL trunque y aborte.
+                    'type'                => $fullyPaid ? 'pago_completo' : 'abono',
                     'notes'               => 'Pago online vía ' . strtoupper($gateway) . ". Ref: {$locked->reference}",
                     'payment_method_id'   => null,
                 ]);
