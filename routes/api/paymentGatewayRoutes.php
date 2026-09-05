@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Route;
 | Rutas protegidas (jwt.verify + role:admin) — configuración:
 |   GET  /api/payment-gateway/config
 |   PUT  /api/payment-gateway/config
+|   GET  /api/payment-gateway/efipay/offices
 |
 | Rutas públicas — webhooks (llamados por la pasarela, sin JWT):
 |   POST /api/webhooks/wompi
@@ -32,6 +33,7 @@ Route::prefix('payment-gateway')->middleware(['jwt.verify', 'role:admin'])->grou
     Route::put('config',            [PaymentGatewayController::class, 'saveConfig']);
     Route::get('transactions',      [PaymentGatewayController::class, 'transactions']);
     Route::get('transactions/{id}', [PaymentGatewayController::class, 'transactionDetail']);
+    Route::get('efipay/offices',    [PaymentGatewayController::class, 'efipayOffices']);
     Route::get('test-users',        [PaymentGatewayController::class, 'testUsers']);
     Route::post('test-invoice',     [PaymentGatewayController::class, 'testInvoice']);
 });

@@ -6,6 +6,7 @@ use App\Models\CabFacturation;
 use App\Models\Company;
 use App\Models\DetFacturation;
 use App\Models\OnlinePaymentTransaction;
+use App\Services\PaymentGateways\EfiPayGateway;
 use App\Services\PaymentGateways\EPaycoGateway;
 use App\Services\PaymentGateways\PaymentAllocationService;
 use App\Services\PaymentGateways\PaymentGatewayFactory;
@@ -85,6 +86,26 @@ class PaymentGatewayController extends Controller
         $company->update($data);
 
         return response()->json(['status' => 0, 'message' => 'Configuración guardada correctamente.']);
+    }
+
+    // ─── Admin: sucursales de EfiPay ──────────────────────────────────────────
+
+    /**
+     * GET /api/payment-gateway/efipay/offices
+     * Lista las sucursales del comercio para que el administrador elija un
+     * `office` válido en lugar de adivinarlo.
+     */
+    public function efipayOffices(): JsonResponse
+    {
+        $company = Company::findOrFail(getSessionCompanyId());
+
+        try {
+            $offices = (new EfiPayGateway($company))->fetchOffices();
+        } catch (\Throwable $e) {
+            return response()->json(['status' => 1, 'message' => $e->getMessage()], 400);
+        }
+
+        return response()->json(['status' => 0, 'data' => $offices]);
     }
 
     // ─── Admin: transacciones ─────────────────────────────────────────────────
@@ -189,16 +210,25 @@ class PaymentGatewayController extends Controller
         $customerName  = trim(($ud->names ?? '') . ' ' . ($ud->lastname ?? '')) ?: 'Test';
         $customerEmail = $ud->email ?? '';
 
-        $gateway    = PaymentGatewayFactory::make($company);
-        $reference  = $company->slug . '-' . $numberFacture . '-' . $det->id;
-        $paymentUrl = $gateway->generatePaymentLink([
-            'reference'      => $reference,
-            'amount'         => $amount,
-            'description'    => $description,
-            'customer_email' => $customerEmail,
-            'customer_name'  => $customerName,
-            'redirect_url'   => url('/portal/facturas'),
-        ]);
+        $reference = $company->slug . '-' . $numberFacture . '-' . $det->id;
+
+        try {
+            $gateway    = PaymentGatewayFactory::make($company);
+            $paymentUrl = $gateway->generatePaymentLink([
+                'reference'      => $reference,
+                'amount'         => $amount,
+                'description'    => $description,
+                'customer_email' => $customerEmail,
+                'customer_name'  => $customerName,
+                'redirect_url'   => url('/portal/facturas'),
+            ]);
+        } catch (\Throwable $e) {
+            // La factura temporal ya no sirve para nada si no hay link de pago.
+            $det->delete();
+
+            // Pantalla de admin: mostramos el motivo real que devuelve la pasarela.
+            return response()->json(['status' => 1, 'message' => $e->getMessage()], 400);
+        }
 
         OnlinePaymentTransaction::create([
             'company_id'             => $company->id,

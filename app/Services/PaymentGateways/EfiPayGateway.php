@@ -32,6 +32,7 @@ class EfiPayGateway implements PaymentGatewayInterface
 
     private const GENERATE_PATH = '/api/v1/payment/generate-payment';
     private const STATUS_PATH   = '/api/v1/payment/transaction-status/';
+    private const OFFICES_PATH  = '/api/v1/offices/get';
 
     /** Límites documentados por EfiPay. */
     private const MAX_REFERENCE_LEN   = 50;
@@ -338,6 +339,59 @@ class EfiPayGateway implements PaymentGatewayInterface
         ];
     }
 
+    /**
+     * Sucursales del comercio (GET /api/v1/offices/get). Sirve para que el
+     * administrador elija un `office` válido en vez de adivinarlo.
+     *
+     * @return array<int, array{id: int|string, name: string}>
+     * @throws \RuntimeException si el token no es válido o EfiPay no responde
+     */
+    public function fetchOffices(): array
+    {
+        $token = trim((string) $this->company->pg_private_key);
+
+        if ($token === '') {
+            throw new \RuntimeException('Guarda primero el token de acceso API de EfiPay.');
+        }
+
+        try {
+            $response = Http::withToken($token)
+                ->acceptJson()
+                ->connectTimeout(self::HTTP_CONNECT_TIMEOUT)
+                ->timeout(self::HTTP_TIMEOUT)
+                ->get(self::API_BASE . self::OFFICES_PATH);
+        } catch (ConnectionException $e) {
+            throw new \RuntimeException('No se pudo conectar con EfiPay. Intenta de nuevo en unos minutos.');
+        }
+
+        if ($response->status() === 401) {
+            throw new \RuntimeException('EfiPay rechazó el token de acceso API. Verifica que corresponda al modo seleccionado.');
+        }
+
+        if (!$response->successful()) {
+            throw new \RuntimeException('EfiPay no devolvió las sucursales: ' . $this->extractApiError($response->json()));
+        }
+
+        $body = $response->json();
+        $rows = $body['data'] ?? $body['offices'] ?? $body;
+
+        if (!is_array($rows)) {
+            return [];
+        }
+
+        $offices = [];
+        foreach ($rows as $row) {
+            if (!is_array($row) || !isset($row['id'])) continue;
+
+            $offices[] = [
+                'id'   => $row['id'],
+                'name' => (string) ($row['name'] ?? $row['description'] ?? ('Sucursal ' . $row['id'])),
+            ];
+        }
+
+        return $offices;
+    }
+
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
     /** URL pública del webhook de esta empresa. */
@@ -430,14 +484,36 @@ class EfiPayGateway implements PaymentGatewayInterface
             return 'error desconocido.';
         }
 
+        // Bolsa de validación anidada: {"errors": {"campo": ["mensaje"]}}
         if (!empty($body['errors']) && is_array($body['errors'])) {
-            $first = reset($body['errors']);
-            $msg   = is_array($first) ? (string) reset($first) : (string) $first;
-            if ($msg !== '') {
-                return $msg;
-            }
+            $msg = $this->firstValidationMessage($body['errors']);
+            if ($msg !== null) return $msg;
         }
 
-        return (string) ($body['message'] ?? 'error desconocido.');
+        if (!empty($body['message'])) {
+            return (string) $body['message'];
+        }
+
+        // Bolsa de validación plana, que es lo que devuelve EfiPay en los 422:
+        // {"office": ["El office seleccionado no es válido."]}
+        $msg = $this->firstValidationMessage($body);
+        if ($msg !== null) return $msg;
+
+        return 'error desconocido.';
+    }
+
+    /** Primer mensaje legible de un mapa campo => [mensajes]. */
+    private function firstValidationMessage(array $bag): ?string
+    {
+        foreach ($bag as $field => $messages) {
+            $text = is_array($messages) ? (string) reset($messages) : (string) $messages;
+            if (trim($text) === '') continue;
+
+            return is_string($field) && !is_numeric($field)
+                ? "{$field}: {$text}"
+                : $text;
+        }
+
+        return null;
     }
 }
