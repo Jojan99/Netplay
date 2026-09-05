@@ -100,6 +100,18 @@ class WhatsAppService
         return $this->delegate(__FUNCTION__, func_get_args());
     }
 
+    /** Botón que abre una URL dentro de WhatsApp (solo Meta). */
+    public function sendCtaUrl(
+        string $to,
+        string $bodyText,
+        string $buttonText,
+        string $url,
+        string $headerText = '',
+        string $footerText = ''
+    ): array {
+        return $this->delegate(__FUNCTION__, func_get_args());
+    }
+
     // ── HELPER ESTÁTICO ──────────────────────────────
     /**
      * Verifica si un usuario tiene WhatsApp habilitado (campo user_data.whatsapp_enabled).

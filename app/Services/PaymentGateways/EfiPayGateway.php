@@ -98,6 +98,13 @@ class EfiPayGateway implements PaymentGatewayInterface
             'office' => (int) $office,
         ];
 
+        // Fecha tope para aprobar el pago (YYYY-MM-DD). Importante en los links
+        // que viajan por WhatsApp: sin ella el cobro queda vigente para siempre.
+        $limitDate = $this->normalizeLimitDate($data['limit_date'] ?? null);
+        if ($limitDate !== null) {
+            $payload['advanced_options']['limit_date'] = $limitDate;
+        }
+
         $customer = $this->buildCustomerInformation($data);
         if ($customer !== []) {
             $payload['customer_information'] = $customer;
@@ -413,6 +420,23 @@ class EfiPayGateway implements PaymentGatewayInterface
             'fallida', 'fallido', 'error'               => 'failed',
             default                                     => 'pending', // Pendiente, En proceso, …
         };
+    }
+
+    /** Acepta una fecha futura en formato YYYY-MM-DD; descarta cualquier otra cosa. */
+    private function normalizeLimitDate(mixed $limitDate): ?string
+    {
+        if (!is_string($limitDate) || trim($limitDate) === '') {
+            return null;
+        }
+
+        try {
+            $date = \Carbon\Carbon::parse(trim($limitDate))->startOfDay();
+        } catch (\Throwable) {
+            return null;
+        }
+
+        // Una fecha ya vencida haría que EfiPay rechace el cobro entero.
+        return $date->isBefore(now()->startOfDay()) ? null : $date->format('Y-m-d');
     }
 
     private function normalizeDescription(string $description): string

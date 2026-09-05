@@ -214,6 +214,59 @@ class MetaWhatsAppService
     }
 
     /**
+     * Mensaje con botón que abre una URL en el navegador embebido de WhatsApp.
+     *
+     * Es lo más cerca que se llega hoy en Colombia a "pagar sin salir de WhatsApp":
+     * el checkout se abre dentro de la app, no en el navegador del teléfono.
+     * Solo funciona dentro de la ventana de 24 h; fuera de ella hace falta una
+     * plantilla aprobada con botón de URL.
+     */
+    public function sendCtaUrl(
+        string $to,
+        string $bodyText,
+        string $buttonText,
+        string $url,
+        string $headerText = '',
+        string $footerText = ''
+    ): array {
+        if (!$this->isEnabled()) return ['success' => false, 'error' => 'Meta WhatsApp deshabilitado.'];
+        if (!$this->hasOpenCustomerWindow($to)) return $this->closedWindowResponse();
+
+        if (!str_starts_with(strtolower($url), 'https://')) {
+            return ['success' => false, 'error' => 'La URL del botón debe usar HTTPS.'];
+        }
+
+        $payload = [
+            'messaging_product' => 'whatsapp',
+            'recipient_type'    => 'individual',
+            'to'                => $this->normalizePhone($to),
+            'type'              => 'interactive',
+            'interactive'       => [
+                'type'   => 'cta_url',
+                'body'   => ['text' => $bodyText],
+                'action' => [
+                    'name'       => 'cta_url',
+                    'parameters' => [
+                        // Meta corta el rótulo en 20 caracteres.
+                        'display_text' => mb_substr($buttonText, 0, 20),
+                        'url'          => $url,
+                    ],
+                ],
+            ],
+        ];
+
+        if ($headerText !== '') {
+            $payload['interactive']['header'] = ['type' => 'text', 'text' => mb_substr($headerText, 0, 60)];
+        }
+
+        if ($footerText !== '') {
+            $payload['interactive']['footer'] = ['text' => mb_substr($footerText, 0, 60)];
+        }
+
+        return $this->sendRequest($payload);
+    }
+
+    /**
      * Envía un mensaje con menú de lista (solo en Meta, máx 10 opciones)
      */
     public function sendInteractiveList(string $to, string $bodyText, array $sections, string $buttonText = 'Opciones'): array

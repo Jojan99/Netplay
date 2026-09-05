@@ -9,7 +9,7 @@ use App\Models\DetFacturation;
 use App\Models\OnlinePaymentTransaction;
 use App\Services\PaymentGateways\EfiPayGateway;
 use App\Services\PaymentGateways\PaymentAllocationService;
-use App\Services\PaymentGateways\PaymentGatewayFactory;
+use App\Services\PaymentGateways\PaymentInitiationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -70,42 +70,23 @@ class ClientPaymentController extends Controller
             return response()->json(['status' => 1, 'message' => 'Pago en línea no disponible.'], 400);
         }
 
-        // Calcular distribución del pago (preview para el frontend y para el webhook)
-        $breakdown  = $this->computeBreakdown($invoices, $amount);
-        $orderedIds = $invoices->pluck('id')->values()->all();
-
-        // Referencia única: evita colisiones con múltiples intentos simultáneos
-        $firstInvoice = $invoices->first();
-        $tag          = count($orderedIds) > 1 ? 'MULTI' : $firstInvoice->number_facture;
-        $reference    = $company->slug . '-' . $tag . '-' . time() . '-' . $firstInvoice->id;
-
-        $userData      = DB::table('user_data')->where('user_id', $clientUser->id)->first(['names', 'lastname', 'email']);
-        $customerEmail = $userData->email ?? '';
-        $customerName  = trim(($userData->names ?? '') . ' ' . ($userData->lastname ?? '')) ?: ($clientUser->username ?? '');
         // El redirect_url llega del cliente: solo se acepta si apunta a nuestro
         // propio dominio, para que no pueda usarse como redirección abierta.
-        $baseRedirect  = $this->safeRedirectUrl($request->input('redirect_url'));
-        $redirectUrl   = rtrim($baseRedirect, '/') . '?tx=' . urlencode($reference);
-
-        $description = count($orderedIds) > 1
-            ? 'Pago ' . count($orderedIds) . ' facturas'
-            : 'Factura #' . $firstInvoice->number_facture;
+        $redirectUrl = $this->safeRedirectUrl($request->input('redirect_url'));
 
         try {
-            $gateway = PaymentGatewayFactory::make($company);
-            $link    = $gateway->generatePaymentLink([
-                'reference'      => $reference,
-                'amount'         => $amount,
-                'description'    => $description,
-                'customer_email' => $customerEmail,
-                'customer_name'  => $customerName,
-                'redirect_url'   => $redirectUrl,
-            ]);
+            $result = app(PaymentInitiationService::class)->initiate(
+                company:      $company,
+                clientUserId: $clientUser->id,
+                invoices:     $invoices,
+                amount:       $amount,
+                redirectUrl:  $redirectUrl,
+                origin:       'portal',
+            );
         } catch (\Throwable $e) {
             Log::error('Pago online: no se pudo generar el link', [
                 'company_id' => $company->id,
                 'gateway'    => $company->pg_gateway,
-                'reference'  => $reference,
                 'error'      => $e->getMessage(),
             ]);
 
@@ -115,32 +96,7 @@ class ClientPaymentController extends Controller
             ], 502);
         }
 
-        OnlinePaymentTransaction::create([
-            'company_id'             => $company->id,
-            'det_facturation_id'     => $firstInvoice->id,
-            'invoice_ids'            => $orderedIds,
-            'reference'              => $reference,
-            'gateway'                => $company->pg_gateway,
-            'sandbox'                => (bool) $company->pg_sandbox,
-            'amount'                 => $amount,
-            'status'                 => 'pending',
-            'customer_name'          => $customerName,
-            'customer_email'         => $customerEmail,
-            'gateway_transaction_id' => $gateway->getLastGatewayReference(),
-            'initiated_at'           => now(),
-        ]);
-
-        return response()->json([
-            'status' => 0,
-            'data'   => [
-                'payment_url' => $link,
-                'reference'   => $reference,
-                'amount'      => $amount,
-                'gateway'     => $company->pg_gateway,
-                'sandbox'     => $company->pg_sandbox,
-                'breakdown'   => $breakdown,
-            ],
-        ]);
+        return response()->json(['status' => 0, 'data' => $result]);
     }
 
     /**
@@ -310,33 +266,5 @@ class ClientPaymentController extends Controller
                 'error'     => $e->getMessage(),
             ]);
         }
-    }
-
-    private function computeBreakdown($invoices, float $amount): array
-    {
-        $remaining = $amount;
-        $result    = [];
-
-        foreach ($invoices as $invoice) {
-            if ($remaining <= 0) break;
-
-            $alreadyPaid = (float) ($invoice->abone ?? 0);
-            $stillOwed   = round($invoice->price_total - $alreadyPaid, 2);
-            $toPay       = min($remaining, $stillOwed);
-
-            $result[] = [
-                'invoice_id'     => $invoice->id,
-                'number_facture' => $invoice->number_facture,
-                'price_total'    => (float) $invoice->price_total,
-                'already_paid'   => $alreadyPaid,
-                'still_owed'     => $stillOwed,
-                'amount_to_pay'  => round($toPay, 2),
-                'full_coverage'  => $toPay >= $stillOwed - 0.01,
-            ];
-
-            $remaining = round($remaining - $toPay, 2);
-        }
-
-        return $result;
     }
 }

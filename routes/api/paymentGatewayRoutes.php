@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\PaymentGatewayController;
+use App\Http\Controllers\PaymentLinkController;
 use App\Http\Controllers\Client\ClientPaymentController;
 use Illuminate\Support\Facades\Route;
 
@@ -23,6 +24,9 @@ use Illuminate\Support\Facades\Route;
 | Rutas públicas — checkout intermedio ePayco:
 |   GET  /api/payment-gateway/epayco/checkout/{token}
 |
+| Rutas públicas — links de pago compartibles (WhatsApp, correo, panel):
+|   GET  /api/pay/{token}
+|
 | Rutas portal cliente (jwt.client):
 |   POST /api/client/invoices/{id}/pay-link
 */
@@ -37,6 +41,12 @@ Route::prefix('payment-gateway')->middleware(['jwt.verify', 'role:admin'])->grou
     Route::get('test-users',        [PaymentGatewayController::class, 'testUsers']);
     Route::post('test-invoice',     [PaymentGatewayController::class, 'testInvoice']);
 });
+
+// ── Links de pago compartibles (público — sin JWT) ───────────────────────────
+// El token tiene 40 caracteres aleatorios; el throttle solo acota el ruido.
+Route::get('pay/{token}', [PaymentLinkController::class, 'open'])
+    ->middleware('throttle:30,1')
+    ->where('token', '[A-Za-z0-9]{20,64}');
 
 // ── Checkout intermedio ePayco (público — sin JWT) ───────────────────────────
 Route::get('payment-gateway/epayco/checkout/{token}', [PaymentGatewayController::class, 'epaycoCheckout']);

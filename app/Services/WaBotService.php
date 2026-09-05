@@ -19,6 +19,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Database\QueryException;
 use App\Services\WhatsAppService;
+use App\Services\PaymentGateways\PaymentLinkService;
 use Symfony\Component\Process\Process;
 
 class WaBotService
@@ -152,17 +153,56 @@ class WaBotService
             $options[] = ['key' => '3', 'label' => 'Reportar pago', 'flow' => 'reportar_pago'];
         }
 
-        $menuText = ($config->welcome_message ?: "Hola, bienvenido a {$company->name}.\n\n¿En qué puedo ayudarte?");
-        $buttons = [];
+        // "Pagar mi factura" solo aparece si la pasarela está realmente operativa:
+        // ofrecerla sin configurar sería llevar al cliente a un callejón sin salida.
+        if ($this->onlinePaymentAvailable($company) && !$this->hasOption($options, 'pagar_factura')) {
+            $options[] = ['key' => '4', 'label' => 'Pagar mi factura', 'flow' => 'pagar_factura'];
+        }
 
+        $menuText = ($config->welcome_message ?: "Hola, bienvenido a {$company->name}.\n\n¿En qué puedo ayudarte?");
+
+        $wa = new WhatsAppService($company->id, false, 'meta');
+
+        // Meta admite máximo 3 botones; con más opciones hay que usar lista.
+        if (count($options) > 3) {
+            $rows = [];
+            foreach ($options as $index => $opt) {
+                $rows[] = [
+                    'id'    => (string) ($opt['key'] ?? ($index + 1)),
+                    'title' => mb_substr($opt['label'] ?? $opt['title'] ?? 'Opción', 0, 24),
+                ];
+            }
+
+            $wa->sendInteractiveList($to, $menuText, [['title' => 'Opciones', 'rows' => $rows]], 'Ver opciones');
+            return;
+        }
+
+        $buttons = [];
         foreach ($options as $index => $opt) {
             $key = $opt['key'] ?? (string) ($index + 1);
             $label = $opt['label'] ?? $opt['title'] ?? 'Opción';
             $buttons[] = ['id' => $key, 'title' => $label];
         }
 
-        $wa = new WhatsAppService($company->id, false, 'meta');
         $wa->sendInteractiveButtons($to, $menuText, $buttons);
+    }
+
+    /** ¿La empresa tiene una pasarela configurada y encendida? */
+    private function onlinePaymentAvailable(Company $company): bool
+    {
+        return (bool) $company->pg_active && !empty($company->pg_gateway);
+    }
+
+    /** ¿El menú configurado ya trae ese flujo? */
+    private function hasOption(array $options, string $flow): bool
+    {
+        foreach ($options as $opt) {
+            if (($opt['flow_id'] ?? $opt['flow'] ?? null) === $flow) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function handleFlowStep(Company $company, WaBotConfig $config, WaBotSession $session, string $phone, string $message, array $payload = []): bool
@@ -191,6 +231,10 @@ class WaBotService
                 return $this->startFlow($company, $phone, 'reportar_pago');
             }
 
+            if (in_array($message, ['4', 'pagar', 'pagar factura', 'pagar_factura', 'pagar mi factura'], true)) {
+                return $this->startFlow($company, $phone, 'pagar_factura');
+            }
+
             $this->sendTextMessage($company, $phone, "Opción no válida. Por favor escribe una de las opciones del menú.");
             return true;
         }
@@ -205,6 +249,10 @@ class WaBotService
 
         if ($flow === 'reportar_pago') {
             return $this->handleReportarPago($company, $session, $phone, $message, $payload);
+        }
+
+        if ($flow === 'pagar_factura') {
+            return $this->handlePagarFactura($company, $session, $phone, $message);
         }
 
         return false;
@@ -227,6 +275,18 @@ class WaBotService
         if ($flow === 'reportar_pago') {
             $this->createSession($company->id, $phone, 'reportar_pago', 'ask_dni');
             $this->sendTextMessage($company, $phone, "Para registrar tu pago, primero envía la cédula del titular de la cuenta.");
+            return true;
+        }
+
+        if ($flow === 'pagar_factura') {
+            if (!$this->onlinePaymentAvailable($company)) {
+                $this->sendTextMessage($company, $phone, "El pago en línea no está disponible por ahora.\n\nEscribe *menu* para volver al inicio.");
+                $this->clearSession($company->id, $phone);
+                return true;
+            }
+
+            $this->createSession($company->id, $phone, 'pagar_factura', 'ask_dni');
+            $this->sendTextMessage($company, $phone, "Para generar tu link de pago, envíame el número de cédula del titular de la cuenta.");
             return true;
         }
 
@@ -1159,6 +1219,254 @@ class WaBotService
         }
 
         return true;
+    }
+
+    // ─── Flujo: pagar factura en línea ───────────────────────────────────────
+
+    /**
+     * Genera un link de pago y lo entrega como botón dentro del chat.
+     * El cliente elige entre pagar una factura puntual o todo lo pendiente.
+     */
+    private function handlePagarFactura(Company $company, WaBotSession $session, string $phone, string $message): bool
+    {
+        $step = $session->current_step;
+        $data = $session->data ?? [];
+
+        if (!$this->onlinePaymentAvailable($company)) {
+            $this->sendTextMessage($company, $phone, "El pago en línea no está disponible por ahora.\n\nEscribe *menu* para volver al inicio.");
+            $this->clearSession($company->id, $phone);
+            return true;
+        }
+
+        // ── Paso 1: identificar al titular ───────────────────────────────────
+        if ($step === 'ask_dni') {
+            $dni = preg_replace('/[^0-9]/', '', $message);
+
+            if (strlen($dni) < 8 || strlen($dni) > 10) {
+                $this->sendTextMessage($company, $phone, "Por favor, ingresa un número de cédula válido (8-10 dígitos).");
+                return true;
+            }
+
+            // El teléfono que escribe debe ser el registrado: el link revela
+            // el saldo y el nombre del titular, no puede pedirlo cualquiera.
+            $client = UserData::where('company_id', $company->id)
+                ->where('dni', $dni)
+                ->get()
+                ->first(fn (UserData $candidate): bool => $this->phonesMatch($candidate->phone, $phone));
+
+            if (!$client) {
+                $this->sendTextMessage($company, $phone, "No pudimos validar esos datos con este número de WhatsApp. Verifica la cédula registrada en tu cuenta o comunícate con soporte.");
+                return true;
+            }
+
+            $invoices = $this->pendingInvoicesFor($company, (int) $client->user_id);
+
+            if ($invoices->isEmpty()) {
+                $this->sendTextMessage($company, $phone, "Hola {$client->names}, no tienes facturas pendientes. ¡Estás al día!\n\nEscribe *menu* para volver al inicio.");
+                $this->clearSession($company->id, $phone);
+                return true;
+            }
+
+            $total = $invoices->sum(fn ($inv) => $this->invoiceBalance($inv));
+
+            $session->update([
+                'current_step' => 'choose_scope',
+                'data' => array_merge($data, [
+                    'client_user_id' => (int) $client->user_id,
+                    'client_name'    => $client->names,
+                ]),
+                'expires_at' => now()->addMinutes(10),
+            ]);
+
+            // Con una sola factura pendiente no tiene sentido preguntar.
+            if ($invoices->count() === 1) {
+                return $this->sendPaymentLink($company, $session, $phone, null, $total, $invoices->count());
+            }
+
+            $wa = new WhatsAppService($company->id, false, 'meta');
+            $this->recordBotConversationMessage($company, $phone, 'system', 'Opciones de pago');
+            $wa->sendInteractiveButtons(
+                $phone,
+                "Hola {$client->names}, tienes {$invoices->count()} facturas pendientes por un total de " . $this->formatMoney($total) . ".\n\n¿Qué deseas pagar?",
+                [
+                    ['id' => 'pay_all', 'title' => 'Pagar todo'],
+                    ['id' => 'pay_one', 'title' => 'Elegir factura'],
+                    ['id' => 'pay_cancel', 'title' => 'Cancelar'],
+                ]
+            );
+
+            return true;
+        }
+
+        // ── Paso 2: alcance del pago ─────────────────────────────────────────
+        if ($step === 'choose_scope') {
+            $clientUserId = (int) ($data['client_user_id'] ?? 0);
+            if (!$clientUserId) {
+                $this->clearSession($company->id, $phone);
+                return false;
+            }
+
+            if (in_array($message, ['pay_cancel', 'cancelar', '3'], true)) {
+                $this->sendTextMessage($company, $phone, "Listo, cancelamos el pago.\n\nEscribe *menu* para volver al inicio.");
+                $this->clearSession($company->id, $phone);
+                return true;
+            }
+
+            $invoices = $this->pendingInvoicesFor($company, $clientUserId);
+
+            if ($invoices->isEmpty()) {
+                $this->sendTextMessage($company, $phone, "Ya no tienes facturas pendientes. ¡Estás al día!");
+                $this->clearSession($company->id, $phone);
+                return true;
+            }
+
+            if (in_array($message, ['pay_all', 'todo', '1'], true)) {
+                $total = $invoices->sum(fn ($inv) => $this->invoiceBalance($inv));
+                return $this->sendPaymentLink($company, $session, $phone, null, $total, $invoices->count());
+            }
+
+            if (in_array($message, ['pay_one', 'elegir', '2'], true)) {
+                $rows = [];
+                foreach ($invoices->take(10) as $inv) {
+                    $rows[] = [
+                        'id'          => 'pay_inv_' . $inv->id,
+                        'title'       => mb_substr('#' . $inv->number_facture, 0, 24),
+                        'description' => date('d/m/Y', strtotime($inv->date_facturation)) . ' — ' . $this->formatMoney($this->invoiceBalance($inv)),
+                    ];
+                }
+
+                $session->update(['current_step' => 'choose_invoice', 'expires_at' => now()->addMinutes(10)]);
+
+                $wa = new WhatsAppService($company->id, false, 'meta');
+                $this->recordBotConversationMessage($company, $phone, 'system', 'Listado de facturas por pagar');
+                $wa->sendInteractiveList(
+                    $phone,
+                    'Selecciona la factura que deseas pagar:',
+                    [['title' => 'Pendientes', 'rows' => $rows]],
+                    'Ver facturas'
+                );
+
+                return true;
+            }
+
+            $this->sendTextMessage($company, $phone, "No entendí esa opción. Responde con uno de los botones o escribe *menu*.");
+            return true;
+        }
+
+        // ── Paso 3: factura puntual ──────────────────────────────────────────
+        if ($step === 'choose_invoice') {
+            $clientUserId = (int) ($data['client_user_id'] ?? 0);
+
+            if (!preg_match('/^pay_inv_(\d+)$/', $message, $m)) {
+                $this->sendTextMessage($company, $phone, "Por favor selecciona una factura de la lista.");
+                return true;
+            }
+
+            $invoiceId = (int) $m[1];
+
+            // La factura debe seguir siendo suya y seguir pendiente.
+            $invoice = $this->pendingInvoicesFor($company, $clientUserId)
+                ->first(fn ($inv) => (int) $inv->id === $invoiceId);
+
+            if (!$invoice) {
+                $this->sendTextMessage($company, $phone, "Esa factura ya no está pendiente. Escribe *menu* para empezar de nuevo.");
+                $this->clearSession($company->id, $phone);
+                return true;
+            }
+
+            return $this->sendPaymentLink($company, $session, $phone, [$invoiceId], $this->invoiceBalance($invoice), 1);
+        }
+
+        return false;
+    }
+
+    /** Crea el link, lo manda como botón y cierra la sesión. */
+    private function sendPaymentLink(
+        Company $company,
+        WaBotSession $session,
+        string $phone,
+        ?array $invoiceIds,
+        float $amount,
+        int $invoiceCount
+    ): bool {
+        $data         = $session->data ?? [];
+        $clientUserId = (int) ($data['client_user_id'] ?? 0);
+
+        try {
+            $service = app(PaymentLinkService::class);
+            $link    = $service->create($company, $clientUserId, $invoiceIds, 'bot');
+            $url     = $service->publicUrl($link);
+        } catch (\Throwable $e) {
+            Log::error('[WaBotService] No se pudo crear el link de pago', [
+                'company_id' => $company->id,
+                'error'      => $e->getMessage(),
+            ]);
+
+            $this->sendTextMessage($company, $phone, "No pudimos generar tu link de pago en este momento. Intenta de nuevo en unos minutos.");
+            $this->clearSession($company->id, $phone);
+            return true;
+        }
+
+        $detalle = $invoiceCount > 1
+            ? "{$invoiceCount} facturas pendientes"
+            : '1 factura pendiente';
+
+        $vence = $link->expires_at ? $link->expires_at->format('d/m/Y') : null;
+
+        $body = "Total a pagar: " . $this->formatMoney($amount) . "\n({$detalle})\n\n"
+              . "Toca el botón para pagar con tarjeta, PSE, Bre-B o efectivo.";
+
+        if ($vence) {
+            $body .= "\n\nEste link vence el {$vence}.";
+        }
+
+        $this->recordBotConversationMessage($company, $phone, 'system', $body . "\n" . $url);
+
+        $wa     = new WhatsAppService($company->id, false, 'meta');
+        $result = $wa->sendCtaUrl($phone, $body, 'Pagar ahora', $url, '', 'Pago seguro');
+
+        // Si el botón no se pudo enviar, el link en texto plano sigue sirviendo.
+        if (($result['success'] ?? true) === false) {
+            Log::warning('[WaBotService] Botón de pago no enviado, se manda el link en texto', [
+                'company_id' => $company->id,
+                'error'      => $result['error'] ?? 'desconocido',
+            ]);
+            $this->sendTextMessage($company, $phone, $body . "\n\n" . $url);
+        }
+
+        $this->clearSession($company->id, $phone);
+        return true;
+    }
+
+    /** Facturas sin pagar del cliente, de la más antigua a la más nueva. */
+    private function pendingInvoicesFor(Company $company, int $clientUserId)
+    {
+        $cabIds = CabFacturation::where('company_id', $company->id)
+            ->where('user_id', $clientUserId)
+            ->pluck('id');
+
+        if ($cabIds->isEmpty()) {
+            return collect();
+        }
+
+        return DetFacturation::whereIn('cab_id', $cabIds)
+            ->where('paid', 0)
+            ->orderBy('date_facturation')
+            ->orderBy('id')
+            ->get()
+            ->filter(fn ($inv) => $this->invoiceBalance($inv) > 0)
+            ->values();
+    }
+
+    /** Saldo pendiente de una factura, descontando abonos. */
+    private function invoiceBalance(object $invoice): float
+    {
+        return round((float) $invoice->price_total - (float) ($invoice->abone ?? 0), 2);
+    }
+
+    private function formatMoney(float $value): string
+    {
+        return '$' . number_format($value, 0, ',', '.');
     }
 
     private function sendTextMessage(Company $company, string $to, string $text): void
