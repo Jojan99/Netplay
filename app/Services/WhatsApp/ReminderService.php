@@ -151,6 +151,7 @@ class ReminderService
             $casos[] = [
                 'cliente' => $fila,
                 'extra'   => [
+                    'invoice_id'        => (int) $fila->invoice_id,
                     'factura'           => (string) $fila->number_facture,
                     'valor'             => $this->dinero((float) $fila->saldo_factura),
                     'fecha_emision'     => $emision->format('d/m/Y'),
@@ -202,6 +203,7 @@ class ReminderService
             $casos[] = [
                 'cliente' => $fila,
                 'extra'   => [
+                    'invoice_id'        => (int) ($masVieja->id ?? 0),
                     'factura'           => (string) ($masVieja->number_facture ?? ''),
                     'fecha_emision'     => $masVieja ? Carbon::parse($masVieja->date_facturation)->format('d/m/Y') : '',
                     'fecha_vencimiento' => $fechaCorte->format('d/m/Y'),
@@ -248,7 +250,7 @@ class ReminderService
             ->where('df.paid', 0)
             ->whereRaw('(df.price_total - COALESCE(df.price_discount,0) - COALESCE(df.price_abone,0)) > 0')
             ->orderBy('df.date_facturation')
-            ->first(['df.number_facture', 'df.date_facturation']);
+            ->first(['df.id', 'df.number_facture', 'df.date_facturation']);
     }
 
     private function enviar(Company $company, WaTemplateBinding $binding, array $caso): bool
@@ -260,23 +262,21 @@ class ReminderService
             $wa     = new WhatsAppService($company->id, false, 'meta');
             $idioma = $binding->language ?: 'es_CO';
 
-            // Si la plantilla trae un botón "Pagar ahora" con la URL variable,
-            // se le pasa el link de este cliente. Con la URL fija el botón
-            // llevaría a la página de inicio, que no le sirve de nada.
-            $indiceBoton = (new MetaWhatsAppService($company->id))
-                ->dynamicUrlButtonIndex($binding->template_name, $idioma);
-
-            $token = $indiceBoton === null
-                ? null
-                : $this->tokenDePago($company, (int) $caso['cliente']->user_id, (string) $caso['cliente']->phone);
+            // Si la plantilla trae botones de URL con variable, se les pasa lo
+            // que le corresponde a este cliente. Con la URL fija llevarían a la
+            // página de inicio, que no le sirve de nada.
+            $botones = $this->valoresDeBotones(
+                (new MetaWhatsAppService($company->id))->dynamicUrlButtons($binding->template_name, $idioma),
+                $company,
+                $caso
+            );
 
             $r = $wa->sendTemplate(
                 (string) $caso['cliente']->phone,
                 $binding->template_name,
                 $params,
                 $idioma,
-                $token,
-                $indiceBoton ?? 0
+                $botones
             );
 
             if (!MetaWhatsAppService::accepted($r)) {
@@ -332,6 +332,47 @@ class ReminderService
     private function claveAviso(int $companyId, string $evento, int $userId): string
     {
         return "wa_aviso:{$companyId}:{$evento}:{$userId}:" . now()->toDateString();
+    }
+
+    /**
+     * Qué va en cada botón de URL, según lo que el botón dice.
+     *
+     * Se decide por el texto del propio botón —"Pagar", "Ver factura"— porque
+     * es lo único que distingue uno de otro sin obligar a configurar a mano el
+     * orden de los botones de cada plantilla.
+     *
+     * @param  array<int, string> $botones índice => texto del botón
+     * @return array<int, string> índice => valor a mandar
+     */
+    private function valoresDeBotones(array $botones, Company $company, array $caso): array
+    {
+        if ($botones === []) {
+            return [];
+        }
+
+        $valores = [];
+
+        foreach ($botones as $indice => $texto) {
+            $t = mb_strtolower($texto);
+
+            if (str_contains($t, 'pag')) {
+                $token = $this->tokenDePago(
+                    $company,
+                    (int) $caso['cliente']->user_id,
+                    (string) $caso['cliente']->phone
+                );
+            } elseif (!empty($caso['extra']['invoice_id'])) {
+                $token = \App\Http\Controllers\InvoiceLinkController::tokenFor((int) $caso['extra']['invoice_id']);
+            } else {
+                $token = null;
+            }
+
+            if ($token !== null) {
+                $valores[$indice] = $token;
+            }
+        }
+
+        return $valores;
     }
 
     /**

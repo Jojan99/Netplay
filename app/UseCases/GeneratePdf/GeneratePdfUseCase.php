@@ -147,6 +147,10 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
                         $waMessages[] = [
                             'number' => $phone,
                             'parameters' => $this->invoiceTemplateParameters($user, $company, $fecha),
+                            // Los botones de URL con variable llevan el enlace
+                            // firmado de esta factura; sin esto abrirían la
+                            // página de inicio, que al cliente no le sirve.
+                            'invoice_id' => $user['det_facturation_id'] ?? null,
                         ];
                     }
                 }
@@ -442,9 +446,20 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
         $queued = 0;
         $invalid = 0;
 
+        $botones = $meta->dynamicUrlButtons('envio_factura', 'es_CO');
+
         foreach ($messages as $message) {
             try {
-                $meta->sendInvoiceTemplate($message['number'], $message['parameters']);
+                $valores = [];
+
+                if ($botones !== [] && !empty($message['invoice_id'])) {
+                    $token = \App\Http\Controllers\InvoiceLinkController::tokenFor((int) $message['invoice_id']);
+                    foreach (array_keys($botones) as $indice) {
+                        $valores[$indice] = $token;
+                    }
+                }
+
+                $meta->sendInvoiceTemplate($message['number'], $message['parameters'], $valores);
                 $queued++;
             } catch (\Throwable $exception) {
                 Log::warning('[META_INVOICE_TEMPLATE] Error enviando factura', ['phone' => $message['number'], 'error' => $exception->getMessage()]);

@@ -57,6 +57,13 @@ Route::get('pay/result/{reference}', [PaymentLinkController::class, 'result'])
     ->middleware('throttle:60,1')
     ->where('reference', '[A-Za-z0-9\\-]{5,80}');
 
+// ── Factura del cliente por enlace firmado (público — sin JWT) ───────────────
+// La ruta vieja pide solo el número de factura, y los números son correlativos:
+// cualquiera podía bajarse las de todos los clientes. Este enlace lleva firma.
+Route::get('factura/{token}', [\App\Http\Controllers\InvoiceLinkController::class, 'show'])
+    ->middleware('throttle:60,1')
+    ->where('token', '[0-9]+-[a-f0-9]{24}');
+
 // ── Cobro ERP de EfiPay (público — sin JWT) ──────────────────────────────────
 // EfiPay consulta qué debe una cédula y cobra por su cuenta; el pago vuelve por
 // el webhook de siempre. La documentación no define autenticación para esta URL,

@@ -341,24 +341,15 @@ class MetaWhatsAppService
         return $this->sendRequest($payload);
     }
 
-    public function sendInvoiceTemplate(string $to, array $parameters): array
+    /**
+     * @param array<int, string> $urlButtons Valor de cada botón de URL con
+     *        variable, indexado por su posición en la plantilla.
+     */
+    public function sendInvoiceTemplate(string $to, array $parameters, array $urlButtons = []): array
     {
         if (!$this->isEnabled()) return ['success' => false, 'error' => 'Meta WhatsApp deshabilitado.'];
 
-        return $this->sendRequest([
-            'messaging_product' => 'whatsapp',
-            'recipient_type' => 'individual',
-            ...$this->recipientField($to),
-            'type' => 'template',
-            'template' => [
-                'name' => 'envio_factura',
-                'language' => ['code' => 'es_CO'],
-                'components' => [[
-                    'type' => 'body',
-                    'parameters' => array_map(static fn (string $value): array => ['type' => 'text', 'text' => $value], $parameters),
-                ]],
-            ],
-        ]);
+        return $this->sendTemplate($to, 'envio_factura', $parameters, 'es_CO', $urlButtons);
     }
 
     /**
@@ -368,13 +359,16 @@ class MetaWhatsAppService
      * cuando el cliente no nos ha escrito recientemente. Meta rechaza saltos de
      * línea y tabulaciones dentro de los parámetros, así que se limpian.
      */
+    /**
+     * @param array<int, string> $urlButtons Valor de cada botón de URL con
+     *        variable, indexado por la posición del botón en la plantilla.
+     */
     public function sendTemplate(
         string $to,
         string $name,
         array $parameters = [],
         string $language = 'es_CO',
-        ?string $urlButtonValue = null,
-        int $urlButtonIndex = 0
+        array $urlButtons = []
     ): array {
         if (!$this->isEnabled()) return ['success' => false, 'error' => 'Meta WhatsApp deshabilitado.'];
 
@@ -392,14 +386,17 @@ class MetaWhatsAppService
             ];
         }
 
-        // Botón de URL con variable: es lo que convierte un "Pagar ahora" que
+        // Botones de URL con variable: es lo que convierte un "Pagar ahora" que
         // lleva a la página de inicio en uno que abre el cobro de ese cliente.
-        if ($urlButtonValue !== null && $urlButtonValue !== '') {
+        // Cada uno va con su índice, que es como Meta los numera.
+        foreach ($urlButtons as $indice => $valor) {
+            if ($valor === null || $valor === '') continue;
+
             $components[] = [
                 'type'     => 'button',
                 'sub_type' => 'url',
-                'index'    => (string) $urlButtonIndex,
-                'parameters' => [['type' => 'text', 'text' => $urlButtonValue]],
+                'index'    => (string) $indice,
+                'parameters' => [['type' => 'text', 'text' => (string) $valor]],
             ];
         }
 
@@ -438,44 +435,46 @@ class MetaWhatsAppService
     }
 
     /**
-     * En qué posición está el botón de URL con variable, si lo hay.
+     * Qué botones de URL de la plantilla llevan variable, y con qué texto.
      *
-     * Meta numera los botones y el parámetro hay que mandarlo con su índice.
-     * Se consulta la plantilla real en vez de suponerlo: una plantilla con la
-     * URL fija revienta el envío si se le manda un parámetro que no espera.
+     * Meta numera los botones y cada parámetro hay que mandarlo con su índice.
+     * Se consulta la plantilla real en vez de suponerlo: mandarle un parámetro
+     * a un botón de URL fija revienta el envío entero.
      *
-     * Devuelve null cuando la URL es fija o no se pudo averiguar.
+     * @return array<int, string> índice => texto del botón (para saber cuál es
+     *         el de pagar y cuál el de ver la factura).
      */
-    public function dynamicUrlButtonIndex(string $name, string $language = 'es_CO'): ?int
+    public function dynamicUrlButtons(string $name, string $language = 'es_CO'): array
     {
-        $clave = "meta:btn_url:{$this->companyId}:{$name}:{$language}";
+        $clave = "meta:btns_url:{$this->companyId}:{$name}:{$language}";
 
         try {
             $guardado = Cache::get($clave);
-            if ($guardado !== null) {
-                return $guardado === 'ninguno' ? null : (int) $guardado;
+            if (is_array($guardado)) {
+                return $guardado;
             }
         } catch (\Throwable $e) {
             // Sin caché se consulta cada vez.
         }
 
-        $indice = $this->buscarBotonDeUrl($name, $language);
+        $botones = $this->buscarBotonesDeUrl($name, $language);
 
         try {
-            Cache::put($clave, $indice ?? 'ninguno', now()->addHour());
+            Cache::put($clave, $botones, now()->addHour());
         } catch (\Throwable $e) {
             // No poder cachearlo no es motivo para no enviar.
         }
 
-        return $indice;
+        return $botones;
     }
 
-    private function buscarBotonDeUrl(string $name, string $language): ?int
+    /** @return array<int, string> */
+    private function buscarBotonesDeUrl(string $name, string $language): array
     {
-        if (!$this->isEnabled() || !$this->companyId) return null;
+        if (!$this->isEnabled() || !$this->companyId) return [];
 
         $company = Company::find($this->companyId);
-        if (!$company?->wa_business_id) return null;
+        if (!$company?->wa_business_id) return [];
 
         try {
             $response = Http::withToken($this->accessToken)
@@ -485,26 +484,28 @@ class MetaWhatsAppService
                     'limit' => 20,
                 ]);
         } catch (\Throwable $e) {
-            return null;
+            return [];
         }
 
-        if ($response->failed()) return null;
+        if ($response->failed()) return [];
 
         $plantilla = collect($response->json('data') ?? [])
             ->first(fn (array $t): bool => ($t['name'] ?? null) === $name && ($t['language'] ?? null) === $language);
 
-        if (!$plantilla) return null;
+        if (!$plantilla) return [];
 
         $botones = collect($plantilla['components'] ?? [])
             ->first(fn (array $c): bool => ($c['type'] ?? null) === 'BUTTONS')['buttons'] ?? [];
 
+        $conVariable = [];
+
         foreach ($botones as $i => $boton) {
             if (($boton['type'] ?? null) === 'URL' && str_contains((string) ($boton['url'] ?? ''), '{{')) {
-                return $i;
+                $conVariable[$i] = (string) ($boton['text'] ?? '');
             }
         }
 
-        return null;
+        return $conVariable;
     }
 
     public function isInvoiceTemplateApproved(): bool
