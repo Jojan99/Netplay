@@ -5,6 +5,7 @@ namespace App\Services\PaymentGateways;
 use App\Models\Company;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -100,6 +101,13 @@ class EfiPayGateway implements PaymentGatewayInterface
             ],
             'office' => (int) $office,
         ];
+
+        // Restringir los medios que se muestran. Sirve para llevar al cliente
+        // directo a un medio concreto (p. ej. solo Nequi) en vez de a la lista.
+        $methods = $data['payment_methods'] ?? null;
+        if (is_array($methods) && $methods !== []) {
+            $payload['advanced_options']['payment_methods'] = $methods;
+        }
 
         // Fecha tope para aprobar el pago (YYYY-MM-DD). Importante en los links
         // que viajan por WhatsApp: sin ella el cobro queda vigente para siempre.
@@ -414,6 +422,73 @@ class EfiPayGateway implements PaymentGatewayInterface
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
+
+    /**
+     * Monto máximo que Nequi acepta en este comercio, o null si no se pudo saber.
+     *
+     * EfiPay no publica los límites por API, pero el checkout sí los trae, y si
+     * el monto los excede el medio simplemente desaparece de la pantalla. Pedir
+     * un checkout "solo Nequi" por encima del tope deja al cliente sin ningún
+     * medio de pago, así que hay que conocerlo antes de ofrecérselo.
+     *
+     * Se averigua con un cobro de sonda que nadie paga y se guarda un día.
+     */
+    public function nequiMaxAmount(): ?float
+    {
+        $key = 'efipay:nequi_max:' . $this->company->id . ':' . (int) $this->company->pg_sandbox;
+
+        try {
+            $cached = Cache::get($key);
+            if ($cached !== null) {
+                return $cached === 'desconocido' ? null : (float) $cached;
+            }
+        } catch (\Throwable $e) {
+            // Sin caché se consulta cada vez: lento, pero nunca equivocado.
+        }
+
+        $max = $this->readNequiMax();
+
+        try {
+            Cache::put($key, $max ?? 'desconocido', now()->addDay());
+        } catch (\Throwable $e) {
+            Log::warning('EfiPay: no se pudo guardar el tope de Nequi en caché', [
+                'company_id' => $this->company->id,
+            ]);
+        }
+
+        return $max;
+    }
+
+    /** Lee el tope del checkout. Null ante cualquier duda: nunca se adivina. */
+    private function readNequiMax(): ?float
+    {
+        try {
+            $url = $this->generatePaymentLink([
+                'reference'    => 'sonda-nequi-' . $this->company->id . '-' . time(),
+                'amount'       => 1000,
+                'description'  => 'Consulta de medios disponibles',
+                'redirect_url' => url('/api/pay/result/sonda'),
+            ]);
+
+            $html = Http::connectTimeout(self::HTTP_CONNECT_TIMEOUT)
+                ->timeout(self::HTTP_TIMEOUT)
+                ->get($url)
+                ->body();
+        } catch (\Throwable $e) {
+            Log::warning('EfiPay: no se pudo consultar el tope de Nequi', [
+                'company_id' => $this->company->id,
+                'error'      => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+
+        if (!preg_match('/"name":"Nequi".{0,120}?"max":(\d+(?:\.\d+)?)/', $html, $m)) {
+            return null;
+        }
+
+        return (float) $m[1];
+    }
 
     /** URL pública del webhook de esta empresa. */
     public function webhookUrl(): string

@@ -63,7 +63,19 @@ class PaymentLinkService
      * @return array{url: string, reference: string, amount: float}
      * @throws PaymentLinkException con un mensaje apto para mostrarle al cliente
      */
-    public function resolveToCheckout(string $token): array
+    /**
+     * @param ?string $method Medio de pago al que se quiere llevar directo al
+     *                        cliente ('nequi'). Null muestra la lista completa.
+     */
+    /**
+     * Medios a los que se puede llevar directo. La clave es lo que viaja en la
+     * URL; el valor, la forma que espera la pasarela.
+     */
+    private const METHOD_FILTERS = [
+        'nequi' => ['debit' => ['Nequi']],
+    ];
+
+    public function resolveToCheckout(string $token, ?string $method = null): array
     {
         $link = PaymentLink::where('token', $token)->first();
 
@@ -109,6 +121,7 @@ class PaymentLinkService
             origin:       'payment_link',
             // Un link creado por el bot nació en un chat; ahí debe volver.
             returnTo:     $link->created_via === 'bot' ? 'whatsapp' : 'web',
+            paymentMethods: self::METHOD_FILTERS[$method] ?? null,
         );
 
         $link->increment('used_count');

@@ -19,6 +19,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Database\QueryException;
 use App\Services\WhatsAppService;
+use App\Services\PaymentGateways\EfiPayGateway;
 use App\Services\PaymentGateways\PaymentLinkService;
 use Symfony\Component\Process\Process;
 
@@ -1381,6 +1382,27 @@ class WaBotService
             return $this->handlePagarFactura($company, $session->fresh(), $phone, (string) $data['dni']);
         }
 
+        // ── Medio de pago: directo a Nequi o a la lista completa ─────────────
+        if ($step === 'choose_method') {
+            $url = (string) ($data['pay_url'] ?? '');
+
+            if ($url === '' || in_array($message, ['pm_cancel', 'cancelar', '3'], true)) {
+                $this->sendTextMessage($company, $phone, "Listo, cancelamos el pago.\n\nEscribe *menu* para volver al inicio.");
+                $this->clearSession($company->id, $phone);
+                return true;
+            }
+
+            return $this->sendPaymentCta(
+                $company,
+                $phone,
+                $url,
+                (float) ($data['pay_amount'] ?? 0),
+                (int) ($data['pay_count'] ?? 1),
+                $data['pay_vence'] ?? null,
+                in_array($message, ['pm_nequi', 'nequi', '1'], true) ? 'nequi' : null
+            );
+        }
+
         // ── Paso 2: alcance del pago ─────────────────────────────────────────
         if ($step === 'choose_scope') {
             $clientUserId = (int) ($data['client_user_id'] ?? 0);
@@ -1490,14 +1512,79 @@ class WaBotService
             return true;
         }
 
+        $vence = $link->expires_at ? $link->expires_at->format('d/m/Y') : null;
+
+        // Con Nequi disponible se pregunta primero, porque llevarlo directo al
+        // formulario de Nequi le ahorra elegir entre una lista de medios.
+        if ($this->nequiSirveParaEsteMonto($company, $amount)) {
+            $session->update([
+                'current_step' => 'choose_method',
+                'data' => array_merge($data, [
+                    'pay_url'    => $url,
+                    'pay_amount' => $amount,
+                    'pay_count'  => $invoiceCount,
+                    'pay_vence'  => $vence,
+                ]),
+                'expires_at' => now()->addMinutes(10),
+            ]);
+
+            $texto = "Total a pagar: " . $this->formatMoney($amount) . "\n\n¿Cómo prefieres pagar?";
+            $this->recordBotConversationMessage($company, $phone, 'system', $texto);
+
+            (new WhatsAppService($company->id, false, 'meta'))->sendInteractiveButtons($phone, $texto, [
+                ['id' => 'pm_nequi',  'title' => 'Pagar con Nequi'],
+                ['id' => 'pm_all',    'title' => 'Otros medios'],
+                ['id' => 'pm_cancel', 'title' => 'Cancelar'],
+            ]);
+
+            return true;
+        }
+
+        return $this->sendPaymentCta($company, $phone, $url, $amount, $invoiceCount, $vence, null);
+    }
+
+    /**
+     * ¿Se le puede ofrecer Nequi por este monto?
+     *
+     * El checkout esconde el medio cuando el monto supera su tope, así que un
+     * cobro "solo Nequi" por encima del límite dejaría al cliente sin ningún
+     * botón que tocar. Ante la duda, no se ofrece.
+     */
+    private function nequiSirveParaEsteMonto(Company $company, float $amount): bool
+    {
+        if ($company->pg_gateway !== 'efipay') {
+            return false;
+        }
+
+        $max = (new EfiPayGateway($company))->nequiMaxAmount();
+
+        return $max !== null && $amount <= $max;
+    }
+
+    /** Manda el botón de pago, apuntando al medio elegido si lo hay. */
+    private function sendPaymentCta(
+        Company $company,
+        string $phone,
+        string $url,
+        float $amount,
+        int $invoiceCount,
+        ?string $vence,
+        ?string $method
+    ): bool {
         $detalle = $invoiceCount > 1
             ? "{$invoiceCount} facturas pendientes"
             : '1 factura pendiente';
 
-        $vence = $link->expires_at ? $link->expires_at->format('d/m/Y') : null;
+        if ($method === 'nequi') {
+            $url  .= (str_contains($url, '?') ? '&' : '?') . 'm=nequi';
+            $medios = 'Solo tendrás que escribir tu celular y aprobar el pago en tu app de Nequi.';
+            $boton  = 'Pagar con Nequi';
+        } else {
+            $medios = 'Toca el botón para pagar con Nequi, tarjeta, PSE, Bre-B o efectivo.';
+            $boton  = 'Pagar ahora';
+        }
 
-        $body = "Total a pagar: " . $this->formatMoney($amount) . "\n({$detalle})\n\n"
-              . "Toca el botón para pagar con tarjeta, PSE, Bre-B o efectivo.";
+        $body = "Total a pagar: " . $this->formatMoney($amount) . "\n({$detalle})\n\n" . $medios;
 
         if ($vence) {
             $body .= "\n\nEste link vence el {$vence}.";
@@ -1506,7 +1593,7 @@ class WaBotService
         $this->recordBotConversationMessage($company, $phone, 'system', $body . "\n" . $url);
 
         $wa     = new WhatsAppService($company->id, false, 'meta');
-        $result = $wa->sendCtaUrl($phone, $body, 'Pagar ahora', $url, '', 'Pago seguro');
+        $result = $wa->sendCtaUrl($phone, $body, $boton, $url, '', 'Pago seguro');
 
         // Si el botón no se pudo enviar, el link en texto plano sigue sirviendo.
         if (($result['success'] ?? true) === false) {

@@ -36,6 +36,7 @@ class PaymentInitiationService
         ?string $limitDate = null,
         string $origin = 'portal',
         string $returnTo = 'web',
+        ?array $paymentMethods = null,
     ): array {
         $firstInvoice = $invoices->first();
         $orderedIds   = $invoices->pluck('id')->values()->all();
@@ -69,6 +70,8 @@ class PaymentInitiationService
             'customer_name'  => $customerName,
             'redirect_url'   => $redirectUrl,
             'limit_date'     => $limitDate,
+            // Cuando viene, el checkout muestra solo estos medios.
+            'payment_methods'=> $paymentMethods,
         ]);
 
         OnlinePaymentTransaction::create([

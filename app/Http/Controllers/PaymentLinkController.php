@@ -25,7 +25,9 @@ class PaymentLinkController extends Controller
     public function open(string $token, Request $request)
     {
         try {
-            $result = $this->links->resolveToCheckout($token);
+            // `m` lleva al cliente directo a un medio (p. ej. el botón
+            // "Pagar con Nequi" del bot). Sin él, ve todos los medios.
+            $result = $this->links->resolveToCheckout($token, $request->query('m'));
         } catch (PaymentLinkException $e) {
             // Única vía por la que un mensaje llega literal al cliente final.
             return response()->view('payment.link_message', [
