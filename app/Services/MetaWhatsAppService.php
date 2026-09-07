@@ -78,7 +78,7 @@ class MetaWhatsAppService
         return $this->sendRequest([
             'messaging_product' => 'whatsapp',
             'recipient_type'    => 'individual',
-            'to'                => $this->normalizePhone($to),
+            ...$this->recipientField($to),
             'type'              => 'text',
             'text'              => ['body' => $body],
         ]);
@@ -93,7 +93,7 @@ class MetaWhatsAppService
         $payload = [
             'messaging_product' => 'whatsapp',
             'recipient_type'    => 'individual',
-            'to'                => $this->normalizePhone($to),
+            ...$this->recipientField($to),
             'type'              => 'document',
             'document'          => [
                 'link'     => $documentUrl,
@@ -124,7 +124,7 @@ class MetaWhatsAppService
         $payload = [
             'messaging_product' => 'whatsapp',
             'recipient_type'    => 'individual',
-            'to'                => $this->normalizePhone($to),
+            ...$this->recipientField($to),
             'type'              => 'document',
             'document'          => [
                 'id'       => $mediaId,
@@ -147,7 +147,7 @@ class MetaWhatsAppService
         $payload = [
             'messaging_product' => 'whatsapp',
             'recipient_type'    => 'individual',
-            'to'                => $this->normalizePhone($to),
+            ...$this->recipientField($to),
             'type'              => 'image',
             'image'             => ['link' => $mediaUrl],
         ];
@@ -167,7 +167,7 @@ class MetaWhatsAppService
         $payload = [
             'messaging_product' => 'whatsapp',
             'recipient_type'    => 'individual',
-            'to'                => $this->normalizePhone($to),
+            ...$this->recipientField($to),
             'type'              => 'video',
             'video'             => ['link' => $mediaUrl],
         ];
@@ -187,7 +187,7 @@ class MetaWhatsAppService
         return $this->sendRequest([
             'messaging_product' => 'whatsapp',
             'recipient_type'    => 'individual',
-            'to'                => $this->normalizePhone($to),
+            ...$this->recipientField($to),
             'type'              => 'audio',
             'audio'             => ['link' => $mediaUrl],
         ]);
@@ -235,7 +235,7 @@ class MetaWhatsAppService
         $payload = [
             'messaging_product' => 'whatsapp',
             'recipient_type'    => 'individual',
-            'to'                => $this->normalizePhone($to),
+            ...$this->recipientField($to),
             'type'              => 'interactive',
             'interactive'       => [
                 'type' => 'button',
@@ -288,7 +288,7 @@ class MetaWhatsAppService
         $payload = [
             'messaging_product' => 'whatsapp',
             'recipient_type'    => 'individual',
-            'to'                => $this->normalizePhone($to),
+            ...$this->recipientField($to),
             'type'              => 'interactive',
             'interactive'       => [
                 'type'   => 'cta_url',
@@ -326,7 +326,7 @@ class MetaWhatsAppService
         $payload = [
             'messaging_product' => 'whatsapp',
             'recipient_type'    => 'individual',
-            'to'                => $this->normalizePhone($to),
+            ...$this->recipientField($to),
             'type'              => 'interactive',
             'interactive'       => [
                 'type' => 'list',
@@ -348,7 +348,7 @@ class MetaWhatsAppService
         return $this->sendRequest([
             'messaging_product' => 'whatsapp',
             'recipient_type' => 'individual',
-            'to' => $this->normalizePhone($to),
+            ...$this->recipientField($to),
             'type' => 'template',
             'template' => [
                 'name' => 'envio_factura',
@@ -389,7 +389,7 @@ class MetaWhatsAppService
         return $this->sendRequest([
             'messaging_product' => 'whatsapp',
             'recipient_type'    => 'individual',
-            'to'                => $this->normalizePhone($to),
+            ...$this->recipientField($to),
             'type'              => 'template',
             'template'          => array_filter([
                 'name'       => $name,
@@ -592,6 +592,25 @@ class MetaWhatsAppService
         $phone = trim($phone);
 
         return self::isUserIdentity($phone) ? $phone : preg_replace('/[^0-9]/', '', $phone);
+    }
+
+    /**
+     * Campo con el que Meta identifica al destinatario.
+     *
+     * Un teléfono va en `to`; una identidad de usuario va en `recipient`. No es
+     * intercambiable: mandando la identidad en `to`, Meta le quita el prefijo,
+     * la trata como si fuera un número, acepta la petición con HTTP 200 y
+     * después falla la entrega con el error 131026 "Message undeliverable".
+     *
+     * @return array<string, string>
+     */
+    private function recipientField(string $to): array
+    {
+        $destino = $this->normalizePhone($to);
+
+        return self::isUserIdentity($destino)
+            ? ['recipient' => $destino]
+            : ['to' => $destino];
     }
 
     /** ¿Es una identidad de usuario de WhatsApp en vez de un teléfono? */
