@@ -500,12 +500,39 @@ class MetaWhatsAppService
         $conVariable = [];
 
         foreach ($botones as $i => $boton) {
-            if (($boton['type'] ?? null) === 'URL' && str_contains((string) ($boton['url'] ?? ''), '{{')) {
-                $conVariable[$i] = (string) ($boton['text'] ?? '');
+            if (($boton['type'] ?? null) !== 'URL' || !str_contains((string) ($boton['url'] ?? ''), '{{')) {
+                continue;
             }
+
+            $conVariable[$i] = (string) ($boton['text'] ?? '');
+
+            // Una plantilla puede quedar apuntando a un dominio que no es
+            // nuestro —pasa al escribir la URL a mano— y entonces el cliente
+            // toca "Pagar ahora" y cae en cualquier parte. El envío igual sale,
+            // porque Meta exige el parámetro, pero queda dicho en el log.
+            $this->avisarSiApuntaFuera($name, (string) $boton['url']);
         }
 
         return $conVariable;
+    }
+
+    private function avisarSiApuntaFuera(string $plantilla, string $url): void
+    {
+        $destino = parse_url($url, PHP_URL_HOST);
+        $propio  = parse_url((string) config('app.url'), PHP_URL_HOST);
+
+        if (!$destino || !$propio) return;
+
+        // www.netplay.com.co y netplay.com.co son el mismo sitio.
+        $normalizar = static fn (string $h): string => preg_replace('/^www\./', '', mb_strtolower($h));
+
+        if ($normalizar($destino) === $normalizar($propio)) return;
+
+        Log::warning('[Meta] El botón de una plantilla apunta fuera del sitio', [
+            'plantilla' => $plantilla,
+            'url'       => $url,
+            'esperado'  => $propio,
+        ]);
     }
 
     public function isInvoiceTemplateApproved(): bool
