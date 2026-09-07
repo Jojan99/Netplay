@@ -48,11 +48,16 @@ class PaymentNotificationService
             $message = $this->buildMessage($tx, $status, $payload);
             if ($message === null) return;
 
-            $result = (new WhatsAppService($company->id))->mensajeInformativo($phone, $message);
+            $wa     = new WhatsAppService($company->id);
+            $result = $wa->mensajeInformativo($phone, $message);
+
+            // Si el cliente pagó desde el portal sin habernos escrito, la ventana
+            // de 24 h está cerrada y Meta solo acepta una plantilla aprobada.
+            if (($result['code'] ?? null) === 'META_WINDOW_CLOSED') {
+                $result = $this->sendAsTemplate($wa, $phone, $tx, $status, $payload);
+            }
 
             if (($result['success'] ?? true) === false) {
-                // La causa más común es la ventana de 24 h cerrada: el cliente
-                // pagó desde el portal sin haber escrito antes por WhatsApp.
                 Log::info('Pago online: no se pudo notificar por WhatsApp', [
                     'reference' => $tx->reference,
                     'status'    => $status,
@@ -67,6 +72,77 @@ class PaymentNotificationService
                 'error'     => $e->getMessage(),
             ]);
         }
+    }
+
+    // ─── Respaldo por plantilla ──────────────────────────────────────────────
+
+    /** Plantilla de Meta que corresponde a cada desenlace. */
+    private const TEMPLATES = [
+        'approved'  => 'pago_confirmado',
+        'pending'   => 'pago_pendiente',
+        'declined'  => 'pago_no_completado',
+        'failed'    => 'pago_no_completado',
+        'cancelled' => 'pago_no_completado',
+    ];
+
+    /**
+     * Reenvía el aviso como plantilla. Los parámetros van cortos y en una sola
+     * línea porque Meta rechaza saltos de línea dentro de una variable.
+     */
+    private function sendAsTemplate(WhatsAppService $wa, string $phone, OnlinePaymentTransaction $tx, string $status, array $payload): array
+    {
+        $template = self::TEMPLATES[$status] ?? null;
+        if (!$template) {
+            return ['success' => false, 'error' => "Sin plantilla para el estado '{$status}'."];
+        }
+
+        $params = [
+            $this->firstName($tx),
+            $this->money($tx->amount),
+            $this->methodLabel($payload),
+            $this->voucher($tx, $payload),
+        ];
+
+        // La plantilla de pago confirmado cierra diciendo cómo quedó la factura.
+        if ($status === 'approved') {
+            $params[] = $this->invoiceSummary($tx);
+        }
+
+        return $wa->sendTemplate($phone, $template, $params);
+    }
+
+    /** Solo el nombre de pila: "Hola Juan" se lee mejor que el nombre completo. */
+    private function firstName(OnlinePaymentTransaction $tx): string
+    {
+        $name = trim((string) $tx->customer_name);
+        if ($name === '') return 'Hola';
+
+        $first = mb_convert_case(mb_strtolower(explode(' ', $name)[0]), MB_CASE_TITLE, 'UTF-8');
+
+        return $first !== '' ? $first : 'Hola';
+    }
+
+    /** Estado de las facturas en una sola línea, apta para una variable. */
+    private function invoiceSummary(OnlinePaymentTransaction $tx): string
+    {
+        $lines = $this->invoiceLines($tx);
+        if ($lines === []) return 'tu factura quedó al día';
+
+        $pending = array_values(array_filter($lines, fn ($l) => str_contains($l, 'queda ')));
+
+        if ($pending === []) {
+            return count($lines) === 1
+                ? 'tu factura quedó pagada'
+                : 'tus ' . count($lines) . ' facturas quedaron pagadas';
+        }
+
+        $owed = 0.0;
+        foreach ($this->invoiceIds($tx) as $id) {
+            $inv = DetFacturation::find($id);
+            if ($inv) $owed += $inv->outstanding();
+        }
+
+        return 'te queda un saldo de ' . $this->money($owed);
     }
 
     // ─── Mensajes ────────────────────────────────────────────────────────────
@@ -163,8 +239,7 @@ class PaymentNotificationService
      */
     private function invoiceLines(OnlinePaymentTransaction $tx): array
     {
-        $ids = !empty($tx->invoice_ids) ? $tx->invoice_ids : [$tx->det_facturation_id];
-        $ids = array_values(array_filter((array) $ids));
+        $ids = $this->invoiceIds($tx);
         if ($ids === []) return [];
 
         $invoices = DetFacturation::whereIn('id', $ids)->get()
@@ -180,6 +255,14 @@ class PaymentNotificationService
         }
 
         return $lines;
+    }
+
+    /** @return array<int> Facturas de la transacción, en el orden en que se cobran. */
+    private function invoiceIds(OnlinePaymentTransaction $tx): array
+    {
+        $ids = !empty($tx->invoice_ids) ? $tx->invoice_ids : [$tx->det_facturation_id];
+
+        return array_values(array_filter((array) $ids));
     }
 
     // ─── Datos de la pasarela ────────────────────────────────────────────────

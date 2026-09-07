@@ -312,6 +312,65 @@ class MetaWhatsAppService
         ]);
     }
 
+    /**
+     * Envía una plantilla aprobada por Meta.
+     *
+     * Es el único camino cuando la ventana de 24 h está cerrada, es decir
+     * cuando el cliente no nos ha escrito recientemente. Meta rechaza saltos de
+     * línea y tabulaciones dentro de los parámetros, así que se limpian.
+     */
+    public function sendTemplate(string $to, string $name, array $parameters = [], string $language = 'es_CO'): array
+    {
+        if (!$this->isEnabled()) return ['success' => false, 'error' => 'Meta WhatsApp deshabilitado.'];
+
+        $components = [];
+        if ($parameters !== []) {
+            $components[] = [
+                'type' => 'body',
+                'parameters' => array_map(
+                    static fn ($value): array => [
+                        'type' => 'text',
+                        'text' => trim(preg_replace('/\s+/u', ' ', (string) $value)),
+                    ],
+                    array_values($parameters)
+                ),
+            ];
+        }
+
+        return $this->sendRequest([
+            'messaging_product' => 'whatsapp',
+            'recipient_type'    => 'individual',
+            'to'                => $this->normalizePhone($to),
+            'type'              => 'template',
+            'template'          => array_filter([
+                'name'       => $name,
+                'language'   => ['code' => $language],
+                'components' => $components ?: null,
+            ]),
+        ]);
+    }
+
+    /** ¿Meta ya aprobó esta plantilla? */
+    public function isTemplateApproved(string $name, string $language = 'es_CO'): bool
+    {
+        if (!$this->isEnabled() || !$this->companyId) return false;
+
+        $company = Company::find($this->companyId);
+        if (!$company?->wa_business_id) return false;
+
+        $response = Http::withToken($this->accessToken)
+            ->get("https://graph.facebook.com/{$this->apiVersion}/{$company->wa_business_id}/message_templates", [
+                'name'  => $name,
+                'limit' => 20,
+            ]);
+        if ($response->failed()) return false;
+
+        return collect($response->json('data') ?? [])
+            ->contains(fn (array $t): bool => ($t['name'] ?? null) === $name
+                && ($t['language'] ?? null) === $language
+                && ($t['status'] ?? null) === 'APPROVED');
+    }
+
     public function isInvoiceTemplateApproved(): bool
     {
         if (!$this->isEnabled() || !$this->companyId) return false;
