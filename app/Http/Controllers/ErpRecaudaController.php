@@ -25,10 +25,11 @@ use Illuminate\Support\Facades\Log;
  * Por eso no hay una segunda ruta de acreditación: es la misma que ya está en
  * producción.
  *
- * Seguridad: la documentación de EfiPay no contempla ninguna autenticación para
- * esta URL, y con sola la cédula se sabría cuánto debe alguien. Como somos
- * nosotros quienes le entregamos la URL, el secreto va dentro de la propia ruta;
- * sin el token la ruta no existe.
+ * Seguridad: con sola la cédula se sabría cuánto debe alguien, así que la ruta
+ * pide dos credenciales. El panel de EfiPay permite mandar un token Bearer, que
+ * es la que manda; el token dentro de la propia URL queda como segunda barrera,
+ * porque una URL se filtra sola por logs y capturas mientras que una cabecera no.
+ * Ninguna de las dos exige columna nueva: se derivan de APP_KEY.
  *
  * @see https://efipay.co/docs/1.0/DocumentationErp
  */
@@ -43,6 +44,16 @@ class ErpRecaudaController extends Controller
     /** Marca en la referencia que el cobro nació del ERP y no de un link nuestro. */
     private const TAG = 'ERP';
 
+    /**
+     * Exigir el token Bearer del panel de EfiPay.
+     *
+     * La documentación no lo menciona (solo aparece en la pantalla de
+     * configuración), así que si algún día EfiPay dejara de mandarlo el rechazo
+     * quedaría explicado en el log y esto se puede bajar a false sin desarmar
+     * nada: el token de la URL sigue protegiendo la ruta.
+     */
+    private const EXIGIR_BEARER = true;
+
     public function recaudas(Request $request, string $companySlug, string $token): JsonResponse
     {
         $company = Company::where('slug', $companySlug)
@@ -53,11 +64,15 @@ class ErpRecaudaController extends Controller
         // Un token errado y una empresa inexistente responden igual, para que
         // nadie pueda averiguar qué slugs existen probando la URL.
         if (!$company || !hash_equals(self::tokenFor($company), $token)) {
-            Log::warning('Cobro ERP: consulta rechazada', [
+            Log::warning('Cobro ERP: consulta rechazada, token de la URL inválido', [
                 'slug' => $companySlug,
                 'ip'   => $request->ip(),
             ]);
 
+            return $this->noEncontrado();
+        }
+
+        if (!$this->bearerValido($request, $company)) {
             return $this->noEncontrado();
         }
 
@@ -158,7 +173,57 @@ class ErpRecaudaController extends Controller
         return substr(hash_hmac('sha256', $material, (string) config('app.key')), 0, 40);
     }
 
+    /**
+     * Token que se pega en «Token cabecera (Bearer)» del panel de EfiPay.
+     * Derivado con un material distinto al de la URL: filtrarse uno no descubre
+     * el otro.
+     */
+    public static function bearerFor(Company $company): string
+    {
+        $material = 'erp-bearer:' . $company->id . ':' . $company->slug;
+
+        return substr(hash_hmac('sha256', $material, (string) config('app.key')), 0, 48);
+    }
+
     // ─── Interno ─────────────────────────────────────────────────────────────
+
+    /**
+     * Acepta tanto «Bearer xxx» como el token pelado: los paneles no siempre
+     * anteponen el esquema, y un 404 por un prefijo faltante costaría horas de
+     * diagnóstico.
+     */
+    private function bearerValido(Request $request, Company $company): bool
+    {
+        if (!self::EXIGIR_BEARER) {
+            return true;
+        }
+
+        $recibido = trim((string) $request->header('Authorization', ''));
+
+        if (stripos($recibido, 'bearer ') === 0) {
+            $recibido = trim(substr($recibido, 7));
+        }
+
+        if ($recibido === '') {
+            Log::warning('Cobro ERP: consulta sin cabecera Authorization', [
+                'company_id' => $company->id,
+                'ip'         => $request->ip(),
+            ]);
+
+            return false;
+        }
+
+        if (!hash_equals(self::bearerFor($company), $recibido)) {
+            Log::warning('Cobro ERP: token Bearer inválido', [
+                'company_id' => $company->id,
+                'ip'         => $request->ip(),
+            ]);
+
+            return false;
+        }
+
+        return true;
+    }
 
     /**
      * EfiPay espera 404 cuando no hay nada que cobrar. Se responde lo mismo ante

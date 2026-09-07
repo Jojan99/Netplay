@@ -59,6 +59,9 @@ class PaymentGatewayController extends Controller
                 'office_id'            => $company->pg_office_id,
                 'webhook_url'          => $webhookUrl,
                 'erp_url'              => $erpUrl,
+                'erp_bearer'           => $erpUrl
+                    ? \App\Http\Controllers\ErpRecaudaController::bearerFor($company)
+                    : null,
                 // Permite al panel mostrar la URL de la pasarela seleccionada
                 // antes de guardar la configuración.
                 'webhook_base'         => url('/api/webhooks'),
