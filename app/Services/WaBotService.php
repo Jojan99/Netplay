@@ -380,12 +380,12 @@ class WaBotService
             // Y con desempate por id, porque varias facturas comparten fecha y
             // sin él MySQL devuelve un orden arbitrario que dejaba fuera unas u
             // otras en cada consulta. Diez es el máximo de filas que admite una
-            // lista interactiva de Meta.
+            // lista interactiva de Meta; se muestran las cinco más recientes.
             $invoices = DetFacturation::whereIn('cab_id', $cabIds)
                 ->orderBy('paid')
                 ->orderByDesc('date_facturation')
                 ->orderByDesc('id')
-                ->limit(10)
+                ->limit(5)
                 ->get();
 
             if ($invoices->isEmpty()) {
@@ -429,36 +429,12 @@ class WaBotService
                 'expires_at' => now()->addMinutes(10),
             ]);
 
-            $wa = new WhatsAppService($company->id, false, 'meta');
-            if (count($invoiceList) > 3) {
-                $sections = [[
-                    'title' => 'Tus facturas',
-                    'rows' => array_map(fn ($inv) => [
-                        'id' => "invoice_{$inv['option']}",
-                        'title' => "Factura #{$inv['number_facture']}",
-                        'description' => date('d/m/Y', strtotime($inv['date_facturation'] ?? now()->toDateString()))
-                            . ' · ' . ($inv['balance'] > 0
-                                ? 'saldo $' . number_format($inv['balance'], 0, ',', '.')
-                                : 'pagada'),
-                    ], $invoiceList),
-                ]];
-
-                $wa->sendInteractiveList(
-                    $phone,
-                    "Hola {$clientName}, selecciona la factura que deseas descargar:",
-                    $sections,
-                    'Ver facturas'
-                );
-            } else {
-                $wa->sendInteractiveButtons(
-                    $phone,
-                    "Hola {$clientName}, selecciona la factura que deseas descargar:",
-                    array_map(fn ($inv) => [
-                        'id' => "invoice_{$inv['option']}",
-                        'title' => $inv['button_title'],
-                    ], $invoiceList)
-                );
-            }
+            $this->sendInvoicePicker(
+                $company,
+                $phone,
+                $invoiceList,
+                "Hola {$clientName}, selecciona la factura que deseas descargar:"
+            );
 
             return true;
         }
@@ -526,16 +502,7 @@ class WaBotService
             if ($message === 'download_no' || $message === 'no' || $message === '2' || $message === 'otra') {
                 $session->update(['current_step' => 'select_invoice', 'expires_at' => now()->addMinutes(10)]);
 
-                $wa = new WhatsAppService($company->id, false, 'meta');
-                $wa->sendInteractiveButtons(
-                    $phone,
-                    "Está bien, selecciona otra factura:",
-                    array_map(fn ($inv) => [
-                        'id' => "invoice_{$inv['option']}",
-                        'title' => '$' . number_format($inv['balance'] ?? 0, 0, ',', '.')
-    . ' - ' . date('d/m/Y', strtotime($inv['date_facturation'])),
-                    ], $data['invoices'] ?? [])
-                );
+                $this->sendInvoicePicker($company, $phone, $data['invoices'] ?? [], 'Está bien, selecciona otra factura:');
                 return true;
             }
 
@@ -589,31 +556,7 @@ class WaBotService
             if ($message === 'another_yes' || $message === 'sí' || $message === 'si' || $message === '1' || $message === 'otra') {
                 $session->update(['current_step' => 'select_invoice', 'expires_at' => now()->addMinutes(10)]);
 
-                $invoices = $data['invoices'] ?? [];
-                $wa = new WhatsAppService($company->id, false, 'meta');
-
-                if (count($invoices) > 3) {
-                    $sections = [[
-                        'title' => 'Tus facturas',
-                        'rows' => array_map(fn ($inv) => [
-                            'id' => "invoice_{$inv['option']}",
-                            'title' => "Factura #{$inv['number_facture']}",
-                            'description' => '$' . number_format($inv['balance'], 0, ',', '.') . ' (' . ($inv['status'] ?? 'Pendiente') . ')',
-                        ], $invoices),
-                    ]];
-
-                    $wa->sendInteractiveList($phone, 'Selecciona otra factura:', $sections, 'Ver facturas');
-                } else {
-                    $wa->sendInteractiveButtons(
-                        $phone,
-                        'Selecciona otra factura:',
-                        array_map(fn ($inv) => [
-                            'id' => "invoice_{$inv['option']}",
-                              'title' => '$' . number_format($inv['balance'] ?? 0, 0, ',', '.')
-    . ' - ' . date('d/m/Y', strtotime($inv['date_facturation'])),
-                    ], $data['invoices'] ?? [])
-                    );
-                }
+                $this->sendInvoicePicker($company, $phone, $data['invoices'] ?? [], 'Selecciona otra factura:');
                 return true;
             }
 
@@ -626,6 +569,43 @@ class WaBotService
         }
 
         return true;
+    }
+
+    /**
+     * Muestra las facturas para elegir: con tres o menos caben como botones;
+     * con más hace falta una lista interactiva.
+     *
+     * Esta decisión vivía copiada en tres sitios y se desincronizó. Al tocar
+     * "Elegir otra" se mandaban las cinco facturas como botones, Meta rechaza
+     * más de tres, y el bot se quedaba callado a mitad del flujo.
+     */
+    private function sendInvoicePicker(Company $company, string $phone, array $invoices, string $bodyText): void
+    {
+        if ($invoices === []) return;
+
+        $wa = new WhatsAppService($company->id, false, 'meta');
+
+        if (count($invoices) > 3) {
+            $wa->sendInteractiveList($phone, $bodyText, [[
+                'title' => 'Tus facturas',
+                'rows'  => array_map(fn ($inv) => [
+                    'id'          => "invoice_{$inv['option']}",
+                    'title'       => "Factura #{$inv['number_facture']}",
+                    'description' => date('d/m/Y', strtotime($inv['date_facturation'] ?? now()->toDateString()))
+                        . ' · ' . (($inv['balance'] ?? 0) > 0
+                            ? 'saldo $' . number_format($inv['balance'], 0, ',', '.')
+                            : 'pagada'),
+                ], $invoices),
+            ]], 'Ver facturas');
+
+            return;
+        }
+
+        $wa->sendInteractiveButtons($phone, $bodyText, array_map(fn ($inv) => [
+            'id' => "invoice_{$inv['option']}",
+            // Las sesiones abiertas antes de este cambio no traen el título.
+            'title' => $inv['button_title'] ?? ('#' . $inv['number_facture']),
+        ], $invoices));
     }
 
     private function handleReportarPago(Company $company, WaBotSession $session, string $phone, string $message, array $payload = []): bool
