@@ -387,8 +387,6 @@ class WaBotService
                 return true;
             }
 
-            // Build interactive buttons for invoices
-            $buttons = [];
             $invoiceList = [];
 
             foreach ($invoices->take(3) as $index => $inv) {
@@ -399,10 +397,13 @@ class WaBotService
                 $status = ($inv->paid ?? false) ? 'Pagada' : 'Pendiente';
                 $fecha = $inv->date_facturation;
 
-                $buttons[] = [
-                    'id' => "invoice_{$number}",
-                    'title' => $number . ". Fac. #{$inv->number_facture}",
-                ];
+                // El título del botón lo lee Meta y exige que sea único entre los
+                // tres. Dos facturas del mismo valor y fecha lo repetían y Meta
+                // tumbaba el mensaje completo con "(#131009) Parameter value is
+                // not valid". El número de factura sí es único.
+                $etiqueta = $balance > 0
+                    ? '$' . number_format($balance, 0, ',', '.')
+                    : $status;
 
                 $invoiceList[] = [
                     'option' => $number,
@@ -411,6 +412,7 @@ class WaBotService
                     'status' => $status,
                     'balance' => $balance,
                     'date_facturation' => $fecha,
+                    'button_title' => "#{$inv->number_facture} {$etiqueta}",
                 ];
             }
 
@@ -427,7 +429,10 @@ class WaBotService
                     'rows' => array_map(fn ($inv) => [
                         'id' => "invoice_{$inv['option']}",
                         'title' => "Factura #{$inv['number_facture']}",
-                        'description' => date('d/m/Y', strtotime($inv['date_facturation'] ?? now()->toDateString())) . ' - $' . number_format($inv['balance'], 0, ',', '.') . ' (' . ($inv['status'] ?? 'Pendiente') . ')',
+                        'description' => date('d/m/Y', strtotime($inv['date_facturation'] ?? now()->toDateString()))
+                            . ' · ' . ($inv['balance'] > 0
+                                ? 'saldo $' . number_format($inv['balance'], 0, ',', '.')
+                                : 'pagada'),
                     ], $invoiceList),
                 ]];
 
@@ -443,8 +448,7 @@ class WaBotService
                     "Hola {$clientName}, selecciona la factura que deseas descargar:",
                     array_map(fn ($inv) => [
                         'id' => "invoice_{$inv['option']}",
-                        'title' => '$' . number_format($inv['balance'] ?? 0, 0, ',', '.')
-    . ' - ' . date('d/m/Y', strtotime($inv['date_facturation'])),
+                        'title' => $inv['button_title'],
                     ], $invoiceList)
                 );
             }

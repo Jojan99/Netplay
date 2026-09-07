@@ -177,11 +177,29 @@ class MetaWhatsAppService
     public function sendInteractiveButtons(string $to, string $bodyText, array $buttons, string $headerText = ''): array
     {
         if (!$this->isEnabled()) return ['success' => false, 'error' => 'Meta WhatsApp deshabilitado.'];
-        if (!$this->hasOpenCustomerWindow($to)) return $this->closedWindowResponse();
-
         if (empty($buttons) || count($buttons) > 3) {
             return ['success' => false, 'error' => 'Máximo 3 botones permitidos'];
         }
+
+        // Meta corta en 20 caracteres y exige títulos distintos entre sí. Si se
+        // repiten rechaza el mensaje entero con un "(#131009) Parameter value is
+        // not valid" que no dice cuál es el problema. Mejor detectarlo aquí.
+        $titles = [];
+        foreach ($buttons as $i => $btn) {
+            $title = trim(mb_substr((string) ($btn['title'] ?? $btn['label'] ?? ''), 0, 20));
+
+            if ($title === '') {
+                return ['success' => false, 'error' => "El botón #" . ($i + 1) . " no tiene texto."];
+            }
+
+            if (in_array($title, $titles, true)) {
+                return ['success' => false, 'error' => "Dos botones dicen \"{$title}\"; Meta los exige distintos."];
+            }
+
+            $titles[] = $title;
+        }
+
+        if (!$this->hasOpenCustomerWindow($to)) return $this->closedWindowResponse();
 
         $payload = [
             'messaging_product' => 'whatsapp',
@@ -192,13 +210,13 @@ class MetaWhatsAppService
                 'type' => 'button',
                 'body' => ['text' => $bodyText],
                 'action' => [
-                    'buttons' => array_map(static fn (array $btn) => [
+                    'buttons' => array_map(static fn (array $btn, string $title) => [
                         'type'  => 'reply',
                         'reply' => [
                             'id'    => $btn['id'] ?? '',
-                            'title' => $btn['title'] ?? $btn['label'] ?? '',
+                            'title' => $title,
                         ],
-                    ], $buttons),
+                    ], $buttons, $titles),
                 ],
             ],
         ];
