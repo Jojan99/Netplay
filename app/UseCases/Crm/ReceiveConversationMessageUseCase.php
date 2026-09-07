@@ -10,6 +10,7 @@ use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 use App\Services\WhatsAppService;
 use Illuminate\Support\Facades\DB;
+use App\Models\Company;
 
 class ReceiveConversationMessageUseCase
     implements ReceiveConversationMessageUseCaseInterface
@@ -83,6 +84,22 @@ public function execute(array $payload): array
         ? 'meta'
         : 'netplay';
     $companyId = isset($payload['company_id']) ? (int) $payload['company_id'] : null;
+
+    // Netplay envía instanceId, no company_id. Resolver la empresa por la instancia
+    // evita crear clientes/conversaciones sin compañía y no altera el flujo de Meta.
+    if ($provider === 'netplay' && !$companyId && !empty($payload['instanceId'])) {
+        $companyId = Company::where('wa_instance_id', $payload['instanceId'])->value('id');
+
+        Log::info('[Netplay Webhook] Empresa resuelta por instancia', [
+            'instance_id' => $payload['instanceId'],
+            'company_id' => $companyId,
+        ]);
+    }
+
+    if (!$companyId) {
+        throw new \Exception('No se pudo resolver la empresa del webhook');
+    }
+
     $conversationId = $this->repository
         ->getOrCreateConversationByPhone($phone, $names, $companyId, $provider);
 
