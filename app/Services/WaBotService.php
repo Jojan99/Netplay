@@ -1533,7 +1533,7 @@ class WaBotService
 
             (new WhatsAppService($company->id, false, 'meta'))->sendInteractiveButtons($phone, $texto, [
                 ['id' => 'pm_nequi',  'title' => 'Pagar con Nequi'],
-                ['id' => 'pm_all',    'title' => 'Otros medios'],
+                ['id' => 'pm_all',    'title' => 'PSE y otros'],
                 ['id' => 'pm_cancel', 'title' => 'Cancelar'],
             ]);
 
