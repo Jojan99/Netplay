@@ -98,12 +98,36 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
             }
             $emailEnabled = $company ? $company->email_enabled : true;
 
-            if ($company?->wa_provider === 'meta' && in_array($sendChannel, ['whatsapp', 'both'], true) && !(new \App\Services\MetaWhatsAppService($companyId))->isInvoiceTemplateApproved()) {
-                return [
-                    'message' => 'La plantilla envio_factura aún no está aprobada por Meta. Publica la plantilla y espera su aprobación antes de realizar envíos masivos.',
-                    'status' => 1,
-                    'code' => 'META_TEMPLATE_REQUIRED',
-                ];
+            // Sin plantilla aprobada no se puede escribir por WhatsApp. Antes eso
+            // abortaba el proceso entero, así que una plantilla en revisión
+            // dejaba a los clientes sin factura ni siquiera por correo. Ahora
+            // solo se cae el canal que falta.
+            if ($company?->wa_provider === 'meta'
+                && in_array($sendChannel, ['whatsapp', 'both'], true)
+                && $waEnabled) {
+
+                $meta = new \App\Services\MetaWhatsAppService($companyId);
+
+                if (!$meta->isInvoiceTemplateApproved()) {
+                    $plantilla = $meta->invoiceTemplateName();
+
+                    // Con solo WhatsApp pedido no hay por dónde seguir: se
+                    // avisa en vez de dar el proceso por bueno sin enviar nada.
+                    if ($sendChannel === 'whatsapp') {
+                        return [
+                            'message' => "La plantilla {$plantilla} no está aprobada por Meta. Espera su aprobación, o elige otra en Automatizaciones, antes de enviar.",
+                            'status'  => 1,
+                            'code'    => 'META_TEMPLATE_REQUIRED',
+                        ];
+                    }
+
+                    Log::warning('[WA_BILLING] Plantilla sin aprobar, se envía solo por correo', [
+                        'company_id' => $companyId,
+                        'plantilla'  => $plantilla,
+                    ]);
+
+                    $waEnabled = false;
+                }
             }
 
             // Si ambos están desactivados, abortar
