@@ -478,6 +478,26 @@ class MetaWhatsAppService
     }
 
     // ── CORE ─────────────────────────────────────────
+    /**
+     * ¿Meta aceptó el mensaje?
+     *
+     * La API no devuelve ningún "success": responde con el id del mensaje, o
+     * lanza excepción. Leerlo mal hace que un envío correcto se registre como
+     * fallido, así que la lectura vive en un solo sitio.
+     */
+    public static function accepted(array $respuesta): bool
+    {
+        return self::messageIdOf($respuesta) !== null;
+    }
+
+    /** El wamid que devolvió Meta, si lo hay. */
+    public static function messageIdOf(array $respuesta): ?string
+    {
+        $id = $respuesta['messages'][0]['id'] ?? null;
+
+        return $id ? (string) $id : null;
+    }
+
     private function sendRequest(array $payload): array
     {
         $url = "https://graph.facebook.com/{$this->apiVersion}/{$this->phoneNumberId}/messages";

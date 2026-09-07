@@ -96,8 +96,21 @@ Route::prefix('company')->group(function () {
                 Route::post('validate-phone',       [\App\Http\Controllers\MetaWhatsAppController::class, 'validatePhone']);
 
                 // Automatizaciones: qué plantilla sale ante cada hecho del negocio
-                Route::get('template-bindings',     [\App\Http\Controllers\WaTemplateBindingController::class, 'index']);
-                Route::post('template-bindings',    [\App\Http\Controllers\WaTemplateBindingController::class, 'save']);
+                Route::get('template-bindings',           [\App\Http\Controllers\WaTemplateBindingController::class, 'index']);
+                Route::post('template-bindings',          [\App\Http\Controllers\WaTemplateBindingController::class, 'save']);
+                Route::get('template-bindings/{event}/preview', [\App\Http\Controllers\WaTemplateBindingController::class, 'preview']);
+                Route::post('template-bindings/test',     [\App\Http\Controllers\WaTemplateBindingController::class, 'test']);
+
+                // Envíos masivos de una plantilla a los clientes
+                Route::get('campaigns/options',      [\App\Http\Controllers\WaCampaignController::class, 'options']);
+                Route::get('campaigns/audience',     [\App\Http\Controllers\WaCampaignController::class, 'audience']);
+                Route::get('campaigns/clients',      [\App\Http\Controllers\WaCampaignController::class, 'clients']);
+                Route::get('campaigns',              [\App\Http\Controllers\WaCampaignController::class, 'index']);
+                Route::post('campaigns',             [\App\Http\Controllers\WaCampaignController::class, 'save']);
+                Route::get('campaigns/{id}',         [\App\Http\Controllers\WaCampaignController::class, 'show'])->where('id', '[0-9]+');
+                Route::post('campaigns/{id}/test',   [\App\Http\Controllers\WaCampaignController::class, 'test'])->where('id', '[0-9]+');
+                Route::post('campaigns/{id}/send',   [\App\Http\Controllers\WaCampaignController::class, 'send'])->where('id', '[0-9]+');
+                Route::post('campaigns/{id}/cancel', [\App\Http\Controllers\WaCampaignController::class, 'cancel'])->where('id', '[0-9]+');
             });
 
             // ── Bot WhatsApp ───────────────────────────────────────────────────

@@ -39,6 +39,18 @@ class Kernel extends ConsoleKernel
         $schedule->command('wa:cerrar-sesiones-inactivas')
             ->everyMinute()
             ->user('www-data');
+
+        // Despacha por tandas los envíos masivos en curso. Cada minuto para que
+        // un envío grande avance sin que nadie tenga que esperar en pantalla.
+        $schedule->command('wa:enviar-campanas')
+            ->everyMinute()
+            ->user('www-data');
+
+        // Recordatorios de pago y avisos de suspensión. Una vez al día: cuándo
+        // le toca a cada cliente lo decide la configuración de cada empresa.
+        $schedule->command('wa:avisos')
+            ->dailyAt('09:00')
+            ->user('www-data');
         
     }
 

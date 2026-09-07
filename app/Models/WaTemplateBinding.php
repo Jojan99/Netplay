@@ -15,12 +15,13 @@ class WaTemplateBinding extends Model
     protected $table = 'wa_template_bindings';
 
     protected $fillable = [
-        'company_id', 'event', 'template_name', 'language', 'enabled', 'params',
+        'company_id', 'event', 'template_name', 'language', 'enabled', 'params', 'config',
     ];
 
     protected $casts = [
         'enabled' => 'boolean',
         'params'  => 'array',
+        'config'  => 'array',
     ];
 
     /** Hechos que hoy saben notificar solos. */
@@ -38,8 +39,45 @@ class WaTemplateBinding extends Model
         'pago_fallido' => [
             'label'       => 'Pago rechazado o anulado',
             'description' => 'La pasarela rechazó el pago o la transacción fue anulada.',
-            'suggested'   => 'pago_no_completado',
+            'suggested'   => 'pago_cancelado',
         ],
+        'recordatorio_pago' => [
+            'label'       => 'Recordatorio de pago',
+            'description' => 'Le avisa al cliente que su factura está por vencer, antes de que entre en mora.',
+            'suggested'   => 'recordatorio_de_pago',
+            'programado'  => true,
+        ],
+        'suspension_mora' => [
+            'label'       => 'Aviso de suspensión por mora',
+            'description' => 'Le avisa al cliente que su servicio se suspenderá si no paga.',
+            'suggested'   => 'suspendido_por_mora',
+            'programado'  => true,
+        ],
+    ];
+
+    /**
+     * Cuándo sale cada aviso programado.
+     *
+     * El plazo cambia por empresa —unas cobran a los 5 días de facturar, otras
+     * el día 5 del mes— así que no puede estar escrito en el código.
+     */
+    public const REFERENCIAS = [
+        'fecha_factura' => [
+            'label'       => 'Fecha de la factura',
+            'description' => 'Cuenta los días desde que se emitió cada factura. Cada una lleva su propia cuenta.',
+        ],
+        'dia_de_corte' => [
+            'label'       => 'Día de corte del mes',
+            'description' => 'Cuenta hacia atrás desde el día del mes en que se suspende. Un solo envío mensual.',
+        ],
+    ];
+
+    /** Ajustes por defecto de un aviso programado, si nadie los ha tocado. */
+    public const CONFIG_POR_DEFECTO = [
+        'referencia'   => 'dia_de_corte',
+        'dias_antes'   => 2,
+        'dias_plazo'   => 5,
+        'solo_con_deuda' => true,
     ];
 
     /**
@@ -59,10 +97,21 @@ class WaTemplateBinding extends Model
         'empresa'          => ['label' => 'Nombre de la empresa',    'example' => 'Netplay'],
         'soporte'          => ['label' => 'Teléfono de soporte',     'example' => '3245127869'],
         'fecha'            => ['label' => 'Fecha del pago',          'example' => '06/09/2026'],
+        'fecha_vencimiento'=> ['label' => 'Fecha de vencimiento',    'example' => '20/09/2026'],
+        'fecha_emision'    => ['label' => 'Fecha de emisión',        'example' => '15/09/2026'],
+        'dias_mora'        => ['label' => 'Días de mora',            'example' => '12'],
+        'total_pendiente'  => ['label' => 'Total que debe',          'example' => '$120.000'],
+        'texto_libre'      => ['label' => 'Texto que tú escribes',   'example' => 'El servicio estará en mantenimiento el sábado.'],
     ];
 
     public function isUsable(): bool
     {
         return $this->enabled && !empty($this->template_name);
+    }
+
+    /** Los ajustes guardados, completados con los valores por defecto. */
+    public function ajustes(): array
+    {
+        return array_merge(self::CONFIG_POR_DEFECTO, (array) ($this->config ?? []));
     }
 }
