@@ -48,15 +48,21 @@ class WhatsAppService
     }
 
     // ── PLANTILLA (fuera de la ventana de 24 h) ──────
-    public function sendTemplate(string $to, string $name, array $parameters = [], string $language = 'es_CO'): array
-    {
+    public function sendTemplate(
+        string $to,
+        string $name,
+        array $parameters = [],
+        string $language = 'es_CO',
+        ?string $urlButtonValue = null,
+        int $urlButtonIndex = 0
+    ): array {
         // Solo Meta maneja plantillas. El servicio interno no las necesita
         // porque no tiene ventana de 24 horas.
         if ($this->provider !== 'meta' || !$this->metaService) {
             return ['success' => false, 'error' => 'Las plantillas solo aplican al proveedor Meta.'];
         }
 
-        return $this->metaService->sendTemplate($to, $name, $parameters, $language);
+        return $this->metaService->sendTemplate($to, $name, $parameters, $language, $urlButtonValue, $urlButtonIndex);
     }
 
     // ── DOCUMENTO / PDF ──────────────────────────────

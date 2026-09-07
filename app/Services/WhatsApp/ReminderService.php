@@ -257,12 +257,26 @@ class ReminderService
         $params  = $this->contexto->toParameters((array) $binding->params, $valores);
 
         try {
-            $wa = new WhatsAppService($company->id, false, 'meta');
-            $r  = $wa->sendTemplate(
+            $wa     = new WhatsAppService($company->id, false, 'meta');
+            $idioma = $binding->language ?: 'es_CO';
+
+            // Si la plantilla trae un botón "Pagar ahora" con la URL variable,
+            // se le pasa el link de este cliente. Con la URL fija el botón
+            // llevaría a la página de inicio, que no le sirve de nada.
+            $indiceBoton = (new MetaWhatsAppService($company->id))
+                ->dynamicUrlButtonIndex($binding->template_name, $idioma);
+
+            $token = $indiceBoton === null
+                ? null
+                : $this->tokenDePago($company, (int) $caso['cliente']->user_id, (string) $caso['cliente']->phone);
+
+            $r = $wa->sendTemplate(
                 (string) $caso['cliente']->phone,
                 $binding->template_name,
                 $params,
-                $binding->language ?: 'es_CO'
+                $idioma,
+                $token,
+                $indiceBoton ?? 0
             );
 
             if (!MetaWhatsAppService::accepted($r)) {
@@ -318,6 +332,34 @@ class ReminderService
     private function claveAviso(int $companyId, string $evento, int $userId): string
     {
         return "wa_aviso:{$companyId}:{$evento}:{$userId}:" . now()->toDateString();
+    }
+
+    /**
+     * Link de pago para este cliente, listo para el botón de la plantilla.
+     *
+     * Devuelve solo el token: Meta lo pega al final de la URL que quedó
+     * definida en la plantilla (…/api/pay/{{1}}).
+     */
+    private function tokenDePago(Company $company, int $userId, string $phone): ?string
+    {
+        if (!$company->pg_active || !$company->pg_gateway) {
+            return null;
+        }
+
+        try {
+            $link = app(\App\Services\PaymentGateways\PaymentLinkService::class)
+                ->create($company, $userId, null, 'recordatorio', null, $phone);
+
+            return $link->token;
+        } catch (\Throwable $e) {
+            Log::warning('[Avisos WhatsApp] No se pudo generar el link de pago', [
+                'company_id' => $company->id,
+                'user_id'    => $userId,
+                'error'      => $e->getMessage(),
+            ]);
+
+            return null;
+        }
     }
 
     private function dinero(float $valor): string

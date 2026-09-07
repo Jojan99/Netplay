@@ -47,6 +47,12 @@ class WaTemplateBinding extends Model
             'suggested'   => 'recordatorio_de_pago',
             'programado'  => true,
         ],
+        'envio_factura' => [
+            'label'       => 'Envío de la factura mensual',
+            'description' => 'Sale con el proceso de facturación, cuando se genera la factura del mes.',
+            'suggested'   => 'envio_factura',
+            'proceso'     => true,
+        ],
         'suspension_mora' => [
             'label'       => 'Aviso de suspensión por mora',
             'description' => 'Le avisa al cliente que su servicio se suspenderá si no paga.',
@@ -103,6 +109,21 @@ class WaTemplateBinding extends Model
         'total_pendiente'  => ['label' => 'Total que debe',          'example' => '$120.000'],
         'texto_libre'      => ['label' => 'Texto que tú escribes',   'example' => 'El servicio estará en mantenimiento el sábado.'],
     ];
+
+    /**
+     * ¿Está permitido este aviso?
+     *
+     * Sin fila configurada se responde que sí: el envío de la factura ya venía
+     * funcionando antes de que existiera este interruptor, y apagarlo por la
+     * simple ausencia de un registro dejaría a los clientes sin su factura sin
+     * que nadie lo hubiera pedido.
+     */
+    public static function permitido(int $companyId, string $event): bool
+    {
+        $row = static::where('company_id', $companyId)->where('event', $event)->first();
+
+        return $row === null || (bool) $row->enabled;
+    }
 
     public function isUsable(): bool
     {

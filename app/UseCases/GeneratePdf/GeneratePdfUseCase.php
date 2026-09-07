@@ -88,6 +88,14 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
             // ── Verificar configuración de canales de la empresa ─────────────────────
             $company = $companyId > 0 ? Company::find($companyId) : null;
             $waEnabled = $company ? $company->invoice_whatsapp_enabled : true;
+
+            // Interruptor del panel: si el aviso de factura está apagado, el
+            // proceso sigue corriendo y generando los PDF, pero no le escribe
+            // a nadie por WhatsApp.
+            if ($waEnabled && !\App\Models\WaTemplateBinding::permitido($companyId, 'envio_factura')) {
+                Log::info('[WA_BILLING] Envío de factura desactivado en el panel', ['company_id' => $companyId]);
+                $waEnabled = false;
+            }
             $emailEnabled = $company ? $company->email_enabled : true;
 
             if ($company?->wa_provider === 'meta' && in_array($sendChannel, ['whatsapp', 'both'], true) && !(new \App\Services\MetaWhatsAppService($companyId))->isInvoiceTemplateApproved()) {

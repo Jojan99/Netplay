@@ -368,8 +368,14 @@ class MetaWhatsAppService
      * cuando el cliente no nos ha escrito recientemente. Meta rechaza saltos de
      * línea y tabulaciones dentro de los parámetros, así que se limpian.
      */
-    public function sendTemplate(string $to, string $name, array $parameters = [], string $language = 'es_CO'): array
-    {
+    public function sendTemplate(
+        string $to,
+        string $name,
+        array $parameters = [],
+        string $language = 'es_CO',
+        ?string $urlButtonValue = null,
+        int $urlButtonIndex = 0
+    ): array {
         if (!$this->isEnabled()) return ['success' => false, 'error' => 'Meta WhatsApp deshabilitado.'];
 
         $components = [];
@@ -383,6 +389,17 @@ class MetaWhatsAppService
                     ],
                     array_values($parameters)
                 ),
+            ];
+        }
+
+        // Botón de URL con variable: es lo que convierte un "Pagar ahora" que
+        // lleva a la página de inicio en uno que abre el cobro de ese cliente.
+        if ($urlButtonValue !== null && $urlButtonValue !== '') {
+            $components[] = [
+                'type'     => 'button',
+                'sub_type' => 'url',
+                'index'    => (string) $urlButtonIndex,
+                'parameters' => [['type' => 'text', 'text' => $urlButtonValue]],
             ];
         }
 
@@ -418,6 +435,76 @@ class MetaWhatsAppService
             ->contains(fn (array $t): bool => ($t['name'] ?? null) === $name
                 && ($t['language'] ?? null) === $language
                 && ($t['status'] ?? null) === 'APPROVED');
+    }
+
+    /**
+     * En qué posición está el botón de URL con variable, si lo hay.
+     *
+     * Meta numera los botones y el parámetro hay que mandarlo con su índice.
+     * Se consulta la plantilla real en vez de suponerlo: una plantilla con la
+     * URL fija revienta el envío si se le manda un parámetro que no espera.
+     *
+     * Devuelve null cuando la URL es fija o no se pudo averiguar.
+     */
+    public function dynamicUrlButtonIndex(string $name, string $language = 'es_CO'): ?int
+    {
+        $clave = "meta:btn_url:{$this->companyId}:{$name}:{$language}";
+
+        try {
+            $guardado = Cache::get($clave);
+            if ($guardado !== null) {
+                return $guardado === 'ninguno' ? null : (int) $guardado;
+            }
+        } catch (\Throwable $e) {
+            // Sin caché se consulta cada vez.
+        }
+
+        $indice = $this->buscarBotonDeUrl($name, $language);
+
+        try {
+            Cache::put($clave, $indice ?? 'ninguno', now()->addHour());
+        } catch (\Throwable $e) {
+            // No poder cachearlo no es motivo para no enviar.
+        }
+
+        return $indice;
+    }
+
+    private function buscarBotonDeUrl(string $name, string $language): ?int
+    {
+        if (!$this->isEnabled() || !$this->companyId) return null;
+
+        $company = Company::find($this->companyId);
+        if (!$company?->wa_business_id) return null;
+
+        try {
+            $response = Http::withToken($this->accessToken)
+                ->timeout(15)
+                ->get("https://graph.facebook.com/{$this->apiVersion}/{$company->wa_business_id}/message_templates", [
+                    'name'  => $name,
+                    'limit' => 20,
+                ]);
+        } catch (\Throwable $e) {
+            return null;
+        }
+
+        if ($response->failed()) return null;
+
+        $plantilla = collect($response->json('data') ?? [])
+            ->first(fn (array $t): bool => ($t['name'] ?? null) === $name && ($t['language'] ?? null) === $language);
+
+        if (!$plantilla) return null;
+
+        $botones = collect($plantilla['components'] ?? [])
+            ->first(fn (array $c): bool => ($c['type'] ?? null) === 'BUTTONS')['buttons'] ?? [];
+
+        foreach ($botones as $i => $boton) {
+            if (($boton['type'] ?? null) === 'URL' && str_contains((string) ($boton['url'] ?? ''), '{{')) {
+                return $i;
+            }
+        }
+
+        return null;
     }
 
     public function isInvoiceTemplateApproved(): bool
