@@ -327,10 +327,18 @@ class WaBotService
                 return true;
             }
 
-            $client = UserData::where('company_id', $company->id)
-                ->where('dni', $dni)
-                ->get()
-                ->first(fn (UserData $candidate): bool => $this->phonesMatch($candidate->phone, $phone));
+            // Sin teléfono no hay con qué comparar: se le pide el registrado.
+            if (self::isUserIdentity($phone) && empty($data['verified_phone'])) {
+                $session->update([
+                    'current_step' => 'ask_phone',
+                    'data' => array_merge($data, ['dni' => $dni]),
+                    'expires_at' => now()->addMinutes(10),
+                ]);
+                $this->sendTextMessage($company, $phone, "Para confirmar que eres el titular, escríbeme el número de celular registrado en tu cuenta.");
+                return true;
+            }
+
+            $client = $this->resolveDniOwner($company, $dni, $phone, $data['verified_phone'] ?? null);
 
             if (!$client) {
                 $this->sendTextMessage($company, $phone, "No pudimos validar esos datos con este número de WhatsApp. Verifica la cédula registrada en tu cuenta o comunícate con soporte.");
@@ -457,6 +465,40 @@ class WaBotService
             );
 
             return true;
+        }
+
+        if ($step === 'ask_phone') {
+            $typed = preg_replace('/[^0-9]/', '', $message);
+
+            if (strlen($typed) < 10) {
+                $this->sendTextMessage($company, $phone, "Escríbeme el número de celular completo, sin espacios ni guiones.");
+                return true;
+            }
+
+            $client = $this->resolveDniOwner($company, (string) ($data['dni'] ?? ''), $phone, $typed);
+
+            if (!$client) {
+                if ($this->tooManyAttempts($session)) {
+                    $this->sendTextMessage($company, $phone, "Por seguridad cerramos la consulta. Comunícate con soporte para verificar tu cuenta.");
+                    $this->clearSession($company->id, $phone);
+                    return true;
+                }
+
+                // Un solo mensaje para cédula y teléfono: decir cuál de los dos
+                // falló le serviría a alguien para tantear datos ajenos.
+                $this->sendTextMessage($company, $phone, "No pudimos validar esos datos con este número de WhatsApp. Verifica la cédula registrada en tu cuenta o comunícate con soporte.");
+                return true;
+            }
+
+            // Verificado: se vuelve a entrar por el paso normal, que ya sabe
+            // seguir. Así no hay dos copias de lo que viene después.
+            $session->update([
+                'current_step' => 'ask_dni',
+                'data' => array_merge($data, ['verified_phone' => $typed, 'dni_attempts' => 0]),
+                'expires_at' => now()->addMinutes(10),
+            ]);
+
+            return $this->handleConsultarFactura($company, $session->fresh(), $phone, (string) $data['dni']);
         }
 
         if ($step === 'select_invoice') {
@@ -1254,10 +1296,18 @@ class WaBotService
 
             // El teléfono que escribe debe ser el registrado: el link revela
             // el saldo y el nombre del titular, no puede pedirlo cualquiera.
-            $client = UserData::where('company_id', $company->id)
-                ->where('dni', $dni)
-                ->get()
-                ->first(fn (UserData $candidate): bool => $this->phonesMatch($candidate->phone, $phone));
+            // Si el remitente no trae teléfono, se le pide que lo escriba.
+            if (self::isUserIdentity($phone) && empty($data['verified_phone'])) {
+                $session->update([
+                    'current_step' => 'pay_ask_phone',
+                    'data' => array_merge($data, ['dni' => $dni]),
+                    'expires_at' => now()->addMinutes(10),
+                ]);
+                $this->sendTextMessage($company, $phone, "Para confirmar que eres el titular, escríbeme el número de celular registrado en tu cuenta.");
+                return true;
+            }
+
+            $client = $this->resolveDniOwner($company, $dni, $phone, $data['verified_phone'] ?? null);
 
             if (!$client) {
                 $this->sendTextMessage($company, $phone, "No pudimos validar esos datos con este número de WhatsApp. Verifica la cédula registrada en tu cuenta o comunícate con soporte.");
@@ -1301,6 +1351,34 @@ class WaBotService
             );
 
             return true;
+        }
+
+        if ($step === 'pay_ask_phone') {
+            $typed = preg_replace('/[^0-9]/', '', $message);
+
+            if (strlen($typed) < 10) {
+                $this->sendTextMessage($company, $phone, "Escríbeme el número de celular completo, sin espacios ni guiones.");
+                return true;
+            }
+
+            if (!$this->resolveDniOwner($company, (string) ($data['dni'] ?? ''), $phone, $typed)) {
+                if ($this->tooManyAttempts($session)) {
+                    $this->sendTextMessage($company, $phone, "Por seguridad cerramos la solicitud. Comunícate con soporte para verificar tu cuenta.");
+                    $this->clearSession($company->id, $phone);
+                    return true;
+                }
+
+                $this->sendTextMessage($company, $phone, "No pudimos validar esos datos con este número de WhatsApp. Verifica la cédula registrada en tu cuenta o comunícate con soporte.");
+                return true;
+            }
+
+            $session->update([
+                'current_step' => 'ask_dni',
+                'data' => array_merge($data, ['verified_phone' => $typed, 'dni_attempts' => 0]),
+                'expires_at' => now()->addMinutes(10),
+            ]);
+
+            return $this->handlePagarFactura($company, $session->fresh(), $phone, (string) $data['dni']);
         }
 
         // ── Paso 2: alcance del pago ─────────────────────────────────────────
@@ -1570,6 +1648,56 @@ class WaBotService
                 'error' => $result['error'] ?? 'Respuesta no exitosa',
             ]);
         }
+    }
+
+    /** Intentos de validación permitidos antes de obligar a esperar. */
+    private const MAX_DNI_ATTEMPTS = 3;
+
+    /**
+     * Titular de esa cédula, verificado contra quien escribe.
+     *
+     * Cuando el remitente trae teléfono, él mismo es la prueba: basta con que
+     * coincida con el registrado. Las cuentas nuevas de WhatsApp llegan solo
+     * con identidad de usuario y sin teléfono, así que a esas se les pide que
+     * escriban el número registrado y se compara con ese.
+     *
+     * Esto acredita que conocen el número, no que lo controlen. Es más débil
+     * que un código por SMS, pero muy superior a pedir solo la cédula, que en
+     * Colombia aparece en cualquier recibo.
+     */
+    private function resolveDniOwner(Company $company, string $dni, string $senderPhone, ?string $typedPhone = null): ?UserData
+    {
+        $prueba = $typedPhone ?: $senderPhone;
+
+        // Sin teléfono con qué comparar, nadie pasa.
+        if (self::isUserIdentity($senderPhone) && !$typedPhone) {
+            return null;
+        }
+
+        return UserData::where('company_id', $company->id)
+            ->where('dni', $dni)
+            ->get()
+            ->first(fn (UserData $candidate): bool => $this->phonesMatch($candidate->phone, $prueba));
+    }
+
+    /** ¿Quien escribe llega sin teléfono, identificado solo por su usuario? */
+    private static function isUserIdentity(string $value): bool
+    {
+        return \App\Services\MetaWhatsAppService::isUserIdentity($value);
+    }
+
+    /**
+     * Cuenta los intentos fallidos para que nadie pruebe teléfonos a ciegas
+     * contra una cédula ajena.
+     */
+    private function tooManyAttempts(WaBotSession $session): bool
+    {
+        $data = $session->data ?? [];
+        $intentos = (int) ($data['dni_attempts'] ?? 0) + 1;
+
+        $session->update(['data' => array_merge($data, ['dni_attempts' => $intentos])]);
+
+        return $intentos >= self::MAX_DNI_ATTEMPTS;
     }
 
     private function phonesMatch(?string $storedPhone, string $incomingPhone): bool
