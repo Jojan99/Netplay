@@ -376,8 +376,15 @@ class WaBotService
                 ->where('user_id', $client->user_id)
                 ->pluck('id');
 
+            // Primero las pendientes: son las que el cliente viene a resolver.
+            // Y con desempate por id, porque varias facturas comparten fecha y
+            // sin él MySQL devuelve un orden arbitrario que dejaba fuera unas u
+            // otras en cada consulta. Diez es el máximo de filas que admite una
+            // lista interactiva de Meta.
             $invoices = DetFacturation::whereIn('cab_id', $cabIds)
+                ->orderBy('paid')
                 ->orderByDesc('date_facturation')
+                ->orderByDesc('id')
                 ->limit(10)
                 ->get();
 
@@ -389,7 +396,7 @@ class WaBotService
 
             $invoiceList = [];
 
-            foreach ($invoices->take(3) as $index => $inv) {
+            foreach ($invoices as $index => $inv) {
                 $number = (int)($index + 1);
                 $total = $inv->price_total ?? $inv->total ?? 0;
                 $discount = $inv->price_discount ?? 0;
