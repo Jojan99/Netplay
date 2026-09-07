@@ -410,7 +410,11 @@ class MetaWhatsAppService
             ->where('conversation.company_id', $this->companyId)
             ->where('conversation.provider', 'meta')
             ->where('message.sender_type', 'customer')
-            ->whereRaw("REPLACE(REPLACE(REPLACE(customer.phone, '+', ''), ' ', ''), '-', '') = ?", [$normalizedPhone])
+            // Se compara por el número nacional de diez dígitos: `user_data.phone`
+            // guarda "3245127869" y el CRM "+573245127869". Comparar las cadenas
+            // completas daba siempre "ventana cerrada" para cualquier aviso que
+            // saliera de nuestro lado.
+            ->whereRaw("RIGHT(REPLACE(REPLACE(REPLACE(customer.phone, '+', ''), ' ', ''), '-', ''), 10) = ?", [substr($normalizedPhone, -10)])
             ->orderByDesc('message.created_at')
             ->value('message.created_at');
 

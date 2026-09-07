@@ -35,9 +35,7 @@ class PaymentNotificationService
             // Se consulta y se marca por separado a propósito: si el caché no
             // puede escribir, el aviso igual sale. Un mensaje repetido molesta;
             // un pago acreditado sin avisar deja al cliente sin saber si pagó.
-            $key = $this->dedupeKey($tx, $status);
-            if (Cache::has($key)) return;
-            Cache::add($key, 1, self::DEDUPE_TTL);
+            if ($this->alreadyNotified($tx, $status)) return;
 
             $phone = $this->resolvePhone($tx);
             if (!$phone) {
@@ -61,7 +59,7 @@ class PaymentNotificationService
                     'error'     => $result['error'] ?? 'sin detalle',
                 ]);
                 // Se libera el candado para poder reintentar en otro webhook.
-                Cache::forget($this->dedupeKey($tx, $status));
+                $this->releaseNotice($tx, $status);
             }
         } catch (\Throwable $e) {
             Log::error('Pago online: error notificando al cliente', [
@@ -202,12 +200,31 @@ class PaymentNotificationService
             };
         }
 
-        if (mb_strtolower($source) === 'pse') return 'PSE';
+        $source = $this->prettySource($source);
 
         return match ($kind) {
             'credit' => "Tarjeta {$source}",
             'cash'   => "Efectivo ({$source})",
             default  => $source,
+        };
+    }
+
+    /**
+     * La pasarela mezcla mayúsculas y minúsculas según el medio ("NEQUI",
+     * "Bre-B", "pse"). Al cliente se le muestra siempre bien escrito.
+     */
+    private function prettySource(string $source): string
+    {
+        return match (mb_strtolower($source)) {
+            'pse'                 => 'PSE',
+            'nequi'               => 'Nequi',
+            'daviplata'           => 'Daviplata',
+            'bre-b', 'breb'       => 'Bre-B',
+            'american express'    => 'American Express',
+            'diners club'         => 'Diners Club',
+            default => mb_strtoupper($source) === $source
+                ? mb_convert_case(mb_strtolower($source), MB_CASE_TITLE, 'UTF-8')
+                : $source,
         };
     }
 
@@ -240,12 +257,47 @@ class PaymentNotificationService
         $phone = DB::table('user_data')->where('user_id', $cab->user_id)->value('phone');
         $phone = preg_replace('/\D+/', '', (string) $phone);
 
-        return strlen($phone) >= 10 ? $phone : null;
+        if (strlen($phone) < 10) return null;
+
+        // Meta exige indicativo de país. En la base los números se guardan casi
+        // siempre a diez dígitos, así que se antepone el de Colombia.
+        return strlen($phone) === 10 ? '57' . $phone : $phone;
     }
 
     private function money(float|int|string|null $value): string
     {
         return '$' . number_format((float) $value, 0, ',', '.');
+    }
+
+    /**
+     * ¿Ya se avisó este estado? El caché es solo una segunda barrera: el webhook
+     * ya filtra por cambio de estado. Si el caché falla -- disco lleno, permisos
+     * -- se avisa igual, porque callar un pago acreditado es peor que repetirlo.
+     */
+    private function alreadyNotified(OnlinePaymentTransaction $tx, string $status): bool
+    {
+        $key = $this->dedupeKey($tx, $status);
+
+        try {
+            if (Cache::has($key)) return true;
+            Cache::add($key, 1, self::DEDUPE_TTL);
+        } catch (\Throwable $e) {
+            Log::warning('Pago online: el caché no pudo registrar el aviso, se envía igual', [
+                'reference' => $tx->reference,
+                'error'     => $e->getMessage(),
+            ]);
+        }
+
+        return false;
+    }
+
+    private function releaseNotice(OnlinePaymentTransaction $tx, string $status): void
+    {
+        try {
+            Cache::forget($this->dedupeKey($tx, $status));
+        } catch (\Throwable $e) {
+            // Sin candado que liberar: el próximo webhook reintentará igual.
+        }
     }
 
     private function dedupeKey(OnlinePaymentTransaction $tx, string $status): string
