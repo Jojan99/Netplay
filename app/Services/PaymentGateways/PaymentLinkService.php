@@ -35,6 +35,7 @@ class PaymentLinkService
         ?array $invoiceIds = null,
         string $createdVia = 'bot',
         ?int $ttlDays = null,
+        ?string $createdFor = null,
     ): PaymentLink {
         return PaymentLink::create([
             'company_id'  => $company->id,
@@ -43,6 +44,8 @@ class PaymentLinkService
             'scope'       => $invoiceIds === null ? 'all_pending' : 'invoice',
             'invoice_ids' => $invoiceIds !== null ? array_values($invoiceIds) : null,
             'created_via' => $createdVia,
+            // Chat desde el que se pidió: ahí debe llegar la confirmación.
+            'created_for' => $createdFor,
             'expires_at'  => now()->addDays($ttlDays ?? self::DEFAULT_TTL_DAYS)->endOfDay(),
         ]);
     }

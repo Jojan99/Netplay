@@ -1477,7 +1477,7 @@ class WaBotService
 
         try {
             $service = app(PaymentLinkService::class);
-            $link    = $service->create($company, $clientUserId, $invoiceIds, 'bot');
+            $link    = $service->create($company, $clientUserId, $invoiceIds, 'bot', null, $phone);
             $url     = $service->publicUrl($link);
         } catch (\Throwable $e) {
             Log::error('[WaBotService] No se pudo crear el link de pago', [

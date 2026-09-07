@@ -6,6 +6,7 @@ use App\Models\CabFacturation;
 use App\Models\Company;
 use App\Models\DetFacturation;
 use App\Models\OnlinePaymentTransaction;
+use App\Models\PaymentLink;
 use App\Models\WaTemplateBinding;
 use App\Services\WhatsAppService;
 use Illuminate\Support\Facades\Cache;
@@ -380,6 +381,14 @@ class PaymentNotificationService
     /** Teléfono del dueño de la factura, no el que haya escrito el pago. */
     private function resolvePhone(OnlinePaymentTransaction $tx): ?string
     {
+        // Si el cobro nació en un chat, la confirmación va a ese chat. El
+        // teléfono de la cuenta puede ser otro -- y con las cuentas sin
+        // teléfono de WhatsApp casi siempre lo es.
+        $chat = PaymentLink::where('last_reference', $tx->reference)->value('created_for');
+        if ($chat) {
+            return $chat;
+        }
+
         $invoiceId = $tx->det_facturation_id
             ?: (!empty($tx->invoice_ids) ? ($tx->invoice_ids[0] ?? null) : null);
 

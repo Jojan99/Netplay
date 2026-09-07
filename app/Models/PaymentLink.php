@@ -17,7 +17,7 @@ class PaymentLink extends Model
         'token',
         'scope',
         'invoice_ids',
-        'created_via',
+        'created_via', 'created_for',
         'expires_at',
         'max_uses',
         'used_count',
