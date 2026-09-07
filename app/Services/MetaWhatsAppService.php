@@ -349,7 +349,22 @@ class MetaWhatsAppService
     {
         if (!$this->isEnabled()) return ['success' => false, 'error' => 'Meta WhatsApp deshabilitado.'];
 
-        return $this->sendTemplate($to, 'envio_factura', $parameters, 'es_CO', $urlButtons);
+        return $this->sendTemplate($to, $this->invoiceTemplateName(), $parameters, 'es_CO', $urlButtons);
+    }
+
+    /**
+     * Qué plantilla se usa para mandar la factura.
+     *
+     * La elige el panel. El nombre estaba escrito a fuego, así que cambiar a
+     * una versión corregida obligaba a tocar código.
+     */
+    public function invoiceTemplateName(): string
+    {
+        $elegida = \App\Models\WaTemplateBinding::where('company_id', $this->companyId)
+            ->where('event', 'envio_factura')
+            ->value('template_name');
+
+        return $elegida ?: 'envio_factura';
     }
 
     /**
@@ -537,22 +552,7 @@ class MetaWhatsAppService
 
     public function isInvoiceTemplateApproved(): bool
     {
-        if (!$this->isEnabled() || !$this->companyId) return false;
-
-        $company = Company::find($this->companyId);
-        if (!$company?->wa_business_id) return false;
-
-        $response = Http::withToken($this->accessToken)
-            ->get("https://graph.facebook.com/{$this->apiVersion}/{$company->wa_business_id}/message_templates", [
-                'name' => 'envio_factura',
-                'limit' => 20,
-            ]);
-        if ($response->failed()) return false;
-
-        return collect($response->json('data') ?? [])
-            ->contains(fn (array $template): bool => $template['name'] === 'envio_factura'
-                && $template['language'] === 'es_CO'
-                && $template['status'] === 'APPROVED');
+        return $this->isTemplateApproved($this->invoiceTemplateName(), 'es_CO');
     }
 
     // ── ENVÍO MASIVO / BATCH ─────────────────────────

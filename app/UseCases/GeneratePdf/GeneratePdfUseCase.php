@@ -446,7 +446,7 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
         $queued = 0;
         $invalid = 0;
 
-        $botones = $meta->dynamicUrlButtons('envio_factura', 'es_CO');
+        $botones = $meta->dynamicUrlButtons($meta->invoiceTemplateName(), 'es_CO');
 
         foreach ($messages as $message) {
             try {
