@@ -518,11 +518,19 @@ class MetaWhatsAppService
             ->where('conversation.company_id', $this->companyId)
             ->where('conversation.provider', 'meta')
             ->where('message.sender_type', 'customer')
-            // Se compara por el número nacional de diez dígitos: `user_data.phone`
-            // guarda "3245127869" y el CRM "+573245127869". Comparar las cadenas
-            // completas daba siempre "ventana cerrada" para cualquier aviso que
-            // saliera de nuestro lado.
-            ->whereRaw("RIGHT(REPLACE(REPLACE(REPLACE(customer.phone, '+', ''), ' ', ''), '-', ''), 10) = ?", [substr($normalizedPhone, -10)])
+            // Una identidad de usuario no tiene número nacional que comparar:
+            // se busca tal cual. Para teléfonos se comparan los diez últimos
+            // dígitos, porque `user_data.phone` guarda "3245127869" y el CRM
+            // "+573245127869"; comparar las cadenas completas daba siempre
+            // "ventana cerrada" para cualquier aviso que saliera de nuestro lado.
+            ->when(
+                self::isUserIdentity($normalizedPhone),
+                fn ($query) => $query->where('customer.phone', $normalizedPhone),
+                fn ($query) => $query->whereRaw(
+                    "RIGHT(REPLACE(REPLACE(REPLACE(customer.phone, '+', ''), ' ', ''), '-', ''), 10) = ?",
+                    [substr($normalizedPhone, -10)]
+                )
+            )
             ->orderByDesc('message.created_at')
             ->value('message.created_at');
 
@@ -572,8 +580,23 @@ class MetaWhatsAppService
     /**
      * Normaliza el número de teléfono para Meta (sin +, solo números).
      */
+    /**
+     * Destinatario tal como lo espera Meta.
+     *
+     * Con los nombres de usuario de WhatsApp hay cuentas que no tienen teléfono
+     * y se identifican como "CO.1559353791887122". Eso viaja intacto: quitarle
+     * los caracteres no numéricos lo convertiría en un número inexistente.
+     */
     private function normalizePhone(string $phone): string
     {
-        return preg_replace('/[^0-9]/', '', $phone);
+        $phone = trim($phone);
+
+        return self::isUserIdentity($phone) ? $phone : preg_replace('/[^0-9]/', '', $phone);
+    }
+
+    /** ¿Es una identidad de usuario de WhatsApp en vez de un teléfono? */
+    public static function isUserIdentity(string $value): bool
+    {
+        return (bool) preg_match('/^[A-Z]{2}\.\d+$/', trim($value));
     }
 }

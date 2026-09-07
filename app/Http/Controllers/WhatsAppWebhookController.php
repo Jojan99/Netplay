@@ -86,9 +86,14 @@ class WhatsAppWebhookController extends Controller
                 // Mapear contactos por wa_id
                 $contactMap = [];
                 foreach ($contacts as $contact) {
-                    $waId = $contact['wa_id'] ?? null;
+                    // WhatsApp está migrando a nombres de usuario: hay cuentas que
+                    // llegan solo con `user_id` y sin teléfono. Para nosotros el
+                    // identificador es el que venga.
+                    $waId = $contact['wa_id'] ?? $contact['user_id'] ?? null;
                     if ($waId) {
-                        $contactMap[$waId] = $contact['profile']['name'] ?? 'Cliente';
+                        $contactMap[$waId] = $contact['profile']['name']
+                            ?? $contact['profile']['username']
+                            ?? 'Cliente';
                     }
                 }
 
@@ -104,6 +109,11 @@ class WhatsAppWebhookController extends Controller
                         $handledByBot = false;
                         if ($phoneNumberId && in_array($message['type'] ?? '', ['text', 'interactive', 'image', 'document'], true)) {
                             $metaMessage = $message;
+
+                            // Sin teléfono, el remitente es su identidad de usuario.
+                            $metaMessage['from'] = $message['from']
+                                ?? $message['from_user_id']
+                                ?? null;
                             if (($message['type'] ?? null) === 'interactive') {
                                 $buttonId = $message['interactive']['button_reply']['id']
                                     ?? $message['interactive']['list_reply']['id']
