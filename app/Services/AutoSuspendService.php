@@ -377,7 +377,33 @@ class AutoSuspendService
             'created_at'     => now(),
         ]);
 
+        // 4. Avisarle. Sin esto el cliente que pagó vuelve a llamar preguntando
+        // por su internet aunque ya lo tenga de vuelta.
+        $this->avisarReactivacion($companyId, [$userId]);
+
         return true;
+    }
+
+    /**
+     * Le avisa por WhatsApp a quien recuperó el servicio.
+     *
+     * Se traga cualquier error a propósito: reactivar es lo importante y no
+     * puede quedarse a medias porque WhatsApp no responda.
+     *
+     * @param array<int, int> $userIds
+     */
+    private function avisarReactivacion(int $companyId, array $userIds): void
+    {
+        try {
+            $enviados = app(\App\Services\WhatsApp\ServiceNotifier::class)
+                ->reactivados($companyId, $userIds);
+
+            if ($enviados > 0) {
+                $this->writelog("avisarReactivacion empresa={$companyId} → {$enviados} aviso(s) por WhatsApp.");
+            }
+        } catch (\Throwable $e) {
+            $this->writelog("avisarReactivacion empresa={$companyId} → falló el aviso: {$e->getMessage()}");
+        }
     }
 
     /**
@@ -451,6 +477,9 @@ class AutoSuspendService
             'created_at'     => $now,
         ], $applied);
         DB::table('auto_suspend_logs')->insert($logs);
+
+        // Avisarle a cada uno que ya tiene servicio.
+        $this->avisarReactivacion($companyId, $applied);
 
         $total = count($applied);
         $this->writelog("reactivateAllClear empresa={$companyId} → {$total} cliente(s) reactivado(s) en BD y MikroTik");

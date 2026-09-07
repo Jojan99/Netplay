@@ -53,6 +53,11 @@ class WaTemplateBinding extends Model
             'suggested'   => 'envio_factura',
             'proceso'     => true,
         ],
+        'servicio_reactivado' => [
+            'label'       => 'Servicio reactivado',
+            'description' => 'El cliente pagó y su servicio volvió a quedar activo.',
+            'suggested'   => 'servicio_reactivado',
+        ],
         'suspension_mora' => [
             'label'       => 'Aviso de suspensión por mora',
             'description' => 'Le avisa al cliente que su servicio se suspenderá si no paga.',
