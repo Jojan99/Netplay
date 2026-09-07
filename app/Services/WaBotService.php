@@ -131,6 +131,26 @@ class WaBotService
         ]);
     }
 
+    /**
+     * Devuelve al cliente al menú principal.
+     *
+     * Borrar la sesión no basta: sin menú enviado el cliente toca "Ir al menú"
+     * y no recibe nada, que es exactamente como se veía el flujo de facturas.
+     */
+    private function returnToMenu(Company $company, string $phone): bool
+    {
+        $config = WaBotConfig::where('company_id', $company->id)->first();
+
+        // createSession ya borra la anterior.
+        $this->createSession($company->id, $phone, 'menu', 'awaiting_option');
+
+        if ($config) {
+            $this->sendWelcomeMenu($company, $config, $phone);
+        }
+
+        return true;
+    }
+
     private function sendWelcomeMenu(Company $company, WaBotConfig $config, string $to): void
     {
         $options = $config->options ?? [
@@ -561,8 +581,7 @@ class WaBotService
             }
 
             if ($message === 'another_no' || $message === 'no' || $message === '2' || $message === 'menu' || $message === 'menú') {
-                $this->clearSession($company->id, $phone);
-                return false; // Return to menu
+                return $this->returnToMenu($company, $phone);
             }
 
             return true;
@@ -626,12 +645,7 @@ class WaBotService
             }
 
             if (in_array($message, ['payment_menu', 'menu', 'menú', '2'], true)) {
-                $config = WaBotConfig::where('company_id', $company->id)->first();
-                $this->createSession($company->id, $phone, 'menu', 'awaiting_option');
-                if ($config) {
-                    $this->sendWelcomeMenu($company, $config, $phone);
-                }
-                return true;
+                return $this->returnToMenu($company, $phone);
             }
 
             return true;
