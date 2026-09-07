@@ -19,6 +19,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Database\QueryException;
 use App\Services\WhatsAppService;
+use App\Models\WaIdentity;
 use App\Services\PaymentGateways\EfiPayGateway;
 use App\Services\PaymentGateways\PaymentLinkService;
 use Symfony\Component\Process\Process;
@@ -98,9 +99,13 @@ class WaBotService
         }
 
         if ($normalizedMessage === 'menu' || $normalizedMessage === 'inicio') {
-            $this->createSession($company->id, $from, 'menu', 'awaiting_option');
-            $this->sendWelcomeMenu($company, $config, $from);
-            return true;
+            return $this->returnToMenu($company, $from);
+        }
+
+        if (in_array($normalizedMessage, ['otra cedula', 'otra cédula', 'cambiar cedula', 'cambiar cédula'], true)) {
+            WaIdentity::forget($company->id, $from);
+            $this->sendTextMessage($company, $from, "Listo, olvidé esa cédula. Te la pediré de nuevo.");
+            return $this->returnToMenu($company, $from);
         }
 
         // Handle active flow
@@ -152,33 +157,36 @@ class WaBotService
         return true;
     }
 
-    private function sendWelcomeMenu(Company $company, WaBotConfig $config, string $to): void
+    /**
+     * Las opciones del menú, en un solo lugar.
+     *
+     * Antes vivían duplicadas aquí y en el enrutador, y bastaba tocar una para
+     * que el cliente viera un botón que no llevaba a ninguna parte.
+     */
+    private function menuOptions(Company $company, WaBotConfig $config): array
     {
-        $options = $config->options ?? [
+        $options = $config->options ?: [
             ['key' => '1', 'label' => 'Consultar factura', 'flow' => 'consultar_factura'],
-            ['key' => '2', 'label' => 'Consultar revisión / soporte', 'flow' => 'consultar_revision'],
-            ['key' => '3', 'label' => 'Reportar pago', 'flow' => 'reportar_pago'],
         ];
-
-        $hasReportarPagoOption = false;
-        foreach ($options as $opt) {
-            $key = strtolower(trim((string) ($opt['key'] ?? '')));
-            $label = strtolower(trim((string) ($opt['label'] ?? $opt['title'] ?? '')));
-            if ($key === '3' || str_contains($label, 'reportar pago') || str_contains($label, 'reportar')) {
-                $hasReportarPagoOption = true;
-                break;
-            }
-        }
-
-        if (!$hasReportarPagoOption) {
-            $options[] = ['key' => '3', 'label' => 'Reportar pago', 'flow' => 'reportar_pago'];
-        }
 
         // "Pagar mi factura" solo aparece si la pasarela está realmente operativa:
         // ofrecerla sin configurar sería llevar al cliente a un callejón sin salida.
         if ($this->onlinePaymentAvailable($company) && !$this->hasOption($options, 'pagar_factura')) {
-            $options[] = ['key' => '4', 'label' => 'Pagar mi factura', 'flow' => 'pagar_factura'];
+            $options[] = ['label' => 'Pagar mi factura', 'flow' => 'pagar_factura'];
         }
+
+        // Numeración corrida: quitar una opción no puede dejar huecos, porque el
+        // número es lo que el cliente escribe si no toca el botón.
+        foreach ($options as $i => $opt) {
+            $options[$i]['key'] = (string) ($i + 1);
+        }
+
+        return array_values($options);
+    }
+
+    private function sendWelcomeMenu(Company $company, WaBotConfig $config, string $to): void
+    {
+        $options = $this->menuOptions($company, $config);
 
         $menuText = ($config->welcome_message ?: "Hola, bienvenido a {$company->name}.\n\n¿En qué puedo ayudarte?");
 
@@ -233,26 +241,20 @@ class WaBotService
         $data = $session->data ?? [];
 
         if ($flow === 'menu') {
-            $options = $config->options ?? [
-                ['key' => '1', 'label' => 'Consultar factura', 'flow' => 'consultar_factura'],
-                ['key' => '2', 'label' => 'Consultar revisión', 'flow' => 'consultar_revision'],
-                ['key' => '3', 'label' => 'Reportar pago', 'flow' => 'reportar_pago'],
-            ];
+            $options = $this->menuOptions($company, $config);
 
             foreach ($options as $index => $opt) {
                 $key = strtolower(trim((string) ($opt['key'] ?? ($index + 1))));
                 if ($message === $key) {
-                    // New builder uses flow_id; older configurations use flow.
+                    // El constructor nuevo usa flow_id; las configuraciones
+                    // viejas, flow.
                     $targetFlow = $opt['flow_id'] ?? $opt['flow'] ?? $key;
                     return $this->startFlow($company, $phone, $targetFlow);
                 }
             }
 
-            if (in_array($message, ['3', 'reportar pago', 'reportar_pago', 'reporte pago', 'reporte_pago'], true)) {
-                return $this->startFlow($company, $phone, 'reportar_pago');
-            }
-
-            if (in_array($message, ['4', 'pagar', 'pagar factura', 'pagar_factura', 'pagar mi factura'], true)) {
+            // Escribir la intención también vale, sin tocar el botón.
+            if (in_array($message, ['pagar', 'pagar factura', 'pagar_factura', 'pagar mi factura'], true)) {
                 return $this->startFlow($company, $phone, 'pagar_factura');
             }
 
@@ -260,27 +262,83 @@ class WaBotService
             return true;
         }
 
-        if ($flow === 'consultar_factura') {
-            return $this->handleConsultarFactura($company, $session, $phone, $message);
-        }
-
-        if ($flow === 'consultar_revision') {
-            return $this->handleConsultarRevision($company, $session, $phone, $message);
-        }
-
-        if ($flow === 'reportar_pago') {
-            return $this->handleReportarPago($company, $session, $phone, $message, $payload);
-        }
-
-        if ($flow === 'pagar_factura') {
-            return $this->handlePagarFactura($company, $session, $phone, $message);
-        }
-
-        return false;
+        return $this->routeFlow($company, $session, $phone, $message, $payload);
     }
+
+    /**
+     * Lleva el mensaje al flujo que corresponde.
+     *
+     * Vive aparte de handleFlowStep porque startFlow también necesita entrar a
+     * un flujo, cuando ya sabe de quién se trata y se salta la cédula.
+     */
+    private function routeFlow(
+        Company $company,
+        WaBotSession $session,
+        string $phone,
+        string $message,
+        array $payload = []
+    ): bool {
+        return match ($session->current_flow) {
+            'consultar_factura'  => $this->handleConsultarFactura($company, $session, $phone, $message),
+            'consultar_revision' => $this->handleConsultarRevision($company, $session, $phone, $message),
+            'reportar_pago'      => $this->handleReportarPago($company, $session, $phone, $message, $payload),
+            'pagar_factura'      => $this->handlePagarFactura($company, $session, $phone, $message),
+            default              => false,
+        };
+    }
+
+    /**
+     * ¿Esto parece una cédula?
+     *
+     * Se exigían entre 8 y 10 dígitos, y con eso el bot rechazaba a 133 de los
+     * 907 clientes: las cédulas colombianas antiguas tienen 6 o 7 dígitos. El
+     * rango amplio no abre ningún hueco, porque después hay que acertar además
+     * el celular registrado.
+     */
+    private function pareceCedula(string $dni): bool
+    {
+        $largo = strlen($dni);
+
+        return $largo >= 5 && $largo <= 12;
+    }
+
+    /** Flujos que empiezan pidiendo la cédula del titular. */
+    private const FLUJOS_CON_CEDULA = [
+        'consultar_factura',
+        'consultar_revision',
+        'reportar_pago',
+        'pagar_factura',
+    ];
 
     private function startFlow(Company $company, string $phone, string $flow): bool
     {
+        // A quien ya se comprobó no se le vuelve a pedir la cédula: se entra
+        // derecho al flujo con la que dejó registrada.
+        if (in_array($flow, self::FLUJOS_CON_CEDULA, true)
+            && ($conocido = WaIdentity::lookup($company->id, $phone))) {
+
+            if ($flow === 'pagar_factura' && !$this->onlinePaymentAvailable($company)) {
+                $this->sendTextMessage($company, $phone, "El pago en línea no está disponible por ahora.\n\nEscribe *menu* para volver al inicio.");
+                $this->clearSession($company->id, $phone);
+                return true;
+            }
+
+            $session = $this->createSession($company->id, $phone, $flow, 'ask_dni', [
+                // Sin esto, a quien escribe sin teléfono se le volvería a pedir
+                // el celular: la comprobación ya se hizo, se reutiliza.
+                'verified_phone' => $conocido->verified_phone,
+            ]);
+
+            $this->sendTextMessage(
+                $company,
+                $phone,
+                "Continúo con la cédula {$conocido->maskedDni()} que ya validaste.\n\n"
+                . "Si necesitas consultar otra, escribe *otra cedula*."
+            );
+
+            return $this->routeFlow($company, $session, $phone, $conocido->dni);
+        }
+
         if ($flow === 'consultar_factura') {
             $this->createSession($company->id, $phone, 'consultar_factura', 'ask_dni');
             $this->sendTextMessage($company, $phone, "Para consultar tu factura, por favor envíame tu número de cédula o DNI.");
@@ -322,9 +380,8 @@ class WaBotService
         if ($step === 'ask_dni') {
             $dni = preg_replace('/[^0-9]/', '', $message);
 
-            // Validar que sea un DNI válido (8-10 dígitos)
-            if (strlen($dni) < 8 || strlen($dni) > 10) {
-                $this->sendTextMessage($company, $phone, "Por favor, ingresa un número de cédula válido (8-10 dígitos).");
+            if (!$this->pareceCedula($dni)) {
+                $this->sendTextMessage($company, $phone, "Por favor, ingresa un número de cédula válido.");
                 return true;
             }
 
@@ -697,8 +754,8 @@ class WaBotService
         if ($step === 'ask_dni') {
             $dni = preg_replace('/[^0-9]/', '', $message);
 
-            if (strlen($dni) < 8 || strlen($dni) > 10) {
-                $this->sendTextMessage($company, $phone, "Por favor, ingresa una cédula válida (8-10 dígitos).");
+            if (!$this->pareceCedula($dni)) {
+                $this->sendTextMessage($company, $phone, "Por favor, ingresa un número de cédula válido.");
                 return true;
             }
 
@@ -1231,13 +1288,9 @@ class WaBotService
                 return true;
             }
 
-            $session->update([
-                'current_step' => 'show_tickets',
-                'data' => array_merge($data, ['client_id' => $client->id, 'dni' => $dni]),
-                'expires_at' => now()->addMinutes(10),
-            ]);
-
-            // Get latest tickets
+            // Los dos desenlaces de abajo cierran la sesión, así que no hay un
+            // paso siguiente que preparar.
+            // Últimos tickets
             $tickets = Ticket::where('company_id', $company->id)
                 ->where('user_id', $client->user_id)
                 ->orderByDesc('created_at')
@@ -1290,8 +1343,8 @@ class WaBotService
         if ($step === 'ask_dni') {
             $dni = preg_replace('/[^0-9]/', '', $message);
 
-            if (strlen($dni) < 8 || strlen($dni) > 10) {
-                $this->sendTextMessage($company, $phone, "Por favor, ingresa un número de cédula válido (8-10 dígitos).");
+            if (!$this->pareceCedula($dni)) {
+                $this->sendTextMessage($company, $phone, "Por favor, ingresa un número de cédula válido.");
                 return true;
             }
 
@@ -1761,10 +1814,33 @@ class WaBotService
             return null;
         }
 
-        return UserData::where('company_id', $company->id)
+        $candidatos = UserData::where('company_id', $company->id)
             ->where('dni', $dni)
             ->get()
-            ->first(fn (UserData $candidate): bool => $this->phonesMatch($candidate->phone, $prueba));
+            ->filter(fn (UserData $c): bool => $this->phonesMatch($c->phone, $prueba))
+            ->values();
+
+        // Si ese celular apunta a más de un cliente no se puede saber a cuál se
+        // le está dando acceso, así que no pasa nadie. Varias filas del mismo
+        // cliente sí valen: son duplicados, no personas distintas.
+        if ($candidatos->pluck('user_id')->unique()->count() !== 1) {
+            return null;
+        }
+
+        $cliente = $candidatos->first();
+
+        // Único punto donde se comprueba la titularidad, así que es el único
+        // sitio donde tiene sentido dejar constancia. Todos los flujos heredan
+        // el reconocimiento sin repetir la lógica.
+        WaIdentity::remember(
+            $company->id,
+            $senderPhone,
+            (int) $cliente->user_id,
+            $dni,
+            $typedPhone ?: (self::isUserIdentity($senderPhone) ? null : $senderPhone)
+        );
+
+        return $cliente;
     }
 
     /** ¿Quien escribe llega sin teléfono, identificado solo por su usuario? */
