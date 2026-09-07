@@ -29,6 +29,16 @@ class Kernel extends ConsoleKernel
 
         // Envía facturas pendientes por email para todas las empresas (respeta límite diario por empresa)
         $schedule->command('invoices:send-pending-emails')->dailyAt('08:00')->user('www-data');
+
+        // Avisa y cierra las conversaciones del bot que quedaron sin respuesta.
+        // Cada minuto porque el cliente espera de a pocos minutos, no de a horas.
+        // Sin withoutOverlapping a propósito: el candado se guarda en caché y
+        // un fallo de permisos ahí tumbaría el programador entero. Solapar no
+        // hace daño, porque la sesión se borra al avisar y la segunda pasada
+        // ya no la encuentra.
+        $schedule->command('wa:cerrar-sesiones-inactivas')
+            ->everyMinute()
+            ->user('www-data');
         
     }
 

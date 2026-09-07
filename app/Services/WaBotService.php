@@ -13,6 +13,7 @@ use App\Models\PaymentProofAudit;
 use App\Models\Ticket;
 use App\Models\CrmMessage;
 use App\Events\NewMessageEvent;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -78,27 +79,29 @@ class WaBotService
 
         $invoiceIntent = preg_match('/\b(factura|facturas|facturacion|facturación)\b/u', $normalizedMessage) === 1;
 
-        if (in_array($normalizedMessage, $triggerWords, true) || $invoiceIntent || $session) {
-            $this->recordBotConversationMessage($company, $from, 'customer', $payload['bot_selection_label'] ?? $message, $payload['id'] ?? null);
+        // "menu" vale siempre, como la palabra clave: es la salida que el bot le
+        // ofrece al cliente en cada mensaje, y no puede quedar bloqueada por la
+        // espera justo después de que él mismo se la sugirió al cerrar.
+        $pideMenu       = in_array($normalizedMessage, ['menu', 'menú', 'inicio'], true);
+        $esPalabraClave = in_array($normalizedMessage, $triggerWords, true) || $pideMenu;
+
+        // Si el bot acaba de cerrar, se queda callado un rato: así no interrumpe
+        // una conversación con un agente humano saludando a cada mensaje.
+        if (!$session && !$esPalabraClave && $this->enEsperaDeSaludar($company->id, $from)) {
+            return false;
         }
 
-        // A menu session is required so the next message can be routed to a flow.
-        if (in_array($normalizedMessage, $triggerWords, true) || $invoiceIntent || !$session) {
-            if (in_array($normalizedMessage, $triggerWords, true)) {
-                $this->clearSession($company->id, $from);
-                $this->createSession($company->id, $from, 'menu', 'awaiting_option');
-                $this->sendWelcomeMenu($company, $config, $from);
-                return true;
-            }
+        // Se registra solo lo que el bot va a atender; lo demás lo guarda el CRM.
+        $this->recordBotConversationMessage($company, $from, 'customer', $payload['bot_selection_label'] ?? $message, $payload['id'] ?? null);
 
-            if ($invoiceIntent) {
+        // Sin sesión abierta, cualquier cosa que escriba el cliente abre el
+        // menú: no tiene por qué adivinar la palabra mágica. "hola", "buenas" o
+        // "necesito ayuda" valen igual.
+        if ($esPalabraClave || $invoiceIntent || !$session) {
+            if ($invoiceIntent && !$esPalabraClave) {
                 return $this->startFlow($company, $from, 'consultar_factura');
             }
 
-            return false; // Let CRM handle non-trigger messages without session
-        }
-
-        if ($normalizedMessage === 'menu' || $normalizedMessage === 'inicio') {
             return $this->returnToMenu($company, $from);
         }
 
@@ -112,28 +115,88 @@ class WaBotService
         return $this->handleFlowStep($company, $config, $session, $from, $normalizedMessage, $payload);
     }
 
+    /**
+     * Cierra las conversaciones que quedaron esperando una respuesta.
+     *
+     * El vencimiento de la sesión por sí solo no le dice nada al cliente: la
+     * conversación simplemente se queda muda y la siguiente vez que escribe le
+     * vuelve a salir el menú sin explicación. Esto le avisa y cierra.
+     *
+     * Lo llama el comando programado wa:cerrar-sesiones-inactivas.
+     *
+     * @return int Cuántas se cerraron.
+     */
+    public function closeIdleSessions(int $minutosDeGracia = 30): int
+    {
+        // Si el programador estuvo caído no se avisa de conversaciones viejas:
+        // un mensaje de cierre horas después confunde más de lo que ayuda.
+        $vencidas = WaBotSession::where('expires_at', '<=', now())
+            ->where('expires_at', '>', now()->subMinutes($minutosDeGracia))
+            ->get();
+
+        $cerradas = 0;
+
+        foreach ($vencidas as $sesion) {
+            $company = Company::find($sesion->company_id);
+
+            if (!$company) {
+                $sesion->delete();
+                continue;
+            }
+
+            try {
+                $this->sendTextMessage(
+                    $company,
+                    $sesion->phone,
+                    'No recibimos ninguna consulta, así que cerramos por ahora. '
+                    . 'Escríbenos cuando quieras y con gusto te ayudamos.'
+                );
+            } catch (\Throwable $e) {
+                Log::warning('[WaBotService] No se pudo avisar el cierre por inactividad', [
+                    'company_id' => $sesion->company_id,
+                    'error'      => $e->getMessage(),
+                ]);
+            }
+
+            // Borra y arranca la espera, para no volver a saludar enseguida.
+            $this->clearSession($sesion->company_id, $sesion->phone);
+            $cerradas++;
+        }
+
+        return $cerradas;
+    }
+
     private function findCompanyByPhoneNumberId(string $phoneNumberId): ?Company
     {
         return Company::where('wa_phone_number_id', $phoneNumberId)->first();
     }
 
+    /**
+     * Cierra la atención. Único punto por el que el bot suelta al cliente, así
+     * que es donde arranca la espera antes de poder volver a saludar solo.
+     */
     private function clearSession(int $companyId, string $phone): void
     {
         WaBotSession::where('company_id', $companyId)
             ->where('phone', $phone)
             ->delete();
+
+        $this->empezarEspera($companyId, $phone);
     }
 
     private function createSession(int $companyId, string $phone, string $flow, string $step, array $data = []): WaBotSession
     {
-        $this->clearSession($companyId, $phone);
+        // Borrado directo, no clearSession: abrir una sesión no es soltar al
+        // cliente, y no debe arrancar la espera para volver a saludar.
+        WaBotSession::where('company_id', $companyId)->where('phone', $phone)->delete();
+
         return WaBotSession::create([
             'company_id' => $companyId,
             'phone' => $phone,
             'current_flow' => $flow,
             'current_step' => $step,
             'data' => $data,
-            'expires_at' => now()->addMinutes(10),
+            'expires_at' => self::vencimientoSesion(),
         ]);
     }
 
@@ -288,6 +351,58 @@ class WaBotService
     }
 
     /**
+     * Cuánto espera el bot a que el cliente conteste.
+     *
+     * Pasado esto le avisa que no recibió ninguna consulta y cierra, para no
+     * dejar una conversación a medias esperando indefinidamente.
+     */
+    private const MINUTOS_PARA_CONTESTAR = 5;
+
+    /**
+     * Cuánto tarda el bot en poder volver a saludar por su cuenta.
+     *
+     * Sin esta espera, cualquier mensaje suelto después de cerrar volvería a
+     * abrir el menú: quien está conversando con un agente humano recibiría el
+     * saludo del bot a cada rato. La palabra clave y "menu" nunca esperan.
+     */
+    private const MINUTOS_ANTES_DE_VOLVER_A_SALUDAR = 10;
+
+    private static function vencimientoSesion(): \Illuminate\Support\Carbon
+    {
+        return now()->addMinutes(self::MINUTOS_PARA_CONTESTAR);
+    }
+
+    /** ¿El bot acaba de cerrar con este cliente? */
+    private function enEsperaDeSaludar(int $companyId, string $sender): bool
+    {
+        try {
+            return (bool) Cache::get(self::claveEspera($companyId, $sender));
+        } catch (\Throwable $e) {
+            // Sin caché se prefiere saludar: molesta menos que quedarse mudo.
+            return false;
+        }
+    }
+
+    /** Arranca la espera. Se llama cada vez que el bot deja de atender. */
+    private function empezarEspera(int $companyId, string $sender): void
+    {
+        try {
+            Cache::put(
+                self::claveEspera($companyId, $sender),
+                1,
+                now()->addMinutes(self::MINUTOS_ANTES_DE_VOLVER_A_SALUDAR)
+            );
+        } catch (\Throwable $e) {
+            // Ni con caché rota puede fallar la atención al cliente.
+        }
+    }
+
+    private static function claveEspera(int $companyId, string $sender): string
+    {
+        return 'wa_bot_espera:' . $companyId . ':' . $sender;
+    }
+
+    /**
      * ¿Esto parece una cédula?
      *
      * Se exigían entre 8 y 10 dígitos, y con eso el bot rechazaba a 133 de los
@@ -390,7 +505,7 @@ class WaBotService
                 $session->update([
                     'current_step' => 'ask_phone',
                     'data' => array_merge($data, ['dni' => $dni]),
-                    'expires_at' => now()->addMinutes(10),
+                    'expires_at' => self::vencimientoSesion(),
                 ]);
                 $this->sendTextMessage($company, $phone, "Para confirmar que eres el titular, escríbeme el número de celular registrado en tu cuenta.");
                 return true;
@@ -411,7 +526,7 @@ class WaBotService
                     'client_name' => $client->names,
                     'client_dni' => $dni,
                 ]),
-                'expires_at' => now()->addMinutes(10),
+                'expires_at' => self::vencimientoSesion(),
             ]);
 
             $wa = new WhatsAppService($company->id, false, 'meta');
@@ -512,7 +627,7 @@ class WaBotService
             $session->update([
                 'current_step' => 'select_invoice',
                 'data' => array_merge($data, ['invoices' => $invoiceList]),
-                'expires_at' => now()->addMinutes(10),
+                'expires_at' => self::vencimientoSesion(),
             ]);
 
             $this->sendInvoicePicker(
@@ -553,7 +668,7 @@ class WaBotService
             $session->update([
                 'current_step' => 'ask_dni',
                 'data' => array_merge($data, ['verified_phone' => $typed, 'dni_attempts' => 0]),
-                'expires_at' => now()->addMinutes(10),
+                'expires_at' => self::vencimientoSesion(),
             ]);
 
             return $this->handleConsultarFactura($company, $session->fresh(), $phone, (string) $data['dni']);
@@ -600,7 +715,7 @@ class WaBotService
             $session->update([
                 'current_step' => 'confirm_download',
                 'data' => array_merge($data, ['selected_invoice_id' => $selectedInvoice['id'], 'selected_number' => $selectedInvoice['number_facture']]),
-                'expires_at' => now()->addMinutes(10),
+                'expires_at' => self::vencimientoSesion(),
             ]);
 
             $wa = new WhatsAppService($company->id, false, 'meta');
@@ -620,7 +735,7 @@ class WaBotService
             $message = strtolower(trim($message));
 
             if ($message === 'download_no' || $message === 'no' || $message === '2' || $message === 'otra') {
-                $session->update(['current_step' => 'select_invoice', 'expires_at' => now()->addMinutes(10)]);
+                $session->update(['current_step' => 'select_invoice', 'expires_at' => self::vencimientoSesion()]);
 
                 $this->sendInvoicePicker($company, $phone, $data['invoices'] ?? [], 'Está bien, selecciona otra factura:');
                 return true;
@@ -653,7 +768,7 @@ class WaBotService
             $session->update([
                 'current_step' => 'ask_another',
                 'data' => $data,
-                'expires_at' => now()->addMinutes(10),
+                'expires_at' => self::vencimientoSesion(),
             ]);
 
             $wa = new WhatsAppService($company->id, false, 'meta');
@@ -674,7 +789,7 @@ class WaBotService
 
             // Aceptar respuesta de botón O texto manual
             if ($message === 'another_yes' || $message === 'sí' || $message === 'si' || $message === '1' || $message === 'otra') {
-                $session->update(['current_step' => 'select_invoice', 'expires_at' => now()->addMinutes(10)]);
+                $session->update(['current_step' => 'select_invoice', 'expires_at' => self::vencimientoSesion()]);
 
                 $this->sendInvoicePicker($company, $phone, $data['invoices'] ?? [], 'Selecciona otra factura:');
                 return true;
@@ -734,13 +849,13 @@ class WaBotService
 
         if ($step === 'payment_complete') {
             if (in_array($message, ['payment_retry', 'reenviar comprobante', 'reenviar', '1'], true)) {
-                $session->update(['current_step' => 'awaiting_payment_proof', 'expires_at' => now()->addMinutes(10)]);
+                $session->update(['current_step' => 'awaiting_payment_proof', 'expires_at' => self::vencimientoSesion()]);
                 $this->sendTextMessage($company, $phone, 'Envía nuevamente la foto o el documento del comprobante. Verifica que se vean el monto, la fecha y la referencia.');
                 return true;
             }
 
             if (in_array($message, ['payment_another', 'otra factura', 'otra', '1'], true)) {
-                $session->update(['current_step' => 'ask_dni', 'expires_at' => now()->addMinutes(10)]);
+                $session->update(['current_step' => 'ask_dni', 'expires_at' => self::vencimientoSesion()]);
                 return $this->handleReportarPago($company, $session->fresh(), $phone, (string) ($data['client_dni'] ?? ''));
             }
 
@@ -819,7 +934,7 @@ class WaBotService
                     'client_dni' => $dni,
                     'pending_invoices' => $invoiceList,
                 ]),
-                'expires_at' => now()->addMinutes(10),
+                'expires_at' => self::vencimientoSesion(),
             ]);
 
             $rows = array_map(static fn (array $inv): array => [
@@ -875,7 +990,7 @@ class WaBotService
             $session->update([
                 'current_step' => 'awaiting_payment_proof',
                 'data' => array_merge($data, ['selected_invoice_id' => $selectedInvoice['id'], 'selected_invoice_number' => $selectedInvoice['number_facture'], 'selected_invoice_amount' => $selectedInvoice['balance']]),
-                'expires_at' => now()->addMinutes(10),
+                'expires_at' => self::vencimientoSesion(),
             ]);
 
             $this->sendTextMessage($company, $phone, "Perfecto. La factura seleccionada es #{$selectedInvoice['number_facture']} por $" . number_format($selectedInvoice['balance'], 0, ',', '.') . ".\n\nAhora envía la foto o documento del comprobante. Si lo prefieres, también escribe: monto y fecha, por ejemplo: 'Monto: 140000 Fecha: 30/08/2026'.");
@@ -889,7 +1004,7 @@ class WaBotService
             if ($result['approved']) {
                 $session->update([
                     'current_step' => 'payment_complete',
-                    'expires_at' => now()->addMinutes(10),
+                    'expires_at' => self::vencimientoSesion(),
                 ]);
                 (new WhatsAppService($company->id, false, 'meta'))->sendInteractiveButtons(
                     $phone,
@@ -905,7 +1020,7 @@ class WaBotService
             if ($result['can_continue'] ?? false) {
                 $session->update([
                     'current_step' => 'payment_complete',
-                    'expires_at' => now()->addMinutes(10),
+                    'expires_at' => self::vencimientoSesion(),
                 ]);
                 (new WhatsAppService($company->id, false, 'meta'))->sendInteractiveButtons(
                     $phone,
@@ -1355,7 +1470,7 @@ class WaBotService
                 $session->update([
                     'current_step' => 'pay_ask_phone',
                     'data' => array_merge($data, ['dni' => $dni]),
-                    'expires_at' => now()->addMinutes(10),
+                    'expires_at' => self::vencimientoSesion(),
                 ]);
                 $this->sendTextMessage($company, $phone, "Para confirmar que eres el titular, escríbeme el número de celular registrado en tu cuenta.");
                 return true;
@@ -1384,7 +1499,7 @@ class WaBotService
                     'client_user_id' => (int) $client->user_id,
                     'client_name'    => $client->names,
                 ]),
-                'expires_at' => now()->addMinutes(10),
+                'expires_at' => self::vencimientoSesion(),
             ]);
 
             // Con una sola factura pendiente no tiene sentido preguntar.
@@ -1429,7 +1544,7 @@ class WaBotService
             $session->update([
                 'current_step' => 'ask_dni',
                 'data' => array_merge($data, ['verified_phone' => $typed, 'dni_attempts' => 0]),
-                'expires_at' => now()->addMinutes(10),
+                'expires_at' => self::vencimientoSesion(),
             ]);
 
             return $this->handlePagarFactura($company, $session->fresh(), $phone, (string) $data['dni']);
@@ -1493,7 +1608,7 @@ class WaBotService
                     ];
                 }
 
-                $session->update(['current_step' => 'choose_invoice', 'expires_at' => now()->addMinutes(10)]);
+                $session->update(['current_step' => 'choose_invoice', 'expires_at' => self::vencimientoSesion()]);
 
                 $wa = new WhatsAppService($company->id, false, 'meta');
                 $this->recordBotConversationMessage($company, $phone, 'system', 'Listado de facturas por pagar');
@@ -1578,7 +1693,7 @@ class WaBotService
                     'pay_count'  => $invoiceCount,
                     'pay_vence'  => $vence,
                 ]),
-                'expires_at' => now()->addMinutes(10),
+                'expires_at' => self::vencimientoSesion(),
             ]);
 
             $texto = "Total a pagar: " . $this->formatMoney($amount) . "\n\n¿Cómo prefieres pagar?";
@@ -1696,8 +1811,25 @@ class WaBotService
         return '$' . number_format($value, 0, ',', '.');
     }
 
+    /**
+     * Deja siempre a la vista cómo volver al menú.
+     *
+     * Sin esto, cualquier mensaje que no sea un botón deja al cliente sin salida
+     * visible: tiene que saber de memoria que la palabra es "menu".
+     */
+    private function conSalidaAlMenu(string $text): string
+    {
+        $plano = mb_strtolower($text);
+
+        return str_contains($plano, 'menu') || str_contains($plano, 'menú')
+            ? $text
+            : $text . "\n\nEscribe *menu* para volver al inicio.";
+    }
+
     private function sendTextMessage(Company $company, string $to, string $text): void
     {
+        $text = $this->conSalidaAlMenu($text);
+
         $this->recordBotConversationMessage($company, $to, 'system', $text);
 
         try {
