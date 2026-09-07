@@ -259,8 +259,10 @@ class EfiPayGateway implements PaymentGatewayInterface
             return (string) $references[0];
         }
 
-        // Rutas alternativas por si EfiPay cambia el anidamiento del payload.
-        $fallback = $request->input('advanced_option.references.0')
+        // El webhook del cobro ERP no trae `advanced_option`: la referencia que
+        // le dimos en la respuesta del ERP vuelve como `ref_payment`.
+        $fallback = $request->input('checkout.payment_referenceable.ref_payment')
+                 ?? $request->input('advanced_option.references.0')
                  ?? $request->input('checkout.advanced_option.references.0');
 
         return $fallback !== null ? (string) $fallback : '';
@@ -273,6 +275,15 @@ class EfiPayGateway implements PaymentGatewayInterface
 
     public function getAmountPaid(Request $request): float
     {
+        // En cobro ERP el cliente puede pagar varias facturas de una vez: entonces
+        // `transaction.amount` es el total de todas y acreditarlo a una sola la
+        // sobrepagaría. `paid_advance.amount_paid` es lo que tocó a esta recauda.
+        $porRecauda = $request->input('checkout.paid_advance.amount_paid');
+
+        if (is_numeric($porRecauda) && (float) $porRecauda > 0) {
+            return round((float) $porRecauda, 2);
+        }
+
         // `value_cop` viene ya convertido a pesos cuando la transacción es en otra moneda.
         $amount = $request->input('transaction.value_cop')
                ?? $request->input('transaction.amount')

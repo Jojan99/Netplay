@@ -31,6 +31,12 @@ class PaymentGatewayController extends Controller
             ? url('/api/webhooks/' . $company->pg_gateway . '/' . $company->slug)
             : null;
 
+        // URL del cobro ERP: solo EfiPay la usa, y lleva el token adentro porque
+        // esa ruta no tiene otra autenticación.
+        $erpUrl = $company->pg_gateway === 'efipay' && $company->slug
+            ? \App\Http\Controllers\ErpRecaudaController::urlFor($company)
+            : null;
+
         return response()->json([
             'status' => 0,
             'data'   => [
@@ -52,6 +58,7 @@ class PaymentGatewayController extends Controller
                 'client_id'            => $company->pg_client_id,
                 'office_id'            => $company->pg_office_id,
                 'webhook_url'          => $webhookUrl,
+                'erp_url'              => $erpUrl,
                 // Permite al panel mostrar la URL de la pasarela seleccionada
                 // antes de guardar la configuración.
                 'webhook_base'         => url('/api/webhooks'),
@@ -319,7 +326,8 @@ class PaymentGatewayController extends Controller
                     'wompi'    => $request->input('data.transaction.reference'),
                     'epayco'   => $request->input('x_id_factura') ?: $request->input('x_ref_payco'),
                     'zonapago' => $request->input('referencia'),
-                    'efipay'   => $request->input('checkout.payment_gateway.advanced_option.references.0'),
+                    'efipay'   => $request->input('checkout.payment_gateway.advanced_option.references.0')
+                                  ?? $request->input('checkout.payment_referenceable.ref_payment'),
                     default    => null,
                 };
 

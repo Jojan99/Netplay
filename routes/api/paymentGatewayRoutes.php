@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\ErpRecaudaController;
 use App\Http\Controllers\PaymentGatewayController;
 use App\Http\Controllers\PaymentLinkController;
 use App\Http\Controllers\Client\ClientPaymentController;
@@ -27,6 +28,9 @@ use Illuminate\Support\Facades\Route;
 | Rutas públicas — links de pago compartibles (WhatsApp, correo, panel):
 |   GET  /api/pay/{token}
 |
+| Ruta pública — cobro ERP de EfiPay (ellos consultan qué debe una cédula):
+|   GET  /api/erp/efipay/{company_slug}/{token}?id_number=…
+|
 | Rutas portal cliente (jwt.client):
 |   POST /api/client/invoices/{id}/pay-link
 */
@@ -52,6 +56,16 @@ Route::get('pay/{token}', [PaymentLinkController::class, 'open'])
 Route::get('pay/result/{reference}', [PaymentLinkController::class, 'result'])
     ->middleware('throttle:60,1')
     ->where('reference', '[A-Za-z0-9\\-]{5,80}');
+
+// ── Cobro ERP de EfiPay (público — sin JWT) ──────────────────────────────────
+// EfiPay consulta qué debe una cédula y cobra por su cuenta; el pago vuelve por
+// el webhook de siempre. La documentación no define autenticación para esta URL,
+// así que el secreto va en la propia ruta y sin él no resuelve.
+// La documentación dice GET y el panel de EfiPay dice POST: se aceptan ambos.
+Route::match(['get', 'post'], 'erp/efipay/{company_slug}/{token}', [ErpRecaudaController::class, 'recaudas'])
+    ->middleware('throttle:60,1')
+    ->where('company_slug', '[A-Za-z0-9\\-_]{2,64}')
+    ->where('token', '[a-f0-9]{40}');
 
 // ── Checkout intermedio ePayco (público — sin JWT) ───────────────────────────
 Route::get('payment-gateway/epayco/checkout/{token}', [PaymentGatewayController::class, 'epaycoCheckout']);
