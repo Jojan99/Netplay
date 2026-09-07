@@ -87,10 +87,13 @@ class EfiPayGateway implements PaymentGatewayInterface
             ],
             'advanced_options' => [
                 'references'   => [$reference],
+                // Cada desenlace lleva su marca para que la página de retorno
+                // pueda saludar bien sin esperar al webhook. Es solo una pista:
+                // el estado de verdad se lee de la base.
                 'result_urls'  => [
-                    'approved' => $redirectUrl,
-                    'rejected' => $redirectUrl,
-                    'pending'  => $redirectUrl,
+                    'approved' => $this->withOutcome($redirectUrl, 'approved'),
+                    'rejected' => $this->withOutcome($redirectUrl, 'rejected'),
+                    'pending'  => $this->withOutcome($redirectUrl, 'pending'),
                     'webhook'  => $webhookUrl,
                 ],
                 'has_comments' => false,
@@ -408,6 +411,12 @@ class EfiPayGateway implements PaymentGatewayInterface
     }
 
     /** Traduce los estados de EfiPay (en español) al vocabulario interno. */
+    /** Añade el desenlace a la URL de retorno sin romper sus parámetros. */
+    private function withOutcome(string $url, string $outcome): string
+    {
+        return $url . (str_contains($url, '?') ? '&' : '?') . 'r=' . $outcome;
+    }
+
     public static function normalizeStatus(string $status): string
     {
         $normalized = mb_strtolower(trim($status));

@@ -20,6 +20,8 @@ class PaymentInitiationService
     /**
      * @param  Collection  $invoices  Facturas ya validadas como del cliente y sin pagar,
      *                                ordenadas de la más antigua a la más nueva.
+     * @param  string  $returnTo  'whatsapp' devuelve al chat al terminar de pagar;
+     *                             'web', al portal.
      * @return array{payment_url: string, reference: string, amount: float, gateway: string,
      *               sandbox: bool, breakdown: array, expires_on: ?string}
      *
@@ -33,6 +35,7 @@ class PaymentInitiationService
         ?string $redirectUrl = null,
         ?string $limitDate = null,
         string $origin = 'portal',
+        string $returnTo = 'web',
     ): array {
         $firstInvoice = $invoices->first();
         $orderedIds   = $invoices->pluck('id')->values()->all();
@@ -49,8 +52,13 @@ class PaymentInitiationService
             ? 'Pago ' . count($orderedIds) . ' facturas'
             : 'Factura #' . $firstInvoice->number_facture;
 
-        $redirectUrl = $redirectUrl ?: url('/portal/facturas');
-        $redirectUrl = rtrim($redirectUrl, '/') . '?tx=' . urlencode($reference);
+        // Página propia de retorno. El origen se marca aquí, donde se conoce con
+        // certeza: rastrearlo después por el link falla si el cliente lo abrió
+        // más de una vez, porque el link solo recuerda su último intento.
+        $redirectUrl = $redirectUrl
+            ?: url('/api/pay/result/' . $reference) . '?via=' . ($returnTo === 'whatsapp' ? 'wa' : 'web');
+
+        $redirectUrl .= (str_contains($redirectUrl, '?') ? '&' : '?') . 'tx=' . urlencode($reference);
 
         $gateway = PaymentGatewayFactory::make($company);
         $link    = $gateway->generatePaymentLink([

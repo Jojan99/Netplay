@@ -48,6 +48,11 @@ Route::get('pay/{token}', [PaymentLinkController::class, 'open'])
     ->middleware('throttle:30,1')
     ->where('token', '[A-Za-z0-9]{20,64}');
 
+// Retorno de la pasarela: devuelve al cliente por donde entró (chat o portal).
+Route::get('pay/result/{reference}', [PaymentLinkController::class, 'result'])
+    ->middleware('throttle:60,1')
+    ->where('reference', '[A-Za-z0-9\\-]{5,80}');
+
 // ── Checkout intermedio ePayco (público — sin JWT) ───────────────────────────
 Route::get('payment-gateway/epayco/checkout/{token}', [PaymentGatewayController::class, 'epaycoCheckout']);
 

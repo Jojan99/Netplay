@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Company;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
@@ -36,6 +37,36 @@ class MetaWhatsAppService
     public function isEnabled(): bool
     {
         return $this->enabled && !empty($this->phoneNumberId) && !empty($this->accessToken);
+    }
+
+    /**
+     * Número visible del bot, para armar enlaces wa.me que devuelvan al chat.
+     *
+     * No se guarda en la empresa, así que se le pregunta a Meta y se cachea:
+     * cambia casi nunca y no vale una llamada por visita.
+     */
+    public function businessPhoneNumber(): ?string
+    {
+        if (!$this->isEnabled()) return null;
+
+        return Cache::remember("wa:display_phone:{$this->phoneNumberId}", 86400, function (): ?string {
+            try {
+                $response = Http::withToken($this->accessToken)
+                    ->timeout(10)
+                    ->get("https://graph.facebook.com/{$this->apiVersion}/{$this->phoneNumberId}", [
+                        'fields' => 'display_phone_number',
+                    ]);
+
+                if ($response->failed()) return null;
+
+                $digits = preg_replace('/\D+/', '', (string) $response->json('display_phone_number'));
+
+                return strlen($digits) >= 10 ? $digits : null;
+            } catch (\Throwable $e) {
+                Log::warning('[MetaWhatsAppService] No se pudo leer el número del bot', ['error' => $e->getMessage()]);
+                return null;
+            }
+        });
     }
 
     // ── TEXTO ────────────────────────────────────────

@@ -98,10 +98,14 @@ class PaymentLinkService
             clientUserId: $link->user_id,
             invoices:     $invoices,
             amount:       $amount,
-            redirectUrl:  url('/portal/facturas'),
+            // Sin URL propia: el iniciador arma la página de retorno, que sabe
+            // devolver al chat cuando el link lo creó el bot.
+            redirectUrl:  null,
             // El cobro no puede sobrevivir al link que lo originó.
             limitDate:    optional($link->expires_at)->format('Y-m-d'),
             origin:       'payment_link',
+            // Un link creado por el bot nació en un chat; ahí debe volver.
+            returnTo:     $link->created_via === 'bot' ? 'whatsapp' : 'web',
         );
 
         $link->increment('used_count');
