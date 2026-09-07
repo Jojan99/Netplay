@@ -107,7 +107,7 @@ class WhatsAppWebhookController extends Controller
                     try {
                         // Intentar manejar con el bot primero
                         $handledByBot = false;
-                        if ($phoneNumberId && in_array($message['type'] ?? '', ['text', 'interactive', 'image', 'document'], true)) {
+                        if ($phoneNumberId && in_array($message['type'] ?? '', ['text', 'interactive', 'image', 'document', 'button'], true)) {
                             $metaMessage = $message;
 
                             // Sin teléfono, el remitente es su identidad de usuario.
@@ -124,6 +124,21 @@ class WhatsAppWebhookController extends Controller
                                     $metaMessage['bot_selection_label'] = $message['interactive']['button_reply']['title']
                                         ?? $message['interactive']['list_reply']['title']
                                         ?? $buttonId;
+                                }
+                            }
+
+                            // Los botones de una plantilla no llegan como
+                            // "interactive" sino como "button", y sin esto el bot
+                            // ni se enteraba: el cliente tocaba "Consultar
+                            // facturas" en el aviso de mora y no pasaba nada.
+                            if (($message['type'] ?? null) === 'button') {
+                                $texto = $message['button']['payload']
+                                    ?? $message['button']['text']
+                                    ?? null;
+
+                                if ($texto) {
+                                    $metaMessage['text'] = ['body' => $texto];
+                                    $metaMessage['bot_selection_label'] = $message['button']['text'] ?? $texto;
                                 }
                             }
 
