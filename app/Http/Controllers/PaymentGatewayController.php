@@ -10,6 +10,7 @@ use App\Services\PaymentGateways\EfiPayGateway;
 use App\Services\PaymentGateways\EPaycoGateway;
 use App\Services\PaymentGateways\PaymentAllocationService;
 use App\Services\PaymentGateways\PaymentGatewayFactory;
+use App\Services\PaymentGateways\PaymentNotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -378,6 +379,15 @@ class PaymentGatewayController extends Controller
                 return response()->json(['ok' => false], 200);
             }
 
+            // Estado anterior: solo se avisa al cliente cuando de verdad cambia,
+            // así los reintentos del webhook no le repiten el mensaje.
+            $previousStatus = $tx->status;
+
+            // La transacción nace en 'pending', así que un pago en efectivo
+            // ("Por Pagar") no cambiaría el estado y el cliente se quedaría sin
+            // aviso. El primer webhook siempre notifica.
+            $firstNotice = empty($tx->gateway_payload);
+
             // Siempre persistir el estado (aprobado, rechazado, cancelado, fallido…)
             $tx->update([
                 'status'                 => $txStatus,
@@ -389,6 +399,13 @@ class PaymentGatewayController extends Controller
 
             if ($txStatus === 'approved') {
                 $this->markInvoicePaid($company->id, $reference, $amount, $gatewayName);
+            }
+
+            // Se notifica después de acreditar, para que el mensaje pueda
+            // informar el saldo real de cada factura y no el que había antes.
+            if ($txStatus !== $previousStatus || $firstNotice) {
+                (new PaymentNotificationService())
+                    ->notify($company, $tx->fresh(), $txStatus, $request->all());
             }
 
             return response()->json(['ok' => true, 'status' => $txStatus], 200);

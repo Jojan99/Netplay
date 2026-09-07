@@ -1,0 +1,521 @@
+{
+  "version": "7.0",
+  "data_api_version": "3.0",
+  "routing_model": {
+    "RESUMEN": ["ELEGIR_FACTURA", "DATOS", "AVISO"],
+    "ELEGIR_FACTURA": ["DATOS", "AVISO"],
+    "DATOS": ["METODO", "AVISO"],
+    "METODO": ["BREB", "EFECTIVO", "SALIR", "AVISO"],
+    "BREB": ["QR_BREB", "AVISO"],
+    "EFECTIVO": ["CUPON", "AVISO"],
+    "QR_BREB": [],
+    "CUPON": [],
+    "SALIR": [],
+    "AVISO": []
+  },
+  "screens": [
+    {
+      "id": "RESUMEN",
+      "title": "Detalle de tu pago",
+      "data": {
+        "titular": {"type": "string", "__example__": "Juan Pérez"},
+        "resumen": {"type": "string", "__example__": "Tienes 3 facturas pendientes por $195.000"},
+        "detalle": {
+          "type": "string",
+          "__example__": "NT19 · ago-2026 · $65.000\nNT20 · sep-2026 · $65.000\nNT21 · oct-2026 · $65.000"
+        },
+        "alcances": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {"type": "string"},
+              "title": {"type": "string"},
+              "description": {"type": "string"}
+            }
+          },
+          "__example__": [
+            {"id": "all", "title": "Pagar todo", "description": "$195.000 · 3 facturas"},
+            {"id": "single", "title": "Elegir una factura", "description": "Paga solo la que quieras"}
+          ]
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {"type": "TextHeading", "text": "${data.titular}"},
+          {"type": "TextSubheading", "text": "${data.resumen}"},
+          {"type": "TextBody", "text": "${data.detalle}"},
+          {
+            "type": "Form",
+            "name": "form_resumen",
+            "children": [
+              {
+                "type": "RadioButtonsGroup",
+                "name": "alcance",
+                "label": "¿Qué deseas pagar?",
+                "required": true,
+                "data-source": "${data.alcances}"
+              },
+              {
+                "type": "Footer",
+                "label": "Continuar",
+                "on-click-action": {
+                  "name": "data_exchange",
+                  "payload": {"alcance": "${form.alcance}"}
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "ELEGIR_FACTURA",
+      "title": "Elige la factura",
+      "data": {
+        "facturas": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {"type": "string"},
+              "title": {"type": "string"},
+              "description": {"type": "string"}
+            }
+          },
+          "__example__": [
+            {"id": "13320", "title": "NT13320 · $50.000", "description": "Vence 15 sep 2026"},
+            {"id": "13321", "title": "NT13321 · $65.000", "description": "Vencida hace 12 días"}
+          ]
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "TextSubheading",
+            "text": "Los abonos se aplican de la factura más antigua a la más nueva."
+          },
+          {
+            "type": "Form",
+            "name": "form_factura",
+            "children": [
+              {
+                "type": "RadioButtonsGroup",
+                "name": "factura_id",
+                "label": "Facturas pendientes",
+                "required": true,
+                "data-source": "${data.facturas}"
+              },
+              {
+                "type": "Footer",
+                "label": "Continuar",
+                "on-click-action": {
+                  "name": "data_exchange",
+                  "payload": {"factura_id": "${form.factura_id}"}
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "DATOS",
+      "title": "Información de pago",
+      "data": {
+        "total": {"type": "string", "__example__": "Total a pagar: $195.000"},
+        "nombre": {"type": "string", "__example__": "Juan"},
+        "apellido": {"type": "string", "__example__": "Pérez"},
+        "correo": {"type": "string", "__example__": "juan@correo.com"},
+        "documento": {"type": "number", "__example__": 1094123456},
+        "tipos_documento": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {"type": "string"},
+              "title": {"type": "string"}
+            }
+          },
+          "__example__": [
+            {"id": "CC", "title": "CC · Cédula de ciudadanía"},
+            {"id": "CE", "title": "CE · Cédula de extranjería"},
+            {"id": "NIT", "title": "NIT · Número de identificación tributaria"},
+            {"id": "PPT", "title": "PPT · Permiso por protección temporal"},
+            {"id": "PASSPORT", "title": "PASSPORT · Pasaporte"},
+            {"id": "TI", "title": "TI · Tarjeta de identidad"}
+          ]
+        },
+        "tipo_documento": {"type": "string", "__example__": "CC"}
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {"type": "TextSubheading", "text": "${data.total}"},
+          {"type": "TextCaption", "text": "Estos datos deben coincidir con el titular del medio de pago."},
+          {
+            "type": "Form",
+            "name": "form_datos",
+            "init-values": {
+              "nombre": "${data.nombre}",
+              "apellido": "${data.apellido}",
+              "correo": "${data.correo}",
+              "documento": "${data.documento}",
+              "tipo_documento": "${data.tipo_documento}"
+            },
+            "children": [
+              {
+                "type": "TextInput",
+                "name": "nombre",
+                "label": "Nombre(s)",
+                "input-type": "text",
+                "required": true,
+                "max-chars": 40
+              },
+              {
+                "type": "TextInput",
+                "name": "apellido",
+                "label": "Apellido(s)",
+                "input-type": "text",
+                "required": true,
+                "max-chars": 40
+              },
+              {
+                "type": "TextInput",
+                "name": "correo",
+                "label": "Correo electrónico",
+                "input-type": "email",
+                "required": true,
+                "max-chars": 80
+              },
+              {
+                "type": "Dropdown",
+                "name": "tipo_documento",
+                "label": "Tipo de documento",
+                "required": true,
+                "data-source": "${data.tipos_documento}"
+              },
+              {
+                "type": "TextInput",
+                "name": "documento",
+                "label": "Documento",
+                "input-type": "number",
+                "required": true,
+                "min-chars": 5,
+                "max-chars": 15
+              },
+              {
+                "type": "Footer",
+                "label": "Continuar",
+                "on-click-action": {
+                  "name": "data_exchange",
+                  "payload": {
+                    "nombre": "${form.nombre}",
+                    "apellido": "${form.apellido}",
+                    "correo": "${form.correo}",
+                    "tipo_documento": "${form.tipo_documento}",
+                    "documento": "${form.documento}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "METODO",
+      "title": "Método de pago",
+      "data": {
+        "total": {"type": "string", "__example__": "Total a pagar: $195.000"},
+        "metodos": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {"type": "string"},
+              "title": {"type": "string"},
+              "description": {"type": "string"}
+            }
+          },
+          "__example__": [
+            {
+              "id": "breb",
+              "title": "Bre-B",
+              "description": "Apruebas en la app de tu banco. Sin salir de WhatsApp."
+            },
+            {
+              "id": "efectivo",
+              "title": "Efectivo",
+              "description": "Efecty, Éxito, SuperGiros y más. Te damos el código."
+            },
+            {
+              "id": "otros",
+              "title": "Tarjeta, PSE, Nequi o Daviplata",
+              "description": "Se abre el pago seguro en tu navegador."
+            }
+          ]
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {"type": "TextSubheading", "text": "${data.total}"},
+          {
+            "type": "Form",
+            "name": "form_metodo",
+            "children": [
+              {
+                "type": "RadioButtonsGroup",
+                "name": "metodo",
+                "label": "¿Cómo quieres pagar?",
+                "required": true,
+                "data-source": "${data.metodos}"
+              },
+              {
+                "type": "Footer",
+                "label": "Continuar",
+                "on-click-action": {
+                  "name": "data_exchange",
+                  "payload": {"metodo": "${form.metodo}"}
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "BREB",
+      "title": "Pago con Bre-B",
+      "data": {
+        "total": {"type": "string", "__example__": "Total a pagar: $195.000"},
+        "celular": {"type": "string", "__example__": "3123456789"}
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {"type": "TextSubheading", "text": "${data.total}"},
+          {
+            "type": "TextCaption",
+            "text": "Generamos un código QR que apruebas desde la app de tu banco. Tienes 30 minutos."
+          },
+          {
+            "type": "Form",
+            "name": "form_breb",
+            "init-values": {"celular": "${data.celular}"},
+            "children": [
+              {
+                "type": "TextInput",
+                "name": "celular",
+                "label": "Número de celular",
+                "helper-text": "Sin guiones ni espacios.",
+                "input-type": "phone",
+                "required": true,
+                "min-chars": 10,
+                "max-chars": 10
+              },
+              {
+                "type": "Footer",
+                "label": "Generar pago",
+                "on-click-action": {
+                  "name": "data_exchange",
+                  "payload": {"celular": "${form.celular}"}
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "EFECTIVO",
+      "title": "Pago en efectivo",
+      "data": {
+        "total": {"type": "string", "__example__": "Total a pagar: $195.000"},
+        "celular": {"type": "string", "__example__": "3123456789"},
+        "franquicias": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {"type": "string"},
+              "title": {"type": "string"}
+            }
+          },
+          "__example__": [
+            {"id": "Efecty", "title": "Efecty"},
+            {"id": "Éxito", "title": "Éxito"},
+            {"id": "Carulla", "title": "Carulla"},
+            {"id": "Super Giros", "title": "Super Giros"},
+            {"id": "Punto Red", "title": "Punto Red"}
+          ]
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {"type": "TextSubheading", "text": "${data.total}"},
+          {"type": "TextCaption", "text": "Te damos un código para pagar en el punto que elijas."},
+          {
+            "type": "Form",
+            "name": "form_efectivo",
+            "init-values": {"celular": "${data.celular}"},
+            "children": [
+              {
+                "type": "Dropdown",
+                "name": "franquicia",
+                "label": "¿Dónde vas a pagar?",
+                "required": true,
+                "data-source": "${data.franquicias}"
+              },
+              {
+                "type": "TextInput",
+                "name": "celular",
+                "label": "Número de celular",
+                "input-type": "phone",
+                "required": true,
+                "min-chars": 10,
+                "max-chars": 10
+              },
+              {
+                "type": "Footer",
+                "label": "Generar código",
+                "on-click-action": {
+                  "name": "data_exchange",
+                  "payload": {"franquicia": "${form.franquicia}", "celular": "${form.celular}"}
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "QR_BREB",
+      "title": "Escanea para pagar",
+      "terminal": true,
+      "success": true,
+      "data": {
+        "qr": {
+          "type": "string",
+          "__example__": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        },
+        "instruccion": {
+          "type": "string",
+          "__example__": "Abre la app de tu banco, elige Bre-B y escanea este código. Son $195.000."
+        },
+        "vence": {"type": "string", "__example__": "El código vence a las 11:24 a. m."},
+        "referencia": {"type": "string", "__example__": "netplay-sas-MULTI-1788614971-13320"}
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {"type": "TextSubheading", "text": "${data.instruccion}"},
+          {"type": "Image", "src": "${data.qr}", "height": 280, "scale-type": "contain"},
+          {"type": "TextCaption", "text": "${data.vence}"},
+          {"type": "TextCaption", "text": "Te avisamos por este mismo chat apenas se acredite."},
+          {
+            "type": "Footer",
+            "label": "Listo",
+            "on-click-action": {
+              "name": "complete",
+              "payload": {"resultado": "breb_generado", "referencia": "${data.referencia}"}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "CUPON",
+      "title": "Código de pago",
+      "terminal": true,
+      "success": true,
+      "data": {
+        "codigo": {"type": "string", "__example__": "998877665544"},
+        "instruccion": {"type": "string", "__example__": "Ve a cualquier punto Efecty y da este código. Son $195.000."},
+        "vence": {"type": "string", "__example__": "Válido hasta el 10 de septiembre."},
+        "referencia": {"type": "string", "__example__": "netplay-sas-MULTI-1788614971-13320"}
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {"type": "TextSubheading", "text": "${data.instruccion}"},
+          {"type": "TextHeading", "text": "${data.codigo}"},
+          {"type": "TextCaption", "text": "${data.vence}"},
+          {"type": "TextCaption", "text": "Te avisamos por este mismo chat apenas se acredite."},
+          {
+            "type": "Footer",
+            "label": "Listo",
+            "on-click-action": {
+              "name": "complete",
+              "payload": {"resultado": "cupon_generado", "referencia": "${data.referencia}"}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "SALIR",
+      "title": "Pago seguro",
+      "terminal": true,
+      "success": true,
+      "data": {
+        "checkout_url": {"type": "string", "__example__": "https://sag.efipay.co/checkout/abc123"},
+        "instruccion": {
+          "type": "string",
+          "__example__": "Abre el pago seguro para continuar con tarjeta, PSE, Nequi o Daviplata. Son $195.000."
+        },
+        "referencia": {"type": "string", "__example__": "netplay-sas-MULTI-1788614971-13320"}
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {"type": "TextSubheading", "text": "${data.instruccion}"},
+          {
+            "type": "TextCaption",
+            "text": "Por seguridad, los datos de tu tarjeta nunca pasan por WhatsApp ni por nuestros servidores."
+          },
+          {
+            "type": "EmbeddedLink",
+            "text": "Abrir el pago seguro",
+            "on-click-action": {"name": "open_url", "url": "${data.checkout_url}"}
+          },
+          {
+            "type": "Footer",
+            "label": "Listo",
+            "on-click-action": {
+              "name": "complete",
+              "payload": {"resultado": "checkout_externo", "referencia": "${data.referencia}"}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "AVISO",
+      "title": "Pago en línea",
+      "terminal": true,
+      "data": {
+        "mensaje": {"type": "string", "__example__": "No tienes facturas pendientes por pagar. ¡Estás al día!"}
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {"type": "TextSubheading", "text": "${data.mensaje}"},
+          {"type": "TextCaption", "text": "Si necesitas ayuda, escríbenos por este mismo chat."},
+          {
+            "type": "Footer",
+            "label": "Cerrar",
+            "on-click-action": {
+              "name": "complete",
+              "payload": {"resultado": "aviso"}
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

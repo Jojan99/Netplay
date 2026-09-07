@@ -1,0 +1,394 @@
+{
+  "version": "7.0",
+  "screens": [
+    {
+      "id": "RESUMEN",
+      "title": "Detalle de tu pago",
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {"type": "TextHeading", "text": "Juan Pérez"},
+          {"type": "TextSubheading", "text": "Tienes 3 facturas pendientes por $195.000"},
+          {
+            "type": "TextBody",
+            "text": "NT19 · ago-2026 · $65.000\nNT20 · sep-2026 · $65.000\nNT21 · oct-2026 · $65.000"
+          },
+          {
+            "type": "Form",
+            "name": "form_resumen",
+            "children": [
+              {
+                "type": "RadioButtonsGroup",
+                "name": "alcance",
+                "label": "¿Qué deseas pagar?",
+                "required": true,
+                "data-source": [
+                  {"id": "all", "title": "Pagar todo", "description": "$195.000 · 3 facturas"},
+                  {"id": "single", "title": "Elegir una factura", "description": "Paga solo la que quieras"}
+                ]
+              },
+              {
+                "type": "Footer",
+                "label": "Continuar",
+                "on-click-action": {
+                  "name": "navigate",
+                  "next": {"type": "screen", "name": "ELEGIR_FACTURA"}
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "ELEGIR_FACTURA",
+      "title": "Elige la factura",
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "TextSubheading",
+            "text": "Los abonos se aplican de la factura más antigua a la más nueva."
+          },
+          {
+            "type": "Form",
+            "name": "form_factura",
+            "children": [
+              {
+                "type": "RadioButtonsGroup",
+                "name": "factura_id",
+                "label": "Facturas pendientes",
+                "required": true,
+                "data-source": [
+                  {"id": "13320", "title": "NT13320 · $50.000", "description": "Vence 15 sep 2026"},
+                  {"id": "13321", "title": "NT13321 · $65.000", "description": "Vencida hace 12 días"}
+                ]
+              },
+              {
+                "type": "Footer",
+                "label": "Continuar",
+                "on-click-action": {
+                  "name": "navigate",
+                  "next": {"type": "screen", "name": "DATOS"}
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "DATOS",
+      "title": "Información de pago",
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {"type": "TextSubheading", "text": "Total a pagar: $195.000"},
+          {"type": "TextCaption", "text": "Estos datos deben coincidir con el titular del medio de pago."},
+          {
+            "type": "Form",
+            "name": "form_datos",
+            "init-values": {
+              "nombre": "Juan",
+              "apellido": "Pérez",
+              "correo": "juan@correo.com",
+              "documento": 1094123456,
+              "tipo_documento": "CC"
+            },
+            "children": [
+              {
+                "type": "TextInput",
+                "name": "nombre",
+                "label": "Nombre(s)",
+                "input-type": "text",
+                "required": true,
+                "max-chars": 40
+              },
+              {
+                "type": "TextInput",
+                "name": "apellido",
+                "label": "Apellido(s)",
+                "input-type": "text",
+                "required": true,
+                "max-chars": 40
+              },
+              {
+                "type": "TextInput",
+                "name": "correo",
+                "label": "Correo electrónico",
+                "input-type": "email",
+                "required": true,
+                "max-chars": 80
+              },
+              {
+                "type": "Dropdown",
+                "name": "tipo_documento",
+                "label": "Tipo de documento",
+                "required": true,
+                "data-source": [
+                  {"id": "CC", "title": "CC · Cédula de ciudadanía"},
+                  {"id": "CE", "title": "CE · Cédula de extranjería"},
+                  {"id": "NIT", "title": "NIT · Número de identificación tributaria"},
+                  {"id": "PPT", "title": "PPT · Permiso por protección temporal"},
+                  {"id": "PASSPORT", "title": "PASSPORT · Pasaporte"},
+                  {"id": "TI", "title": "TI · Tarjeta de identidad"}
+                ]
+              },
+              {
+                "type": "TextInput",
+                "name": "documento",
+                "label": "Documento",
+                "input-type": "number",
+                "required": true,
+                "min-chars": 5,
+                "max-chars": 15
+              },
+              {
+                "type": "Footer",
+                "label": "Continuar",
+                "on-click-action": {
+                  "name": "navigate",
+                  "next": {"type": "screen", "name": "METODO"}
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "METODO",
+      "title": "Método de pago",
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {"type": "TextSubheading", "text": "Total a pagar: $195.000"},
+          {
+            "type": "Form",
+            "name": "form_metodo",
+            "children": [
+              {
+                "type": "RadioButtonsGroup",
+                "name": "metodo",
+                "label": "¿Cómo quieres pagar?",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "breb",
+                    "title": "Bre-B",
+                    "description": "Apruebas en la app de tu banco. Sin salir de WhatsApp."
+                  },
+                  {
+                    "id": "efectivo",
+                    "title": "Efectivo",
+                    "description": "Efecty, Éxito, SuperGiros y más. Te damos el código."
+                  },
+                  {
+                    "id": "otros",
+                    "title": "Tarjeta, PSE, Nequi o Daviplata",
+                    "description": "Se abre el pago seguro en tu navegador."
+                  }
+                ]
+              },
+              {
+                "type": "Footer",
+                "label": "Continuar",
+                "on-click-action": {
+                  "name": "navigate",
+                  "next": {"type": "screen", "name": "BREB"}
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "BREB",
+      "title": "Pago con Bre-B",
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {"type": "TextSubheading", "text": "Total a pagar: $195.000"},
+          {
+            "type": "TextCaption",
+            "text": "Generamos un código QR que apruebas desde la app de tu banco. Tienes 30 minutos."
+          },
+          {
+            "type": "Form",
+            "name": "form_breb",
+            "init-values": {"celular": "3123456789"},
+            "children": [
+              {
+                "type": "TextInput",
+                "name": "celular",
+                "label": "Número de celular",
+                "helper-text": "Sin guiones ni espacios.",
+                "input-type": "phone",
+                "required": true,
+                "min-chars": 10,
+                "max-chars": 10
+              },
+              {
+                "type": "Footer",
+                "label": "Generar pago",
+                "on-click-action": {
+                  "name": "navigate",
+                  "next": {"type": "screen", "name": "QR_BREB"}
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "EFECTIVO",
+      "title": "Pago en efectivo",
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {"type": "TextSubheading", "text": "Total a pagar: $195.000"},
+          {"type": "TextCaption", "text": "Te damos un código para pagar en el punto que elijas."},
+          {
+            "type": "Form",
+            "name": "form_efectivo",
+            "init-values": {"celular": "3123456789"},
+            "children": [
+              {
+                "type": "Dropdown",
+                "name": "franquicia",
+                "label": "¿Dónde vas a pagar?",
+                "required": true,
+                "data-source": [
+                  {"id": "Efecty", "title": "Efecty"},
+                  {"id": "Éxito", "title": "Éxito"},
+                  {"id": "Carulla", "title": "Carulla"},
+                  {"id": "Super Giros", "title": "Super Giros"},
+                  {"id": "Punto Red", "title": "Punto Red"}
+                ]
+              },
+              {
+                "type": "TextInput",
+                "name": "celular",
+                "label": "Número de celular",
+                "input-type": "phone",
+                "required": true,
+                "min-chars": 10,
+                "max-chars": 10
+              },
+              {
+                "type": "Footer",
+                "label": "Generar código",
+                "on-click-action": {
+                  "name": "navigate",
+                  "next": {"type": "screen", "name": "CUPON"}
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "QR_BREB",
+      "title": "Escanea para pagar",
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "TextSubheading",
+            "text": "Abre la app de tu banco, elige Bre-B y escanea este código. Son $195.000."
+          },
+          {
+            "type": "Image",
+            "src": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+            "height": 280,
+            "scale-type": "contain"
+          },
+          {"type": "TextCaption", "text": "El código vence a las 11:24 a. m."},
+          {"type": "TextCaption", "text": "Te avisamos por este mismo chat apenas se acredite."},
+          {
+            "type": "Footer",
+            "label": "Listo",
+            "on-click-action": {
+              "name": "navigate",
+              "next": {"type": "screen", "name": "EFECTIVO"}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "CUPON",
+      "title": "Código de pago",
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {"type": "TextSubheading", "text": "Ve a cualquier punto Efecty y da este código. Son $195.000."},
+          {"type": "TextHeading", "text": "998877665544"},
+          {"type": "TextCaption", "text": "Válido hasta el 10 de septiembre."},
+          {"type": "TextCaption", "text": "Te avisamos por este mismo chat apenas se acredite."},
+          {
+            "type": "Footer",
+            "label": "Listo",
+            "on-click-action": {
+              "name": "navigate",
+              "next": {"type": "screen", "name": "SALIR"}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "SALIR",
+      "title": "Pago seguro",
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "TextSubheading",
+            "text": "Abre el pago seguro para continuar con tarjeta, PSE, Nequi o Daviplata. Son $195.000."
+          },
+          {
+            "type": "TextCaption",
+            "text": "Por seguridad, los datos de tu tarjeta nunca pasan por WhatsApp ni por nuestros servidores."
+          },
+          {
+            "type": "EmbeddedLink",
+            "text": "Abrir el pago seguro",
+            "on-click-action": {"name": "open_url", "url": "https://sag.efipay.co/checkout/abc123"}
+          },
+          {
+            "type": "Footer",
+            "label": "Listo",
+            "on-click-action": {
+              "name": "navigate",
+              "next": {"type": "screen", "name": "AVISO"}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "AVISO",
+      "title": "Pago en línea",
+      "terminal": true,
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {"type": "TextSubheading", "text": "No tienes facturas pendientes por pagar. ¡Estás al día!"},
+          {"type": "TextCaption", "text": "Si necesitas ayuda, escríbenos por este mismo chat."},
+          {
+            "type": "Footer",
+            "label": "Cerrar",
+            "on-click-action": {
+              "name": "complete",
+              "payload": {"resultado": "aviso"}
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
