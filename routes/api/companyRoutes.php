@@ -94,6 +94,10 @@ Route::prefix('company')->group(function () {
                 Route::post('send-test',            [\App\Http\Controllers\MetaWhatsAppController::class, 'sendTest']);
                 Route::get('logs',                  [\App\Http\Controllers\MetaWhatsAppController::class, 'getLogs']);
                 Route::post('validate-phone',       [\App\Http\Controllers\MetaWhatsAppController::class, 'validatePhone']);
+
+                // Automatizaciones: qué plantilla sale ante cada hecho del negocio
+                Route::get('template-bindings',     [\App\Http\Controllers\WaTemplateBindingController::class, 'index']);
+                Route::post('template-bindings',    [\App\Http\Controllers\WaTemplateBindingController::class, 'save']);
             });
 
             // ── Bot WhatsApp ───────────────────────────────────────────────────

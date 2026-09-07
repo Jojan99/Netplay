@@ -6,6 +6,7 @@ use App\Models\CabFacturation;
 use App\Models\Company;
 use App\Models\DetFacturation;
 use App\Models\OnlinePaymentTransaction;
+use App\Models\WaTemplateBinding;
 use App\Services\WhatsAppService;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -54,7 +55,7 @@ class PaymentNotificationService
             // Si el cliente pagó desde el portal sin habernos escrito, la ventana
             // de 24 h está cerrada y Meta solo acepta una plantilla aprobada.
             if (($result['code'] ?? null) === 'META_WINDOW_CLOSED') {
-                $result = $this->sendAsTemplate($wa, $phone, $tx, $status, $payload);
+                $result = $this->sendAsTemplate($wa, $phone, $company, $tx, $status, $payload);
             }
 
             if (($result['success'] ?? true) === false) {
@@ -76,39 +77,92 @@ class PaymentNotificationService
 
     // ─── Respaldo por plantilla ──────────────────────────────────────────────
 
-    /** Plantilla de Meta que corresponde a cada desenlace. */
-    private const TEMPLATES = [
-        'approved'  => 'pago_confirmado',
+    /** Cada desenlace de la pasarela corresponde a un hecho del negocio. */
+    private const EVENTS = [
+        'approved'  => 'pago_aprobado',
         'pending'   => 'pago_pendiente',
-        'declined'  => 'pago_no_completado',
-        'failed'    => 'pago_no_completado',
-        'cancelled' => 'pago_no_completado',
+        'declined'  => 'pago_fallido',
+        'failed'    => 'pago_fallido',
+        'cancelled' => 'pago_fallido',
     ];
 
     /**
-     * Reenvía el aviso como plantilla. Los parámetros van cortos y en una sola
-     * línea porque Meta rechaza saltos de línea dentro de una variable.
+     * Reenvía el aviso como plantilla, según lo configurado en el panel.
+     *
+     * El orden de los parámetros no lo decide el código: lo decide quien
+     * redactó la plantilla en Meta y lo dejó guardado en el vínculo.
      */
-    private function sendAsTemplate(WhatsAppService $wa, string $phone, OnlinePaymentTransaction $tx, string $status, array $payload): array
+    private function sendAsTemplate(WhatsAppService $wa, string $phone, Company $company, OnlinePaymentTransaction $tx, string $status, array $payload): array
     {
-        $template = self::TEMPLATES[$status] ?? null;
-        if (!$template) {
+        $event = self::EVENTS[$status] ?? null;
+        if (!$event) {
             return ['success' => false, 'error' => "Sin plantilla para el estado '{$status}'."];
         }
 
-        $params = [
-            $this->firstName($tx),
-            $this->money($tx->amount),
-            $this->methodLabel($payload),
-            $this->voucher($tx, $payload),
-        ];
+        $binding = WaTemplateBinding::where('company_id', $company->id)->where('event', $event)->first();
 
-        // La plantilla de pago confirmado cierra diciendo cómo quedó la factura.
-        if ($status === 'approved') {
-            $params[] = $this->invoiceSummary($tx);
+        if (!$binding || !$binding->isUsable()) {
+            return ['success' => false, 'error' => "La plantilla de '{$event}' no está activada en el panel."];
         }
 
-        return $wa->sendTemplate($phone, $template, $params);
+        $context = $this->templateContext($company, $tx, $payload);
+        $params  = [];
+
+        foreach ((array) $binding->params as $variable) {
+            $params[] = $context[$variable] ?? '';
+        }
+
+        return $wa->sendTemplate($phone, $binding->template_name, $params, $binding->language ?: 'es_CO');
+    }
+
+    /**
+     * Valor de cada variable que el panel ofrece para armar la plantilla.
+     *
+     * @return array<string, string>
+     */
+    private function templateContext(Company $company, OnlinePaymentTransaction $tx, array $payload): array
+    {
+        $ids      = $this->invoiceIds($tx);
+        $invoices = $ids ? DetFacturation::whereIn('id', $ids)->get() : collect();
+
+        $owed = round($invoices->sum(fn ($inv) => $inv->outstanding()), 2);
+
+        $numbers = $invoices->pluck('number_facture')->filter()->values();
+        $factura = match (true) {
+            $numbers->isEmpty() => '',
+            $numbers->count() === 1 => (string) $numbers->first(),
+            default => $numbers->first() . ' y ' . ($numbers->count() - 1) . ' más',
+        };
+
+        return [
+            'cliente'          => $this->firstName($tx),
+            'cliente_completo' => trim((string) $tx->customer_name) ?: $this->firstName($tx),
+            'valor'            => $this->money($tx->amount),
+            'plan'             => $this->planName($tx),
+            'factura'          => $factura,
+            'referencia'       => $this->voucher($tx, $payload),
+            'medio_pago'       => $this->methodLabel($payload),
+            'saldo'            => $this->money($owed),
+            'estado_facturas'  => $this->invoiceSummary($tx),
+            'empresa'          => (string) ($company->name ?: 'Netplay'),
+            'soporte'          => (string) ($company->phone ?: ''),
+            'fecha'            => now()->format('d/m/Y'),
+        ];
+    }
+
+    /** Plan contratado por el dueño de la factura. */
+    private function planName(OnlinePaymentTransaction $tx): string
+    {
+        $ids = $this->invoiceIds($tx);
+        if ($ids === []) return '';
+
+        $invoice = DetFacturation::find($ids[0]);
+        $cab     = $invoice ? CabFacturation::find($invoice->cab_id) : null;
+        if (!$cab) return '';
+
+        $planId = DB::table('user_data')->where('user_id', $cab->user_id)->value('internet_plans_id');
+
+        return (string) (DB::table('internet_plans')->where('id', $planId)->value('plan_name') ?: '');
     }
 
     /** Solo el nombre de pila: "Hola Juan" se lee mejor que el nombre completo. */
