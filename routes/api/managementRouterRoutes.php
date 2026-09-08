@@ -172,6 +172,13 @@ Route::post('conversations/{conversationId}/send-invoice', [\App\Http\Controller
 Route::post('conversations/{conversationId}/pay-link', [\App\Http\Controllers\Crm\CrmCustomerController::class, 'payLink']);
 Route::post('conversations/{conversationId}/tech-note', [\App\Http\Controllers\Crm\CrmCustomerController::class, 'techNote']);
 
+// ── EQUIPO: chat interno y llamadas entre agentes ────────────────────────────
+Route::get('team/members', [\App\Http\Controllers\Crm\TeamController::class, 'members']);
+Route::get('team/messages', [\App\Http\Controllers\Crm\TeamController::class, 'messages']);
+Route::post('team/messages', [\App\Http\Controllers\Crm\TeamController::class, 'send']);
+Route::post('team/read', [\App\Http\Controllers\Crm\TeamController::class, 'read']);
+Route::post('team/call/signal', [\App\Http\Controllers\Crm\TeamController::class, 'callSignal']);
+
 // ── CONFIGURACIÓN DEL CRM ────────────────────────────────────────────────────
 Route::get('crm/settings', [ConversationController::class, 'getSettings']);
 Route::post('crm/settings', [ConversationController::class, 'saveSettings']);

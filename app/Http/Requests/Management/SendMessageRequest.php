@@ -14,7 +14,9 @@ class SendMessageRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'message' => 'required|string'
+            // Texto obligatorio sólo para mensajes de texto; ubicación, voto, reacción (quitar) y contacto van sin texto
+            'message' => 'nullable|string|required_if:type,text',
+            'type'    => 'nullable|string|in:text,sticker,location,contact,reaction,poll,poll_vote',
         ];
     }
 }

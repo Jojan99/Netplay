@@ -18,3 +18,15 @@ Broadcast::channel('conversation.{conversationId}', function ($user, $conversati
 Broadcast::channel('crm.inbox', function ($user) {
     return true;
 });
+
+// Presencia por empresa: quién del equipo está en línea (chat interno y llamadas)
+Broadcast::channel('company.{companyId}', function ($user, $companyId) {
+    if ((int) $user->company_id !== (int) $companyId) return false;
+    $ud = \Illuminate\Support\Facades\DB::table('user_data')->where('user_id', $user->id)->first(['names', 'lastname']);
+    return ['id' => $user->id, 'name' => trim(($ud->names ?? '') . ' ' . ($ud->lastname ?? '')) ?: ($user->email ?? 'Usuario')];
+});
+
+// Canal privado por usuario: mensajes directos y señalización de llamadas
+Broadcast::channel('user.{userId}', function ($user, $userId) {
+    return (int) $user->id === (int) $userId;
+});
