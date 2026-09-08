@@ -88,7 +88,7 @@ try {
 
         $mediaUrl = asset('storage/' . $path);
 
-        $this->whatsAppService->sendVoice(
+        $sendResult = $this->whatsAppService->sendVoice(
             $conversation->phone,
             $mediaUrl
         );
@@ -143,7 +143,7 @@ try {
             'mediaUrl' => $mediaUrl,
         ]);
 
-        $this->whatsAppService->sendVoice(
+        $sendResult = $this->whatsAppService->sendVoice(
             $conversation->phone,
             $mediaUrl
         );
@@ -161,7 +161,7 @@ try {
     }
 }else {
 
-        match ($type) {
+        $sendResult = match ($type) {
             'image' => $this->whatsAppService->sendImage(
                 $conversation->phone,
                 $publicUrl
@@ -197,6 +197,8 @@ try {
                 'mime_type'       => $finalMime,
                 'extension'       => $finalExt,
                 'original_name'   => $finalName,
+                'external_id'     => is_array($sendResult ?? null) ? ($sendResult['messageId'] ?? ($sendResult['messages'][0]['id'] ?? null)) : null,
+                'status'          => 'sent',
             ]);
 
             $message->refresh();

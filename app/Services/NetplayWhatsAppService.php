@@ -39,10 +39,46 @@ class NetplayWhatsAppService
     }
 
     // ── TEXTO ────────────────────────────────────────
-    public function mensajeInformativo(string $to, string $body): array
+    public function mensajeInformativo(string $to, string $body, ?array $quoted = null): array
     {
         if (!$this->enabled) return ['success' => false, 'error' => 'WhatsApp deshabilitado para esta empresa.'];
-        return $this->sendRequest('send', ['number' => $to, 'message' => $body]);
+        $params = ['number' => $to, 'message' => $body];
+        if (!empty($quoted['id'])) $params['quoted'] = $quoted;
+        return $this->sendRequest('send', $params);
+    }
+
+    /** Pausa/reanuda el bot del servicio Node para un número. */
+    public function setBotPaused(string $phone, bool $paused): array
+    {
+        if (!$this->enabled) return ['success' => false, 'error' => 'WhatsApp deshabilitado para esta empresa.'];
+        return $this->sendRequest('bot/pause', ['number' => $phone, 'paused' => $paused]);
+    }
+
+    public function sendReaction(string $to, string $targetExternalId, bool $targetFromMe, string $emoji): array
+    {
+        if (!$this->enabled) return ['success' => false, 'error' => 'WhatsApp deshabilitado para esta empresa.'];
+        return $this->sendRequest('send/reaction', ['number' => $to, 'messageId' => $targetExternalId, 'fromMe' => $targetFromMe, 'emoji' => $emoji]);
+    }
+
+    public function sendSticker(string $to, string $stickerUrl, ?array $quoted = null): array
+    {
+        if (!$this->enabled) return ['success' => false, 'error' => 'WhatsApp deshabilitado para esta empresa.'];
+        $p = ['number' => $to, 'url' => $stickerUrl]; if (!empty($quoted['id'])) $p['quoted'] = $quoted;
+        return $this->sendRequest('send/sticker', $p);
+    }
+
+    public function sendLocation(string $to, float $latitude, float $longitude, ?string $name = null, ?string $address = null, ?array $quoted = null): array
+    {
+        if (!$this->enabled) return ['success' => false, 'error' => 'WhatsApp deshabilitado para esta empresa.'];
+        $p = ['number' => $to, 'latitude' => $latitude, 'longitude' => $longitude, 'name' => $name, 'address' => $address]; if (!empty($quoted['id'])) $p['quoted'] = $quoted;
+        return $this->sendRequest('send/location', $p);
+    }
+
+    public function sendContact(string $to, ?string $contactName, string $contactPhone, ?array $quoted = null): array
+    {
+        if (!$this->enabled) return ['success' => false, 'error' => 'WhatsApp deshabilitado para esta empresa.'];
+        $p = ['number' => $to, 'contactName' => $contactName, 'contactPhone' => $contactPhone]; if (!empty($quoted['id'])) $p['quoted'] = $quoted;
+        return $this->sendRequest('send/contact', $p);
     }
 
     // ── DOCUMENTO / PDF ──────────────────────────────

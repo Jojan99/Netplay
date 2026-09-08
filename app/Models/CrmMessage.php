@@ -15,5 +15,14 @@ class CrmMessage extends Model
         'sender_type',
         'content',
         'message_type',
+        'sender_user_id',
+        'media_url',
+        'mime_type',
+        'external_id',
+        'status',
+        'quoted_message_id',
+        'is_forwarded',
+        'forwarded_from_id',
+        'agent_signature',
     ];
 }

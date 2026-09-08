@@ -15,6 +15,9 @@ interface SendMessageUseCaseInterface
     public function execute(
         int $conversationId,
         string $content,
-        ?int $agentId
+        ?int $agentId,
+        ?int $quotedMessageId = null,
+        string $type = 'text',
+        array $extra = []
     );
 }

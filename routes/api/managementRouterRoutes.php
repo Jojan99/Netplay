@@ -162,6 +162,25 @@ Route::get('stickers', [ConversationController::class, 'getStickers']);
 Route::post('stickers', [ConversationController::class, 'saveSticker']);
 Route::delete('stickers/{stickerId}', [ConversationController::class, 'deleteSticker']);
 
+// ── AUDIO M4A PARA SAFARI (lo carga <audio src>, sin cabeceras JWT) ───────────
+Route::get('crm/media/m4a', [ConversationController::class, 'transcodeAudio'])->withoutMiddleware('jwt.verify');
+
+// ── FICHA DEL CLIENTE EN EL CHAT ─────────────────────────────────────────────
+Route::get('conversations/{conversationId}/customer-summary', [\App\Http\Controllers\Crm\CrmCustomerController::class, 'summary']);
+Route::get('conversations/{conversationId}/history', [\App\Http\Controllers\Crm\CrmCustomerController::class, 'history']);
+Route::post('conversations/{conversationId}/send-invoice', [\App\Http\Controllers\Crm\CrmCustomerController::class, 'sendInvoice']);
+Route::post('conversations/{conversationId}/pay-link', [\App\Http\Controllers\Crm\CrmCustomerController::class, 'payLink']);
+Route::post('conversations/{conversationId}/tech-note', [\App\Http\Controllers\Crm\CrmCustomerController::class, 'techNote']);
+
+// ── CONFIGURACIÓN DEL CRM ────────────────────────────────────────────────────
+Route::get('crm/settings', [ConversationController::class, 'getSettings']);
+Route::post('crm/settings', [ConversationController::class, 'saveSettings']);
+
+// ── RESPUESTAS RÁPIDAS ("/atajo" en el chat) ──────────────────────────────────
+Route::get('crm/quick-replies', [ConversationController::class, 'getQuickReplies']);
+Route::post('crm/quick-replies', [ConversationController::class, 'saveQuickReply']);
+Route::delete('crm/quick-replies/{id}', [ConversationController::class, 'deleteQuickReply']);
+
 // ── CREAR TICKET DESDE CONVERSACIÓN ──────────────────────────────────────────
 Route::post('conversations/{conversationId}/ticket', [ConversationController::class, 'createTicketFromConversation']);
 Route::get('crm/ticket-meta', [ConversationController::class, 'ticketMeta']);

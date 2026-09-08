@@ -15,11 +15,13 @@ class NewMessageEvent implements ShouldBroadcast
 
     public CrmMessage $message;
     public int $conversation_id; // ✅ FALTABA ESTO
+    public ?array $quoted;
 
-    public function __construct(CrmMessage $message, int $conversationId)
+    public function __construct(CrmMessage $message, int $conversationId, ?array $quoted = null)
     {
         $this->message = $message;
         $this->conversation_id = $conversationId;
+        $this->quoted = $quoted;
     }
 
     /**
@@ -54,6 +56,9 @@ class NewMessageEvent implements ShouldBroadcast
                 'message_type' => $this->message->message_type,
                 'media_url' => $this->message->media_url,
                 'mime_type' => $this->message->mime_type,      // ✅ NUEVO
+                'status' => $this->message->status,
+                'quoted' => $this->quoted,
+                'quoted_message_id' => $this->message->quoted_message_id,
             ],
         ];
     }

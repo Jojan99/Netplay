@@ -26,6 +26,7 @@ class ConversationRepository implements ConversationRepositoryInterface
         $userId  = $filters['user_id'] ?? null;   // si mandas user_id explícito (opcional)
         $limit   = (int)($filters['limit'] ?? 50);
         $provider = $filters['provider'] ?? null;
+        $labelId  = !empty($filters['label']) ? (int)$filters['label'] : null;
 
 
 
@@ -37,7 +38,8 @@ class ConversationRepository implements ConversationRepositoryInterface
                 'm1.message_type',
                 'm1.media_url',
                 'm1.mime_type',     // 🔥 AÑADIR ESTOMessages retrieved successfully
-                'm1.created_at'
+                'm1.created_at',
+                'm1.sender_type'
             )
             ->whereRaw('m1.id = (
       SELECT m2.id
@@ -70,14 +72,17 @@ class ConversationRepository implements ConversationRepositoryInterface
                 DB::raw("
         CASE 
             WHEN lm.message_type = 'text' THEN lm.content
-            WHEN lm.message_type = 'image' THEN '📷 Imagen'
-            WHEN lm.message_type = 'audio' THEN '🎤 Audio'
-            WHEN lm.message_type = 'video' THEN '🎥 Video'
-            ELSE 'Mensaje'
+            WHEN lm.message_type = 'image' THEN COALESCE(NULLIF(lm.content, ''), 'Foto')
+            WHEN lm.message_type = 'audio' THEN 'Nota de voz'
+            WHEN lm.message_type = 'video' THEN COALESCE(NULLIF(lm.content, ''), 'Video')
+            WHEN lm.message_type = 'document' THEN COALESCE(NULLIF(lm.content, ''), 'Documento')
+            WHEN lm.message_type = 'sticker' THEN 'Sticker'
+            ELSE COALESCE(NULLIF(lm.content, ''), 'Mensaje')
         END as last_message_content
     "),
 
                 'lm.message_type as last_message_type',
+                'lm.sender_type as last_message_from',
                 'lm.media_url as last_message_media_url',
                 'lm.created_at as last_message_at',
 
@@ -109,11 +114,25 @@ class ConversationRepository implements ConversationRepositoryInterface
             })
 
 
+            ->when($labelId, fn($qq) => $qq->whereExists(fn($e) => $e->selectRaw('1')->from('crm_conversation_labels as cl')->whereColumn('cl.conversation_id', 'c.id')->where('cl.label_id', $labelId)))
             ->orderByRaw('COALESCE(lm.created_at, c.created_at) DESC')
             ->limit($limit);
 
-        return $q->get()->map(function ($row) {
+        $rows = $q->get();
+
+        // Etiquetas de las conversaciones devueltas (una sola consulta)
+        $ids = $rows->pluck('id')->all();
+        $labelsByConv = [];
+        if ($ids) {
+            foreach (DB::table('crm_conversation_labels as cl')->join('crm_labels as l', 'l.id', '=', 'cl.label_id')
+                ->whereIn('cl.conversation_id', $ids)->get(['cl.conversation_id', 'l.id', 'l.name', 'l.color']) as $l) {
+                $labelsByConv[$l->conversation_id][] = ['id' => (int)$l->id, 'name' => $l->name, 'color' => $l->color];
+            }
+        }
+
+        return $rows->map(function ($row) use ($labelsByConv) {
             return [
+                'labels' => $labelsByConv[$row->id] ?? [],
                 'id' => (int)$row->id,
                 'status' => $row->status,
                 'priority' => $row->priority,
@@ -129,6 +148,7 @@ class ConversationRepository implements ConversationRepositoryInterface
                 'last_message' => $row->last_message_type ? [
                     'content'   => $row->last_message_content,
                     'type'      => $row->last_message_type,
+                    'from'      => $row->last_message_from,
                     'media_url' => $row->last_message_media_url,
                     'at'        => $row->last_message_at,
                 ] : null,
@@ -165,25 +185,32 @@ class ConversationRepository implements ConversationRepositoryInterface
             throw new \Exception('Conversation not found');
         }
 
-        $botPaused = $conversation->provider === 'meta' && DB::table('wa_bot_pauses')
-            ->where(['company_id' => $conversation->company_id, 'provider' => 'meta', 'phone' => $conversation->phone])
+        $botPaused = DB::table('wa_bot_pauses')
+            ->where(['company_id' => $conversation->company_id, 'provider' => $conversation->provider ?: 'netplay', 'phone' => $conversation->phone])
             ->exists();
 
         // 2️⃣ Obtener mensajes
-        $messages = DB::table('crm_messages')
-            ->where('conversation_id', $conversationId)
-            ->orderBy('created_at', 'asc')
+        // Reacciones: se agrupan sobre el mensaje reaccionado (no son filas del chat)
+        $reactions = [];
+        foreach (DB::table('crm_messages')->where('conversation_id', $conversationId)->where('message_type', 'reaction')->whereNotNull('quoted_message_id')
+            ->orderBy('id')->get(['quoted_message_id', 'sender_type', 'content']) as $r) {
+            if ($r->content === '' || $r->content === null) { unset($reactions[$r->quoted_message_id][$r->sender_type]); continue; } // reacción quitada
+            $reactions[$r->quoted_message_id][$r->sender_type] = $r->content;
+        }
+
+        $messages = DB::table('crm_messages as m')
+            ->leftJoin('crm_messages as q', 'q.id', '=', 'm.quoted_message_id')
+            ->where('m.conversation_id', $conversationId)
+            ->where(fn($w) => $w->where('m.message_type', '!=', 'reaction')->orWhereNull('m.quoted_message_id'))
+            ->orderBy('m.created_at', 'asc')
+            ->orderBy('m.id', 'asc')
             ->select([
-                'id',
-                'sender_type',
-                'content',
-                'message_type',
-                'media_url',
-                'mime_type',     // 🔥 AÑADIR ESTO
-                'created_at',
+                'm.id', 'm.sender_type', 'm.content', 'm.message_type', 'm.media_url', 'm.mime_type', 'm.created_at',
+                'm.status', 'm.is_note', 'm.is_forwarded', 'm.agent_signature', 'm.quoted_message_id',
+                'q.sender_type as q_sender', 'q.content as q_content', 'q.message_type as q_type', 'q.media_url as q_media',
             ])
             ->get()
-            ->map(function ($row) {
+            ->map(function ($row) use ($reactions) {
                 return [
                     'id' => (int) $row->id,
                     'sender_type' => $row->sender_type,
@@ -192,10 +219,31 @@ class ConversationRepository implements ConversationRepositoryInterface
                     'media_url' => $row->media_url,
                     'mime_type' => $row->mime_type,
                     'created_at' => $row->created_at,
+                    'status' => $row->status,
+                    'reactions' => collect($reactions[$row->id] ?? [])->map(fn($emoji, $from) => ['emoji' => $emoji, 'from' => $from])->values()->toArray(),
+                    'is_note' => (bool) $row->is_note,
+                    'is_forwarded' => (bool) $row->is_forwarded,
+                    'agent_signature' => $row->agent_signature,
+                    'quoted' => $row->quoted_message_id ? [
+                        'id' => (int) $row->quoted_message_id,
+                        'sender_type' => $row->q_sender,
+                        'content' => $row->q_content,
+                        'message_type' => $row->q_type,
+                        'media_url' => $row->q_media,
+                    ] : null,
                 ];
             })
             ->toArray();
 
+
+        // Ventana de 24 h de Meta: sólo se puede responder libremente si el cliente escribió en las últimas 24 h
+        $metaWindowOpen = null; $metaWindowUntil = null;
+        if ($conversation->provider === 'meta') {
+            $lastCustomerAt = DB::table('crm_messages')->where('conversation_id', $conversationId)->where('sender_type', 'customer')->max('created_at');
+            $until = $lastCustomerAt ? Carbon::parse($lastCustomerAt)->addHours(24) : null;
+            $metaWindowOpen  = $until ? $until->isFuture() : false;
+            $metaWindowUntil = $until?->toIso8601String();
+        }
 
         // 3️⃣ Response completo (lo que Angular espera)
         return [
@@ -208,6 +256,8 @@ class ConversationRepository implements ConversationRepositoryInterface
                 'priority' => $conversation->priority,
                 'provider' => $conversation->provider,
                 'bot_paused' => $botPaused,
+                'meta_window_open' => $metaWindowOpen,
+                'meta_window_until' => $metaWindowUntil,
             ],
             'data' => $messages,
             'error' => 0,
@@ -334,6 +384,8 @@ Log::info('Intentando insertar cliente', [
         $message->content         = $data['content'] ?? null;
         $message->media_url       = $data['media_url'] ?? null;
         $message->external_id = $data['external_id'] ?? null;
+        $message->status          = $data['status'] ?? null;
+        $message->quoted_message_id = $data['quoted_message_id'] ?? null;
         $message->mime_type       = $data['mime_type'] ?? null;
         $message->extension       = $data['extension'] ?? null;
         $message->original_name   = $data['original_name'] ?? null;
@@ -415,12 +467,44 @@ DB::table('crm_conversations')
     public function createMessage(array $data): CrmMessage
     {
         return CrmMessage::create([
-            'conversation_id' => $data['conversation_id'],
-            'sender_user_id'  => $data['sender_user_id'] ?? null,
-            'sender_type'     => $data['sender_type'],
-            'content'         => $data['content'],
-            'message_type'    => $data['message_type'] ?? 'text',
+            'conversation_id'   => $data['conversation_id'],
+            'sender_user_id'    => $data['sender_user_id'] ?? null,
+            'sender_type'       => $data['sender_type'],
+            'content'           => $data['content'],
+            'message_type'      => $data['message_type'] ?? 'text',
+            'quoted_message_id' => $data['quoted_message_id'] ?? null,
+            'status'            => $data['status'] ?? 'pending',
         ]);
+    }
+
+    /** Guarda el id de WhatsApp del mensaje enviado (para seguir los acks). */
+    public function setMessageExternalId(int $messageId, ?string $externalId, string $status = 'sent'): void
+    {
+        DB::table('crm_messages')->where('id', $messageId)->update(array_filter([
+            'external_id' => $externalId,
+            'status'      => $status,
+        ], fn($v) => $v !== null));
+    }
+
+    /** Aplica un ack (sent|delivered|read|failed) por id de WhatsApp. Devuelve [conversation_id, id] o null. */
+    public function applyMessageStatus(string $externalId, string $status): ?array
+    {
+        $row = DB::table('crm_messages')->where('external_id', $externalId)->where('sender_type', '!=', 'customer')->first(['id', 'conversation_id', 'status']);
+        if (!$row) return null;
+        $rank = ['pending' => 0, 'sent' => 1, 'delivered' => 2, 'read' => 3, 'failed' => 9];
+        if (($rank[$row->status] ?? 0) >= ($rank[$status] ?? 0) && $status !== 'failed') return null; // nunca retroceder
+        $update = ['status' => $status];
+        if ($status === 'delivered') $update['delivered_at'] = now();
+        if ($status === 'read') { $update['read_at'] = now(); $update['delivered_at'] = DB::raw('COALESCE(delivered_at, NOW())'); }
+        DB::table('crm_messages')->where('id', $row->id)->update($update);
+        return ['conversation_id' => (int)$row->conversation_id, 'id' => (int)$row->id];
+    }
+
+    /** Datos mínimos de un mensaje para citarlo (reply). */
+    public function findMessageForQuote(int $messageId, int $conversationId): ?array
+    {
+        $m = DB::table('crm_messages')->where('id', $messageId)->where('conversation_id', $conversationId)->first(['id', 'sender_type', 'content', 'message_type', 'external_id']);
+        return $m ? ['id' => (int)$m->id, 'sender_type' => $m->sender_type, 'content' => $m->content, 'message_type' => $m->message_type, 'external_id' => $m->external_id] : null;
     }
 
 
@@ -718,13 +802,68 @@ DB::table('crm_conversations')
             ];
         }
 
+        // Esperando respuesta ahora: abiertas cuyo último mensaje es del cliente
+        $waitAlert = (int)(DB::table('crm_settings')->where('company_id', $companyId)->value('wait_alert_minutes') ?? 15);
+        $waiting = DB::table('crm_conversations as c')
+            ->join('crm_customers as cu', 'cu.id', '=', 'c.customer_id')
+            ->join('crm_messages as lm', function ($j) { $j->on('lm.conversation_id', '=', 'c.id'); })
+            ->where('c.company_id', $companyId)
+            ->whereIn('c.status', ['new', 'in_progress'])
+            ->whereRaw('lm.id = (SELECT MAX(id) FROM crm_messages WHERE conversation_id = c.id)')
+            ->where('lm.sender_type', 'customer')
+            ->selectRaw('c.id, cu.name, cu.phone, TIMESTAMPDIFF(MINUTE, lm.created_at, NOW()) as minutes')
+            ->orderByDesc('minutes')
+            ->get();
+        $waitingOver = $waiting->filter(fn($w) => $w->minutes >= $waitAlert);
+
+        // Tiempo de primera respuesta por agente (últimos 30 días)
+        $responseByAgent = DB::table('crm_conversations as c')
+            ->join('user_data as ud', 'ud.user_id', '=', 'c.assigned_user_id')
+            ->join('crm_messages as m1', function ($j) { $j->on('m1.conversation_id', '=', 'c.id')->where('m1.sender_type', '=', 'customer'); })
+            ->join('crm_messages as m2', function ($j) { $j->on('m2.conversation_id', '=', 'c.id')->where('m2.sender_type', '=', 'agent'); })
+            ->where('c.company_id', $companyId)
+            ->where('c.created_at', '>=', Carbon::now()->subDays(30))
+            ->whereRaw('m1.id = (SELECT MIN(id) FROM crm_messages WHERE conversation_id = c.id AND sender_type = "customer")')
+            ->whereRaw('m2.id = (SELECT MIN(id) FROM crm_messages WHERE conversation_id = c.id AND sender_type = "agent")')
+            ->selectRaw("CONCAT(COALESCE(ud.names,''), ' ', COALESCE(ud.lastname,'')) as agent_name, COUNT(*) as total, AVG(TIMESTAMPDIFF(MINUTE, m1.created_at, m2.created_at)) as avg_minutes")
+            ->groupBy('c.assigned_user_id', 'ud.names', 'ud.lastname')
+            ->orderBy('avg_minutes')
+            ->limit(10)
+            ->get()
+            ->map(fn($r) => ['agent' => trim($r->agent_name), 'total' => (int)$r->total, 'avg_minutes' => round((float)$r->avg_minutes, 1)])
+            ->toArray();
+
+        $byLabel = DB::table('crm_conversation_labels as cl')
+            ->join('crm_labels as l', 'l.id', '=', 'cl.label_id')
+            ->join('crm_conversations as c', 'c.id', '=', 'cl.conversation_id')
+            ->where('c.company_id', $companyId)
+            ->whereIn('c.status', ['new', 'in_progress'])
+            ->selectRaw('l.id, l.name, l.color, COUNT(*) as total')
+            ->groupBy('l.id', 'l.name', 'l.color')->orderByDesc('total')->get()
+            ->map(fn($r) => ['id' => (int)$r->id, 'name' => $r->name, 'color' => $r->color, 'total' => (int)$r->total])->toArray();
+
+        $closedToday = DB::table('crm_conversations')->where('company_id', $companyId)->where('status', 'closed')->whereDate('updated_at', today())->count();
+        $messagesToday = DB::table('crm_messages as m')->join('crm_conversations as c', 'c.id', '=', 'm.conversation_id')
+            ->where('c.company_id', $companyId)->whereDate('m.created_at', today())
+            ->selectRaw("SUM(m.sender_type = 'customer') as inbound, SUM(m.sender_type = 'agent') as outbound")->first();
+
         return [
             'total'           => $total,
             'today'           => $today,
+            'closed_today'    => $closedToday,
+            'messages_today'  => ['inbound' => (int)($messagesToday->inbound ?? 0), 'outbound' => (int)($messagesToday->outbound ?? 0)],
             'by_status'       => $byStatus,
             'by_priority'     => $byPriority,
             'by_agent'        => $byAgent,
+            'by_label'        => $byLabel,
             'avg_response_minutes' => round((float)($avgResponse ?? 0), 1),
+            'response_by_agent'    => $responseByAgent,
+            'waiting'         => [
+                'alert_minutes' => $waitAlert,
+                'total'         => $waiting->count(),
+                'over_alert'    => $waitingOver->count(),
+                'list'          => $waitingOver->take(8)->map(fn($w) => ['id' => (int)$w->id, 'name' => $w->name ?: $w->phone, 'phone' => $w->phone, 'minutes' => (int)$w->minutes])->values()->toArray(),
+            ],
             'last_7_days'     => $last7days,
         ];
     }
@@ -734,19 +873,35 @@ DB::table('crm_conversations')
      * =================================================================== */
     public function getCustomersForBroadcast(int $companyId): array
     {
-        return DB::table('crm_customers')
-            ->where('company_id', $companyId)
-            ->orderBy('name')
-            ->select(['id', 'phone', 'name'])
+        // Nombre del CRM o, si está vacío, el del cliente del ISP (mismos últimos 10 dígitos) + plan y estado
+        return DB::table('crm_customers as cu')
+            ->leftJoin('user_data as ud', function ($j) use ($companyId) {
+                $j->on(DB::raw("RIGHT(REGEXP_REPLACE(cu.phone, '[^0-9]', ''), 10)"), '=', DB::raw("RIGHT(REGEXP_REPLACE(ud.phone, '[^0-9]', ''), 10)"))
+                  ->where('ud.company_id', '=', $companyId);
+            })
+            ->leftJoin('internet_plans as ip', 'ip.id', '=', 'ud.internet_plans_id')
+            ->leftJoin('internet_status as ist', 'ist.id', '=', 'ud.status_internet_id')
+            ->where('cu.company_id', $companyId)
+            ->orderByRaw("COALESCE(NULLIF(cu.name,''), CONCAT(ud.names,' ',ud.lastname), cu.phone)")
+            ->select(['cu.id', 'cu.phone', 'cu.name', 'ud.names', 'ud.lastname', 'ip.plan_name', 'ist.name as service_status'])
             ->get()
-            ->map(fn($r) => ['id' => (int)$r->id, 'phone' => $r->phone, 'name' => $r->name])
+            ->unique('id')
+            ->map(fn($r) => [
+                'id'     => (int)$r->id,
+                'phone'  => $r->phone,
+                'name'   => trim($r->name ?: trim(($r->names ?? '') . ' ' . ($r->lastname ?? ''))) ?: null,
+                'linked' => !empty($r->names),
+                'plan'   => $r->plan_name,
+                'status' => $r->service_status,
+            ])
+            ->values()
             ->toArray();
     }
 
     /* =====================================================================
      * NUEVA CONVERSACIÓN DESDE TELÉFONO
      * =================================================================== */
-    public function createConversationFromPhone(string $phone, string $name, int $companyId): int
+    public function createConversationFromPhone(string $phone, string $name, int $companyId, string $provider = 'netplay'): int
     {
         // limpiar teléfono
         $phone = preg_replace('/[^0-9+]/', '', $phone);
@@ -772,6 +927,7 @@ DB::table('crm_conversations')
         // crear conversación nueva
         return (int) DB::table('crm_conversations')->insertGetId([
             'company_id'     => $companyId,
+            'provider'       => $provider,
             'customer_id'    => $customerId,
             'status'         => 'new',
             'priority'       => 'normal',
@@ -790,20 +946,22 @@ DB::table('crm_conversations')
         $clean = preg_replace('/[^0-9]/', '', $phone);
         $last10 = substr($clean, -10);
 
+        // user_data guarda plan, estado e IP directamente (internet_plans_id, status_internet_id, ip_assignment_id → tabla_ips)
         $user = DB::table('user_data as ud')
-            ->leftJoin('conection_routers as cr', 'cr.user_id', '=', 'ud.user_id')
-            ->leftJoin('internet_plans as ip', 'ip.id', '=', 'cr.plan_id')
-            ->leftJoin('internet_status as ist', 'ist.id', '=', 'cr.status_id')
+            ->leftJoin('internet_plans as ip', 'ip.id', '=', 'ud.internet_plans_id')
+            ->leftJoin('internet_status as ist', 'ist.id', '=', 'ud.status_internet_id')
+            ->leftJoin('tabla_ips as tip', 'tip.id', '=', 'ud.ip_assignment_id')
             ->where(function ($q) use ($clean, $last10) {
                 $q->where('ud.phone', 'like', '%' . $last10)
                   ->orWhere('ud.phone', $clean);
             })
+            ->orderByDesc('ud.id')
             ->select([
                 'ud.names',
                 'ud.lastname',
                 'ud.address',
-                'cr.ip',
-                DB::raw("COALESCE(ip.name, 'Sin plan') as plan_name"),
+                'tip.ip',
+                DB::raw("COALESCE(ip.plan_name, 'Sin plan') as plan_name"),
                 DB::raw("COALESCE(ist.name, 'Desconocido') as service_status"),
             ])
             ->first();
@@ -851,5 +1009,51 @@ DB::table('crm_conversations')
     public function deleteSticker(int $stickerId): void
     {
         DB::table('crm_stickers')->where('id', $stickerId)->delete();
+    }
+
+    /* =====================================================================
+     * RESPUESTAS RÁPIDAS ("/atajo" en el compositor)
+     * =================================================================== */
+    public function getQuickReplies(int $companyId): array
+    {
+        return DB::table('crm_quick_replies')
+            ->where('company_id', $companyId)
+            ->orderBy('shortcut')
+            ->get()
+            ->map(fn($r) => [
+                'id'       => (int)$r->id,
+                'shortcut' => $r->shortcut,
+                'title'    => $r->title,
+                'content'  => $r->content,
+            ])
+            ->toArray();
+    }
+
+    public function saveQuickReply(int $companyId, ?int $id, string $shortcut, ?string $title, string $content, ?int $userId): array
+    {
+        $shortcut = strtolower(ltrim(trim($shortcut), '/'));
+        $data = [
+            'shortcut'   => $shortcut,
+            'title'      => $title,
+            'content'    => $content,
+            'updated_at' => now(),
+        ];
+
+        if ($id) {
+            DB::table('crm_quick_replies')->where('company_id', $companyId)->where('id', $id)->update($data);
+        } else {
+            $id = DB::table('crm_quick_replies')->insertGetId($data + [
+                'company_id' => $companyId,
+                'created_by' => $userId,
+                'created_at' => now(),
+            ]);
+        }
+
+        return ['id' => (int)$id, 'shortcut' => $shortcut, 'title' => $title, 'content' => $content];
+    }
+
+    public function deleteQuickReply(int $companyId, int $id): void
+    {
+        DB::table('crm_quick_replies')->where('company_id', $companyId)->where('id', $id)->delete();
     }
 }

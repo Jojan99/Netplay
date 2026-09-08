@@ -42,7 +42,29 @@ class WhatsAppService
     }
 
     // ── TEXTO ────────────────────────────────────────
-    public function mensajeInformativo(string $to, string $body): array
+    /** $quoted = ['id' => id de WhatsApp del original, 'fromMe' => bool, 'text' => string] para responder citando. */
+    public function mensajeInformativo(string $to, string $body, ?array $quoted = null): array
+    {
+        return $this->delegate(__FUNCTION__, func_get_args());
+    }
+
+    public function sendSticker(string $to, string $stickerUrl, ?array $quoted = null): array
+    {
+        return $this->delegate(__FUNCTION__, func_get_args());
+    }
+
+    public function sendLocation(string $to, float $latitude, float $longitude, ?string $name = null, ?string $address = null, ?array $quoted = null): array
+    {
+        return $this->delegate(__FUNCTION__, func_get_args());
+    }
+
+    public function sendContact(string $to, ?string $contactName, string $contactPhone, ?array $quoted = null): array
+    {
+        return $this->delegate(__FUNCTION__, func_get_args());
+    }
+
+    /** Reacciona a un mensaje ($emoji vacío = quitar la reacción). */
+    public function sendReaction(string $to, string $targetExternalId, bool $targetFromMe, string $emoji): array
     {
         return $this->delegate(__FUNCTION__, func_get_args());
     }

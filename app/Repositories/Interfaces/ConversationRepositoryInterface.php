@@ -74,4 +74,14 @@ public function isFirstMessage(int $conversationId): bool;
     public function getStickers(int $companyId): array;
     public function saveSticker(int $companyId, string $mediaUrl, ?string $name): array;
     public function deleteSticker(int $stickerId): void;
+
+    // ── Acks y citas ──────────────────────────────────────────────────────
+    public function setMessageExternalId(int $messageId, ?string $externalId, string $status = 'sent'): void;
+    public function applyMessageStatus(string $externalId, string $status): ?array;
+    public function findMessageForQuote(int $messageId, int $conversationId): ?array;
+
+    // ── Respuestas rápidas ("/atajo") ─────────────────────────────────────
+    public function getQuickReplies(int $companyId): array;
+    public function saveQuickReply(int $companyId, ?int $id, string $shortcut, ?string $title, string $content, ?int $userId): array;
+    public function deleteQuickReply(int $companyId, int $id): void;
 }

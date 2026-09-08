@@ -70,18 +70,60 @@ class MetaWhatsAppService
     }
 
     // ── TEXTO ────────────────────────────────────────
-    public function mensajeInformativo(string $to, string $body): array
+    public function mensajeInformativo(string $to, string $body, ?array $quoted = null): array
     {
         if (!$this->isEnabled()) return ['success' => false, 'error' => 'Meta WhatsApp deshabilitado.'];
         if (!$this->hasOpenCustomerWindow($to)) return $this->closedWindowResponse();
 
-        return $this->sendRequest([
+        $payload = [
             'messaging_product' => 'whatsapp',
             'recipient_type'    => 'individual',
             ...$this->recipientField($to),
             'type'              => 'text',
             'text'              => ['body' => $body],
-        ]);
+        ];
+        // Responder citando: Meta usa context.message_id con el wamid del original
+        if (!empty($quoted['id']) && str_starts_with((string)$quoted['id'], 'wamid.')) {
+            $payload['context'] = ['message_id' => $quoted['id']];
+        }
+        return $this->sendRequest($payload);
+    }
+
+    public function sendReaction(string $to, string $targetExternalId, bool $targetFromMe, string $emoji): array
+    {
+        if (!$this->isEnabled()) return ['success' => false, 'error' => 'Meta WhatsApp deshabilitado.'];
+        return $this->sendRequest(['messaging_product' => 'whatsapp', 'recipient_type' => 'individual', ...$this->recipientField($to), 'type' => 'reaction',
+            'reaction' => ['message_id' => $targetExternalId, 'emoji' => $emoji]]);
+    }
+
+    public function sendSticker(string $to, string $stickerUrl, ?array $quoted = null): array
+    {
+        if (!$this->isEnabled()) return ['success' => false, 'error' => 'Meta WhatsApp deshabilitado.'];
+        if (!$this->hasOpenCustomerWindow($to)) return $this->closedWindowResponse();
+        $payload = ['messaging_product' => 'whatsapp', 'recipient_type' => 'individual', ...$this->recipientField($to), 'type' => 'sticker', 'sticker' => ['link' => $stickerUrl]];
+        if (!empty($quoted['id']) && str_starts_with((string)$quoted['id'], 'wamid.')) $payload['context'] = ['message_id' => $quoted['id']];
+        return $this->sendRequest($payload);
+    }
+
+    public function sendLocation(string $to, float $latitude, float $longitude, ?string $name = null, ?string $address = null, ?array $quoted = null): array
+    {
+        if (!$this->isEnabled()) return ['success' => false, 'error' => 'Meta WhatsApp deshabilitado.'];
+        if (!$this->hasOpenCustomerWindow($to)) return $this->closedWindowResponse();
+        $payload = ['messaging_product' => 'whatsapp', 'recipient_type' => 'individual', ...$this->recipientField($to), 'type' => 'location',
+            'location' => array_filter(['latitude' => $latitude, 'longitude' => $longitude, 'name' => $name, 'address' => $address], fn($v) => $v !== null)];
+        if (!empty($quoted['id']) && str_starts_with((string)$quoted['id'], 'wamid.')) $payload['context'] = ['message_id' => $quoted['id']];
+        return $this->sendRequest($payload);
+    }
+
+    public function sendContact(string $to, ?string $contactName, string $contactPhone, ?array $quoted = null): array
+    {
+        if (!$this->isEnabled()) return ['success' => false, 'error' => 'Meta WhatsApp deshabilitado.'];
+        if (!$this->hasOpenCustomerWindow($to)) return $this->closedWindowResponse();
+        $digits = preg_replace('/\D/', '', $contactPhone);
+        $payload = ['messaging_product' => 'whatsapp', 'recipient_type' => 'individual', ...$this->recipientField($to), 'type' => 'contacts',
+            'contacts' => [['name' => ['formatted_name' => $contactName ?: $digits, 'first_name' => $contactName ?: $digits], 'phones' => [['phone' => '+' . $digits, 'type' => 'CELL', 'wa_id' => $digits]]]]];
+        if (!empty($quoted['id']) && str_starts_with((string)$quoted['id'], 'wamid.')) $payload['context'] = ['message_id' => $quoted['id']];
+        return $this->sendRequest($payload);
     }
 
     // ── DOCUMENTO / PDF ──────────────────────────────

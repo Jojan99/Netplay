@@ -9,7 +9,9 @@ class InboxUpdatedEvent implements ShouldBroadcast
 {
     public function __construct(
         public int $conversationId,
-        public string $status
+        public string $status,
+        public string $sender = 'customer',  // customer|agent: el panel suena sólo con mensajes del cliente
+        public ?string $provider = null      // meta|netplay: para avisar en la otra bandeja
     ) {}
 
     public function broadcastOn()
@@ -27,6 +29,8 @@ class InboxUpdatedEvent implements ShouldBroadcast
         return [
             'conversationId' => $this->conversationId,
             'status' => $this->status,
+            'sender' => $this->sender,
+            'provider' => $this->provider,
         ];
     }
 }

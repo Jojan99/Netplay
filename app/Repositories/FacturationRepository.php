@@ -298,12 +298,34 @@ class FacturationRepository implements FacturationRepositoryInterface
             ->limit($perPage)
             ->get();
 
+        // Resumen de mora (sin filtro de búsqueda): clientes con 1, 2 y 3+ facturas pendientes
+        $grouped = DB::table('user_data as us')
+            ->join('cab_facturations as cb', 'cb.user_id', '=', 'us.user_id')
+            ->join('det_facturations as dt', 'cb.id', '=', 'dt.cab_id')
+            ->join('users', 'users.id', '=', 'us.user_id')
+            ->where('users.company_id', $companyId)
+            ->where('dt.paid', 0)
+            ->select('us.user_id', 'cb.id as cab_id',
+                DB::raw('COUNT(dt.id) as months'),
+                DB::raw('SUM(dt.price_total - dt.price_discount - dt.price_abone) as pending'))
+            ->groupBy('us.user_id', 'cb.id');
+
+        $summary = DB::query()->fromSub($grouped, 'g')
+            ->selectRaw('SUM(g.months = 1) as m1, SUM(g.months = 2) as m2, SUM(g.months >= 3) as m3, SUM(g.pending) as total_debt')
+            ->first();
+
         return (object)[
             'items'        => $items,
             'total'        => (int) $total,
             'per_page'     => $perPage,
             'current_page' => $page,
             'last_page'    => max(1, (int) ceil($total / $perPage)),
+            'summary'      => [
+                'm1'         => (int) ($summary->m1 ?? 0),
+                'm2'         => (int) ($summary->m2 ?? 0),
+                'm3'         => (int) ($summary->m3 ?? 0),
+                'total_debt' => (float) ($summary->total_debt ?? 0),
+            ],
         ];
     }
 
