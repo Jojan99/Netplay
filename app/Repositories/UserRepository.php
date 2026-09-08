@@ -106,7 +106,12 @@ class UserRepository implements UserRepositoryInterface
     public function UpdateUserData(CreateUserDataRequest $data): mixed
     {
         $userId = $data['id_user'] ?? $data['id'];
-        $user = UserData::where('user_id', $userId)->first();
+        // El cliente debe pertenecer a la empresa en sesión: sin esto cualquier usuario
+        // autenticado podría editar clientes de otra empresa cambiando el id.
+        $companyId = getSessionCompanyId();
+        $user = UserData::where('user_id', $userId)
+            ->when($companyId, fn($q) => $q->where('company_id', $companyId))
+            ->first();
 
         if ($user) {
             $oldPlanId = $user->internet_plans_id;
@@ -181,7 +186,10 @@ class UserRepository implements UserRepositoryInterface
      */
     public function DeleteUserData($id): mixed
     {
-        $user = UserData::where('user_id', $id)->first();
+        $companyId = getSessionCompanyId();
+        $user = UserData::where('user_id', $id)
+            ->when($companyId, fn($q) => $q->where('company_id', $companyId))
+            ->first();
         if ($user) {
             $user->update([
                 'active' => 0,
@@ -263,7 +271,7 @@ class UserRepository implements UserRepositoryInterface
      * @param int $id
      * @return mixed
      */
-    public function getUserByIdBost($dni): mixed
+    public function getUserByIdBost($dni, ?int $companyId = null): mixed
     {
         return User::select(
                 'user_data.names',
@@ -283,6 +291,9 @@ class UserRepository implements UserRepositoryInterface
             ->join('cab_facturations', 'cab_facturations.user_id', '=', 'user_data.user_id')
             ->join('internet_status', 'internet_status.id', '=', 'user_data.status_internet_id')
             ->where('user_data.dni', $dni)
+            // Aislamiento por empresa: este endpoint es público, sin el filtro
+            // exponía los datos de clientes de todas las empresas.
+            ->when($companyId, fn($q) => $q->where('users.company_id', $companyId))
             ->first();
     }
 
@@ -419,7 +430,7 @@ class UserRepository implements UserRepositoryInterface
      */
     public function validateStaffUsername(string $username): mixed
     {
-        return User::where('username', $username)->first();
+        return User::where('company_id', getSessionCompanyId())->where('username', $username)->first();
     }
 
     /**

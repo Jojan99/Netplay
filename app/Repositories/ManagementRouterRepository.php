@@ -36,12 +36,18 @@ class ManagementRouterRepository implements ManagementRouterRepositoryInterface
         }
 
         // 🔹 Lógica existente (NO se rompe)
+        // Aislamiento por empresa: sin el filtro, un cambio de estado podía caer
+        // sobre el cliente de otra empresa que tuviera la misma cédula.
+        $companyId = getSessionCompanyId();
         $user = UserData::select('user_data.user_id')
             ->join('users', 'users.id', '=', 'user_data.user_id')
             ->where('user_data.dni', $data['id_user']) // asumo que ip = dni
+            ->when($companyId, fn($q) => $q->where('users.company_id', $companyId))
             ->first();
 
-        $oldStatusId = UserData::where('user_id', $idUser)->value('status_internet_id') ?? 1;
+        $oldStatusId = UserData::where('user_id', $idUser)
+            ->when($companyId, fn($q) => $q->where('company_id', $companyId))
+            ->value('status_internet_id') ?? 1;
 
         UserData::where('user_id', $data['id_user'])
         ->update([

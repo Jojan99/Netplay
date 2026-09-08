@@ -11,7 +11,9 @@ use App\Services\WhatsAppApiService;
 use App\UseCases\Company\Interfaces\RegisterCompanyUseCaseInterface;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
+use App\Support\Modules;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class RegisterCompanyUseCase implements RegisterCompanyUseCaseInterface
@@ -23,59 +25,71 @@ class RegisterCompanyUseCase implements RegisterCompanyUseCaseInterface
 
     public function register(RegisterCompanyRequest $data): mixed
     {
+        $token = Str::uuid()->toString();
+
         try {
-            $token = Str::uuid()->toString();
+            // Todo o nada: si algo falla no queda una empresa a medias (sin perfiles ni admin).
+            $company = DB::transaction(function () use ($data, $token) {
+                $company = $this->companyRepository->createCompany($data, $token);
+                $now = now();
 
-            $company = $this->companyRepository->createCompany($data, $token);
+                $adminProfileId = null;
+                foreach (['ADMIN', 'TECNICO', 'CONTADOR'] as $roleName) {
+                    $profileId = DB::table('profiles')->insertGetId([
+                        'company_id' => $company->id,
+                        'name'       => $roleName,
+                        'active'     => true,
+                        'created_at' => $now,
+                        'updated_at' => $now,
+                    ]);
 
-            // Crear roles y módulos para la empresa PRIMERO para obtener el profile_id del ADMIN
-            $now = now();
-            $moduleDefaults = [
-                'ADMIN'    => [
-                    'usuario', 'finanzas', 'egresos', 'report-paid', 'history-facture',
-                    'created-ticket', 'view-ticket', 'olt-detail', 'olt-admin', 'router',
-                    'staff', 'billing-config', 'inventory', 'mikrotik', 'resumen', 'crm', 'whatsapp',
-                ],
-                'TECNICO'  => ['created-ticket', 'view-ticket', 'crm'],
-                'CONTADOR' => ['finanzas', 'egresos', 'report-paid', 'history-facture', 'inventory', 'resumen'],
-            ];
+                    if ($roleName === 'ADMIN') {
+                        $adminProfileId = $profileId;
+                    }
 
-            $adminProfileId = null;
-            foreach (['ADMIN', 'TECNICO', 'CONTADOR'] as $roleName) {
-                $profileId = DB::table('profiles')->insertGetId([
-                    'company_id' => $company->id,
-                    'name'       => $roleName,
-                    'active'     => true,
-                    'created_at' => $now,
-                    'updated_at' => $now,
-                ]);
+                    $moduleRows = array_map(fn($m) => [
+                        'profile_id' => $profileId,
+                        'module'     => $m,
+                        'active'     => true,
+                        'created_at' => $now,
+                        'updated_at' => $now,
+                    ], Modules::defaultsFor($roleName));
 
-                if ($roleName === 'ADMIN') {
-                    $adminProfileId = $profileId;
+                    if ($moduleRows) {
+                        DB::table('profile_modules')->insert($moduleRows);
+                    }
                 }
 
-                $moduleRows = array_map(fn($m) => [
-                    'profile_id' => $profileId,
-                    'module'     => $m,
-                    'active'     => true,
-                    'created_at' => $now,
-                    'updated_at' => $now,
-                ], $moduleDefaults[$roleName]);
+                // Usuario administrador de la empresa
+                $user = User::create([
+                    'username'   => $data['admin_username'] ?? $data['nit'],
+                    'email'      => $data['email'],
+                    'password'   => Hash::make($data['admin_password']),
+                    'profile_id' => $adminProfileId,
+                    'company_id' => $company->id,
+                    'active'     => 0,
+                ]);
 
-                DB::table('profile_modules')->insert($moduleRows);
-            }
+                // Ficha del administrador: sin ella el panel no muestra nombre ni permite editar el perfil
+                // role_id tiene FK a profiles y su default (0) no existe, hay que fijarlo
+                UserData::create([
+                    'role_id'    => $adminProfileId,
+                    'company_id' => $company->id,
+                    'user_id'    => $user->id,
+                    'names'      => $data['admin_name'],
+                    'lastname'   => $data['admin_lastname'],
+                    'email'      => $data['email'],
+                    'phone'      => $data['admin_phone'] ?? $data['phone'],
+                    'address'    => $data['address'],
+                    'dni'        => $data['admin_dni'] ?? $data['nit'],
+                    'birthday'   => '',
+                    'active'     => 1,
+                ]);
 
-            // Crear usuario admin de la empresa con el profile_id real de esta empresa
-            User::create([
-                'username'   => $data['nit'],
-                'email'      => $data['email'],
-                'password'   => Hash::make($data['admin_password']),
-                'profile_id' => $adminProfileId,
-                'company_id' => $company->id,
-                'active'     => 0,
-            ]);
+                return $company;
+            });
 
-            // Aprovisionar empresa en whatsapp-service (sin lanzar excepción si falla)
+            // Aprovisionar la empresa en el servicio de WhatsApp (no bloquea el registro)
             try {
                 $waService = new WhatsAppApiService();
                 $waCompany = $waService->provisionCompany($data['name'], $data['email'], 5);
@@ -83,24 +97,46 @@ class RegisterCompanyUseCase implements RegisterCompanyUseCaseInterface
                 $waKey = $waCompany['company']['api_key'] ?? $waCompany['apiKey']    ?? null;
                 if ($waId && $waKey) {
                     $company->update(['wa_company_id' => $waId, 'wa_api_key' => $waKey]);
-                    // La suscripción se activa automáticamente en el WA service al crear la empresa
                 }
-            } catch (\Throwable) {
-                // No bloquear el registro si el servicio WA no responde
+            } catch (\Throwable $e) {
+                Log::warning('[Registro empresa] WhatsApp no aprovisionado', ['company_id' => $company->id, 'error' => $e->getMessage()]);
             }
 
-            // Enviar correo de confirmación solo a la empresa
-            $confirmUrl = env('APP_URL') . '/api/company/confirm/' . $token;
-            $this->emailTemplate->sendConfirmation($data['email'], $data['name'], $confirmUrl);
-
+            // Correo de confirmación (tampoco debe tumbar el registro)
+            try {
+                $confirmUrl = rtrim(config('app.url'), '/') . '/api/company/confirm/' . $token;
+                $this->emailTemplate->sendConfirmation($data['email'], $data['name'], $confirmUrl);
+            } catch (\Throwable $e) {
+                Log::warning('[Registro empresa] correo de confirmación no enviado', ['company_id' => $company->id, 'error' => $e->getMessage()]);
+                return [
+                    'message' => 'Empresa registrada, pero no pudimos enviar el correo de confirmación. Escribinos para activarla.',
+                    'status'  => 0,
+                    'data'    => ['company_id' => $company->id, 'email_sent' => false],
+                ];
+            }
         } catch (QueryException $e) {
-            return ['message' => 'Error al registrar la empresa: ' . $e->getMessage(), 'status' => 1, 'data' => null];
+            Log::error('[Registro empresa] error de base de datos', ['error' => $e->getMessage()]);
+            return ['message' => $this->friendlyDbError($e), 'status' => 1, 'data' => null];
+        } catch (\Throwable $e) {
+            Log::error('[Registro empresa] error inesperado', ['error' => $e->getMessage()]);
+            return ['message' => 'No pudimos registrar la empresa. Intentá de nuevo en unos minutos.', 'status' => 1, 'data' => null];
         }
 
         return [
-            'message' => 'Empresa registrada. Revisa tu correo para confirmar la cuenta.',
+            'message' => 'Empresa registrada. Revisá tu correo para confirmar la cuenta.',
             'status'  => 0,
-            'data'    => null,
+            'data'    => ['company_id' => $company->id, 'email_sent' => true],
         ];
+    }
+
+    /** Traduce los errores típicos de base de datos a algo que el usuario entienda. */
+    private function friendlyDbError(QueryException $e): string
+    {
+        $msg = $e->getMessage();
+        if (str_contains($msg, 'companies_nit_unique') || str_contains($msg, "for key 'nit'")) return 'Ya existe una empresa registrada con ese NIT.';
+        if (str_contains($msg, 'companies_email_unique') || str_contains($msg, "for key 'email'")) return 'Ya existe una empresa registrada con ese correo.';
+        if (str_contains($msg, 'companies_slug_unique')) return 'Ya existe una empresa con un nombre muy parecido. Probá con otro nombre.';
+        if (str_contains($msg, 'Duplicate entry')) return 'Alguno de los datos ya está registrado. Revisá NIT, correo y usuario.';
+        return 'No pudimos registrar la empresa. Revisá los datos e intentá de nuevo.';
     }
 }

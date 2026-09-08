@@ -210,8 +210,27 @@ class UserController extends Controller
      */
     public function getUserByIdBost(
         string $id,
-        GetUserByIdUseCaseInterface $GetUserByIdUseCaseInterface
+        GetUserByIdUseCaseInterface $GetUserByIdUseCaseInterface,
+        \Illuminate\Http\Request $request
     ): object {
+        // Endpoint público: sin empresa devolvería clientes de cualquier empresa.
+        $companyKey = $request->query('company');
+        $companyId  = getSessionCompanyId();
+        if (!$companyId && $companyKey) {
+            $companyId = \App\Models\Company::where('slug', $companyKey)
+                ->orWhere('nit', $companyKey)
+                ->orWhere('id', is_numeric($companyKey) ? (int) $companyKey : 0)
+                ->value('id');
+        }
+        if (!$companyId) {
+            return standardApiReponse(
+                'Falta identificar la empresa (?company=slug).',
+                ApiResponseConstants::DATA_NULL,
+                ApiResponseConstants::ERROR,
+                JsonResponse::HTTP_BAD_REQUEST
+            );
+        }
+
         if (!$id) {
             return standardApiReponse(
                 'id parameter cannot be empty: ',
@@ -221,7 +240,7 @@ class UserController extends Controller
             );
         }
         try {
-            $getUser = $GetUserByIdUseCaseInterface->getUserByIdBost($id);
+            $getUser = $GetUserByIdUseCaseInterface->getUserByIdBost($id, (int) $companyId);
         } catch (JWTException $e) {
             // Respuesta en caso de excepción
             return standardApiReponse(

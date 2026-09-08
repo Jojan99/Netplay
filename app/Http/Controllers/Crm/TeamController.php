@@ -145,13 +145,15 @@ class TeamController extends Controller
     /* POST team/call/signal { to, type, payload } — relé de señalización WebRTC */
     public function callSignal(Request $request): JsonResponse
     {
-        $request->validate(['to' => 'required|integer', 'type' => 'required|string|in:ring,accept,reject,busy,hangup,offer,answer,ice,join,leave,invite', 'payload' => 'nullable']);
+        $request->validate(['to' => 'required|integer', 'type' => 'required|string|in:ring,accept,reject,busy,hangup,offer,answer,ice,join,leave,invite,diag', 'payload' => 'nullable']);
         $me = $this->me();
         $to = (int)$request->to;
         if (!DB::table('users')->where('id', $to)->where('company_id', $me['company_id'])->exists()) {
             return response()->json(['ok' => false, 'error' => 'Destinatario inválido'], 422);
         }
         $from = $this->memberRow($me['id']);
+        \Illuminate\Support\Facades\Log::info('[Team call]', ['type' => $request->type, 'from' => $me['id'], 'to' => $to, 'call' => $request->input('call_id'), 'bytes' => strlen(json_encode($request->input('payload'))), 'diag' => $request->type === 'diag' ? $request->input('payload') : null]);
+        if ($request->type === 'diag') return response()->json(['ok' => true]);   // sólo se registra, no se reenvía
         broadcast(new TeamCallSignalEvent($to, [
             'type' => $request->type, 'payload' => $request->input('payload'), 'call_id' => (string)$request->input('call_id', ''),
             'participants' => $request->input('participants'), 'group' => (bool)$request->input('group', false),

@@ -184,11 +184,21 @@ class WaTemplateBindingController extends Controller
 
         try {
             $wa = new WhatsAppService($companyId, false, 'meta');
+
+            // Si la plantilla trae botones de URL con variable, Meta exige su valor
+            // aunque sea una prueba; se manda un token de ejemplo.
+            $meta    = new \App\Services\MetaWhatsAppService($companyId);
+            $botones = [];
+            foreach ($meta->dynamicUrlButtons($data['template_name'], $data['language'] ?? 'es_CO') as $indice => $texto) {
+                $botones[$indice] = 'demo';
+            }
+
             $r  = $wa->sendTemplate(
                 (string) $data['phone'],
                 $data['template_name'],
                 $contexto->toParameters($data['params'] ?? [], $contexto->sample($company)),
-                $data['language'] ?: 'es_CO'
+                $data['language'] ?: 'es_CO',
+                $botones
             );
         } catch (\Throwable $e) {
             return response()->json(['ok' => false, 'error' => $e->getMessage()], 422);

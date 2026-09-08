@@ -62,6 +62,13 @@ Route::prefix('client')->middleware(['jwt.client'])->group(function () {
     Route::get('tickets/{id}', [ClientTicketController::class, 'show']);
 
     // Perfil
+    // ── Cuenta: estado del servicio, pagos, contratos y actividad ──
+    Route::get('status',                       [\App\Http\Controllers\Client\ClientAccountController::class, 'status']);
+    Route::get('payments',                     [\App\Http\Controllers\Client\ClientAccountController::class, 'payments']);
+    Route::get('payments/{invoiceId}/receipt', [\App\Http\Controllers\Client\ClientAccountController::class, 'receipt']);
+    Route::get('contracts',                    [\App\Http\Controllers\Client\ClientAccountController::class, 'contracts']);
+    Route::get('activity',                     [\App\Http\Controllers\Client\ClientAccountController::class, 'activity']);
+
     Route::get('profile', [ClientProfileController::class, 'show']);
     Route::put('profile', [ClientProfileController::class, 'update']);
     Route::post('change-password', [ClientProfileController::class, 'changePassword']);

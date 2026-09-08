@@ -3,7 +3,7 @@
 use App\Http\Controllers\InternetPlanController;
 use Illuminate\Support\Facades\Route;
 
-Route::prefix('plans')->middleware(['jwt.verify'])->group(function () {
+Route::prefix('plans')->middleware(['jwt.verify', 'module:planes-internet'])->group(function () {
     Route::get('/',           [InternetPlanController::class, 'index']);
     Route::post('/',          [InternetPlanController::class, 'store']);
     Route::put('/{id}',       [InternetPlanController::class, 'update']);

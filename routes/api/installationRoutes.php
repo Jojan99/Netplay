@@ -3,7 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\InstallationOrderController;
 
-Route::prefix('installations')->group(function () {
+Route::prefix('installations')->middleware('module:installations')->group(function () {
     Route::get('/', [InstallationOrderController::class, 'index']);
     Route::post('/', [InstallationOrderController::class, 'store']);
     Route::get('/dashboard', [InstallationOrderController::class, 'dashboard']);

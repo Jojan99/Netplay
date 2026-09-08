@@ -10,7 +10,7 @@ Route::post('/contracts/sign-token/{token}', [ContractSignController::class, 'si
 // Pre-detección de cara de documento (sin JWT, usado en vista de firma)
 Route::post('/contracts/detect-document-side', [ContractSignController::class, 'detectDocumentSide']);
 
-Route::prefix('contracts')->middleware(['jwt.verify'])->group(function () {
+Route::prefix('contracts')->middleware(['jwt.verify', 'module:contratos'])->group(function () {
 
     // Plantillas de contrato (ADMIN / CONTADOR)
     Route::get('/',              [ContractController::class, 'index']);

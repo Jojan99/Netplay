@@ -15,11 +15,17 @@ use Illuminate\Support\Facades\DB;
 
 class EmployeeRepository implements EmployeeRepositoryInterface
 {
+    /**
+     * Empresa en sesión. Antes caía a "la primera empresa" o a la 1, lo que en un
+     * proceso sin sesión (cron, cola) mezclaba datos entre empresas.
+     */
     private function companyId(): int
     {
-        $id = getSessionCompanyId();
-        // Si es null, usar el company_id del primer empleado o 1 por defecto
-        return $id ?? \App\Models\Employee::first()?->company_id ?? 1;
+        $id = getSessionCompanyId() ?: (\Tymon\JWTAuth\Facades\JWTAuth::user()->company_id ?? null);
+        if (!$id) {
+            throw new \RuntimeException('No hay empresa en sesión para consultar empleados.');
+        }
+        return (int) $id;
     }
 
     private function findEmployee(int $id): Employee

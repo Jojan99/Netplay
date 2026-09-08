@@ -71,12 +71,12 @@ class GetUserByIdUseCase implements GetUserByIdUseCaseInterface
      * @param int $id
      * @return mixed
      */
-    public function getUserByIdBost($id): mixed
+    public function getUserByIdBost($id, ?int $companyId = null): mixed
     {
         
         try {
             if(true){
-                $getUserById = $this->userRepository->getUserByIdBost($id);
+                $getUserById = $this->userRepository->getUserByIdBost($id, $companyId);
             }else{
                 return [
                     'message' => 'Accion no permitida',

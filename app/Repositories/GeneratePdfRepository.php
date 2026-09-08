@@ -58,17 +58,23 @@ class GeneratePdfRepository implements GeneratePdfRepositoryInterface
      /**
      * @return mixed
      */
-    public function getperiodeNotificationRemenber(): mixed
+    /**
+     * Clientes del grupo 2 con factura que vence hoy. Antes traía todas las empresas
+     * y comparaba contra una fecha fija de 2025, así que nunca devolvía nada útil.
+     */
+    public function getperiodeNotificationRemenber(?int $companyId = null, ?string $date = null): mixed
     {
+        $companyId = $companyId ?: getSessionCompanyId();
 
         return CabFacturation::join('user_data as us', 'us.user_id', '=', 'cab_facturations.user_id')
         ->join('det_facturations as det', 'det.cab_id', '=', 'cab_facturations.id')
         ->where('cab_facturations.group', 2)
         ->where('us.active', 1)
-        ->where('det.date_facturation', '2025-02-28')
+        ->where('det.date_facturation', $date ?: now()->toDateString())
+        ->when($companyId, fn($q) => $q->where('cab_facturations.company_id', $companyId))
         ->select('cab_facturations.user_id')
+        ->distinct()
         ->get();
-        
     }
 
      /**

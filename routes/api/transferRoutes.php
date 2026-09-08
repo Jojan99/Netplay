@@ -3,7 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\TransferOrderController;
 
-Route::prefix('transfers')->group(function () {
+Route::prefix('transfers')->middleware('module:transfers')->group(function () {
     Route::get('/', [TransferOrderController::class, 'index']);
     Route::post('/', [TransferOrderController::class, 'store']);
     Route::get('/dashboard', [TransferOrderController::class, 'dashboard']);

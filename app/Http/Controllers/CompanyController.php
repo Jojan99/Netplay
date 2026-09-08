@@ -718,18 +718,8 @@ class CompanyController extends Controller
      */
     public function getProfileModules(int $profileId): JsonResponse
     {
-        $all = [
-            'usuario',
-            'created-ticket', 'view-ticket', 'installations',
-            'finanzas', 'egresos', 'report-paid', 'history-facture', 'resumen',
-            'inventory',
-            'mikrotik',
-            'olt-admin', 'olt-detail', 'router',
-            'staff', 'billing-config', 'payment-gateway', 'contratos', 'empleados', 'planes-internet',
-            'crm',
-            'whatsapp',
-            'technician-map',
-        ];
+        $catalog = \App\Support\Modules::flat();
+        $all = array_column($catalog, 'module');
 
         $active = \Illuminate\Support\Facades\DB::table('profile_modules')
             ->where('profile_id', $profileId)
@@ -737,10 +727,7 @@ class CompanyController extends Controller
             ->pluck('module')
             ->toArray();
 
-        $result = array_map(fn($m) => [
-            'module' => $m,
-            'active' => in_array($m, $active),
-        ], $all);
+        $result = array_map(fn($m) => $m + ['active' => in_array($m['module'], $active)], $catalog);
 
         return standardApiReponse('OK', $result, false, JsonResponse::HTTP_OK);
     }

@@ -3,7 +3,7 @@
 use App\Http\Controllers\EmployeeController;
 use Illuminate\Support\Facades\Route;
 
-Route::prefix('employees')->middleware(['jwt.verify'])->group(function () {
+Route::prefix('employees')->middleware(['jwt.verify', 'module:empleados'])->group(function () {
 
     // Rutas específicas primero (antes de {id})
     Route::get('/',              [EmployeeController::class, 'index']);
