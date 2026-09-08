@@ -99,6 +99,7 @@ class WaTemplateBinding extends Model
         'cliente'          => ['label' => 'Nombre del cliente',      'example' => 'Manuel'],
         'cliente_completo' => ['label' => 'Nombre completo',         'example' => 'Manuel Pombo'],
         'valor'            => ['label' => 'Valor pagado',            'example' => '$60.000'],
+        'valor_numero'     => ['label' => 'Valor sin el símbolo $',  'example' => '60.000'],
         'plan'             => ['label' => 'Plan contratado',         'example' => 'INTERNET 100MG'],
         'factura'          => ['label' => 'Número de factura',       'example' => 'NT16531'],
         'referencia'       => ['label' => 'Comprobante del pago',    'example' => '594192'],

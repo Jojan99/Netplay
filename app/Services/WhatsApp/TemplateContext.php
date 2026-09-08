@@ -43,10 +43,19 @@ class TemplateContext
             $contexto['saldo']           = $contexto['total_pendiente'];
         }
 
-        return array_merge($contexto, array_map(
+        $contexto = array_merge($contexto, array_map(
             static fn ($v) => (string) $v,
             array_filter($extra, static fn ($v) => $v !== null)
         ));
+
+        // Algunas plantillas ya escriben el símbolo (por ejemplo "Valor: ${{3}}"),
+        // así que se ofrece el mismo importe sin el "$" para no duplicarlo.
+        if (!isset($contexto['valor_numero'])) {
+            $base = $contexto['valor'] ?? $contexto['total_pendiente'] ?? '';
+            $contexto['valor_numero'] = ltrim((string) $base, '$ ');
+        }
+
+        return $contexto;
     }
 
     /**

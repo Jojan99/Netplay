@@ -27,7 +27,7 @@ class SyncMetaTemplates extends Command
     private const MAPA = [
         'envio_factura' => [
             'nombres' => ['envio_factura_v2', 'envio_factura'],
-            'params'  => ['cliente', 'factura', 'valor', 'fecha_emision', 'fecha_vencimiento', 'empresa'],
+            'params'  => ['cliente', 'factura', 'valor_numero', 'fecha_emision', 'fecha_vencimiento', 'empresa'],
         ],
         'recordatorio_pago' => [
             'nombres' => ['recordatorio_de_pago_v2', 'recordatorio_de_pago', 'recordatorio_pago'],
