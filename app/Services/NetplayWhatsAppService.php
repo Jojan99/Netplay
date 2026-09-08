@@ -54,6 +54,18 @@ class NetplayWhatsAppService
         return $this->sendRequest('bot/pause', ['number' => $phone, 'paused' => $paused]);
     }
 
+    public function sendPoll(string $to, string $question, array $options, int $selectable = 1): array
+    {
+        if (!$this->enabled) return ['success' => false, 'error' => 'WhatsApp deshabilitado para esta empresa.'];
+        return $this->sendRequest('send/poll', ['number' => $to, 'name' => $question, 'options' => array_values($options), 'selectableCount' => $selectable]);
+    }
+
+    public function sendPollVote(string $to, string $pollExternalId, array $options): array
+    {
+        if (!$this->enabled) return ['success' => false, 'error' => 'WhatsApp deshabilitado para esta empresa.'];
+        return $this->sendRequest('send/poll-vote', ['number' => $to, 'pollMessageId' => $pollExternalId, 'options' => array_values($options)]);
+    }
+
     public function sendReaction(string $to, string $targetExternalId, bool $targetFromMe, string $emoji): array
     {
         if (!$this->enabled) return ['success' => false, 'error' => 'WhatsApp deshabilitado para esta empresa.'];

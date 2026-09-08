@@ -10,6 +10,7 @@ interface SendConversationMediaUseCaseInterface
     int $conversationId,
     string $type,
     UploadedFile $file,
-    int $userId
-):  array;
+    int $userId,
+        ?string $caption = null
+    ):  array;
 }

@@ -89,6 +89,16 @@ class MetaWhatsAppService
         return $this->sendRequest($payload);
     }
 
+    public function sendPoll(string $to, string $question, array $options, int $selectable = 1): array
+    {
+        return ['success' => false, 'status' => 'error', 'message' => 'La API de Meta no permite enviar encuestas.'];
+    }
+
+    public function sendPollVote(string $to, string $pollExternalId, array $options): array
+    {
+        return ['success' => false, 'status' => 'error', 'message' => 'La API de Meta no permite votar en encuestas.'];
+    }
+
     public function sendReaction(string $to, string $targetExternalId, bool $targetFromMe, string $emoji): array
     {
         if (!$this->isEnabled()) return ['success' => false, 'error' => 'Meta WhatsApp deshabilitado.'];

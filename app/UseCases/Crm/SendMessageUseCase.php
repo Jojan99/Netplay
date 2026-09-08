@@ -75,7 +75,26 @@ class SendMessageUseCase implements SendMessageUseCaseInterface
     $quoted = $quotedMessageId ? $this->conversationRepository->findMessageForQuote($quotedMessageId, $conversation->id) : null;
 
     // Tipos especiales: sticker (content = URL del webp), ubicación (extra: latitude, longitude, name, address), contacto
-    $messageType = in_array($type, ['sticker', 'location', 'contact', 'reaction'], true) ? $type : 'text';
+    // Votar en una encuesta: no crea mensaje, sólo envía el voto y lo registra
+    if ($type === 'poll_vote') {
+        $target = $this->conversationRepository->findMessageForQuote((int)($extra['target_message_id'] ?? 0), $conversation->id);
+        if (!$target || $target['message_type'] !== 'poll' || !$target['external_id']) return ['status' => 'error', 'message' => 'Encuesta no encontrada'];
+        $options = array_values(array_filter((array)($extra['options'] ?? []), 'is_string'));
+        $whatsAppService = new WhatsAppService($conversation->company_id, false, $conversation->provider ?? 'netplay');
+        $r = $whatsAppService->sendPollVote($conversation->phone, (string)$target['external_id'], $options);
+        if (!is_array($r) || ($r['status'] ?? null) !== 'ok') return ['status' => 'error', 'message' => $r['message'] ?? $r['error'] ?? 'No se pudo votar'];
+        $this->conversationRepository->upsertPollVote($target['id'], 'agent', 'agent', null, $options);
+        broadcast(new \App\Events\PollVoteEvent($conversation->id, $target['id'], $this->conversationRepository->getPollVotes($target['id'])));
+        return $r + ['votes' => $this->conversationRepository->getPollVotes($target['id'])];
+    }
+
+    $messageType = in_array($type, ['sticker', 'location', 'contact', 'reaction', 'poll'], true) ? $type : 'text';
+    if ($messageType === 'poll') {
+        $pollOptions = array_values(array_filter(array_map('trim', (array)($extra['options'] ?? []))));
+        if (count($pollOptions) < 2) return ['status' => 'error', 'message' => 'La encuesta necesita al menos 2 opciones'];
+        $content = "📊 Encuesta: " . trim($content) . "\n" . implode("\n", array_map(fn($o) => '• ' . $o, $pollOptions));
+        if ((int)($extra['selectable'] ?? 1) !== 1) $content .= "\n(varias opciones)";
+    }
     // Reacción: content = emoji ('' para quitarla), extra.target_message_id = mensaje reaccionado
     $target = $messageType === 'reaction' && !empty($extra['target_message_id'])
         ? $this->conversationRepository->findMessageForQuote((int)$extra['target_message_id'], $conversation->id) : null;
@@ -141,6 +160,7 @@ class SendMessageUseCase implements SendMessageUseCaseInterface
         'location' => $whatsAppService->sendLocation($conversation->phone, (float)($extra['latitude'] ?? 0), (float)($extra['longitude'] ?? 0), $extra['name'] ?? null, $extra['address'] ?? null, $quotedArg),
         'contact'  => $whatsAppService->sendContact($conversation->phone, $extra['contact_name'] ?? null, (string)($extra['contact_phone'] ?? ''), $quotedArg),
         'reaction' => $whatsAppService->sendReaction($conversation->phone, (string)$target['external_id'], $target['sender_type'] !== 'customer', $content),
+        'poll'     => $whatsAppService->sendPoll($conversation->phone, trim((string)($extra['question'] ?? '')) ?: explode("\n", $content)[0], $pollOptions, (int)($extra['selectable'] ?? 1)),
         default    => $whatsAppService->mensajeInformativo($conversation->phone, $content, $quotedArg),
     };
 

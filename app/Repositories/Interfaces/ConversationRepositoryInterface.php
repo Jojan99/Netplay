@@ -79,6 +79,8 @@ public function isFirstMessage(int $conversationId): bool;
     public function setMessageExternalId(int $messageId, ?string $externalId, string $status = 'sent'): void;
     public function applyMessageStatus(string $externalId, string $status): ?array;
     public function findMessageForQuote(int $messageId, int $conversationId): ?array;
+    public function getPollVotes(int $messageId): array;
+    public function upsertPollVote(int $messageId, string $voterKey, string $voterType, ?string $voterName, array $options): void;
 
     // ── Respuestas rápidas ("/atajo") ─────────────────────────────────────
     public function getQuickReplies(int $companyId): array;

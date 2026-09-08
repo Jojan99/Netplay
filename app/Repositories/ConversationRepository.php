@@ -198,6 +198,12 @@ class ConversationRepository implements ConversationRepositoryInterface
             $reactions[$r->quoted_message_id][$r->sender_type] = $r->content;
         }
 
+        $pollVotes = [];
+        foreach (DB::table('crm_poll_votes as v')->join('crm_messages as pm', 'pm.id', '=', 'v.message_id')->where('pm.conversation_id', $conversationId)
+            ->orderBy('v.updated_at')->get(['v.message_id', 'v.voter_key', 'v.voter_type', 'v.voter_name', 'v.options']) as $v) {
+            $pollVotes[$v->message_id][] = ['voter_key' => $v->voter_key, 'voter_type' => $v->voter_type, 'voter_name' => $v->voter_name, 'options' => json_decode($v->options, true) ?: []];
+        }
+
         $messages = DB::table('crm_messages as m')
             ->leftJoin('crm_messages as q', 'q.id', '=', 'm.quoted_message_id')
             ->where('m.conversation_id', $conversationId)
@@ -210,9 +216,10 @@ class ConversationRepository implements ConversationRepositoryInterface
                 'q.sender_type as q_sender', 'q.content as q_content', 'q.message_type as q_type', 'q.media_url as q_media',
             ])
             ->get()
-            ->map(function ($row) use ($reactions) {
+            ->map(function ($row) use ($reactions, $pollVotes) {
                 return [
                     'id' => (int) $row->id,
+                    'poll_votes' => $row->message_type === 'poll' ? ($pollVotes[$row->id] ?? []) : null,
                     'sender_type' => $row->sender_type,
                     'content' => $row->content,
                     'message_type' => $row->message_type,
@@ -498,6 +505,22 @@ DB::table('crm_conversations')
         if ($status === 'read') { $update['read_at'] = now(); $update['delivered_at'] = DB::raw('COALESCE(delivered_at, NOW())'); }
         DB::table('crm_messages')->where('id', $row->id)->update($update);
         return ['conversation_id' => (int)$row->conversation_id, 'id' => (int)$row->id];
+    }
+
+    /** Votos de una encuesta: [{voter_key, voter_type, voter_name, options}] */
+    public function getPollVotes(int $messageId): array
+    {
+        return DB::table('crm_poll_votes')->where('message_id', $messageId)->orderBy('updated_at')->get()
+            ->map(fn($v) => ['voter_key' => $v->voter_key, 'voter_type' => $v->voter_type, 'voter_name' => $v->voter_name, 'options' => json_decode($v->options, true) ?: []])
+            ->values()->toArray();
+    }
+
+    public function upsertPollVote(int $messageId, string $voterKey, string $voterType, ?string $voterName, array $options): void
+    {
+        DB::table('crm_poll_votes')->updateOrInsert(
+            ['message_id' => $messageId, 'voter_key' => $voterKey],
+            ['voter_type' => $voterType, 'voter_name' => $voterName, 'options' => json_encode(array_values($options)), 'updated_at' => now(), 'created_at' => now()]
+        );
     }
 
     /** Datos mínimos de un mensaje para citarlo (reply). */

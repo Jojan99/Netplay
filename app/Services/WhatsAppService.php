@@ -63,6 +63,17 @@ class WhatsAppService
         return $this->delegate(__FUNCTION__, func_get_args());
     }
 
+    public function sendPoll(string $to, string $question, array $options, int $selectable = 1): array
+    {
+        return $this->delegate(__FUNCTION__, func_get_args());
+    }
+
+    /** Vota en una encuesta recibida o propia ($options vacío = quitar el voto). */
+    public function sendPollVote(string $to, string $pollExternalId, array $options): array
+    {
+        return $this->delegate(__FUNCTION__, func_get_args());
+    }
+
     /** Reacciona a un mensaje ($emoji vacío = quitar la reacción). */
     public function sendReaction(string $to, string $targetExternalId, bool $targetFromMe, string $emoji): array
     {

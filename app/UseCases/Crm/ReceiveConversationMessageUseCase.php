@@ -39,6 +39,19 @@ public function execute(array $payload): array
         return ['status' => 'ok', 'event' => 'message.status'];
     }
 
+    // Votos de encuesta (descifrados por el servicio Node)
+    if ($payload['event'] === 'poll.vote') {
+        $d = $payload['data'];
+        $msg = !empty($d['pollMessageId']) ? DB::table('crm_messages')->where('external_id', $d['pollMessageId'])->first(['id', 'conversation_id']) : null;
+        if ($msg) {
+            $fromMe = !empty($d['fromMe']);
+            $name = $fromMe ? null : DB::table('crm_conversations as c')->join('crm_customers as cu', 'cu.id', '=', 'c.customer_id')->where('c.id', $msg->conversation_id)->value('cu.name');
+            $this->repository->upsertPollVote((int)$msg->id, $fromMe ? 'agent' : (string)($d['voterJid'] ?? $d['voterPhone'] ?? 'customer'), $fromMe ? 'agent' : 'customer', $name, (array)($d['selected'] ?? []));
+            broadcast(new \App\Events\PollVoteEvent((int)$msg->conversation_id, (int)$msg->id, $this->repository->getPollVotes((int)$msg->id)));
+        }
+        return ['status' => 'ok', 'event' => 'poll.vote'];
+    }
+
     // Solo procesar mensajes recibidos
     if ($payload['event'] !== 'message.received') {
         Log::info('[Webhook ignorado]', ['event' => $payload['event']]);
@@ -225,6 +238,7 @@ public function execute(array $payload): array
         case 'poll':
             $opts = array_map(fn($o) => '• ' . $o, $data['options'] ?? []);
             $content = "📊 Encuesta: " . ($data['content'] ?? 'Sin título') . ($opts ? "\n" . implode("\n", $opts) : '');
+            if ((int)($data['selectableCount'] ?? 1) !== 1) $content .= "\n(varias opciones)";
             break;
 
         case 'event':

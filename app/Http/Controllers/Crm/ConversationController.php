@@ -171,7 +171,8 @@ public function getMessages(
             $conversationId,
             $request->type,
             $file,
-            getSessionUserId()
+            getSessionUserId(),
+            $request->input('caption')
         );
 
         return response()->json([
@@ -196,7 +197,7 @@ public function store(
             auth()->id(),
             $request->input('quoted_message_id') ? (int) $request->input('quoted_message_id') : null,
             (string) $request->input('type', 'text'),
-            (array) $request->only(['latitude', 'longitude', 'name', 'address', 'contact_name', 'contact_phone', 'target_message_id'])
+            (array) $request->only(['latitude', 'longitude', 'name', 'address', 'contact_name', 'contact_phone', 'target_message_id', 'options', 'selectable', 'question'])
         )
     );
 }

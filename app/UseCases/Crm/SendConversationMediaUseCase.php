@@ -22,8 +22,10 @@ class SendConversationMediaUseCase implements SendConversationMediaUseCaseInterf
         int $conversationId,
         string $type,
         UploadedFile $file,
-        int $userId
+        int $userId,
+        ?string $caption = null
     ): array {
+        $caption = trim((string)$caption) ?: null;
 
         $conversation = $this->conversationRepository->find($conversationId);
         if (!$conversation) {
@@ -164,11 +166,13 @@ try {
         $sendResult = match ($type) {
             'image' => $this->whatsAppService->sendImage(
                 $conversation->phone,
-                $publicUrl
+                $publicUrl,
+                $caption ?? ''
             ),
             'video' => $this->whatsAppService->sendVideo(
                 $conversation->phone,
-                $publicUrl
+                $publicUrl,
+                $caption ?? ''
             ),
             'document' => $this->whatsAppService->sendDocument(
                 $conversation->phone,
@@ -192,7 +196,7 @@ try {
                 'sender_type'     => 'agent',
                 'sender_user_id'  => $userId,
                 'message_type'    => $type,
-                'content'         => null,
+                'content'         => in_array($type, ['image', 'video'], true) ? $caption : null,
                 'media_url'       => $finalMediaUrl,
                 'mime_type'       => $finalMime,
                 'extension'       => $finalExt,
