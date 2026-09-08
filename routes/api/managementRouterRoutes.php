@@ -178,6 +178,7 @@ Route::get('team/messages', [\App\Http\Controllers\Crm\TeamController::class, 'm
 Route::post('team/messages', [\App\Http\Controllers\Crm\TeamController::class, 'send']);
 Route::post('team/read', [\App\Http\Controllers\Crm\TeamController::class, 'read']);
 Route::post('team/call/signal', [\App\Http\Controllers\Crm\TeamController::class, 'callSignal']);
+Route::get('team/ice', [\App\Http\Controllers\Crm\TeamController::class, 'ice']);
 
 // ── CONFIGURACIÓN DEL CRM ────────────────────────────────────────────────────
 Route::get('crm/settings', [ConversationController::class, 'getSettings']);

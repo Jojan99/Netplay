@@ -72,11 +72,12 @@ class TeamController extends Controller
                                  ->orWhere(fn($b) => $b->where('m.from_user_id', $other)->where('m.to_user_id', $me['id'])));
         }
         if ($request->filled('before')) $q->where('m.id', '<', (int)$request->before);
-        $rows = $q->orderByDesc('m.id')->limit(50)->get(['m.id', 'm.from_user_id', 'm.to_user_id', 'm.content', 'm.read_at', 'm.created_at', DB::raw("TRIM(CONCAT(COALESCE(ud.names,''),' ',COALESCE(ud.lastname,''))) as from_name")]);
+        $rows = $q->orderByDesc('m.id')->limit(50)->get(['m.id', 'm.from_user_id', 'm.to_user_id', 'm.content', 'm.read_at', 'm.created_at', 'm.attachment_url', 'm.attachment_type', 'm.attachment_name', 'm.attachment_size', DB::raw("TRIM(CONCAT(COALESCE(ud.names,''),' ',COALESCE(ud.lastname,''))) as from_name")]);
 
         return response()->json(['ok' => true, 'data' => $rows->reverse()->values()->map(fn($m) => [
             'id' => (int)$m->id, 'from_user_id' => (int)$m->from_user_id, 'to_user_id' => $m->to_user_id ? (int)$m->to_user_id : null,
             'from_name' => $m->from_name ?: 'Agente', 'content' => $m->content, 'read_at' => $m->read_at, 'created_at' => $m->created_at,
+            'attachment_url' => $m->attachment_url, 'attachment_type' => $m->attachment_type, 'attachment_name' => $m->attachment_name, 'attachment_size' => $m->attachment_size,
             'mine' => (int)$m->from_user_id === $me['id'],
         ])]);
     }
@@ -84,19 +85,31 @@ class TeamController extends Controller
     /* POST team/messages { to: userId|null, content } */
     public function send(Request $request): JsonResponse
     {
-        $request->validate(['content' => 'required|string|max:4000', 'to' => 'nullable|integer']);
+        $request->validate(['content' => 'nullable|string|max:4000', 'to' => 'nullable|integer', 'file' => 'nullable|file|max:25600']);
         $me = $this->me();
-        $to = $request->filled('to') ? (int)$request->to : null;
+        $to = $request->filled('to') && $request->to !== 'null' ? (int)$request->to : null;
         if ($to && !DB::table('users')->where('id', $to)->where('company_id', $me['company_id'])->exists()) {
             return response()->json(['ok' => false, 'error' => 'Destinatario inválido'], 422);
         }
+        $content = trim((string)$request->content);
+        $att = ['attachment_url' => null, 'attachment_type' => null, 'attachment_name' => null, 'attachment_size' => null];
+        if ($request->hasFile('file')) {
+            $file = $request->file('file');
+            $mime = $file->getClientMimeType() ?: 'application/octet-stream';
+            $type = str_starts_with($mime, 'image/') ? 'image' : (str_starts_with($mime, 'audio/') ? 'audio' : (str_starts_with($mime, 'video/') ? 'video' : 'file'));
+            $ext  = strtolower($file->getClientOriginalExtension() ?: ($type === 'audio' ? 'webm' : 'bin'));
+            $path = $file->storeAs('team/' . $me['company_id'], now()->format('Ymd_His') . '_' . substr(md5(uniqid()), 0, 8) . '.' . $ext, 'public');
+            $att = ['attachment_url' => asset('storage/' . $path), 'attachment_type' => $type, 'attachment_name' => $file->getClientOriginalName() ?: basename($path), 'attachment_size' => $file->getSize()];
+        }
+        if ($content === '' && !$att['attachment_url']) return response()->json(['ok' => false, 'error' => 'Mensaje vacío'], 422);
+
         $id = DB::table('crm_team_messages')->insertGetId([
             'company_id' => $me['company_id'], 'from_user_id' => $me['id'], 'to_user_id' => $to,
-            'content' => trim($request->content), 'created_at' => now(), 'updated_at' => now(),
-        ]);
+            'content' => $content, 'created_at' => now(), 'updated_at' => now(),
+        ] + $att);
         $from = $this->memberRow($me['id']);
         $message = ['id' => $id, 'company_id' => $me['company_id'], 'from_user_id' => $me['id'], 'to_user_id' => $to, 'from_name' => $from['name'] ?? 'Agente',
-            'content' => trim($request->content), 'read_at' => null, 'created_at' => now()->toDateTimeString()];
+            'content' => $content, 'read_at' => null, 'created_at' => now()->toDateTimeString()] + $att;
         broadcast(new TeamMessageEvent($message));
         return response()->json(['ok' => true, 'data' => $message + ['mine' => true]], 201);
     }
@@ -114,10 +127,25 @@ class TeamController extends Controller
         return response()->json(['ok' => true]);
     }
 
+    /* GET team/ice — servidores STUN/TURN para las llamadas (configurable por env RTC_ICE_SERVERS en JSON) */
+    public function ice(): JsonResponse
+    {
+        $custom = env('RTC_ICE_SERVERS');
+        $servers = $custom ? (json_decode($custom, true) ?: []) : [];
+        if (!$servers) {
+            $servers = [
+                ['urls' => ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302']],
+                // Relé público de Open Relay (metered.ca): permite conectar entre redes con NAT estricto.
+                ['urls' => ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:443', 'turn:openrelay.metered.ca:443?transport=tcp', 'turns:openrelay.metered.ca:443?transport=tcp'], 'username' => 'openrelayproject', 'credential' => 'openrelayproject'],
+            ];
+        }
+        return response()->json(['ok' => true, 'data' => $servers]);
+    }
+
     /* POST team/call/signal { to, type, payload } — relé de señalización WebRTC */
     public function callSignal(Request $request): JsonResponse
     {
-        $request->validate(['to' => 'required|integer', 'type' => 'required|string|in:ring,accept,reject,busy,hangup,offer,answer,ice', 'payload' => 'nullable']);
+        $request->validate(['to' => 'required|integer', 'type' => 'required|string|in:ring,accept,reject,busy,hangup,offer,answer,ice,join,leave,invite', 'payload' => 'nullable']);
         $me = $this->me();
         $to = (int)$request->to;
         if (!DB::table('users')->where('id', $to)->where('company_id', $me['company_id'])->exists()) {
@@ -126,6 +154,7 @@ class TeamController extends Controller
         $from = $this->memberRow($me['id']);
         broadcast(new TeamCallSignalEvent($to, [
             'type' => $request->type, 'payload' => $request->input('payload'), 'call_id' => (string)$request->input('call_id', ''),
+            'participants' => $request->input('participants'), 'group' => (bool)$request->input('group', false),
             'from' => ['id' => $me['id'], 'name' => $from['name'] ?? 'Agente'], 'at' => now()->toIso8601String(),
         ]));
         return response()->json(['ok' => true]);
