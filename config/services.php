@@ -44,7 +44,8 @@ return [
     'api_key'     => env('NETPLAY_WS_API_KEY'),
     'instance_id' => env('NETPLAY_WS_INSTANCE_ID'),
     'base_url'    => env('NETPLAY_WS_URL', 'http://181.48.150.43:3001/crm'),
-    'master_key'  => env('NETPLAY_WS_MASTER_KEY', 'netplay_master_2026_xK9pLmQr'),
+    // Sin valor por defecto a propósito: la clave sale del .env y no del código.
+    'master_key'  => env('NETPLAY_WS_MASTER_KEY'),
 ],
 
 'meta_whatsapp' => [
@@ -53,6 +54,10 @@ return [
     'access_token'     => env('META_WS_ACCESS_TOKEN'),
     'business_id'      => env('META_WS_BUSINESS_ID'),
     'api_version'      => env('META_WS_API_VERSION', 'v18.0'),
+    // App Secret de la app de Meta: con él se valida la firma HMAC de cada
+    // webhook entrante. Mientras esté vacío el webhook se acepta sin verificar
+    // y queda el aviso en el log, para no cortar mensajes antes de configurarlo.
+    'app_secret'       => env('META_WS_APP_SECRET', ''),
 ],
 
 'netplay_payments' => [

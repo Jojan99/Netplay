@@ -21,7 +21,10 @@ class CreateStaffRequest extends FormRequest
             'lastname'   => 'required|string|max:255',
             'email'      => 'required|email|max:255',
             'username'   => 'required|string|max:100',
-            'password'   => 'required|string|min:6',
+            // Cuentas de personal: tienen acceso al panel, así que la clave
+            // pide largo y mezcla. Las cuentas de cliente del portal no pasan
+            // por aquí y conservan sus credenciales actuales.
+            'password'   => ['required', 'string', \Illuminate\Validation\Rules\Password::min(10)->mixedCase()->numbers()],
             'profile_id' => [
                 'required', 'integer',
                 Rule::exists('profiles', 'id')->where('company_id', getSessionCompanyId()),

@@ -22,3 +22,7 @@ yarn-error.log
 *.bak
 *.bak-*
 *.bak2-*
+
+# Cualquier variante del .env (respaldos incluidos), salvo el ejemplo
+.env.*
+!.env.example

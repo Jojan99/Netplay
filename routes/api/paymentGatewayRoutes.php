@@ -100,8 +100,12 @@ Route::prefix('webhooks')->group(function () {
     });
 
     // 📥 Webhook oficial de Meta (WhatsApp Business API)
-    Route::get('whatsapp-meta',  [\App\Http\Controllers\WhatsAppWebhookController::class, 'verify']);
-    Route::post('whatsapp-meta', [\App\Http\Controllers\WhatsAppWebhookController::class, 'receive']);
+    // Es público por necesidad (lo llama Meta), así que va con tope de tasa
+    // holgado: suficiente para el tráfico real y un freno ante una inundación.
+    Route::get('whatsapp-meta',  [\App\Http\Controllers\WhatsAppWebhookController::class, 'verify'])
+        ->middleware('throttle:120,1');
+    Route::post('whatsapp-meta', [\App\Http\Controllers\WhatsAppWebhookController::class, 'receive'])
+        ->middleware('throttle:600,1');
 });
 
 // ── Portal cliente: generar link de pago ─────────────────────────────────────

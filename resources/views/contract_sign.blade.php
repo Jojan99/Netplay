@@ -364,7 +364,10 @@
                 </div>
             @else
                 <div class="html-view" id="contract-view">
-                    {!! preg_replace('/\s*style\s*=\s*["\'][^"\']*["\']/i', '', $clientContract->contract->content) !!}
+                    {{-- Página pública: el contenido se sanea antes de renderizar
+                         (quita script/iframe, manejadores onX y href javascript:)
+                         además de los style= que ya se limpiaban. --}}
+                    {!! \App\Support\HtmlSeguro::limpiar($clientContract->contract->content) !!}
                 </div>
             @endif
         </div>

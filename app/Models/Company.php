@@ -59,6 +59,18 @@ class Company extends Model
     ];
 
     protected $casts = [
+        // Credenciales cifradas en reposo.
+        //
+        // Con esto un dump de la base, un backup viejo o un respaldo que se
+        // filtre ya no entregan las llaves de cobro ni el token de WhatsApp
+        // Business de cada empresa. En el código se siguen leyendo igual
+        // ($company->pg_private_key): Eloquent descifra al vuelo, así que las
+        // pasarelas y el panel funcionan sin cambios.
+        'pg_private_key'      => 'encrypted',
+        'pg_events_secret'    => 'encrypted',
+        'pg_integrity_secret' => 'encrypted',
+        'wa_access_token'     => 'encrypted',
+
         'email_verified_at' => 'datetime',
         'created_at'        => 'datetime:Y-m-d H:i:s',
         'updated_at'        => 'datetime:Y-m-d H:i:s',

@@ -53,6 +53,37 @@ class WhatsAppWebhookController extends Controller
     }
 
     /**
+     * Comprueba la firma HMAC con la que Meta sella cada webhook.
+     *
+     * Sin esto cualquiera puede enviarnos un POST haciéndose pasar por Meta y
+     * disparar el bot y el CRM con mensajes inventados. Los webhooks de las
+     * pasarelas de pago ya validaban su firma; este era el único que no.
+     *
+     * Si WHATSAPP_APP_SECRET todavía no está configurado se deja pasar y se
+     * avisa en el log, para no cortar los mensajes en producción antes de que
+     * el secreto esté puesto. Una vez configurado, la validación es obligatoria.
+     */
+    private function firmaValida(Request $request): bool
+    {
+        $appSecret = (string) config('services.meta_whatsapp.app_secret', '');
+
+        if ($appSecret === '') {
+            Log::warning('[Meta Webhook] WHATSAPP_APP_SECRET sin configurar: el webhook se acepta sin verificar firma');
+            return true;
+        }
+
+        $cabecera = (string) $request->header('X-Hub-Signature-256', '');
+
+        if (!str_starts_with($cabecera, 'sha256=')) {
+            return false;
+        }
+
+        $esperada = 'sha256=' . hash_hmac('sha256', $request->getContent(), $appSecret);
+
+        return hash_equals($esperada, $cabecera);
+    }
+
+    /**
      * POST /api/webhooks/whatsapp-meta
      *
      * Recibe los mensajes y eventos de la API oficial de WhatsApp Business (Meta).
@@ -60,6 +91,13 @@ class WhatsAppWebhookController extends Controller
      */
     public function receive(Request $request): JsonResponse
     {
+        if (!$this->firmaValida($request)) {
+            Log::warning('[Meta Webhook] Firma X-Hub-Signature-256 inválida — payload descartado', [
+                'ip' => $request->ip(),
+            ]);
+            return response()->json(['status' => 'forbidden', 'reason' => 'invalid_signature'], 403);
+        }
+
         $payload = $request->all();
 
         Log::info('[Meta Webhook] Payload recibido', $payload);
