@@ -24,5 +24,7 @@ class CrmMessage extends Model
         'is_forwarded',
         'forwarded_from_id',
         'agent_signature',
+        'participant_phone',
+        'participant_name',
     ];
 }

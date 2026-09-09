@@ -28,6 +28,10 @@ class ConversationRepository implements ConversationRepositoryInterface
         $provider = $filters['provider'] ?? null;
         $labelId  = !empty($filters['label']) ? (int)$filters['label'] : null;
 
+        // Los grupos viven en su propia sección: por defecto la bandeja de
+        // atención no los muestra, para no mezclarlos con los clientes.
+        $grupos = $filters['grupos'] ?? null;   // 1 => solo grupos
+
 
 
         // Subquery: último mensaje por conversación
@@ -57,6 +61,7 @@ class ConversationRepository implements ConversationRepositoryInterface
             // Datos de agente (si quieres mostrar nombre del agente desde user_data)
             ->leftJoin('user_data as ud', 'ud.user_id', '=', 'c.assigned_user_id')
             ->where('c.company_id', getSessionCompanyId())
+            ->where('cu.is_group', $grupos ? 1 : 0)
             ->select([
                 'c.id',
                 'c.status',
@@ -68,6 +73,7 @@ class ConversationRepository implements ConversationRepositoryInterface
                 'cu.id as customer_id',
                 'cu.name as customer_name',
                 'cu.phone as customer_phone',
+                'cu.is_group as is_group',
 
                 DB::raw("
         CASE 
@@ -175,6 +181,7 @@ class ConversationRepository implements ConversationRepositoryInterface
                 'c.provider',
                 'cu.name as customer_name',
                 'cu.phone',
+                'cu.is_group',
                 'c.status',
                 'c.priority',
             ])
@@ -213,6 +220,7 @@ class ConversationRepository implements ConversationRepositoryInterface
             ->select([
                 'm.id', 'm.sender_type', 'm.content', 'm.message_type', 'm.media_url', 'm.mime_type', 'm.created_at',
                 'm.status', 'm.is_note', 'm.is_forwarded', 'm.agent_signature', 'm.quoted_message_id',
+                'm.participant_name', 'm.participant_phone',
                 'q.sender_type as q_sender', 'q.content as q_content', 'q.message_type as q_type', 'q.media_url as q_media',
             ])
             ->get()
@@ -231,6 +239,9 @@ class ConversationRepository implements ConversationRepositoryInterface
                     'is_note' => (bool) $row->is_note,
                     'is_forwarded' => (bool) $row->is_forwarded,
                     'agent_signature' => $row->agent_signature,
+                    // En un grupo, quién escribió este mensaje
+                    'participant_name'  => $row->participant_name ?? null,
+                    'participant_phone' => $row->participant_phone ?? null,
                     'quoted' => $row->quoted_message_id ? [
                         'id' => (int) $row->quoted_message_id,
                         'sender_type' => $row->q_sender,
@@ -300,6 +311,61 @@ public function getPhoneByConversationId(int $conversationId): ?string
         ->where('c.id', $conversationId)
         ->value('cu.phone'); // devuelve solo el campo phone
 }
+
+
+    /**
+     * Conversación de un grupo de WhatsApp.
+     *
+     * Se guarda igual que un chat, pero el "cliente" es el grupo: en vez de un
+     * teléfono lleva el jid y queda marcado con is_group, para que la bandeja
+     * pueda mostrarlos en su propia sección y no mezclados con la atención.
+     */
+    public function getOrCreateGroupConversation(string $jid, string $nombre, int $companyId): int
+    {
+        $activa = DB::table('crm_conversations as c')
+            ->join('crm_customers as cu', 'cu.id', '=', 'c.customer_id')
+            ->where('c.company_id', $companyId)
+            ->where('cu.phone', $jid)
+            ->where('cu.is_group', 1)
+            ->whereIn('c.status', ['new', 'in_progress'])
+            ->orderByDesc('c.id')
+            ->value('c.id');
+
+        if ($activa) {
+            // El nombre del grupo puede cambiar; se refresca sin tocar el resto.
+            DB::table('crm_customers')
+                ->where('company_id', $companyId)->where('phone', $jid)
+                ->update(['name' => $nombre, 'updated_at' => now()]);
+
+            return (int) $activa;
+        }
+
+        $customerId = DB::table('crm_customers')
+            ->where('company_id', $companyId)->where('phone', $jid)
+            ->value('id');
+
+        if (!$customerId) {
+            $customerId = DB::table('crm_customers')->insertGetId([
+                'company_id' => $companyId,
+                'phone'      => $jid,
+                'is_group'   => 1,
+                'name'       => $nombre,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+
+        return (int) DB::table('crm_conversations')->insertGetId([
+            'company_id'      => $companyId,
+            'provider'        => 'netplay',   // Meta no soporta grupos
+            'customer_id'     => $customerId,
+            'status'          => 'new',
+            'priority'        => 'normal',
+            'last_message_at' => now(),
+            'created_at'      => now(),
+            'updated_at'      => now(),
+        ]);
+    }
 
     public function getOrCreateConversationByPhone(string $phone, string $names, ?int $companyId = null, string $provider = 'netplay'): int
     {
@@ -396,6 +462,9 @@ Log::info('Intentando insertar cliente', [
         $message->mime_type       = $data['mime_type'] ?? null;
         $message->extension       = $data['extension'] ?? null;
         $message->original_name   = $data['original_name'] ?? null;
+        // Quién escribió, cuando el mensaje viene de un grupo
+        $message->participant_phone = $data['participant_phone'] ?? null;
+        $message->participant_name  = $data['participant_name'] ?? null;
 
 
         $message->save();

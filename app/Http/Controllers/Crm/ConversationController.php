@@ -36,6 +36,7 @@ public function inbox(
         'status',
         'search',
         'provider',
+        'grupos',   // 1 => la sección de grupos, en vez de la atención a clientes
     ]);
 
     // 🔥 SIEMPRE usar el usuario autenticado REAL

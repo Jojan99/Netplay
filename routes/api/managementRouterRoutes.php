@@ -190,6 +190,10 @@ Route::get('team/ice', [\App\Http\Controllers\Crm\TeamController::class, 'ice'])
 
 // ── CONFIGURACIÓN DEL CRM ────────────────────────────────────────────────────
 Route::get('crm/settings', [ConversationController::class, 'getSettings']);
+
+// Grupos de WhatsApp (solo WhatsApp Web; Meta no soporta grupos)
+Route::get('crm/grupos',  [\App\Http\Controllers\Crm\GruposController::class, 'index']);
+Route::post('crm/grupos', [\App\Http\Controllers\Crm\GruposController::class, 'toggle']);
 Route::post('crm/settings', [ConversationController::class, 'saveSettings']);
 
 // ── RESPUESTAS RÁPIDAS ("/atajo" en el chat) ──────────────────────────────────

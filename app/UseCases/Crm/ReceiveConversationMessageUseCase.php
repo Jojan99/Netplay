@@ -71,10 +71,30 @@ public function execute(array $payload): array
         throw new \Exception('Invalid payload: phone');
     }
 
-    // Ignorar grupos
-    if ($data['isGroup'] ?? false) {
-        Log::info('[Webhook grupo ignorado]', ['phone' => $phone]);
-        return ['status' => 'ignored', 'reason' => 'group_message'];
+    // ─── Grupos ───
+    //
+    // Antes se descartaban todos. Ahora entran, pero solo los que la empresa
+    // marcó para seguir: una línea puede estar en grupos ajenos a la atención
+    // y traerlos todos llenaría la bandeja de ruido.
+    //
+    // Van a su propia sección, no mezclados con los chats de clientes.
+    $esGrupo   = (bool) ($data['isGroup'] ?? false);
+    $grupoJid  = $data['groupJid'] ?? ($esGrupo ? $phone : null);
+
+    if ($esGrupo) {
+        if (!$grupoJid) {
+            return ['status' => 'ignored', 'reason' => 'grupo_sin_jid'];
+        }
+
+        $seguido = DB::table('crm_grupos_seguidos')
+            ->where('jid', $grupoJid)
+            ->where('activo', 1)
+            ->first(['company_id', 'nombre']);
+
+        if (!$seguido) {
+            Log::info('[Webhook grupo no seguido]', ['jid' => $grupoJid]);
+            return ['status' => 'ignored', 'reason' => 'grupo_no_seguido'];
+        }
     }
 
     // ─── Nombre ───
@@ -159,7 +179,7 @@ public function execute(array $payload): array
     $puerta = app(\App\Services\Crm\PuertaIdentificacion::class);
     $mensajesPrevios = [];
 
-    if (!($payload['_saltar_identificacion'] ?? false)) {
+    if (!$esGrupo && !($payload['_saltar_identificacion'] ?? false)) {
         $decision = $puerta->evaluar($companyId, $provider, $phone, $data['content'] ?? null, $payload);
 
         if ($decision['accion'] === \App\Services\Crm\PuertaIdentificacion::RETIENE) {
@@ -174,8 +194,13 @@ public function execute(array $payload): array
         $identidad = ['dni' => null, 'user_id' => null, 'nombre' => null];
     }
 
-    $conversationId = $this->repository
-        ->getOrCreateConversationByPhone($phone, $names, $companyId, $provider);
+    $conversationId = $esGrupo
+        ? $this->repository->getOrCreateGroupConversation(
+            $grupoJid,
+            $data['groupName'] ?? ($seguido->nombre ?? 'Grupo'),
+            (int) $companyId
+          )
+        : $this->repository->getOrCreateConversationByPhone($phone, $names, $companyId, $provider);
 
     // Vincular el cliente real a la ficha del CRM, que hasta ahora solo tenía
     // el teléfono. Es lo que permite abrir la ficha del cliente desde el chat.
@@ -368,6 +393,10 @@ public function execute(array $payload): array
         'mime_type'       => $mimeType,
         'external_id'     => $externalId,
         'quoted_message_id' => $reactedId ?? null,   // reacción: id del mensaje reaccionado
+        // En un grupo cada mensaje lo escribe alguien distinto: sin esto el
+        // hilo se leería como si hablara una sola persona.
+        'participant_phone' => $esGrupo ? ($data['participantPhone'] ?? null) : null,
+        'participant_name'  => $esGrupo ? ($data['participantName'] ?? null) : null,
         'created_at'      => now(),
     ]);
 
