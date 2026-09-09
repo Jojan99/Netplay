@@ -78,7 +78,11 @@ class CreateTicketUseCase implements CreateTicketUseCaseInterface
                 "📝 *Observación:*\n{$data['observation']}\n\n".
                 "⏰ *Fecha:* {$hora}";
 
-                NotificationRouterService::dispatch(getSessionCompanyId(), $eventType, $message);
+                // El aviso al grupo lo decide quien crea el ticket. Antes salía
+                // siempre y no había forma de crear uno sin avisar.
+                if ($data->boolean('notify_group', true)) {
+                    NotificationRouterService::dispatch(getSessionCompanyId(), $eventType, $message);
+                }
 
                 // $this->TemplateEmailPay->EmailPay($dataUser,$data['price_total'],$data['number_facture']);
             } else {

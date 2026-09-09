@@ -40,6 +40,7 @@ class CreateTicketRequest extends FormRequest
             'phone' => 'required|string',
             'technician_name' => 'string',
             'client_name' => 'string',
+            'notify_group' => 'nullable|boolean',
 
         ];
     }

@@ -783,6 +783,9 @@ public function createTicketFromConversation(int $conversationId, Request $reque
         'address'      => 'nullable|string',
         'cedula'       => 'nullable|string',
         'phone'        => 'nullable|string',
+        // El aviso al grupo pasa a ser una decisión del agente. Antes salía
+        // siempre, sin que nadie lo pidiera ni pudiera evitarlo.
+        'notify_group' => 'nullable|boolean',
     ]);
 
     // Obtener datos del cliente desde la conversación
@@ -832,6 +835,9 @@ public function createTicketFromConversation(int $conversationId, Request $reque
         'updated_at'      => now(),
     ]);
 
+    // Aviso al grupo de WhatsApp: ahora lo decide el agente. Antes salía
+    // siempre, sin que nadie lo pidiera ni pudiera evitarlo.
+    if ($request->boolean('notify_group', true)) {
     // Notificación WhatsApp (no bloqueante)
     try {
         $message =
@@ -844,6 +850,7 @@ public function createTicketFromConversation(int $conversationId, Request $reque
 
         \App\Services\NotificationRouterService::dispatch(getSessionCompanyId(), 'ticket_support', $message);
     } catch (\Throwable) {}
+    }
 
     return response()->json(['ok' => true, 'ticket_id' => $ticketId], 201);
 }
