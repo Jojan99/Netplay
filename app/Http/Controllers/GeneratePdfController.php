@@ -177,9 +177,16 @@ class GeneratePdfController extends Controller
             }
 
             // Verificar que la empresa tiene habilitado el envío de facturas por WhatsApp
-            $company = Company::find($data['company_id'] ?? 0);
+            // Antes esto se saltaba en silencio: company_id no venía en la
+            // consulta, Company::find(0) daba null y la condición nunca se
+            // evaluaba. Se resuelve también por la sesión.
+            $company = Company::find(($data['company_id'] ?? 0) ?: getSessionCompanyId());
             if ($company && !$company->invoice_whatsapp_enabled) {
-                return response()->json(['status' => 'error', 'message' => 'El envío de facturas por WhatsApp está deshabilitado para esta empresa', 'error_code' => 'WA_DISABLED'], 403);
+                return response()->json([
+                    'status'     => 'error',
+                    'message'    => 'El envío de facturas por WhatsApp está apagado. Se activa en Configuración de facturación → Plantilla de factura.',
+                    'error_code' => 'WA_DISABLED',
+                ], 403);
             }
 
             $phone = trim($data['phone'] ?? '');
@@ -210,7 +217,10 @@ class GeneratePdfController extends Controller
             // Meta y el cliente no escribió en las últimas 24 h, Meta rechaza
             // el envío; insistir fuera de ventana es lo que termina costando
             // el bloqueo de la línea.
-            $companyId = (int) ($data['company_id'] ?? 0);
+            // La empresa sale de la factura y, si faltara, de la sesión: sin
+            // ella no se puede decidir el canal y todo envío se rechazaba con
+            // "la empresa no tiene línea vinculada".
+            $companyId = (int) ($data['company_id'] ?? 0) ?: (int) getSessionCompanyId();
             $decision  = (new \App\Services\WhatsApp\CanalDeEnvio($companyId))
                 ->evaluar(request()->input('canal'), $phone);
 
@@ -243,7 +253,8 @@ class GeneratePdfController extends Controller
                 $valores = [];
                 $botones = $meta->dynamicUrlButtons($meta->invoiceTemplateName(), 'es_CO');
                 if ($botones !== []) {
-                    $token = \App\Http\Controllers\InvoiceLinkController::tokenFor((int) $data['id']);
+                    // det_id es la factura; 'id' es la cabecera de facturación.
+                    $token = \App\Http\Controllers\InvoiceLinkController::tokenFor((int) ($data['det_id'] ?? $data['id']));
                     foreach (array_keys($botones) as $indice) {
                         $valores[$indice] = $token;
                     }

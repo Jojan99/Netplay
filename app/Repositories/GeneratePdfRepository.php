@@ -174,7 +174,12 @@ class GeneratePdfRepository implements GeneratePdfRepositoryInterface
         'user_data.address','user_data.phone','user_data.email','cab_facturations.date_init_facturation'
         ,'det_facturations.price_discount','det_facturations.create_facture_manual','det_facturations.number_facture','det_facturations.date_facturation'
         ,'det_facturations.price_total','det_facturations.days_facture','det_facturations.porcentage_discount',
-        'cab_facturations.id','det_facturations.price_abone','det_facturations.abone','det_facturations.updated_at')
+        'cab_facturations.id','det_facturations.price_abone','det_facturations.abone','det_facturations.updated_at',
+        // La empresa y el id real de la factura no se estaban trayendo. Sin
+        // company_id no se puede saber por qué canal de WhatsApp mandarla, y
+        // 'id' es el de la cabecera: para el enlace firmado hace falta el del
+        // detalle, que es la factura en sí.
+        'cab_facturations.company_id','det_facturations.id as det_id')
         ->join('user_data', 'users.id', '=', 'user_data.user_id')
         ->join('internet_plans', 'internet_plans.id', '=', 'user_data.internet_plans_id')
         ->join('cab_facturations', 'cab_facturations.user_id', '=', 'user_data.user_id')
