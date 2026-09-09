@@ -39,6 +39,53 @@ public function execute(array $payload): array
         return ['status' => 'ok', 'event' => 'message.status'];
     }
 
+    // El cliente (o el agente desde el teléfono) borró un mensaje
+    if ($payload['event'] === 'message.deleted') {
+        $d = $payload['data'];
+        $msg = !empty($d['messageId'])
+            ? DB::table('crm_messages')->where('external_id', $d['messageId'])->first(['id', 'conversation_id'])
+            : null;
+
+        if ($msg) {
+            // La fila no se borra: un mensaje citado más arriba en el hilo
+            // quedaría apuntando a la nada. Se marca, como hace WhatsApp.
+            DB::table('crm_messages')->where('id', $msg->id)->update([
+                'deleted_at' => now(),
+                'deleted_by' => $d['deletedBy'] ?? 'customer',
+            ]);
+
+            broadcast(new \App\Events\MessageRevisedEvent(
+                (int) $msg->conversation_id, (int) $msg->id, 'deleted', null
+            ));
+        }
+
+        return ['status' => 'ok', 'event' => 'message.deleted'];
+    }
+
+    // El cliente editó un mensaje
+    if ($payload['event'] === 'message.edited') {
+        $d = $payload['data'];
+        $msg = !empty($d['messageId'])
+            ? DB::table('crm_messages')->where('external_id', $d['messageId'])->first(['id', 'conversation_id', 'content', 'content_original'])
+            : null;
+
+        if ($msg) {
+            DB::table('crm_messages')->where('id', $msg->id)->update([
+                // Se conserva lo que decía antes: el agente tiene que poder
+                // saber qué le habían escrito realmente.
+                'content_original' => $msg->content_original ?? $msg->content,
+                'content'          => $d['content'] ?? $msg->content,
+                'edited_at'        => now(),
+            ]);
+
+            broadcast(new \App\Events\MessageRevisedEvent(
+                (int) $msg->conversation_id, (int) $msg->id, 'edited', $d['content'] ?? null
+            ));
+        }
+
+        return ['status' => 'ok', 'event' => 'message.edited'];
+    }
+
     // Votos de encuesta (descifrados por el servicio Node)
     if ($payload['event'] === 'poll.vote') {
         $d = $payload['data'];

@@ -92,6 +92,16 @@ Route::prefix('management')->group(function () {
         [ConversationController::class, 'store']
     );
 
+    // 🗑️ Borrar y ✏️ editar un mensaje ya enviado (solo WhatsApp Web)
+    Route::delete(
+        'conversations/{conversationId}/messages/{messageId}',
+        [ConversationController::class, 'deleteMessage']
+    );
+    Route::put(
+        'conversations/{conversationId}/messages/{messageId}',
+        [ConversationController::class, 'editMessage']
+    );
+
     // 📥 Webhook WhatsApp
     Route::post(
         'receiveMessage',

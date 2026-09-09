@@ -221,6 +221,7 @@ class ConversationRepository implements ConversationRepositoryInterface
                 'm.id', 'm.sender_type', 'm.content', 'm.message_type', 'm.media_url', 'm.mime_type', 'm.created_at',
                 'm.status', 'm.is_note', 'm.is_forwarded', 'm.agent_signature', 'm.quoted_message_id',
                 'm.participant_name', 'm.participant_phone',
+                'm.deleted_at', 'm.deleted_by', 'm.edited_at',
                 'q.sender_type as q_sender', 'q.content as q_content', 'q.message_type as q_type', 'q.media_url as q_media',
             ])
             ->get()
@@ -240,6 +241,10 @@ class ConversationRepository implements ConversationRepositoryInterface
                     'is_forwarded' => (bool) $row->is_forwarded,
                     'agent_signature' => $row->agent_signature,
                     // En un grupo, quién escribió este mensaje
+                    // Borrado: la fila se conserva para no romper las citas
+                    'deleted'    => !empty($row->deleted_at),
+                    'deleted_by' => $row->deleted_by ?? null,
+                    'edited'     => !empty($row->edited_at),
                     'participant_name'  => $row->participant_name ?? null,
                     'participant_phone' => $row->participant_phone ?? null,
                     'quoted' => $row->quoted_message_id ? [

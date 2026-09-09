@@ -848,4 +848,120 @@ public function createTicketFromConversation(int $conversationId, Request $reque
     return response()->json(['ok' => true, 'ticket_id' => $ticketId], 201);
 }
 
+/* =====================================================================
+ * BORRAR Y EDITAR MENSAJES (solo WhatsApp Web)
+ * =================================================================== */
+
+/**
+ * DELETE api/management/conversations/{id}/messages/{messageId}
+ * Borra el mensaje para todos.
+ *
+ * WhatsApp solo deja revocar mensajes propios y dentro de su ventana. Si la
+ * pasarela lo rechaza no se marca nada: mostrar "eliminado" cuando el cliente
+ * lo sigue viendo sería peor que no poder borrarlo.
+ */
+public function deleteMessage(int $conversationId, int $messageId): JsonResponse
+{
+    $companyId = getSessionCompanyId();
+
+    $msg = DB::table('crm_messages as m')
+        ->join('crm_conversations as c', 'c.id', '=', 'm.conversation_id')
+        ->join('crm_customers as cu', 'cu.id', '=', 'c.customer_id')
+        ->where('m.id', $messageId)
+        ->where('m.conversation_id', $conversationId)
+        ->where('c.company_id', $companyId)
+        ->first(['m.id', 'm.external_id', 'm.sender_type', 'c.provider', 'cu.phone']);
+
+    if (!$msg) {
+        return response()->json(['ok' => false, 'error' => 'Mensaje no encontrado.'], 404);
+    }
+
+    if ($msg->provider !== 'netplay') {
+        return response()->json(['ok' => false, 'error' => 'La API de Meta no permite borrar mensajes.'], 422);
+    }
+
+    if ($msg->sender_type !== 'agent') {
+        return response()->json(['ok' => false, 'error' => 'Solo se pueden borrar los mensajes propios.'], 422);
+    }
+
+    if (!$msg->external_id) {
+        return response()->json(['ok' => false, 'error' => 'Ese mensaje no llegó a enviarse a WhatsApp.'], 422);
+    }
+
+    $r = (new \App\Services\NetplayWhatsAppService($companyId, true))
+        ->borrarMensaje($msg->phone, $msg->external_id);
+
+    if (!($r['success'] ?? false)) {
+        return response()->json([
+            'ok'    => false,
+            'error' => $r['error'] ?? 'WhatsApp no permitió borrar el mensaje. Puede que haya pasado demasiado tiempo.',
+        ], 422);
+    }
+
+    DB::table('crm_messages')->where('id', $messageId)
+        ->update(['deleted_at' => now(), 'deleted_by' => 'agent']);
+
+    broadcast(new \App\Events\MessageRevisedEvent($conversationId, $messageId, 'deleted', null));
+
+    return response()->json(['ok' => true]);
+}
+
+/**
+ * PUT api/management/conversations/{id}/messages/{messageId}  { content }
+ * Edita un mensaje propio. WhatsApp solo lo permite dentro de los 15 minutos.
+ */
+public function editMessage(Request $request, int $conversationId, int $messageId): JsonResponse
+{
+    $request->validate(['content' => 'required|string|max:4000']);
+
+    $companyId = getSessionCompanyId();
+
+    $msg = DB::table('crm_messages as m')
+        ->join('crm_conversations as c', 'c.id', '=', 'm.conversation_id')
+        ->join('crm_customers as cu', 'cu.id', '=', 'c.customer_id')
+        ->where('m.id', $messageId)
+        ->where('m.conversation_id', $conversationId)
+        ->where('c.company_id', $companyId)
+        ->first(['m.id', 'm.external_id', 'm.sender_type', 'm.message_type', 'm.content',
+                 'm.content_original', 'm.created_at', 'c.provider', 'cu.phone']);
+
+    if (!$msg) {
+        return response()->json(['ok' => false, 'error' => 'Mensaje no encontrado.'], 404);
+    }
+
+    if ($msg->provider !== 'netplay') {
+        return response()->json(['ok' => false, 'error' => 'La API de Meta no permite editar mensajes.'], 422);
+    }
+
+    if ($msg->sender_type !== 'agent' || $msg->message_type !== 'text') {
+        return response()->json(['ok' => false, 'error' => 'Solo se pueden editar los mensajes de texto propios.'], 422);
+    }
+
+    // WhatsApp corta a los 15 minutos. Se comprueba acá para dar un motivo
+    // claro en vez de un error genérico de la pasarela.
+    if (\Carbon\Carbon::parse($msg->created_at)->diffInMinutes(now()) >= 15) {
+        return response()->json([
+            'ok'    => false,
+            'error' => 'WhatsApp solo permite editar dentro de los 15 minutos siguientes al envío.',
+        ], 422);
+    }
+
+    $r = (new \App\Services\NetplayWhatsAppService($companyId, true))
+        ->editarMensaje($msg->phone, $msg->external_id, $request->input('content'));
+
+    if (!($r['success'] ?? false)) {
+        return response()->json(['ok' => false, 'error' => $r['error'] ?? 'WhatsApp no permitió editar el mensaje.'], 422);
+    }
+
+    DB::table('crm_messages')->where('id', $messageId)->update([
+        'content_original' => $msg->content_original ?? $msg->content,
+        'content'          => $request->input('content'),
+        'edited_at'        => now(),
+    ]);
+
+    broadcast(new \App\Events\MessageRevisedEvent($conversationId, $messageId, 'edited', $request->input('content')));
+
+    return response()->json(['ok' => true]);
+}
+
 }

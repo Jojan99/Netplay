@@ -47,6 +47,36 @@ class NetplayWhatsAppService
         return $this->sendRequest('send', $params);
     }
 
+
+    /**
+     * Borra un mensaje para todos.
+     *
+     * WhatsApp solo deja revocar mensajes propios y dentro de su ventana; si
+     * ya pasó, el servicio responde error y se devuelve tal cual.
+     */
+    public function borrarMensaje(string $to, string $messageId, bool $fromMe = true): array
+    {
+        if (!$this->enabled) return ['success' => false, 'error' => 'WhatsApp deshabilitado para esta empresa.'];
+
+        return $this->sendRequest('message/delete', [
+            'number'    => $to,
+            'messageId' => $messageId,
+            'fromMe'    => $fromMe,
+        ]);
+    }
+
+    /** Edita un mensaje propio. WhatsApp solo lo permite dentro de los 15 minutos. */
+    public function editarMensaje(string $to, string $messageId, string $texto): array
+    {
+        if (!$this->enabled) return ['success' => false, 'error' => 'WhatsApp deshabilitado para esta empresa.'];
+
+        return $this->sendRequest('message/edit', [
+            'number'    => $to,
+            'messageId' => $messageId,
+            'text'      => $texto,
+        ]);
+    }
+
     /** Pausa/reanuda el bot del servicio Node para un número. */
     public function setBotPaused(string $phone, bool $paused): array
     {
