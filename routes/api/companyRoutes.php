@@ -110,6 +110,11 @@ Route::prefix('company')->group(function () {
                 // Automatizaciones: qué plantilla sale ante cada hecho del negocio
                 Route::get('template-bindings',           [\App\Http\Controllers\WaTemplateBindingController::class, 'index']);
                 Route::post('template-bindings',          [\App\Http\Controllers\WaTemplateBindingController::class, 'save']);
+
+                // Plantillas que el sistema necesita para operar: su estado en
+                // la cuenta de Meta de la empresa, y crearlas si faltan.
+                Route::get('plantillas-sistema',          [\App\Http\Controllers\WaTemplateBindingController::class, 'estadoSistema']);
+                Route::post('plantillas-sistema',         [\App\Http\Controllers\WaTemplateBindingController::class, 'aprovisionarSistema']);
                 Route::get('template-bindings/{event}/preview', [\App\Http\Controllers\WaTemplateBindingController::class, 'preview']);
                 Route::post('template-bindings/test',     [\App\Http\Controllers\WaTemplateBindingController::class, 'test']);
 

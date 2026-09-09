@@ -211,4 +211,31 @@ class WaTemplateBindingController extends Controller
             'error' => $aceptado ? null : ($r['error'] ?? 'Meta no aceptó el mensaje.'),
         ], $aceptado ? 200 : 422);
     }
+
+    /**
+     * GET  company/whatsapp/meta/plantillas-sistema
+     * En qué va cada plantilla que el sistema necesita, en la cuenta de Meta
+     * de esta empresa: creada, en revisión, aprobada o rechazada.
+     */
+    public function estadoSistema(): \Illuminate\Http\JsonResponse
+    {
+        $servicio = new \App\Services\WhatsApp\AprovisionarPlantillas((int) getSessionCompanyId());
+
+        return response()->json(['ok' => true, 'data' => $servicio->estado()]);
+    }
+
+    /**
+     * POST company/whatsapp/meta/plantillas-sistema  { eventos?: string[] }
+     * Crea en la cuenta de la empresa las plantillas que le falten y las deja
+     * en revisión de Meta. No pisa las que la empresa haya elegido a mano.
+     */
+    public function aprovisionarSistema(\Illuminate\Http\Request $request): \Illuminate\Http\JsonResponse
+    {
+        $request->validate(['eventos' => 'nullable|array', 'eventos.*' => 'string']);
+
+        $servicio  = new \App\Services\WhatsApp\AprovisionarPlantillas((int) getSessionCompanyId());
+        $resultado = $servicio->ejecutar($request->input('eventos'));
+
+        return response()->json(['ok' => $resultado['ok'], 'data' => $resultado], $resultado['ok'] ? 200 : 422);
+    }
 }

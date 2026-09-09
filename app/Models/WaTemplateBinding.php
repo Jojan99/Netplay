@@ -64,6 +64,13 @@ class WaTemplateBinding extends Model
             'suggested'   => 'suspendido_por_mora',
             'programado'  => true,
         ],
+        // Detectado al auditar los envíos: el enlace de firma salía como texto
+        // libre, así que fuera de la ventana de 24 h no llegaba.
+        'contrato_firma' => [
+            'label'       => 'Contrato para firmar',
+            'description' => 'Le manda al cliente el enlace para revisar y firmar su contrato.',
+            'suggested'   => 'netplay_contrato_firma',
+        ],
     ];
 
     /**
