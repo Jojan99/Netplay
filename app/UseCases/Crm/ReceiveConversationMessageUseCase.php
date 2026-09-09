@@ -140,11 +140,15 @@ public function execute(array $payload): array
             if ($jid && $jid !== $phone) {
                 $waBaseUrl = rtrim(config('services.netplay_whatsapp.base_url', 'http://181.48.150.43:3001/crm'), '/');
                 $registerUrl = str_replace('/crm', '', $waBaseUrl) . "/instances/{$instanceId}/register-phone";
-                \Illuminate\Support\Facades\Http::timeout(10)->post($registerUrl, [
-                    'lid'   => $jid,
-                    'phone' => $phone,
-                    'name'  => $names,
-                ]);
+                // Este endpoint dejó de estar abierto: va firmado con la clave
+                // maestra, igual que el resto del aprovisionamiento.
+                \Illuminate\Support\Facades\Http::timeout(10)
+                    ->withHeaders(['x-master-key' => (string) config('services.netplay_whatsapp.master_key')])
+                    ->post($registerUrl, [
+                        'lid'   => $jid,
+                        'phone' => $phone,
+                        'name'  => $names,
+                    ]);
                 Log::info('[LID Register] Mapeo enviado a whatsapp-service', [
                     'instance_id' => $instanceId,
                     'jid'         => $jid,
