@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\DB;
 class CrmSettings
 {
     public const DEFAULT_WELCOME = "👋 Hola, gracias por contactar a *Netplay*.\n\nEn breve uno de nuestros asesores continuará la conversación contigo.";
+    public const DEFAULT_IDENTIFICACION = \App\Services\Crm\PuertaIdentificacion::PREGUNTA_POR_DEFECTO;
     public const DEFAULT_OFF_HOURS = "🕒 Gracias por escribirnos. En este momento estamos fuera del horario de atención; te responderemos apenas retomemos. Si es una emergencia del servicio, dejanos el detalle y lo priorizamos.";
 
     public static function for(int $companyId): array
@@ -24,6 +25,13 @@ class CrmSettings
             'welcome_message'    => $row->welcome_message ?? null,
             'wait_alert_minutes' => (int)($row->wait_alert_minutes ?? 15),
             'timezone'           => $row->timezone ?? 'America/Bogota',
+
+            // Identificación previa: pedirle la cédula al cliente antes de que
+            // la conversación llegue al agente.
+            'identificacion_enabled'           => (bool)($row->identificacion_enabled ?? false),
+            'identificacion_solo_desconocidos' => (bool)($row->identificacion_solo_desconocidos ?? false),
+            'identificacion_intentos'          => (int)($row->identificacion_intentos ?? 2),
+            'identificacion_mensaje'           => $row->identificacion_mensaje ?? null,
         ];
     }
 

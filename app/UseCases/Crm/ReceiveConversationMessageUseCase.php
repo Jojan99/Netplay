@@ -125,8 +125,51 @@ public function execute(array $payload): array
         throw new \Exception('No se pudo resolver la empresa del webhook');
     }
 
+    // ─── Puerta de identificación ───
+    //
+    // Antes de crear la conversación se comprueba si hay que pedirle la cédula
+    // a esta persona. Mientras se pregunta, el mensaje queda retenido y no se
+    // crea nada en el CRM: el agente no ve chats de gente sin identificar.
+    // Cuando responde, la puerta devuelve los mensajes retenidos para que
+    // entren en orden, como si hubieran llegado recién.
+    $puerta = app(\App\Services\Crm\PuertaIdentificacion::class);
+    $mensajesPrevios = [];
+
+    if (!($payload['_saltar_identificacion'] ?? false)) {
+        $decision = $puerta->evaluar($companyId, $provider, $phone, $data['content'] ?? null, $payload);
+
+        if ($decision['accion'] === \App\Services\Crm\PuertaIdentificacion::RETIENE) {
+            return ['status' => 'retenido_identificacion', 'phone' => $phone];
+        }
+
+        // Los retenidos incluyen el mensaje actual al final; se procesan los
+        // anteriores y este sigue por el camino normal de abajo.
+        $mensajesPrevios = array_slice($decision['retenidos'] ?? [], 0, -1);
+        $identidad = $decision;
+    } else {
+        $identidad = ['dni' => null, 'user_id' => null, 'nombre' => null];
+    }
+
     $conversationId = $this->repository
         ->getOrCreateConversationByPhone($phone, $names, $companyId, $provider);
+
+    // Vincular el cliente real a la ficha del CRM, que hasta ahora solo tenía
+    // el teléfono. Es lo que permite abrir la ficha del cliente desde el chat.
+    if (!empty($identidad['dni']) || !empty($identidad['user_id'])) {
+        $this->vincularCliente($conversationId, $identidad);
+    }
+
+    // Soltar lo que el cliente escribió mientras se le preguntaba
+    foreach ($mensajesPrevios as $previo) {
+        try {
+            $previo['_saltar_identificacion'] = true;
+            $this->execute($previo);
+        } catch (\Throwable $e) {
+            Log::warning('[Identificación] No se pudo soltar un mensaje retenido', [
+                'phone' => $phone, 'error' => $e->getMessage(),
+            ]);
+        }
+    }
 
     // ─── Registrar LID / JID → teléfono real en whatsapp-service ───
     // Cada mensaje que llega le dice al servicio de WhatsApp cuál es
@@ -421,6 +464,40 @@ private function resolveMediaMetadata(string $url): array
 
     } catch (\Throwable) {
         return [null, null, null];
+    }
+}
+
+/**
+ * Deja el cliente de Netplay pegado a la ficha del CRM.
+ *
+ * crm_customers solo guardaba el teléfono; sin esto el agente no puede abrir
+ * la ficha del cliente desde el chat porque no hay a quién apuntar.
+ */
+private function vincularCliente(int $conversationId, array $identidad): void
+{
+    try {
+        $customerId = \Illuminate\Support\Facades\DB::table('crm_conversations')
+            ->where('id', $conversationId)->value('customer_id');
+
+        if (!$customerId) {
+            return;
+        }
+
+        $cambios = array_filter([
+            'user_id' => $identidad['user_id'] ?? null,
+            'dni'     => $identidad['dni'] ?? null,
+            'name'    => $identidad['nombre'] ?? null,
+        ], fn($v) => $v !== null && $v !== '');
+
+        if ($cambios) {
+            \Illuminate\Support\Facades\DB::table('crm_customers')
+                ->where('id', $customerId)
+                ->update($cambios + ['updated_at' => now()]);
+        }
+    } catch (\Throwable $e) {
+        \Illuminate\Support\Facades\Log::warning('[Identificación] No se pudo vincular el cliente', [
+            'conversation_id' => $conversationId, 'error' => $e->getMessage(),
+        ]);
     }
 }
 }

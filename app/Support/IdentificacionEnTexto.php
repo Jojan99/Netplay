@@ -83,8 +83,11 @@ class IdentificacionEnTexto
                 continue;
             }
 
-            // Un número que es todo ceros o todo el mismo dígito no es un documento
-            if (preg_match('/^(\d)\1+$/', $limpio)) {
+            // Solo se descarta el número en ceros. Al principio se descartaba
+            // cualquier dígito repetido, pero eso tiraba documentos válidos:
+            // la cédula de pruebas 999999999 quedaba fuera y el cliente
+            // terminaba como "sin registro".
+            if (preg_match('/^0+$/', $limpio)) {
                 continue;
             }
 

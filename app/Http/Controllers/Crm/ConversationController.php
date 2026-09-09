@@ -656,6 +656,7 @@ public function getSettings(): JsonResponse
     $s = \App\Support\CrmSettings::for(getSessionCompanyId());
     $s['welcome_message_default']   = \App\Support\CrmSettings::DEFAULT_WELCOME;
     $s['off_hours_message_default'] = \App\Support\CrmSettings::DEFAULT_OFF_HOURS;
+    $s['identificacion_mensaje_default'] = \App\Support\CrmSettings::DEFAULT_IDENTIFICACION;
     $s['open_now'] = \App\Support\CrmSettings::isOpenNow($s);
     return response()->json(['ok' => true, 'data' => $s]);
 }
@@ -673,6 +674,10 @@ public function saveSettings(Request $request): JsonResponse
         'welcome_message'    => 'nullable|string|max:2000',
         'wait_alert_minutes' => 'integer|min:1|max:1440',
         'timezone'           => 'nullable|string|max:40',
+        'identificacion_enabled'           => 'boolean',
+        'identificacion_solo_desconocidos' => 'boolean',
+        'identificacion_intentos'          => 'integer|min:1|max:5',
+        'identificacion_mensaje'           => 'nullable|string|max:2000',
     ]);
     if (isset($data['business_days'])) $data['business_days'] = json_encode(array_values(array_unique(array_map('intval', $data['business_days']))));
     $data['updated_at'] = now();
