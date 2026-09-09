@@ -18,6 +18,13 @@ Route::prefix('company')->group(function () {
     Route::get('confirm/{token}', [CompanyController::class, 'confirmEmail'])
         ->withoutMiddleware('jwt.verify');
 
+    // Canje del vale de un solo uso que deja la confirmación, para entrar sin
+    // volver a pedir credenciales. Con tope de intentos: el vale es aleatorio
+    // pero no hay razón para permitir que alguien pruebe muchos.
+    Route::post('confirm-session', [CompanyController::class, 'confirmSession'])
+        ->withoutMiddleware('jwt.verify')
+        ->middleware('throttle:10,1');
+
     // ── Cualquier usuario autenticado ─────────────────────────────────────────
     Route::get('my-modules',             [CompanyController::class, 'getMyModules']);
     Route::post('whatsapp/plan-request', [CompanyController::class, 'submitPlanRequest']);

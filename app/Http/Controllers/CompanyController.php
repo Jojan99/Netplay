@@ -46,19 +46,62 @@ class CompanyController extends Controller
     /**
      * GET /api/company/confirm/{token}
      * Confirma el correo de la empresa activando la cuenta.
+     *
+     * Este enlace lo abre una persona desde su cliente de correo, así que
+     * responde con una redirección al panel y no con JSON: antes el usuario
+     * terminaba mirando una respuesta de API en crudo y tenía que volver a
+     * buscar el login por su cuenta.
+     *
+     * El 'vale' viaja en la URL a propósito y es de un solo uso y vida corta:
+     * el frontend lo canjea por la sesión con un POST, así el token real nunca
+     * queda en el historial del navegador.
      */
     public function confirmEmail(
         string $token,
-        ConfirmCompanyEmailUseCaseInterface $confirmCompanyEmailUseCase
-    ): object {
+        ConfirmCompanyEmailUseCaseInterface $confirmCompanyEmailUseCase,
+        Request $request
+    ) {
         $result = $confirmCompanyEmailUseCase->confirm($token);
+        $datos  = $result['data'] ?? [];
 
-        return standardApiReponse(
-            $result['message'],
-            $result['data'],
-            $result['status'],
-            JsonResponse::HTTP_OK
+        // Quien llame pidiendo JSON (una integración, una prueba) lo sigue recibiendo.
+        if ($request->wantsJson() && !$request->acceptsHtml()) {
+            return standardApiReponse($result['message'], $datos, $result['status'], JsonResponse::HTTP_OK);
+        }
+
+        $parametros = ['estado' => $datos['estado'] ?? 'invalido'];
+
+        if (!empty($datos['vale'])) {
+            $parametros['vale'] = $datos['vale'];
+        }
+        if (!empty($datos['company'])) {
+            $parametros['empresa'] = $datos['company'];
+        }
+
+        return redirect()->away(
+            rtrim(config('app.url'), '/') . '/confirm-email?' . http_build_query($parametros)
         );
+    }
+
+    /**
+     * POST /api/company/confirm-session  { vale }
+     * Canjea el vale de un solo uso que dejó la confirmación por una sesión.
+     */
+    public function confirmSession(Request $request, \App\Services\AccesoDirectoService $acceso): JsonResponse
+    {
+        $request->validate(['vale' => 'required|string|max:120']);
+
+        $sesion = $acceso->canjear($request->input('vale'));
+
+        if (!$sesion) {
+            return response()->json([
+                'message' => 'Este enlace ya se usó o venció. Iniciá sesión con tu usuario y contraseña.',
+                'data'    => null,
+                'error'   => 1,
+            ], JsonResponse::HTTP_OK);
+        }
+
+        return response()->json(['message' => 'Sesión iniciada', 'data' => $sesion, 'error' => 0]);
     }
 
     /**
