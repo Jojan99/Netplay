@@ -18,8 +18,12 @@ namespace App\Support;
  *  - Categoría UTILITY: son avisos sobre algo que el cliente ya tiene con la
  *    empresa (su factura, su pago, su servicio). MARKETING se aprueba peor y
  *    puede cobrarse distinto.
- *  - El cuerpo no puede empezar ni terminar con una variable, ni tener dos
- *    variables seguidas.
+ *  - El cuerpo no puede empezar ni terminar con una variable. "Terminar" es
+ *    más estricto de lo que dice la documentación: no alcanza con poner un
+ *    punto después, tiene que haber palabras reales. Comprobado contra la API:
+ *    "Saludos de {{3}}." se rechaza y "…el equipo de {{3}} para que lo firmes"
+ *    se acepta.
+ *  - Tampoco puede tener dos variables seguidas.
  *  - Las variables van numeradas y en orden: {{1}}, {{2}}, …
  */
 class PlantillasSemilla
@@ -31,8 +35,26 @@ class PlantillasSemilla
      *   pie:?string, boton_url:?array{texto:string, url:string, ejemplo:string}
      * }>
      */
+    /**
+     * Base de los enlaces que llevan los botones.
+     *
+     * Meta no acepta "{{1}}" como URL: exige una URL válida con la variable al
+     * final. El token va como parámetro, así que la base es siempre la misma y
+     * lo que cambia es el token de cada factura o contrato.
+     *
+     * Sale de config('app.url') y no escrita a fuego: la plataforma puede
+     * correr en otro dominio y las plantillas se crean en la cuenta de cada
+     * empresa contra ese mismo dominio.
+     */
+    private static function base(): string
+    {
+        return rtrim((string) config('app.url'), '/');
+    }
+
     public static function todas(): array
     {
+        $base = self::base();
+
         return [
             'envio_factura' => [
                 'evento'      => 'envio_factura',
@@ -41,9 +63,9 @@ class PlantillasSemilla
                 'idioma'      => 'es',
                 'descripcion' => 'Sale con la facturación del mes, cuando se genera la factura.',
                 'variables'   => ['cliente', 'numero_factura', 'valor_numero', 'fecha_emision', 'fecha_vence', 'empresa'],
-                'cuerpo'      => "Hola {{1}} 👋\n\nTu factura ya está disponible.\n\n🧾 Factura: {{2}}\n💰 Valor: \${{3}}\n📅 Emitida: {{4}}\n⏰ Vence: {{5}}\n\nGracias por confiar en {{6}}.",
+                'cuerpo'      => "Hola {{1}} 👋\n\nTu factura ya está disponible.\n\n🧾 Factura: {{2}}\n💰 Valor: \${{3}}\n📅 Emitida: {{4}}\n⏰ Vence: {{5}}\n\nGracias por confiar en {{6}} para tu servicio de internet.",
                 'pie'         => 'Si ya pagaste, ignorá este mensaje.',
-                'boton_url'   => ['texto' => 'Ver mi factura', 'url' => '{{1}}', 'ejemplo' => 'https://netplay.com.co/api/factura/ejemplo'],
+                'boton_url'   => ['texto' => 'Ver mi factura', 'url' => $base . '/api/factura/{{1}}', 'ejemplo' => $base . '/api/factura/1-abc123'],
             ],
 
             'recordatorio_pago' => [
@@ -53,9 +75,9 @@ class PlantillasSemilla
                 'idioma'      => 'es',
                 'descripcion' => 'Avisa antes del vencimiento, para que el cliente no entre en mora.',
                 'variables'   => ['cliente', 'numero_factura', 'valor_numero', 'fecha_vence', 'empresa'],
-                'cuerpo'      => "Hola {{1}} 👋\n\nTe recordamos que tu factura {{2}} por \${{3}} vence el {{4}}.\n\nPodés pagarla desde el botón de abajo.\n\n{{5}}",
+                'cuerpo'      => "Hola {{1}} 👋\n\nTe recordamos que tu factura {{2}} por \${{3}} vence el {{4}}.\n\nPodés pagarla desde el botón de abajo.\n\nUn saludo del equipo de {{5}}, gracias por tu preferencia.",
                 'pie'         => 'Si ya pagaste, ignorá este mensaje.',
-                'boton_url'   => ['texto' => 'Pagar ahora', 'url' => '{{1}}', 'ejemplo' => 'https://netplay.com.co/api/pay/ejemplo'],
+                'boton_url'   => ['texto' => 'Pagar ahora', 'url' => $base . '/api/pay/{{1}}', 'ejemplo' => $base . '/api/pay/abc123'],
             ],
 
             'suspension_mora' => [
@@ -65,9 +87,9 @@ class PlantillasSemilla
                 'idioma'      => 'es',
                 'descripcion' => 'Avisa que el servicio se suspenderá si no se paga.',
                 'variables'   => ['cliente', 'numero_factura', 'valor_numero', 'fecha_vence', 'dias_mora', 'empresa'],
-                'cuerpo'      => "Hola {{1}},\n\nTu factura {{2}} por \${{3}} venció el {{4}} y lleva {{5}} días sin pago.\n\nPara evitar la suspensión del servicio, regularizá el pago lo antes posible.\n\n{{6}}",
+                'cuerpo'      => "Hola {{1}},\n\nTu factura {{2}} por \${{3}} venció el {{4}} y lleva {{5}} días sin pago.\n\nPara evitar la suspensión del servicio, regularizá el pago lo antes posible.\n\nQuedamos atentos desde el equipo de {{6}} para ayudarte.",
                 'pie'         => 'Si ya pagaste, escribinos y lo verificamos.',
-                'boton_url'   => ['texto' => 'Pagar ahora', 'url' => '{{1}}', 'ejemplo' => 'https://netplay.com.co/api/pay/ejemplo'],
+                'boton_url'   => ['texto' => 'Pagar ahora', 'url' => $base . '/api/pay/{{1}}', 'ejemplo' => $base . '/api/pay/abc123'],
             ],
 
             'servicio_reactivado' => [
@@ -77,7 +99,7 @@ class PlantillasSemilla
                 'idioma'      => 'es',
                 'descripcion' => 'El cliente pagó y su servicio volvió a quedar activo.',
                 'variables'   => ['cliente', 'valor_numero', 'empresa'],
-                'cuerpo'      => "¡Listo {{1}}! ✅\n\nRecibimos tu pago de \${{2}} y tu servicio ya está activo de nuevo.\n\nGracias por estar al día con {{3}}.",
+                'cuerpo'      => "¡Listo {{1}}! ✅\n\nRecibimos tu pago de \${{2}} y tu servicio ya está activo de nuevo.\n\nGracias por estar al día con {{3}} y seguir con nosotros.",
                 'pie'         => null,
                 'boton_url'   => null,
             ],
@@ -89,7 +111,7 @@ class PlantillasSemilla
                 'idioma'      => 'es',
                 'descripcion' => 'El pago se acreditó sobre las facturas del cliente.',
                 'variables'   => ['cliente', 'valor_numero', 'numero_factura', 'medio_pago', 'empresa'],
-                'cuerpo'      => "¡Gracias {{1}}! ✅\n\nTu pago de \${{2}} sobre la factura {{3}} quedó registrado.\n\n💳 Medio: {{4}}\n\nSaludos de {{5}}.",
+                'cuerpo'      => "¡Gracias {{1}}! ✅\n\nTu pago de \${{2}} sobre la factura {{3}} quedó registrado.\n\n💳 Medio: {{4}}\n\nSaludos del equipo de {{5}}, quedamos atentos.",
                 'pie'         => 'Este es tu comprobante de pago.',
                 'boton_url'   => null,
             ],
@@ -101,9 +123,9 @@ class PlantillasSemilla
                 'idioma'      => 'es',
                 'descripcion' => 'La pasarela rechazó el pago o la transacción fue anulada.',
                 'variables'   => ['cliente', 'valor_numero', 'numero_factura', 'medio_pago', 'motivo', 'empresa'],
-                'cuerpo'      => "Hola {{1}},\n\nTu pago de \${{2}} sobre la factura {{3}} no se pudo completar.\n\n💳 Medio: {{4}}\n📄 Motivo: {{5}}\n\nNo se te hizo ningún cobro. Podés intentarlo de nuevo cuando quieras.\n\n{{6}}",
+                'cuerpo'      => "Hola {{1}},\n\nTu pago de \${{2}} sobre la factura {{3}} no se pudo completar.\n\n💳 Medio: {{4}}\n📄 Motivo: {{5}}\n\nNo se te hizo ningún cobro. Podés intentarlo de nuevo cuando quieras.\n\nQuedamos atentos desde el equipo de {{6}} para ayudarte.",
                 'pie'         => null,
-                'boton_url'   => ['texto' => 'Reintentar el pago', 'url' => '{{1}}', 'ejemplo' => 'https://netplay.com.co/api/pay/ejemplo'],
+                'boton_url'   => ['texto' => 'Reintentar el pago', 'url' => $base . '/api/pay/{{1}}', 'ejemplo' => $base . '/api/pay/abc123'],
             ],
 
             'pago_pendiente' => [
@@ -113,7 +135,7 @@ class PlantillasSemilla
                 'idioma'      => 'es',
                 'descripcion' => 'El cobro se generó pero todavía no se acredita (efectivo, transferencia).',
                 'variables'   => ['cliente', 'valor_numero', 'numero_factura', 'empresa'],
-                'cuerpo'      => "Hola {{1}},\n\nRegistramos tu pago de \${{2}} sobre la factura {{3}}, pero todavía no se acredita.\n\nApenas se confirme te avisamos por acá.\n\n{{4}}",
+                'cuerpo'      => "Hola {{1}},\n\nRegistramos tu pago de \${{2}} sobre la factura {{3}}, pero todavía no se acredita.\n\nApenas se confirme te avisamos por acá.\n\nTe lo confirma el equipo de {{4}} apenas se acredite.",
                 'pie'         => 'Puede tardar unos minutos.',
                 'boton_url'   => null,
             ],
@@ -129,9 +151,9 @@ class PlantillasSemilla
                 'idioma'      => 'es',
                 'descripcion' => 'Le manda al cliente el enlace para firmar su contrato.',
                 'variables'   => ['cliente', 'contrato', 'empresa'],
-                'cuerpo'      => "Hola {{1}} 👋\n\nTe compartimos tu contrato *{{2}}* para que lo revises y lo firmes.\n\nAbrí el botón desde tu teléfono para completar la firma.\n\n{{3}}",
+                'cuerpo'      => "Hola {{1}} 👋\n\nTe compartimos tu contrato *{{2}}* para que lo revises y lo firmes.\n\nAbrí el botón desde tu teléfono para completar la firma.\n\nTe lo envía el equipo de {{3}} para que lo firmes.",
                 'pie'         => 'El enlace es personal, no lo compartas.',
-                'boton_url'   => ['texto' => 'Firmar contrato', 'url' => '{{1}}', 'ejemplo' => 'https://netplay.com.co/contrato/ejemplo'],
+                'boton_url'   => ['texto' => 'Firmar contrato', 'url' => $base . '/contrato/firmar/{{1}}', 'ejemplo' => $base . '/contrato/firmar/abc123'],
             ],
         ];
     }
