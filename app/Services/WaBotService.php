@@ -1277,7 +1277,8 @@ class WaBotService
         }
     }
 
-    private function extractTextFromProof(string $path): ?string
+    /** Público: lo reusa también el flujo de comprobantes de WhatsApp Web. */
+    public function extractTextFromProof(string $path): ?string
     {
         try {
             $process = new Process(['tesseract', $path, 'stdout', '-l', 'spa', '--psm', '6']);
@@ -1291,7 +1292,8 @@ class WaBotService
         }
     }
 
-    private function extractPaymentProofDetails(string $text): array
+    /** Público: lo reusa también el flujo de comprobantes de WhatsApp Web. */
+    public function extractPaymentProofDetails(string $text): array
     {
         $amount = null;
         if (preg_match('/(?:valor\s+de\s+la\s+transferencia|valor\s+transferido|monto\s+transferido|importe\s+enviado|cu[aá]nto\??)[^\d$]{0,80}\$?\s*([\d\.,]+)/iu', $text, $match)

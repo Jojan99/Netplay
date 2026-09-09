@@ -125,6 +125,30 @@ public function execute(array $payload): array
         throw new \Exception('No se pudo resolver la empresa del webhook');
     }
 
+    // ─── Descartar los eventos vacíos ANTES de crear nada ───
+    //
+    // WhatsApp manda eventos internos que Baileys no clasifica (ajustes de
+    // mensajes temporales, borrados, vencimiento de "ver una vez"): llegan con
+    // type "unknown" y sin texto ni archivo.
+    //
+    // La comprobación va acá y no más abajo a propósito: si se descarta el
+    // mensaje después de getOrCreateConversationByPhone, la conversación ya
+    // quedó creada y aparece vacía en la bandeja del agente.
+    $tiposConocidos = ['text', 'image', 'video', 'audio', 'document', 'sticker',
+                       'location', 'contact', 'poll', 'event', 'reaction'];
+
+    if (!in_array($data['type'] ?? '', $tiposConocidos, true)
+        && empty($data['content']) && empty($data['body'])
+        && empty($data['url']) && empty($data['mediaUrl']) && empty($data['filepath'])) {
+        Log::info('[Evento vacío ignorado]', [
+            'type'      => $data['type'] ?? null,
+            'phone'     => $phone,
+            'data_keys' => array_keys($data),
+        ]);
+
+        return ['status' => 'ignored', 'reason' => 'evento_sin_contenido'];
+    }
+
     // ─── Puerta de identificación ───
     //
     // Antes de crear la conversación se comprueba si hay que pedirle la cédula

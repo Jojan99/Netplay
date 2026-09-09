@@ -11,6 +11,9 @@ class PaymentProof extends Model
 
     protected $fillable = [
         'company_id',
+        // De dónde vino: 'whatsapp_web' (los que manda el cliente al número
+        // de WhatsApp Web) o 'meta' (los del bot de la API oficial).
+        'source',
         'user_id',
         'invoice_id',
         'file_path',

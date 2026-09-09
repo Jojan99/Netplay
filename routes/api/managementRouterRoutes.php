@@ -98,6 +98,14 @@ Route::prefix('management')->group(function () {
         [ConversationController::class, 'receiveMessage']
     )->withoutMiddleware('jwt.verify');
 
+    // 🧾 Comprobante de pago recibido por WhatsApp Web.
+    // Lo manda el servicio Node máquina a máquina, firmado con la clave
+    // maestra: no hay sesión de usuario detrás de un mensaje entrante.
+    Route::post(
+        'wa-proof',
+        [\App\Http\Controllers\Crm\ComprobanteWaWebController::class, 'store']
+    )->withoutMiddleware('jwt.verify')->middleware(['clave.maestra', 'throttle:120,1']);
+
     // 🔁 Transferir conversación
     Route::post(
         'conversations/{conversationId}/transfer',

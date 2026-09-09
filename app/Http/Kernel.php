@@ -73,5 +73,6 @@ class Kernel extends HttpKernel
         'jwt.client'   => \App\Http\Middleware\ClientJwtMiddleware::class,
         'role'         => \App\Http\Middleware\RoleMiddleware::class,
         'module'       => \App\Http\Middleware\ModuleMiddleware::class,
+        'clave.maestra'=> \App\Http\Middleware\ClaveMaestraMiddleware::class,
     ];
 }
