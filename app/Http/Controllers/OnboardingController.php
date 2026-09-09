@@ -96,7 +96,7 @@ class OnboardingController extends Controller
         $clientes  = $this->contarClientes($companyId);
         $facturas  = $this->contar('cab_facturations', $companyId);
         $staff     = $this->contarStaff($companyId);
-        $metodos   = $this->contar('payment_methods', $companyId);
+        $routers   = $this->contar('conection_routers', $companyId);
 
         $datosFacturacion = !empty($empresa->invoice_business_name) || !empty($empresa->invoice_nit ?? null);
 
@@ -120,6 +120,18 @@ class OnboardingController extends Controller
                 'cuenta'      => $planes ? "$planes cargados" : null,
             ],
             [
+                // Va antes de los clientes a propósito: el router es lo que
+                // después permite darle servicio y cortarlo por mora. Cargar
+                // clientes sin MikroTik deja el control de red a mano.
+                'clave'       => 'mikrotik',
+                'titulo'      => 'Conectá tu MikroTik',
+                'detalle'     => 'Cargá el router con su IP, usuario y contraseña. Es lo que después deja asignar ancho de banda y suspender por mora sin tocar nada a mano.',
+                'ruta'        => '/dashboard/mikrotik',
+                'boton'       => 'Agregar MikroTik',
+                'hecho'       => $routers > 0,
+                'cuenta'      => $routers ? ($routers === 1 ? '1 router' : "$routers routers") : null,
+            ],
+            [
                 'clave'       => 'clientes',
                 'titulo'      => 'Registrá tus clientes',
                 'detalle'     => 'Podés cargarlos de a uno o importarlos. Cada cliente queda con su plan, su dirección y su estado de servicio.',
@@ -129,20 +141,15 @@ class OnboardingController extends Controller
                 'cuenta'      => $clientes ? "$clientes registrados" : null,
             ],
             [
-                'clave'       => 'metodos-pago',
-                'titulo'      => 'Definí cómo te pagan',
-                'detalle'     => 'Nequi, transferencia, efectivo o la pasarela en línea. Es lo que aparece en la factura y en el portal del cliente.',
-                'ruta'        => '/dashboard/finanzas/metodos-pago',
-                'boton'       => 'Métodos de pago',
-                'hecho'       => $metodos > 0 || !empty($empresa->pg_active),
-                'cuenta'      => $metodos ? "$metodos configurados" : null,
-            ],
-            [
+                // Antes apuntaba a /dashboard/finanzas, que es "Cartera y
+                // recaudo": ahí se registran pagos de facturas que ya existen,
+                // no se emiten. La facturación del período se dispara desde
+                // Configuración de facturación, pestaña Grupos de facturación.
                 'clave'       => 'facturar',
                 'titulo'      => 'Generá tu primera facturación',
-                'detalle'     => 'Desde Finanzas se emiten las facturas del período y quedan listas para enviarse por WhatsApp o correo.',
-                'ruta'        => '/dashboard/finanzas',
-                'boton'       => 'Ir a finanzas',
+                'detalle'     => 'En Grupos de facturación definís el día de corte y con “Ejecutar ahora” emitís las facturas del período, listas para enviarse por WhatsApp o correo.',
+                'ruta'        => '/dashboard/billing-config',
+                'boton'       => 'Ir a facturación',
                 'hecho'       => $facturas > 0,
                 'cuenta'      => $facturas ? "$facturas emitidas" : null,
             ],
