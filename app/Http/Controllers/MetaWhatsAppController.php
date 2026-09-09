@@ -86,7 +86,15 @@ class MetaWhatsAppController extends Controller
                 ], 400);
             }
 
-            return response()->json(['ok' => true, 'data' => $response->json('data') ?? []]);
+            // Se marca cuáles pertenecen al catálogo del sistema: esas no se
+            // pueden eliminar, porque son las que usa la plataforma para
+            // avisar fuera de la ventana de 24 h.
+            $lista = array_map(function (array $t): array {
+                $t['del_sistema'] = \App\Support\PlantillasSemilla::esDelSistema($t['name'] ?? '');
+                return $t;
+            }, $response->json('data') ?? []);
+
+            return response()->json(['ok' => true, 'data' => $lista]);
         } catch (\Throwable $e) {
             Log::error('[MetaWhatsAppController] Error templates', ['error' => $e->getMessage()]);
             return response()->json(['ok' => false, 'error' => $e->getMessage()], 500);
@@ -155,6 +163,18 @@ class MetaWhatsAppController extends Controller
 
         if (!$config) {
             return response()->json(['ok' => false, 'error' => 'Meta no configurado'], 400);
+        }
+
+        // Las plantillas del catálogo del sistema no se pueden borrar: son las
+        // que la plataforma usa para avisar fuera de la ventana de 24 h, y
+        // volver a crearlas obliga a esperar otra revisión de Meta. Se protege
+        // acá y no solo escondiendo el botón, porque esconderlo no impide la
+        // llamada a la API.
+        if (\App\Support\PlantillasSemilla::esDelSistema($name)) {
+            return response()->json([
+                'ok'    => false,
+                'error' => 'Esa plantilla la usa el sistema para sus avisos automáticos y no se puede eliminar. Si querés otra redacción, creá una propia y asignala en Avisos automáticos.',
+            ], 422);
         }
 
         try {

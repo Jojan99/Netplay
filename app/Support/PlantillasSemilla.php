@@ -136,6 +136,26 @@ class PlantillasSemilla
         ];
     }
 
+    /** ¿Este nombre es de una plantilla del catálogo del sistema? */
+    public static function esDelSistema(string $nombre): bool
+    {
+        $nombre = strtolower(trim($nombre));
+
+        foreach (self::todas() as $def) {
+            if (strtolower($def['nombre']) === $nombre) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** Los nombres del catálogo, para que el panel sepa cuáles proteger. */
+    public static function nombres(): array
+    {
+        return array_values(array_map(fn ($d) => $d['nombre'], self::todas()));
+    }
+
     /** Solo la definición de un evento. */
     public static function para(string $evento): ?array
     {
