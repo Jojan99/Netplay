@@ -11,9 +11,32 @@ use Illuminate\Support\Facades\Auth;
 
 class PaymentProofController extends Controller
 {
+    /**
+     * Todos los comprobantes son de la empresa en sesión. Sin este filtro la
+     * auditoría mostraba (y dejaba aprobar) los comprobantes de otras empresas.
+     */
+    private function scoped()
+    {
+        $companyId = getSessionCompanyId() ?: (\Tymon\JWTAuth\Facades\JWTAuth::user()->company_id ?? null);
+        if (!$companyId) {
+            abort(response()->json(['status' => 'error', 'message' => 'Sin empresa en sesión.'], 403));
+        }
+        return PaymentProof::query()->where('company_id', $companyId);
+    }
+
+    /** Busca un comprobante de la empresa en sesión o corta con 404. */
+    private function findOwned(int $id): PaymentProof
+    {
+        $proof = $this->scoped()->find($id);
+        if (!$proof) {
+            abort(response()->json(['status' => 'error', 'message' => 'Comprobante no encontrado.'], 404));
+        }
+        return $proof;
+    }
+
     public function index(Request $request): JsonResponse
     {
-        $query = PaymentProof::with(['user', 'invoice', 'audits'])->orderByDesc('created_at');
+        $query = $this->scoped()->with(['user', 'invoice', 'audits'])->orderByDesc('created_at');
 
         if ($request->filled('status')) {
             $query->where('status', $request->status);
@@ -61,7 +84,7 @@ class PaymentProofController extends Controller
 
     public function show(int $id): JsonResponse
     {
-        $proof = PaymentProof::with(['user', 'invoice', 'audits'])->findOrFail($id);
+        $proof = $this->findOwned($id)->load(['user', 'invoice', 'audits']);
 
         return response()->json([
             'status' => 'success',
@@ -71,7 +94,7 @@ class PaymentProofController extends Controller
 
     public function markSuspicious(int $id, Request $request): JsonResponse
     {
-        $proof = PaymentProof::findOrFail($id);
+        $proof = $this->findOwned($id);
         $previous = $proof->status;
 
         $proof->update([
@@ -95,7 +118,7 @@ class PaymentProofController extends Controller
 
     public function approve(int $id, Request $request): JsonResponse
     {
-        $proof = PaymentProof::findOrFail($id);
+        $proof = $this->findOwned($id);
         $previous = $proof->status;
 
         $invoice = $proof->invoice;
@@ -134,7 +157,7 @@ class PaymentProofController extends Controller
 
     public function reject(int $id, Request $request): JsonResponse
     {
-        $proof = PaymentProof::findOrFail($id);
+        $proof = $this->findOwned($id);
         $previous = $proof->status;
 
         $proof->update([
@@ -157,7 +180,7 @@ class PaymentProofController extends Controller
 
     public function revert(int $id, Request $request): JsonResponse
     {
-        $proof = PaymentProof::findOrFail($id);
+        $proof = $this->findOwned($id);
         $previous = $proof->status;
 
         $invoice = $proof->invoice;

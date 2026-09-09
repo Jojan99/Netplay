@@ -434,7 +434,7 @@ class InstallationOrderController extends Controller
 
     public function logs($id)
     {
-        $installation = InstallationOrder::findOrFail($id);
+        $installation = InstallationOrder::where('id', $id)->where('company_id', getSessionCompanyId())->firstOrFail();
         $logs = $installation->logs()->get();
         
         return response()->json($logs);
@@ -442,7 +442,7 @@ class InstallationOrderController extends Controller
 
     public function createLog(Request $request, $id)
     {
-        $installation = InstallationOrder::findOrFail($id);
+        $installation = InstallationOrder::where('id', $id)->where('company_id', getSessionCompanyId())->firstOrFail();
         
         $log = InstallationLog::create([
             'installation_id' => $id,

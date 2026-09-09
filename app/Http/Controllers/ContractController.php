@@ -473,7 +473,7 @@ class ContractController extends Controller
         ]);
 
         try {
-            $contract = \App\Models\Contract::findOrFail($id);
+            $contract = \App\Models\Contract::where('id', $id)->where('company_id', getSessionCompanyId())->firstOrFail();
             $companyId = getSessionCompanyId();
             $file = $request->file('pdf');
 
@@ -510,7 +510,7 @@ class ContractController extends Controller
         ]);
 
         try {
-            $contract = \App\Models\Contract::findOrFail($id);
+            $contract = \App\Models\Contract::where('id', $id)->where('company_id', getSessionCompanyId())->firstOrFail();
             $file = $request->file('logo');
             $content = file_get_contents($file->getRealPath());
             $mime = $file->getMimeType();
@@ -608,7 +608,7 @@ class ContractController extends Controller
     public function getPdfDimensions(int $id): JsonResponse
     {
         try {
-            $contract = \App\Models\Contract::findOrFail($id);
+            $contract = \App\Models\Contract::where('id', $id)->where('company_id', getSessionCompanyId())->firstOrFail();
             if (!$contract->pdf_path) {
                 return response()->json([
                     'status'  => 1,
@@ -657,7 +657,7 @@ class ContractController extends Controller
     public function pdfPreview(int $id): mixed
     {
         try {
-            $contract = \App\Models\Contract::findOrFail($id);
+            $contract = \App\Models\Contract::where('id', $id)->where('company_id', getSessionCompanyId())->firstOrFail();
             if (!$contract->pdf_path) {
                 return response()->json([
                     'status'  => 1,
