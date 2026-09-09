@@ -888,13 +888,22 @@ public function deleteMessage(int $conversationId, int $messageId): JsonResponse
         return response()->json(['ok' => false, 'error' => 'Ese mensaje no llegó a enviarse a WhatsApp.'], 422);
     }
 
-    $r = (new \App\Services\NetplayWhatsAppService($companyId, true))
-        ->borrarMensaje($msg->phone, $msg->external_id);
+    // sendRequest lanza excepción si la pasarela falla, y en éxito devuelve
+    // {status:"ok"}; no trae una clave 'success'. Comprobarla daba siempre
+    // por fallido un borrado que en realidad había funcionado.
+    try {
+        $r = (new \App\Services\NetplayWhatsAppService($companyId, true))
+            ->borrarMensaje($msg->phone, $msg->external_id);
 
-    if (!($r['success'] ?? false)) {
+        if (($r['status'] ?? null) !== 'ok') {
+            throw new \RuntimeException($r['message'] ?? 'Respuesta inesperada del servicio de WhatsApp.');
+        }
+    } catch (\Throwable $e) {
+        \Log::warning('[CRM] No se pudo borrar el mensaje', ['id' => $messageId, 'error' => $e->getMessage()]);
+
         return response()->json([
             'ok'    => false,
-            'error' => $r['error'] ?? 'WhatsApp no permitió borrar el mensaje. Puede que haya pasado demasiado tiempo.',
+            'error' => 'WhatsApp no permitió borrar el mensaje. Puede que haya pasado demasiado tiempo.',
         ], 422);
     }
 
@@ -946,11 +955,20 @@ public function editMessage(Request $request, int $conversationId, int $messageI
         ], 422);
     }
 
-    $r = (new \App\Services\NetplayWhatsAppService($companyId, true))
-        ->editarMensaje($msg->phone, $msg->external_id, $request->input('content'));
+    try {
+        $r = (new \App\Services\NetplayWhatsAppService($companyId, true))
+            ->editarMensaje($msg->phone, $msg->external_id, $request->input('content'));
 
-    if (!($r['success'] ?? false)) {
-        return response()->json(['ok' => false, 'error' => $r['error'] ?? 'WhatsApp no permitió editar el mensaje.'], 422);
+        if (($r['status'] ?? null) !== 'ok') {
+            throw new \RuntimeException($r['message'] ?? 'Respuesta inesperada del servicio de WhatsApp.');
+        }
+    } catch (\Throwable $e) {
+        \Log::warning('[CRM] No se pudo editar el mensaje', ['id' => $messageId, 'error' => $e->getMessage()]);
+
+        return response()->json([
+            'ok'    => false,
+            'error' => 'WhatsApp no permitió editar el mensaje: ' . $e->getMessage(),
+        ], 422);
     }
 
     DB::table('crm_messages')->where('id', $messageId)->update([
