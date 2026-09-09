@@ -62,6 +62,51 @@ class CompanyController extends Controller
     }
 
     /**
+     * POST /api/company/resend-confirmation  { user | email }
+     * Vuelve a mandar el correo de activación. Sin esto, si el correo se pierde
+     * o cae en spam la empresa queda registrada pero sin poder entrar.
+     */
+    public function resendConfirmation(Request $request): JsonResponse
+    {
+        $request->validate(['user' => 'nullable|string|max:120', 'email' => 'nullable|email']);
+
+        $company = null;
+        if ($request->filled('user')) {
+            $companyId = \App\Models\User::where('username', $request->user)->value('company_id');
+            $company = $companyId ? \App\Models\Company::find($companyId) : null;
+        }
+        if (!$company && $request->filled('email')) {
+            $company = \App\Models\Company::where('email', $request->email)->first();
+        }
+
+        // Respuesta uniforme: no se revela si la empresa existe o no
+        $generico = 'Si la cuenta existe y falta confirmarla, te enviamos el correo de activación.';
+
+        if (!$company) {
+            return response()->json(['message' => $generico, 'data' => null, 'error' => 0]);
+        }
+        if ($company->active) {
+            return response()->json(['message' => 'Esa empresa ya está activa. Podés iniciar sesión.', 'data' => null, 'error' => 0]);
+        }
+
+        if (!$company->verification_token) {
+            $company->verification_token = \Illuminate\Support\Str::uuid()->toString();
+            $company->save();
+        }
+
+        try {
+            $url = rtrim(config('app.url'), '/') . '/api/company/confirm/' . $company->verification_token;
+            app(\App\Resources\TemplatesEmail\TemplateEmailCompanyConfirmation::class)
+                ->sendConfirmation($company->email, $company->name, $url);
+        } catch (\Throwable $e) {
+            \Log::error('[Reenvío confirmación] falló', ['company_id' => $company->id, 'error' => $e->getMessage()]);
+            return response()->json(['message' => 'No pudimos enviar el correo. Escribinos para activarte la cuenta.', 'data' => null, 'error' => 1], 502);
+        }
+
+        return response()->json(['message' => $generico, 'data' => null, 'error' => 0]);
+    }
+
+    /**
      * POST /api/company/staff/create
      * Crea un usuario de staff (admin, técnico, contador) para la empresa en sesión.
      */

@@ -10,6 +10,11 @@ Route::prefix('company')->group(function () {
     Route::post('register', [CompanyController::class, 'register'])
         ->withoutMiddleware('jwt.verify');
 
+    // Reenviar el correo de activación (público: la cuenta aún no puede entrar)
+    Route::post('resend-confirmation', [CompanyController::class, 'resendConfirmation'])
+        ->withoutMiddleware('jwt.verify')
+        ->middleware('throttle:5,10');
+
     Route::get('confirm/{token}', [CompanyController::class, 'confirmEmail'])
         ->withoutMiddleware('jwt.verify');
 

@@ -45,8 +45,24 @@ class SignInController extends Controller
         try {
             // Se valida si no se pudo crear el token
             if (!$token = JWTAuth::attempt($credentials)) {
+                // Distinguir "cuenta sin confirmar" de "clave incorrecta": antes las dos
+                // daban el mismo mensaje y parecía que la contraseña estaba mal.
+                $pendiente = \App\Models\User::where('username', $request->user)
+                    ->where('active', 0)
+                    ->first(['id', 'email', 'company_id']);
+
+                if ($pendiente && \Illuminate\Support\Facades\Hash::check($request->password, $pendiente->password ?? '')) {
+                    $empresa = \DB::table('companies')->where('id', $pendiente->company_id)->first(['name', 'active', 'email']);
+                    return standardApiReponse(
+                        'Tu cuenta todavía no está confirmada. Te enviamos un correo a ' . ($empresa->email ?? $pendiente->email) . ' para activarla; revisá también la carpeta de spam.',
+                        ['needs_confirmation' => true, 'email' => $empresa->email ?? $pendiente->email, 'username' => $request->user],
+                        ApiResponseConstants::ERROR,
+                        JsonResponse::HTTP_OK
+                    );
+                }
+
                 return standardApiReponse(
-                    'Credenciales no validas, revise su cuenta /o contraseña ',
+                    'Usuario o contraseña incorrectos.',
                     ApiResponseConstants::DATA_NULL,
                     ApiResponseConstants::ERROR,
                     JsonResponse::HTTP_OK

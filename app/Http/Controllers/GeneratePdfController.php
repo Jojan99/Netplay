@@ -362,9 +362,17 @@ class GeneratePdfController extends Controller
         $email    = $request->query('sent_to_email');
         $facture  = $request->query('number_facture');
 
+        // Aislamiento por empresa: sin este filtro la pantalla de Envíos mostraba
+        // los correos y teléfonos de los clientes de todas las empresas.
+        $companyId = getSessionCompanyId();
+        if (!$companyId) {
+            return response()->json(['message' => 'Sin empresa en sesión.', 'data' => null, 'error' => 1], JsonResponse::HTTP_FORBIDDEN);
+        }
+
         $query = DB::table('invoice_send_logs')
             ->select('invoice_send_logs.*', 'det_facturations.number_facture')
-            ->leftJoin('det_facturations', 'det_facturations.id', '=', 'invoice_send_logs.det_facturation_id');
+            ->leftJoin('det_facturations', 'det_facturations.id', '=', 'invoice_send_logs.det_facturation_id')
+            ->where('invoice_send_logs.company_id', $companyId);
 
         if ($channel) {
             $query->where('invoice_send_logs.channel', $channel);
@@ -411,10 +419,17 @@ class GeneratePdfController extends Controller
      */
     public function sendHistory(string $invoiceId): JsonResponse
     {
-        $data = DB::table('det_facturations')
-            ->where('id', $invoiceId)
-            ->orWhere('number_facture', $invoiceId)
-            ->first(['id']);
+        // Los números de factura son correlativos por empresa: sin filtrar por la
+        // empresa en sesión se podía leer el historial de envíos de otra empresa.
+        $companyId = getSessionCompanyId();
+
+        $data = DB::table('det_facturations as d')
+            ->join('cab_facturations as c', 'c.id', '=', 'd.cab_id')
+            ->where(function ($q) use ($invoiceId) {
+                $q->where('d.id', $invoiceId)->orWhere('d.number_facture', $invoiceId);
+            })
+            ->when($companyId, fn($q) => $q->where('c.company_id', $companyId))
+            ->first(['d.id']);
 
         if (!$data) {
             return response()->json(['status' => 'error', 'message' => 'Factura no encontrada'], 404);
@@ -422,6 +437,7 @@ class GeneratePdfController extends Controller
 
         $logs = DB::table('invoice_send_logs')
             ->where('det_facturation_id', $data->id)
+            ->when($companyId, fn($q) => $q->where('company_id', $companyId))
             ->orderByDesc('created_at')
             ->limit(50)
             ->get();
@@ -446,7 +462,14 @@ class GeneratePdfController extends Controller
     ): void {
         try {
             $user = Auth::user();
+            // La empresa se toma de la factura; si no está, de la sesión del usuario
+            $companyId = DB::table('det_facturations as d')
+                ->join('cab_facturations as c', 'c.id', '=', 'd.cab_id')
+                ->where('d.id', $detFacturationId)
+                ->value('c.company_id') ?? ($user->company_id ?? getSessionCompanyId());
+
             DB::table('invoice_send_logs')->insert([
+                'company_id' => $companyId,
                 'det_facturation_id' => $detFacturationId,
                 'user_id' => $user ? $user->id : null,
                 'channel' => $channel,
