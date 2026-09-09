@@ -71,6 +71,17 @@ class PaymentLinkController extends Controller
 
         $status = $tx->status ?? $hint ?? 'pending';
 
+        // Si la transacción sigue sin resolverse, se le pregunta a la pasarela
+        // con el id que ella misma puso en la URL de retorno.
+        //
+        // El aviso al cliente (aprobado / no se completó) depende del webhook,
+        // y si la pasarela no lo tiene configurado la transacción se queda en
+        // "pending" para siempre: el cliente ve "estamos confirmando" y nunca
+        // le llega el resultado. Esto lo resuelve sin depender del webhook.
+        if ($tx && $status === 'pending') {
+            $status = $this->resolverConLaPasarela($tx, (string) $request->query('id', '')) ?? $status;
+        }
+
         // El origen lo marca quien genera el cobro, en la propia URL de retorno.
         // Como respaldo se mira el link, aunque solo recuerda su último intento.
         $link      = PaymentLink::where('last_reference', $reference)->first();
@@ -123,5 +134,73 @@ class PaymentLinkController extends Controller
             // Solo se devuelve solo al chat: mandar al portal sin avisar molesta.
             'autoReturn' => (bool) $volverAlChat,
         ]);
+    }
+
+    /**
+     * Pregunta a la pasarela el estado real y, si cambió, lo guarda, acredita
+     * la factura si corresponde y avisa al cliente por WhatsApp.
+     *
+     * Devuelve el estado nuevo, o null si no se pudo resolver.
+     */
+    private function resolverConLaPasarela(OnlinePaymentTransaction $tx, string $gatewayTxId): ?string
+    {
+        if ($gatewayTxId === '' || $tx->gateway !== 'wompi') {
+            return null;
+        }
+
+        $company = Company::find($tx->company_id);
+
+        if (!$company) {
+            return null;
+        }
+
+        $datos = (new \App\Services\PaymentGateways\WompiGateway($company))
+            ->consultarTransaccion($gatewayTxId);
+
+        if (!$datos || $datos['status'] === 'pending') {
+            return null;
+        }
+
+        // La referencia que devuelve la pasarela tiene que ser la nuestra:
+        // así un id ajeno pegado en la URL no puede tocar esta transacción.
+        if (!empty($datos['reference']) && $datos['reference'] !== $tx->reference) {
+            \Illuminate\Support\Facades\Log::warning('[Pago] La referencia de la pasarela no coincide', [
+                'transaccion' => $tx->id,
+                'esperada'    => $tx->reference,
+                'recibida'    => $datos['reference'],
+            ]);
+            return null;
+        }
+
+        $anterior = $tx->status;
+
+        $tx->update([
+            'status'                 => $datos['status'],
+            'gateway_transaction_id' => $gatewayTxId,
+            'paid_at'                => $datos['status'] === 'approved' ? now() : $tx->paid_at,
+        ]);
+
+        \Illuminate\Support\Facades\Log::info('[Pago] Resuelto consultando a la pasarela', [
+            'transaccion' => $tx->id,
+            'de'          => $anterior,
+            'a'           => $datos['status'],
+        ]);
+
+        try {
+            if ($datos['status'] === 'approved') {
+                app(\App\Http\Controllers\PaymentGatewayController::class)
+                    ->markInvoicePaid($company->id, $tx->reference, $datos['amount'], 'wompi');
+            }
+
+            (new \App\Services\PaymentGateways\PaymentNotificationService())
+                ->notify($company, $tx->fresh(), $datos['status'], ['origen' => 'retorno']);
+        } catch (\Throwable $e) {
+            // Que un fallo del aviso no rompa la página que está viendo el cliente.
+            \Illuminate\Support\Facades\Log::warning('[Pago] No se pudo avisar el resultado', [
+                'transaccion' => $tx->id, 'error' => $e->getMessage(),
+            ]);
+        }
+
+        return $datos['status'];
     }
 }

@@ -30,6 +30,61 @@ class WompiGateway implements PaymentGatewayInterface
         return self::CHECKOUT_URL . '?' . http_build_query($params);
     }
 
+    /**
+     * Consulta el estado real de una transacción en Wompi.
+     *
+     * Hace falta porque el aviso al cliente depende del webhook, y si Wompi no
+     * lo tiene configurado —o se demora— la transacción se queda en "pending"
+     * para siempre: el cliente ve "estamos confirmando" y nunca le llega el
+     * resultado. Con el id que Wompi devuelve en la URL de retorno se le
+     * pregunta directamente y se resuelve sin depender del webhook.
+     *
+     * @return array{status:string, amount:float, reference:?string}|null
+     */
+    public function consultarTransaccion(string $transactionId): ?array
+    {
+        $base = $this->company->pg_sandbox
+            ? 'https://sandbox.wompi.co/v1'
+            : 'https://production.wompi.co/v1';
+
+        try {
+            $respuesta = \Illuminate\Support\Facades\Http::timeout(15)
+                ->withToken((string) $this->company->pg_public_key)
+                ->get("{$base}/transactions/{$transactionId}");
+
+            if (!$respuesta->successful()) {
+                \Illuminate\Support\Facades\Log::warning('[Wompi] No se pudo consultar la transacción', [
+                    'id' => $transactionId, 'status' => $respuesta->status(),
+                ]);
+                return null;
+            }
+
+            $d = $respuesta->json('data');
+
+            if (!is_array($d) || empty($d['status'])) {
+                return null;
+            }
+
+            return [
+                // Wompi usa APPROVED / DECLINED / VOIDED / ERROR / PENDING
+                'status'    => match (strtoupper($d['status'])) {
+                    'APPROVED' => 'approved',
+                    'DECLINED' => 'declined',
+                    'VOIDED'   => 'cancelled',
+                    'ERROR'    => 'failed',
+                    default    => 'pending',
+                },
+                'amount'    => isset($d['amount_in_cents']) ? ((int) $d['amount_in_cents']) / 100 : 0.0,
+                'reference' => $d['reference'] ?? null,
+            ];
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('[Wompi] Error consultando la transacción', [
+                'id' => $transactionId, 'error' => $e->getMessage(),
+            ]);
+            return null;
+        }
+    }
+
     public function verifyWebhook(Request $request): bool
     {
         $eventsSecret = $this->company->pg_events_secret;

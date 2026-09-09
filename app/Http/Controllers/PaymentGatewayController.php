@@ -427,7 +427,8 @@ class PaymentGatewayController extends Controller
         }
     }
 
-    private function markInvoicePaid(int $companyId, string $reference, float $amountPaid, string $gateway): void
+    /** Público: lo usa también la página de retorno cuando resuelve el pago sin webhook. */
+    public function markInvoicePaid(int $companyId, string $reference, float $amountPaid, string $gateway): void
     {
         app(PaymentAllocationService::class)->allocate($companyId, $reference, $amountPaid, $gateway);
     }
