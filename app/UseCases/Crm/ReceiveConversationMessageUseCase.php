@@ -309,16 +309,27 @@ public function execute(array $payload): array
         default:
             Log::warning('[Tipo de mensaje desconocido]', ['type' => $type, 'data' => $data]);
             $type    = 'text';
-            $content = $data['content'] ?? $data['body'] ?? '[Mensaje no soportado: ' . ($data['type'] ?? 'unknown') . ']';
+            $content = $data['content'] ?? $data['body'] ?? null;
     }
 
-    // Seguridad: si content y mediaUrl siguen vacíos, logueamos para debug
+    // Sin texto y sin archivo no hay nada que mostrar.
+    //
+    // WhatsApp manda eventos internos que Baileys no clasifica (ajustes de
+    // mensajes temporales, borrados, vencimiento de "ver una vez"). Antes se
+    // guardaban como "[Mensaje no soportado: unknown]" y el agente veía una
+    // burbuja vacía que no dice nada y ensucia la conversación. Se descartan.
     if (!$content && !$mediaUrl) {
-        Log::warning('[Mensaje sin contenido ni media]', [
-            'type'      => $type,
-            'externalId'=> $externalId,
-            'data_keys' => array_keys($data),
+        Log::info('[Mensaje sin contenido ignorado]', [
+            'type'       => $type,
+            'externalId' => $externalId,
+            'data_keys'  => array_keys($data),
         ]);
+
+        return [
+            'status'          => 'ignored',
+            'reason'          => 'sin_contenido',
+            'conversation_id' => $conversationId,
+        ];
     }
 
     // ─── Guardar mensaje ───
