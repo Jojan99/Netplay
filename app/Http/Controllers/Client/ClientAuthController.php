@@ -144,6 +144,10 @@ class ClientAuthController extends Controller
             // Token ya inválido — no es error crítico
         }
 
+        // Además del token hay que soltar la sesión de servidor: si queda viva,
+        // el usuario sigue autorizado por cookie aunque el token ya no valga.
+        session()->flush();
+
         return response()->json([
             'message' => 'Sesión cerrada correctamente',
             'data'    => null,

@@ -31,7 +31,7 @@ use Illuminate\Support\Facades\Route;
 */
 
 // ── Pública: Login del cliente ──────────────────────────────────────────────
-Route::post('client/login', [ClientAuthController::class, 'login']);
+Route::post('client/login', [ClientAuthController::class, 'login'])->middleware('throttle:login');
 
 // ── Protegidas: solo clientes (profile_id = 1) ─────────────────────────────
 Route::prefix('client')->middleware(['jwt.client'])->group(function () {

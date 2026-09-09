@@ -82,15 +82,21 @@ class FacturationRepository implements FacturationRepositoryInterface
 
     public function getDateFacturePending(GetDateFacturePendingnRequest $data): mixed
     {
+        // El cab_id va como binding y no concatenado: la validación de la Request
+        // hoy lo deja en entero, pero concatenar aquí deja la puerta abierta a
+        // inyección si mañana se reutiliza este método desde otro origen.
+        $cabId = (int) $data['cab_id'];
+
         return DetFacturation::select(
             'id','cab_id','date_facturation','number_facture','date_create_facturation',
             'total','price_total','porcentage_discount','days_facture','discount',
             'price_discount','create_facture_manual','paid','price_abone','abone',
             DB::raw('price_total - price_abone as balance'),
-            DB::raw('(SELECT SUM(price_total - price_abone) FROM det_facturations WHERE cab_id = '.$data['cab_id'].' AND paid = 0) as total_pending'),
-            DB::raw('(SELECT COUNT(*) FROM det_facturations WHERE cab_id = '.$data['cab_id'].' AND paid = 0) as months_pending')
+            DB::raw('(SELECT SUM(price_total - price_abone) FROM det_facturations WHERE cab_id = ? AND paid = 0) as total_pending'),
+            DB::raw('(SELECT COUNT(*) FROM det_facturations WHERE cab_id = ? AND paid = 0) as months_pending')
         )
-        ->where('cab_id', $data['cab_id'])
+        ->addBinding([$cabId, $cabId], 'select')
+        ->where('cab_id', $cabId)
         ->where('paid', 0)
         ->get();
     }

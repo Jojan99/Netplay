@@ -30,12 +30,52 @@ class JwtMiddleware
             } else if ($e instanceof \Tymon\JWTAuth\Exceptions\TokenExpiredException) {
                 return $this->responseJwt('Session has expired');
             } else if ($e instanceof \Tymon\JWTAuth\Exceptions\JWTException && session()->has('user')) {
-                // Sin token en el header pero sesión activa — permitir continuar
+                // Sin token en el header pero con sesión activa.
+                //
+                // Esta vía existe porque hay enlaces que el navegador abre solo
+                // (PDF de factura, contrato, estado de cuenta con window.open) y
+                // ahí no hay forma de mandar el header Authorization. Se conserva,
+                // pero ya no se confía a ciegas en lo que quedó guardado en la
+                // sesión: se vuelve a leer el usuario de la base y se comprueba
+                // que siga existiendo y activo. Así una cuenta desactivada o
+                // borrada deja de pasar aunque su cookie siga viva.
+                if (!$this->sesionSigueValida()) {
+                    session()->flush();
+                    return $this->responseJwt('Session has expired');
+                }
             } else {
                 return $this->responseJwt('The token is not authorized' . $e->getMessage());
             }
         }
         return $next($request);
+    }
+
+    /**
+     * Revalida contra la base el usuario que quedó en la sesión.
+     *
+     * Devuelve false si ya no existe, si fue desactivado o si le cambiaron la
+     * empresa; en ese caso la sesión se descarta.
+     */
+    private function sesionSigueValida(): bool
+    {
+        $enSesion = session('user');
+        $id       = is_object($enSesion) ? ($enSesion->id ?? null) : ($enSesion['id'] ?? null);
+
+        if (!$id) {
+            return false;
+        }
+
+        $fresco = \App\Models\User::find($id);
+
+        if (!$fresco || !$fresco->active) {
+            return false;
+        }
+
+        // Refresca la copia en sesión: perfil y empresa se leen de aquí en
+        // todo el sistema, así que una copia vieja es una fuga de permisos.
+        session(['user' => $fresco]);
+
+        return true;
     }
 
     /**

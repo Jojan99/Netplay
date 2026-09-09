@@ -144,7 +144,9 @@ public function getMessages(
     ): JsonResponse {
         $request->validate([
             'type' => 'required|in:image,video,audio,document',
-            'file' => 'required|file',
+            // Tope de 64 MB: WhatsApp no acepta más y evita llenar el disco.
+            // El filtro de tipos peligrosos va en el caso de uso.
+            'file' => 'required|file|max:65536',
         ]);
 
         /** @var UploadedFile $file */
@@ -167,13 +169,21 @@ public function getMessages(
             'extension' => $file,
         ]);
 
-        $message = $useCase->execute(
-            $conversationId,
-            $request->type,
-            $file,
-            getSessionUserId(),
-            $request->input('caption')
-        );
+        try {
+            $message = $useCase->execute(
+                $conversationId,
+                $request->type,
+                $file,
+                getSessionUserId(),
+                $request->input('caption')
+            );
+        } catch (\InvalidArgumentException $e) {
+            // Tipo de archivo bloqueado por seguridad: es un 400, no un error del servidor
+            return response()->json([
+                'ok'    => false,
+                'error' => $e->getMessage(),
+            ], JsonResponse::HTTP_BAD_REQUEST);
+        }
 
         return response()->json([
             'ok'   => true,

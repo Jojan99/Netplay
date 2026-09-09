@@ -227,10 +227,44 @@ try {
        VALIDACIONES
        =============================== */
 
+    /**
+     * Extensiones que nunca se guardan.
+     *
+     * El archivo termina servido desde storage/ bajo nuestro propio dominio, así
+     * que un .html o un .svg con script se ejecutarían con las cookies de
+     * netplay.com.co. No se usa una lista blanca porque por WhatsApp llega de
+     * todo (planos, comprobantes, audios raros) y cerrar a una lista corta
+     * rompería envíos legítimos: se bloquea lo que es peligroso y pasa el resto.
+     */
+    private const EXTENSIONES_BLOQUEADAS = [
+        'html', 'htm', 'xhtml', 'shtml', 'svg', 'xml', 'xsl',
+        'php', 'php3', 'php4', 'php5', 'php7', 'phtml', 'phar', 'inc',
+        'js', 'mjs', 'cjs', 'jsp', 'asp', 'aspx', 'cgi', 'pl', 'py', 'rb', 'sh', 'bash',
+        'exe', 'dll', 'bat', 'cmd', 'com', 'scr', 'msi', 'vbs', 'ps1', 'jar', 'apk',
+        'htaccess', 'htpasswd',
+    ];
+
+    /** Mimes que el navegador interpretaría como página, venga la extensión que venga. */
+    private const MIMES_BLOQUEADOS = [
+        'text/html', 'application/xhtml+xml', 'image/svg+xml',
+        'application/x-httpd-php', 'text/javascript', 'application/javascript',
+    ];
+
     private function validateFileType(string $type, string $extension, string $mimeType): void
     {
-        if ($type === 'audio') {
-            return; // dejamos pasar, WhatsApp manda lo que quiera
+        $ext  = strtolower(trim($extension));
+        $mime = strtolower(trim(explode(';', $mimeType)[0] ?? ''));
+
+        if (in_array($ext, self::EXTENSIONES_BLOQUEADAS, true) || in_array($mime, self::MIMES_BLOQUEADOS, true)) {
+            Log::warning('[ARCHIVO RECHAZADO] Tipo no permitido en el CRM', [
+                'extension' => $ext,
+                'mime'      => $mime,
+                'type'      => $type,
+            ]);
+
+            throw new \InvalidArgumentException(
+                'Ese tipo de archivo no se puede enviar por seguridad. Convertilo a PDF o imagen y volvé a intentar.'
+            );
         }
     }
 }

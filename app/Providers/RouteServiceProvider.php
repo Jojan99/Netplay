@@ -102,5 +102,22 @@ class RouteServiceProvider extends ServiceProvider
         RateLimiter::for('api', function (Request $request) {
             return Limit::perMinute(30)->by(optional($request->user())->id ?: $request->ip());
         });
+
+        /**
+         * Fuerza bruta en el login.
+         *
+         * Se limita por usuario + IP y no solo por IP: las oficinas de un ISP
+         * salen todas por la misma IP pública y un límite plano dejaría a un
+         * equipo entero sin poder entrar. El tope por IP es el segundo freno,
+         * holgado para uso normal pero suficiente para cortar un barrido.
+         */
+        RateLimiter::for('login', function (Request $request) {
+            $usuario = strtolower((string) ($request->input('user') ?? $request->input('username') ?? $request->input('email') ?? ''));
+
+            return [
+                Limit::perMinute(6)->by('login:' . $usuario . '|' . $request->ip()),
+                Limit::perMinute(40)->by('login-ip:' . $request->ip()),
+            ];
+        });
     }
 }
