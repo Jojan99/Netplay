@@ -29,3 +29,5 @@ Route::prefix('user')->group(function () {
         Route::get('exportUsers', [UserController::class, 'exportUsers']);
     });
 });
+
+Route::get('clients/{userId}/statement', [\App\Http\Controllers\ClientStatementController::class, 'show'])->middleware('module:usuario,finanzas');

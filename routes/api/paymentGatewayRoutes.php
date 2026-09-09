@@ -64,6 +64,10 @@ Route::get('factura/{token}', [\App\Http\Controllers\InvoiceLinkController::clas
     ->middleware('throttle:60,1')
     ->where('token', '[0-9]+-[a-f0-9]{24}');
 
+// Estado de cuenta del cliente: enlace firmado, se comparte por WhatsApp
+Route::get('estado-cuenta/{token}', [\App\Http\Controllers\ClientStatementController::class, 'publicView'])
+    ->where('token', '[0-9]+-[a-f0-9]{24}');
+
 // ── Cobro ERP de EfiPay (público — sin JWT) ──────────────────────────────────
 // EfiPay consulta qué debe una cédula y cobra por su cuenta; el pago vuelve por
 // el webhook de siempre. La documentación no define autenticación para esta URL,

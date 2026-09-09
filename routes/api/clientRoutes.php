@@ -69,6 +69,8 @@ Route::prefix('client')->middleware(['jwt.client'])->group(function () {
     Route::get('contracts',                    [\App\Http\Controllers\Client\ClientAccountController::class, 'contracts']);
     Route::get('activity',                     [\App\Http\Controllers\Client\ClientAccountController::class, 'activity']);
 
+    Route::get('statement', [\App\Http\Controllers\ClientStatementController::class, 'mine']);
+
     Route::get('profile', [ClientProfileController::class, 'show']);
     Route::put('profile', [ClientProfileController::class, 'update']);
     Route::post('change-password', [ClientProfileController::class, 'changePassword']);
