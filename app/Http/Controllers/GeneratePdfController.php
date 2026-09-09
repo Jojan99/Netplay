@@ -203,14 +203,69 @@ class GeneratePdfController extends Controller
             $names    = $data['names'] . ' ' . $data['lastname'];
             $caption  = "Estimado/a {$names}, adjuntamos su factura #{$data['number_facture']}.\n\nTotal a pagar: $" . number_format($data['price_total'] - $data['price_discount'], 0, '.', ',') . "\n\nFecha límite: {$data['date_facturation']}";
 
-            $whatsapp = new WhatsAppService(null, true);
-            $whatsapp->sendDocumentData($phone, $base64Pdf, $filename, $caption);
+            // ── Por dónde sale y de qué forma ──────────────────────────
+            //
+            // Antes se instanciaba WhatsAppService sin canal, con lo que salía
+            // por el proveedor por defecto de la empresa. Si ese es la API de
+            // Meta y el cliente no escribió en las últimas 24 h, Meta rechaza
+            // el envío; insistir fuera de ventana es lo que termina costando
+            // el bloqueo de la línea.
+            $companyId = (int) ($data['company_id'] ?? 0);
+            $decision  = (new \App\Services\WhatsApp\CanalDeEnvio($companyId))
+                ->evaluar(request()->input('canal'), $phone);
 
-            $this->logSend($data['id'], 'whatsapp', 'ok', "Factura enviada por WhatsApp al número {$phone}", $phone, null);
+            if ($decision['modo'] === \App\Services\WhatsApp\CanalDeEnvio::IMPOSIBLE) {
+                $this->logSend($data['id'], 'whatsapp', 'error', $decision['motivo'], $phone, null);
+                return response()->json([
+                    'status' => 'error', 'message' => $decision['motivo'], 'error_code' => 'CANAL_NO_DISPONIBLE',
+                ], 422);
+            }
+
+            $porPlantilla = $decision['modo'] === \App\Services\WhatsApp\CanalDeEnvio::PLANTILLA;
+
+            if ($porPlantilla) {
+                // Fuera de ventana el PDF no se puede mandar: Meta solo acepta
+                // una plantilla aprobada, que además lleva el botón al enlace
+                // firmado de la factura.
+                $meta   = new \App\Services\MetaWhatsAppService($companyId);
+                $vence  = $data['date_facturation'] ?? '';
+                $total  = number_format(($data['price_total'] ?? 0) - ($data['price_discount'] ?? 0), 0, ',', '.');
+
+                $parametros = [
+                    $names ?: 'Cliente',
+                    (string) ($data['number_facture'] ?? ''),
+                    $total,
+                    $data['date_create_facturation'] ?? now()->format('Y-m-d'),
+                    $vence,
+                    $company?->invoice_business_name ?: ($company?->name ?? 'Netplay'),
+                ];
+
+                $valores = [];
+                $botones = $meta->dynamicUrlButtons($meta->invoiceTemplateName(), 'es_CO');
+                if ($botones !== []) {
+                    $token = \App\Http\Controllers\InvoiceLinkController::tokenFor((int) $data['id']);
+                    foreach (array_keys($botones) as $indice) {
+                        $valores[$indice] = $token;
+                    }
+                }
+
+                $meta->sendInvoiceTemplate($phone, $parametros, $valores);
+                $detalle = "Factura enviada por plantilla de Meta al número {$phone} (el cliente estaba fuera de la ventana de 24 h)";
+            } else {
+                (new WhatsAppService($companyId, true, $decision['canal']))
+                    ->sendDocumentData($phone, $base64Pdf, $filename, $caption);
+
+                $canalNombre = $decision['canal'] === \App\Services\WhatsApp\CanalDeEnvio::META ? 'API de Meta' : 'WhatsApp Web';
+                $detalle = "Factura enviada por {$canalNombre} al número {$phone}";
+            }
+
+            $this->logSend($data['id'], 'whatsapp', 'ok', $detalle, $phone, null);
 
             return response()->json([
-                'status'  => 'ok',
-                'message' => "Factura enviada por WhatsApp al número {$phone}",
+                'status'      => 'ok',
+                'message'     => $detalle,
+                'canal'       => $decision['canal'],
+                'por_plantilla' => $porPlantilla,
             ]);
         } catch (\Throwable $e) {
             return response()->json(['status' => 'error', 'message' => $e->getMessage()], 500);

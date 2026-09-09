@@ -694,7 +694,13 @@ class MetaWhatsAppService
         return $response->json();
     }
 
-    private function hasOpenCustomerWindow(string $phone): bool
+    /**
+     * ¿El cliente escribió en las últimas 24 h?
+     *
+     * Público porque la decisión de "documento o plantilla" hay que tomarla
+     * antes de intentar el envío, no después de que Meta lo rechace.
+     */
+    public function hasOpenCustomerWindow(string $phone): bool
     {
         if (!$this->companyId) return false;
 
