@@ -86,27 +86,44 @@ class AprovisionarPlantillas
      *
      * @return array<int, array<string,mixed>>
      */
-    public function estado(): array
+    public function estado(bool $refrescar = true): array
     {
         $company = Company::find($this->companyId);
         $enMeta  = [];
+        $consultado = false;
 
-        if ($company && $company->wa_access_token && $company->wa_business_id) {
+        if ($refrescar && $company && $company->wa_access_token && $company->wa_business_id) {
             foreach ($this->plantillasDeMeta($company) as $t) {
                 $enMeta[strtolower($t['name'] ?? '')] = $t;
+                $consultado = true;
             }
         }
 
-        $vinculos = WaTemplateBinding::where('company_id', $this->companyId)
-            ->pluck('template_name', 'event');
+        $vinculos = WaTemplateBinding::where('company_id', $this->companyId)->get()->keyBy('event');
 
         $salida = [];
 
         foreach (PlantillasSemilla::todas() as $evento => $def) {
-            $vinculada = $vinculos[$evento] ?? null;
+            $binding   = $vinculos[$evento] ?? null;
+            $vinculada = $binding?->template_name;
+
             // Se mira la que está vinculada, que puede ser una propia de la
             // empresa y no la del catálogo.
             $enCuenta = $enMeta[strtolower($vinculada ?: $def['nombre'])] ?? null;
+
+            // Lo último que se supo, guardado en el propio vínculo. Así la
+            // pantalla abre al instante y no depende de que Meta responda;
+            // el botón Actualizar es el que vuelve a preguntarle.
+            $guardado = $this->guardadoDe($binding);
+
+            if ($consultado) {
+                $estado = $enCuenta['status'] ?? 'NO_CREADA';
+                $motivo = $enCuenta['rejected_reason'] ?? null;
+                $this->guardarEstado($binding, $evento, $def, $estado, $motivo);
+            } else {
+                $estado = $guardado['estado'] ?? 'NO_CREADA';
+                $motivo = $guardado['motivo'] ?? null;
+            }
 
             $salida[] = [
                 'evento'      => $evento,
@@ -115,13 +132,66 @@ class AprovisionarPlantillas
                 'sugerida'    => $def['nombre'],
                 'vinculada'   => $vinculada,
                 'propia'      => $vinculada !== null && strtolower($vinculada) !== strtolower($def['nombre']),
-                'estado'      => $enCuenta['status'] ?? 'NO_CREADA',
-                'motivo'      => $enCuenta['rejected_reason'] ?? null,
+                'estado'      => $estado,
+                'motivo'      => $motivo,
+                'revisado'    => $consultado ? now()->toDateTimeString() : ($guardado['revisado'] ?? null),
                 'variables'   => $def['variables'],
             ];
         }
 
         return $salida;
+    }
+
+    /** Lo último que se supo del estado de esta plantilla en Meta. */
+    private function guardadoDe(?WaTemplateBinding $binding): array
+    {
+        if (!$binding || !$binding->config) {
+            return [];
+        }
+
+        $config = is_array($binding->config) ? $binding->config : json_decode((string) $binding->config, true);
+
+        return is_array($config['meta'] ?? null) ? $config['meta'] : [];
+    }
+
+    /**
+     * Guarda el estado en el propio vínculo, para no tener que preguntarle a
+     * Meta cada vez que alguien abre la pantalla.
+     */
+    private function guardarEstado(?WaTemplateBinding $binding, string $evento, array $def, string $estado, ?string $motivo): void
+    {
+        try {
+            $binding = $binding ?: WaTemplateBinding::firstOrNew([
+                'company_id' => $this->companyId,
+                'event'      => $evento,
+            ]);
+
+            $config = is_array($binding->config)
+                ? $binding->config
+                : (json_decode((string) $binding->config, true) ?: []);
+
+            $config['meta'] = [
+                'estado'   => $estado,
+                'motivo'   => $motivo,
+                'revisado' => now()->toDateTimeString(),
+            ];
+
+            $binding->config = $config;
+
+            // Un vínculo nuevo nace apagado y apuntando a la del catálogo:
+            // que exista el registro no significa que el aviso esté activo.
+            if (!$binding->exists) {
+                $binding->template_name = $binding->template_name ?: $def['nombre'];
+                $binding->language      = $binding->language ?: $def['idioma'];
+                $binding->enabled       = false;
+            }
+
+            $binding->save();
+        } catch (\Throwable $e) {
+            Log::warning('[Plantillas] No se pudo guardar el estado', [
+                'company_id' => $this->companyId, 'evento' => $evento, 'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     /* ── Meta ────────────────────────────────────────────────────────── */

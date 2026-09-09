@@ -217,11 +217,17 @@ class WaTemplateBindingController extends Controller
      * En qué va cada plantilla que el sistema necesita, en la cuenta de Meta
      * de esta empresa: creada, en revisión, aprobada o rechazada.
      */
-    public function estadoSistema(): \Illuminate\Http\JsonResponse
+    public function estadoSistema(\Illuminate\Http\Request $request): \Illuminate\Http\JsonResponse
     {
         $servicio = new \App\Services\WhatsApp\AprovisionarPlantillas((int) getSessionCompanyId());
 
-        return response()->json(['ok' => true, 'data' => $servicio->estado()]);
+        // Sin refrescar se responde con lo último guardado: la pantalla abre al
+        // instante y no depende de que la API de Meta conteste. El botón
+        // Actualizar es el que vuelve a preguntarle.
+        return response()->json([
+            'ok'   => true,
+            'data' => $servicio->estado($request->boolean('refrescar')),
+        ]);
     }
 
     /**
