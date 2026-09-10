@@ -49,6 +49,9 @@ Route::prefix('management')->group(function () {
     // Foto del modelo de router, para la ficha del equipo.
     Route::get('router-photo', [ManagementRouterController::class, 'routerPhoto']);
 
+    // Todo lo que el router sabe de un puerto.
+    Route::get('port-detail', [ManagementRouterController::class, 'portDetail']);
+
     // Copia al sistema la IP que cada cliente tiene en el router. Escribe sobre
     // los clientes, así que va con rol admin.
     Route::post('sync-ips', [ManagementRouterController::class, 'syncIps'])->middleware('role:admin');

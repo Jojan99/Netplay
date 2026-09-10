@@ -104,7 +104,10 @@ class MikrotikInfoUseCase implements MikrotikInfoUseCaseInterface
             $name      = $identity[0]['name'] ?? 'Desconocido';
 
             $ifQuery = new Query('/interface/print');
-            $ifQuery->add('=.proplist=name,type,running,disabled,tx-byte,rx-byte,tx-packet,rx-packet,mac-address,mtu');
+            // El comment es lo que el operador escribió para saber qué hay
+            // conectado ahí ("WAN", "TRONCAL 1 UTP"): sin eso el panel de
+            // puertos son sólo números.
+            $ifQuery->add('=.proplist=name,type,running,disabled,tx-byte,rx-byte,tx-packet,rx-packet,mac-address,mtu,comment');
             $interfaces = $api->query($ifQuery)->read();
 
             $addrQuery = new Query('/ip/address/print');

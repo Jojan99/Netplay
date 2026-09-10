@@ -182,6 +182,47 @@ class ManagementRouterController extends Controller
         return standardApiReponse('Foto del equipo', $datos, 0, JsonResponse::HTTP_OK);
     }
 
+    /**
+     * Todo lo que el router sabe de un puerto: enlace, SFP, tráfico en vivo,
+     * VLAN, IP y los clientes que cuelgan de ahí.
+     */
+    public function portDetail(
+        Request $request,
+        \App\Managers\Interfaces\ConectionRouterManagerInterface $conexion,
+        MikrotikInfoUseCaseInterface $uc
+    ): object {
+        $puerto = trim((string) $request->query('name'));
+
+        if ($puerto === '') {
+            return standardApiReponse('Falta el nombre del puerto', null, 1, JsonResponse::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $companyId = getSessionCompanyId();
+
+        if (!$companyId) {
+            return standardApiReponse('Sesión sin empresa asociada', null, 1, JsonResponse::HTTP_UNAUTHORIZED);
+        }
+
+        $routerId = $request->query('router_id') ? (int) $request->query('router_id') : null;
+
+        $router = \Illuminate\Support\Facades\DB::table('conection_routers')
+            ->where('company_id', $companyId)
+            ->when($routerId, fn ($q) => $q->where('id', $routerId))
+            ->first(['token']);
+
+        if (!$router) {
+            return standardApiReponse('No hay router configurado', null, 1, JsonResponse::HTTP_OK);
+        }
+
+        try {
+            $datos = (new \App\Services\Red\DetalleDePuerto($conexion, $router->token))->de($puerto);
+        } catch (\Throwable $e) {
+            return standardApiReponse('No se pudo consultar el puerto: ' . $e->getMessage(), null, 1, JsonResponse::HTTP_OK);
+        }
+
+        return standardApiReponse('Detalle del puerto', $datos, 0, JsonResponse::HTTP_OK);
+    }
+
     public function getIpAvalibles(
         GetIpAvaliblesUseCaseInterface $getIpAvaliblesUseCaseInterface,
         GestionUserRequest $gestionUserRequest
