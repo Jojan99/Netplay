@@ -50,6 +50,7 @@ private const OID_OPT_BIAS      = '1.3.6.1.4.1.2011.6.128.1.1.2.51.1.8'; // + .<
 
     public function __construct(OltAdmin $olt)
     {
+        $this->oltId     = (int) $olt->id;
         $this->host      = $olt->snmp_host ?: $olt->host;
         $this->community = $olt->snmp_community ?: 'public';
         $this->version   = $olt->snmp_version   ?: '2c';
@@ -789,6 +790,7 @@ protected function getIfIndexByFsp(string $fsp): ?int
 
     /** ifIndex => [slot, port], tal como los nombra la propia OLT. */
     private ?array $mapaPuertos = null;
+    private int $oltId = 0;
 
     /**
      * Qué puerto es cada ifIndex, preguntándoselo a la OLT.
@@ -804,6 +806,23 @@ protected function getIfIndexByFsp(string $fsp): ?int
     {
         if ($this->mapaPuertos !== null) {
             return $this->mapaPuertos;
+        }
+
+        // Los puertos de una OLT no cambian salvo que le muevan una placa, y
+        // el walk es lento: sin guardarlo, cada consulta lo repetía y a veces
+        // se cortaba a la mitad, dejando un mapa incompleto que resolvía bien
+        // unos puertos y mal otros. De ahí que la misma ONT saliera en un
+        // puerto distinto en cada consulta.
+        $clave = "olt:{$this->oltId}:mapa_puertos";
+
+        try {
+            $guardado = \Illuminate\Support\Facades\Cache::get($clave);
+
+            if (is_array($guardado) && $guardado !== []) {
+                return $this->mapaPuertos = $guardado;
+            }
+        } catch (\Throwable) {
+            // Sin caché se lee del equipo, que es lo de siempre.
         }
 
         $this->mapaPuertos = [];
@@ -836,7 +855,23 @@ protected function getIfIndexByFsp(string $fsp): ?int
             \Log::warning('[OLT] No se pudo leer el nombre de los puertos', ['error' => $e->getMessage()]);
         }
 
+        // Sólo se guarda si salió completo: un mapa a medias es peor que no
+        // tener ninguno, porque mezcla puertos bien leídos con calculados.
+        if ($this->mapaPuertos !== []) {
+            try {
+                \Illuminate\Support\Facades\Cache::put($clave, $this->mapaPuertos, now()->addHours(12));
+            } catch (\Throwable) {}
+        }
+
         return $this->mapaPuertos;
+    }
+
+    /** Olvida los puertos guardados: hace falta si le cambian una placa. */
+    public function olvidarMapaDePuertos(): void
+    {
+        $this->mapaPuertos = null;
+
+        try { \Illuminate\Support\Facades\Cache::forget("olt:{$this->oltId}:mapa_puertos"); } catch (\Throwable) {}
     }
 
     /**
