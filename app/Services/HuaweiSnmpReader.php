@@ -823,7 +823,10 @@ protected function getIfIndexByFsp(string $fsp): ?int
                     continue;
                 }
 
-                $idx = (int) substr((string) $oid, strrpos((string) $oid, '.') + 1);
+                // walk() devuelve el sufijo del OID, y para ifName ese sufijo
+                // es el ifIndex pelado: se toma igual que en el resto del
+                // servicio, con la primera parte.
+                $idx = (int) explode('.', trim((string) $oid, '.'))[0];
 
                 if ($idx > 0) {
                     $this->mapaPuertos[$idx] = [(int) $m[2], (int) $m[3]];
