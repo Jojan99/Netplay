@@ -306,6 +306,49 @@ class ManagementRouterController extends Controller
         );
     }
 
+    /** Qué se llevaría por delante desmontar PPPoE. */
+    public function pppoeQueSeBorra(Request $request, \App\Managers\Interfaces\ConectionRouterManagerInterface $conexion): object
+    {
+        $token = $this->tokenDelRouter($request);
+
+        if (!$token) {
+            return standardApiReponse('No hay router configurado', null, 1, JsonResponse::HTTP_OK);
+        }
+
+        try {
+            $datos = (new \App\Services\Red\ConfigurarServidorPppoe($conexion, $token))
+                ->queSeBorra((string) ($request->query('pool') ?: 'pool-pppoe'));
+
+            return standardApiReponse('Qué se borra', $datos, 0, JsonResponse::HTTP_OK);
+        } catch (\Throwable $e) {
+            return standardApiReponse('No se pudo leer el router: ' . $e->getMessage(), null, 1, JsonResponse::HTTP_OK);
+        }
+    }
+
+    /** Desmonta PPPoE del router. */
+    public function pppoeDesmontar(Request $request, \App\Managers\Interfaces\ConectionRouterManagerInterface $conexion): object
+    {
+        $token = $this->tokenDelRouter($request);
+
+        if (!$token) {
+            return standardApiReponse('No hay router configurado', null, 1, JsonResponse::HTTP_OK);
+        }
+
+        $r = (new \App\Services\Red\ConfigurarServidorPppoe($conexion, $token))->desmontar([
+            'usuarios'    => $request->boolean('usuarios'),
+            'perfiles'    => $request->boolean('perfiles'),
+            'pool'        => $request->boolean('pool'),
+            'nombre_pool' => $request->input('nombre_pool', 'pool-pppoe'),
+        ]);
+
+        return standardApiReponse(
+            $r['ok'] ? 'PPPoE desmontado' : ($r['error'] ?? 'No se pudo desmontar'),
+            $r,
+            $r['ok'] ? 0 : 1,
+            JsonResponse::HTTP_OK
+        );
+    }
+
     /** El token del router elegido, o el de la empresa si no vino ninguno. */
     private function tokenDelRouter(Request $request): ?string
     {

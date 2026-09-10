@@ -271,6 +271,172 @@ class ConfigurarServidorPppoe
     }
 
     /**
+     * Qué se llevaría por delante desmontar PPPoE.
+     *
+     * Se mira antes de tocar nada porque borrar el servidor deja sin internet
+     * a todo el que esté conectado, y borrar las credenciales es irreversible.
+     *
+     * @return array<string,mixed>
+     */
+    public function queSeBorra(string $pool = 'pool-pppoe'): array
+    {
+        $api = $this->api();
+
+        $servidores = $this->leer($api, '/interface/pppoe-server/server/print');
+        $secrets    = array_filter(
+            $this->leer($api, '/ppp/secret/print'),
+            fn ($s) => ($s['service'] ?? '') === 'pppoe'
+        );
+        $activas = array_filter(
+            $this->leer($api, '/ppp/active/print'),
+            fn ($a) => ($a['service'] ?? '') === 'pppoe'
+        );
+
+        // Sólo los perfiles que quedaron apuntando a este pool: los demás son
+        // de otra cosa —una VPN, por ejemplo— y no hay que tocarlos.
+        $perfiles = array_values(array_filter(
+            $this->leer($api, '/ppp/profile/print'),
+            fn ($p) => ($p['remote-address'] ?? '') === $pool && ($p['default'] ?? 'false') !== 'true'
+        ));
+
+        return [
+            'servidores' => array_map(fn ($s) => [
+                'nombre'   => $s['service-name'] ?? '',
+                'interfaz' => $s['interface'] ?? '',
+            ], $servidores),
+            'perfiles'  => array_map(fn ($p) => [
+                'nombre'    => $p['name'] ?? '',
+                'velocidad' => $p['rate-limit'] ?? null,
+            ], $perfiles),
+            'usuarios'  => array_values(array_map(fn ($s) => [
+                'usuario'    => $s['name'] ?? '',
+                'documento'  => $s['comment'] ?? null,
+                'perfil'     => $s['profile'] ?? null,
+                'conectado'  => false,
+            ], $secrets)),
+            'conectados' => count($activas),
+            'pool'       => $pool,
+        ];
+    }
+
+    /**
+     * Desmonta PPPoE del router.
+     *
+     * Va de lo más externo a lo más interno para no dejar referencias rotas:
+     * primero el servidor —que es lo que deja de aceptar conexiones—, después
+     * las credenciales, después los perfiles y por último el rango.
+     *
+     * @param  array{usuarios?:bool, perfiles?:bool, pool?:bool, nombre_pool?:string}  $opciones
+     * @return array{ok:bool, pasos:array<int,string>, error?:string}
+     */
+    public function desmontar(array $opciones): array
+    {
+        $pool  = trim((string) ($opciones['nombre_pool'] ?? 'pool-pppoe'));
+        $pasos = [];
+
+        try {
+            $api = $this->api();
+
+            foreach ($this->leer($api, '/interface/pppoe-server/server/print') as $srv) {
+                $this->borrar($api, '/interface/pppoe-server/server/remove', $srv['.id'] ?? '');
+                $pasos[] = 'Servidor «' . ($srv['service-name'] ?? '') . '» eliminado.';
+            }
+
+            if (!empty($opciones['usuarios'])) {
+                $n = 0;
+
+                foreach ($this->leer($api, '/ppp/secret/print') as $sec) {
+                    if (($sec['service'] ?? '') !== 'pppoe') {
+                        continue;
+                    }
+
+                    // Primero se corta la sesión: si no, sigue navegando con
+                    // la credencial ya borrada hasta que se desconecte.
+                    $this->cortar($api, $sec['name'] ?? '');
+                    $this->borrar($api, '/ppp/secret/remove', $sec['.id'] ?? '');
+                    $n++;
+                }
+
+                $pasos[] = $n ? "{$n} credencial(es) de cliente eliminadas." : 'No había credenciales PPPoE.';
+            }
+
+            if (!empty($opciones['perfiles'])) {
+                $n = 0;
+
+                foreach ($this->leer($api, '/ppp/profile/print') as $perf) {
+                    // Los que no reparten de este pool son de otra cosa.
+                    if (($perf['remote-address'] ?? '') !== $pool || ($perf['default'] ?? 'false') === 'true') {
+                        continue;
+                    }
+
+                    $this->borrar($api, '/ppp/profile/remove', $perf['.id'] ?? '');
+                    $n++;
+                }
+
+                $pasos[] = $n ? "{$n} perfil(es) eliminados." : 'No había perfiles de este rango.';
+
+                DB::table('internet_plans')
+                    ->where('company_id', getSessionCompanyId())
+                    ->update(['pppoe_profile' => null]);
+            }
+
+            if (!empty($opciones['pool'])) {
+                $id = $this->buscar($api, '/ip/pool/print', 'name', $pool);
+
+                if ($id) {
+                    $this->borrar($api, '/ip/pool/remove', $id);
+                    $pasos[] = "Rango «{$pool}» eliminado.";
+                }
+
+                $natId = $this->buscar($api, '/ip/firewall/nat/print', 'comment', "netplay-pppoe-{$pool}");
+
+                if ($natId) {
+                    $this->borrar($api, '/ip/firewall/nat/remove', $natId);
+                    $pasos[] = 'Regla de salida a internet eliminada.';
+                }
+            }
+
+            Log::info('[PPPoE] Servidor desmontado', ['opciones' => $opciones]);
+
+            return ['ok' => true, 'pasos' => $pasos];
+        } catch (\Throwable $e) {
+            Log::error('[PPPoE] No se pudo desmontar', ['error' => $e->getMessage()]);
+
+            return ['ok' => false, 'pasos' => $pasos, 'error' => 'El router rechazó el cambio: ' . $e->getMessage()];
+        }
+    }
+
+    private function borrar($api, string $comando, string $id): void
+    {
+        if ($id === '') {
+            return;
+        }
+
+        $q = new Query($comando);
+        $q->equal('.id', $id);
+        $api->query($q)->read();
+    }
+
+    private function cortar($api, string $usuario): void
+    {
+        if ($usuario === '') {
+            return;
+        }
+
+        try {
+            $q = new Query('/ppp/active/print');
+            $q->where('name', $usuario);
+            $q->add('=.proplist=.id');
+
+            foreach ($api->query($q)->read() as $sesion) {
+                $this->borrar($api, '/ppp/active/remove', $sesion['.id'] ?? '');
+            }
+        } catch (\Throwable $e) {
+            // Que no se pueda cortar la sesión no impide borrar la credencial.
+        }
+    }
+
+    /**
      * El perfil de un plan: mismo pool y puerta de enlace que el base, pero
      * con la velocidad del plan.
      */

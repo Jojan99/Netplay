@@ -3,6 +3,7 @@
 namespace App\Services\Red;
 
 use App\Managers\Interfaces\ConectionRouterManagerInterface;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use RouterOS\Query;
 
@@ -50,12 +51,25 @@ class ServicioPppoe
                 'interfaz'   => $s['interface'] ?? '',
                 'perfil'     => $s['default-profile'] ?? '',
                 'habilitado' => ($s['disabled'] ?? 'false') !== 'true',
+                'autenticacion' => $s['authentication'] ?? null,
+                'una_sesion' => ($s['one-session-per-host'] ?? '') === 'true',
+                'max_sesiones' => $s['max-sessions'] ?? null,
+                // RouterOS marca así el servidor que no puede levantar: pasa
+                // cuando la interfaz elegida no sirve para atender clientes.
+                'invalido'   => ($s['invalid'] ?? 'false') === 'true',
             ], $servidores),
             'perfiles' => array_map(fn ($p) => [
                 'nombre'          => $p['name'] ?? '',
                 'velocidad'       => $p['rate-limit'] ?? null,
                 'direccion_local' => $p['local-address'] ?? null,
                 'pool'            => $p['remote-address'] ?? null,
+                'una_sesion'      => ($p['only-one'] ?? 'default') === 'yes',
+                'dns'             => $p['dns-server'] ?? null,
+                'cifrado'         => ($p['use-encryption'] ?? '') === 'yes',
+                'del_sistema'     => ($p['default'] ?? 'false') === 'true',
+                // Un perfil que reparte de otro pool no sirve para clientes:
+                // los mandaría a la red equivocada.
+                'en_uso'          => $this->cuantosUsan($p['name'] ?? ''),
             ], $perfiles),
             'pools' => array_map(fn ($p) => [
                 'nombre' => $p['name'] ?? '',
@@ -79,26 +93,67 @@ class ServicioPppoe
 
         foreach ($this->leer($api, '/ppp/active/print') as $s) {
             $activas[$s['name'] ?? ''] = [
-                'ip'       => $s['address'] ?? null,
-                'desde'    => $s['uptime'] ?? null,
-                'servicio' => $s['service'] ?? null,
-                'mac'      => $s['caller-id'] ?? null,
+                'ip'         => $s['address'] ?? null,
+                'desde'      => $s['uptime'] ?? null,
+                'servicio'   => $s['service'] ?? null,
+                'mac'        => $s['caller-id'] ?? null,
+                'sesion_id'  => $s['session-id'] ?? null,
+                'codificacion' => $s['encoding'] ?? null,
             ];
         }
 
-        return array_map(function ($s) use ($activas) {
+        // El documento del cliente va en el comment, así que se puede mostrar
+        // de quién es cada credencial y no sólo el usuario.
+        $clientes = DB::table('user_data as ud')
+            ->join('users as u', 'u.id', '=', 'ud.user_id')
+            ->where('u.company_id', $this->companyId())
+            ->where('ud.active', 1)
+            ->whereNotNull('ud.dni')
+            ->get(['ud.user_id', 'ud.dni', 'ud.names', 'ud.lastname', 'ud.pppoe_user'])
+            ->keyBy(fn ($c) => preg_replace('/\D/', '', (string) $c->dni));
+
+        return array_map(function ($s) use ($activas, $clientes) {
             $usuario = $s['name'] ?? '';
+            $documento = trim((string) ($s['comment'] ?? ''));
+            $cliente = $clientes[preg_replace('/\D/', '', $documento)] ?? null;
 
             return [
                 'usuario'    => $usuario,
                 'perfil'     => $s['profile'] ?? null,
                 'servicio'   => $s['service'] ?? null,
-                'comentario' => $s['comment'] ?? null,
+                'comentario' => $documento ?: null,
                 'habilitado' => ($s['disabled'] ?? 'false') !== 'true',
-                'ultima_ip'  => $s['last-logged-out'] ?? null,
+                'cliente'    => $cliente ? trim($cliente->names . ' ' . $cliente->lastname) : null,
+                'user_id'    => $cliente->user_id ?? null,
+                'ultima_salida' => $s['last-logged-out'] ?? null,
+                'ultimo_motivo' => $s['last-disconnect-reason'] ?? null,
+                'ultima_mac'    => $s['last-caller-id'] ?? null,
                 'sesion'     => $activas[$usuario] ?? null,
             ];
         }, $this->leer($api, '/ppp/secret/print'));
+    }
+
+    /** Cuántas credenciales están usando este perfil. */
+    private function cuantosUsan(string $perfil): int
+    {
+        if ($perfil === '') {
+            return 0;
+        }
+
+        $this->secretsCache ??= $this->leer($this->api(), '/ppp/secret/print');
+
+        return count(array_filter(
+            $this->secretsCache,
+            fn ($s) => ($s['profile'] ?? '') === $perfil
+        ));
+    }
+
+    /** @var array<int,array<string,mixed>>|null */
+    private ?array $secretsCache = null;
+
+    private function companyId(): int
+    {
+        return (int) getSessionCompanyId();
     }
 
     /* ── Alta y bajas ─────────────────────────────────────────────────────── */
