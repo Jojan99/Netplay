@@ -77,6 +77,9 @@ class ServicioPppoe
             ], $pools),
             'secrets'  => count($this->leer($api, '/ppp/secret/print')),
             'sesiones' => count($this->leer($api, '/ppp/active/print')),
+            // Lo que hay conectado por VPN y no por PPPoE. Se informa para que
+            // no parezca que faltan clientes ni que sobran.
+            'otros_ppp' => $this->otrosServiciosPpp($api),
         ];
     }
 
@@ -112,7 +115,15 @@ class ServicioPppoe
             ->get(['ud.user_id', 'ud.dni', 'ud.names', 'ud.lastname', 'ud.pppoe_user'])
             ->keyBy(fn ($c) => preg_replace('/\D/', '', (string) $c->dni));
 
-        return array_map(function ($s) use ($activas, $clientes) {
+        // MikroTik guarda en el mismo lugar las credenciales de PPPoE y las de
+        // las VPN —L2TP, PPTP, SSTP, OpenVPN—. Acá interesan sólo las de
+        // clientes: la cuenta de la VPN del propio ISP no es un abonado.
+        $secrets = array_filter(
+            $this->leer($api, '/ppp/secret/print'),
+            fn ($s) => in_array($s['service'] ?? '', ['pppoe', 'any', ''], true)
+        );
+
+        return array_values(array_map(function ($s) use ($activas, $clientes) {
             $usuario = $s['name'] ?? '';
             $documento = trim((string) ($s['comment'] ?? ''));
             $cliente = $clientes[preg_replace('/\D/', '', $documento)] ?? null;
@@ -128,9 +139,41 @@ class ServicioPppoe
                 'ultima_salida' => $s['last-logged-out'] ?? null,
                 'ultimo_motivo' => $s['last-disconnect-reason'] ?? null,
                 'ultima_mac'    => $s['last-caller-id'] ?? null,
-                'sesion'     => $activas[$usuario] ?? null,
+                // Sólo cuenta como conectado si entró por PPPoE: la misma
+                // credencial podría estar usándose para otra cosa.
+                'sesion'     => ($activas[$usuario]['servicio'] ?? null) === 'pppoe'
+                    ? $activas[$usuario]
+                    : null,
             ];
-        }, $this->leer($api, '/ppp/secret/print'));
+        }, $secrets));
+    }
+
+    /**
+     * Sesiones PPP que no son PPPoE, agrupadas por servicio.
+     *
+     * @return array<int,array{servicio:string, sesiones:int}>
+     */
+    private function otrosServiciosPpp($api): array
+    {
+        $porServicio = [];
+
+        foreach ($this->leer($api, '/ppp/active/print') as $a) {
+            $servicio = $a['service'] ?? '';
+
+            if ($servicio === '' || $servicio === 'pppoe') {
+                continue;
+            }
+
+            $porServicio[$servicio] = ($porServicio[$servicio] ?? 0) + 1;
+        }
+
+        $salida = [];
+
+        foreach ($porServicio as $servicio => $n) {
+            $salida[] = ['servicio' => $servicio, 'sesiones' => $n];
+        }
+
+        return $salida;
     }
 
     /** Cuántas credenciales están usando este perfil. */
