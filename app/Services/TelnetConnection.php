@@ -88,8 +88,17 @@ class TelnetConnection
     {
         // Huawei OLT variants: "User name:", "Username:", "Login:"
         $out = $this->read('/(?:User\s*name|Login|Username)\s*[:\>]\s*$/i');
+
         if (empty(trim($out))) {
-            throw new RuntimeException('Telnet: timed out waiting for username prompt. Received: ' . json_encode($out));
+            // La OLT aceptó la conexión pero no mandó nada. Es lo que hace
+            // cuando ya no le quedan sesiones libres: no rechaza, se queda
+            // callada. Decirlo así ahorra buscar el problema en la red.
+            throw new RuntimeException(
+                'La OLT aceptó la conexión pero no respondió. Casi siempre es porque tiene todas '
+                . 'sus sesiones ocupadas por conexiones anteriores que quedaron abiertas. Se liberan '
+                . 'solas cuando la OLT las da por vencidas; si hay apuro, entrá por consola y cerralas '
+                . 'a mano con "display users".'
+            );
         }
         $this->write($username . "\r\n");
 
