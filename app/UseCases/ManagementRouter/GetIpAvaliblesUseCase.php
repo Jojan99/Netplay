@@ -138,8 +138,17 @@ public function GetIpAvalibles(GestionUserRequest $gestionUserRequest, ?int $rou
 
     } catch (\Throwable $err) {
 
+        // Hasta acá el error se perdía entero, así que cuando el formulario de
+        // alta se trababa no había forma de saber si era el router apagado, la
+        // clave cambiada o un timeout.
+        \Illuminate\Support\Facades\Log::warning('[IPs disponibles] Falló la consulta al router', [
+            'router_id' => $routerId,
+            'vlan'      => $gestionUserRequest['vlan'] ?? null,
+            'error'     => $err->getMessage(),
+        ]);
+
         return [
-            'message' => 'Ocurrió un error al consultar el router',
+            'message' => 'No se pudo consultar el router. Verificá que esté en línea y reintentá.',
             'status'  => 1,
             'data'    => null
         ];
