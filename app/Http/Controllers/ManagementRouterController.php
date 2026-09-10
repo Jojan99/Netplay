@@ -168,6 +168,20 @@ class ManagementRouterController extends Controller
         );
     }
 
+    /**
+     * Foto del equipo que corresponde al modelo del router.
+     *
+     * Va aparte de getRouterInfo porque la primera vez sale a buscarla y no
+     * conviene demorar la pantalla entera por una imagen; después queda
+     * guardada y responde al instante.
+     */
+    public function routerPhoto(Request $request): object
+    {
+        $datos = \App\Services\Red\FotoDelRouter::resolver($request->query('board'));
+
+        return standardApiReponse('Foto del equipo', $datos, 0, JsonResponse::HTTP_OK);
+    }
+
     public function getIpAvalibles(
         GetIpAvaliblesUseCaseInterface $getIpAvaliblesUseCaseInterface,
         GestionUserRequest $gestionUserRequest
