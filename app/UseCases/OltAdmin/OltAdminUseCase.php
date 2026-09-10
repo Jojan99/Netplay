@@ -790,17 +790,47 @@ class OltAdminUseCase
         $cacheKey = "olt:{$oltId}:all_service_ports";
         $todos    = Cache::get($cacheKey);
 
-        if (!is_array($todos) || $todos === []) {
-            $todos = $this->dispatcher->dispatch($oltId, 'getServicePorts');
+        if (is_array($todos) && $todos !== []) {
+            return $todos;
+        }
 
-            // Sólo se guarda si trajo algo: cachear un vacío por cinco minutos
-            // hacía que todo pareciera sin service-port en ese rato.
-            if (is_array($todos) && $todos !== []) {
-                Cache::put($cacheKey, $todos, now()->addMinutes(5));
+        // Se recorren los puertos que tienen ONT registrada, uno por uno.
+        // "display service-port all" en una OLT con cientos de ONT devuelve
+        // miles de líneas paginadas —por eso estaba deshabilitado y devolvía
+        // vacío—; por puerto el volumen es chico y son pocas consultas.
+        $puertos = OltOnt::where('olt_id', $oltId)
+            ->distinct()
+            ->orderBy('fsp')
+            ->pluck('fsp')
+            ->filter()
+            ->all();
+
+        $todos = [];
+
+        foreach ($puertos as $fsp) {
+            try {
+                $delPuerto = $this->dispatcher->dispatch($oltId, 'getServicePorts', ['fsp' => $fsp]);
+
+                foreach ((array) $delPuerto as $sp) {
+                    // El puerto no siempre viene en la respuesta: se completa
+                    // con el que se preguntó, que es el que corresponde.
+                    $sp['fsp'] = $sp['fsp'] ?? $fsp;
+                    $todos[]   = $sp;
+                }
+            } catch (\Throwable $e) {
+                \Log::warning('OLT getAllServicePorts: falló un puerto', [
+                    'olt_id' => $oltId, 'fsp' => $fsp, 'error' => $e->getMessage(),
+                ]);
             }
         }
 
-        return is_array($todos) ? $todos : [];
+        // Sólo se guarda si trajo algo: cachear un vacío hacía que todas las
+        // ONT parecieran sin service-port durante los cinco minutos.
+        if ($todos !== []) {
+            Cache::put($cacheKey, $todos, now()->addMinutes(10));
+        }
+
+        return $todos;
     }
 
     private function mergeServicePorts(int $oltId, array $onts): array

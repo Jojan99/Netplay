@@ -106,6 +106,20 @@ class OltTelnetWorker extends Command
         while (true) {
             $this->publishHeartbeat($oltId);
             $this->renovarLock();
+
+            // El worker vive indefinidamente, así que se queda con el código
+            // que tenía al arrancar: después de un despliegue sigue corriendo
+            // el viejo hasta que alguien lo mata. Con esta señal termina solo
+            // y el dispatcher lo vuelve a levantar ya actualizado.
+            if (Redis::get("olt:{$oltId}:recargar")) {
+                Redis::del("olt:{$oltId}:recargar");
+                $this->info("OLT #{$oltId}: recarga pedida, el worker termina para volver con el código nuevo.");
+                Log::info("OLT Worker #{$oltId}: termina por recarga");
+                $this->disconnect($oltId);
+                $this->soltarLock();
+
+                return self::SUCCESS;
+            }
             $this->checkIdleTimeout($oltId);
 
             // Espera hasta BLPOP_TIMEOUT segundos por un comando

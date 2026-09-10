@@ -440,10 +440,14 @@ public function getServicePorts(?string $fsp = null, ?int $ontId = null): array
     // 🧾 Comando
     if ($fsp !== null && $ontId !== null) {
         $command = "display service-port port {$fsp} ont {$ontId}";
+    } elseif ($fsp !== null) {
+        // Todos los de un puerto. No se usa "display service-port all" a
+        // propósito: en una OLT con cientos de ONT devuelve miles de líneas
+        // paginadas. Por puerto el volumen es manejable y quien llama puede
+        // recorrer los puertos que le interesen.
+        $command = "display service-port port {$fsp}";
     } else {
-        //$command = "display service-port all";
-
-        return []; // para evitar paginación masiva en OLTs grandes, requerimos fsp+ontId. Si no se dan, devolvemos array vacío.    
+        return [];
     }
 
     Log::debug('COMANDO', ['cmd' => $command]);
