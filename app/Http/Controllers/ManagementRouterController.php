@@ -84,6 +84,26 @@ class ManagementRouterController extends Controller
         return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }
 
+    /**
+     * Clientes que están compartiendo una misma IP.
+     *
+     * No toca el router: es una lectura de lo que la plataforma tiene
+     * registrado, para poder ir resolviéndolos de a uno con la migración de
+     * IP que ya existe.
+     */
+    public function ipConflicts(): object
+    {
+        $companyId = getSessionCompanyId();
+
+        if (!$companyId) {
+            return standardApiReponse('Sesión sin empresa asociada', null, 1, JsonResponse::HTTP_UNAUTHORIZED);
+        }
+
+        $datos = (new \App\Services\Red\ConflictosDeIp($companyId))->listar();
+
+        return standardApiReponse('Conflictos de IP', $datos, 0, JsonResponse::HTTP_OK);
+    }
+
     public function getIpAvalibles(
         GetIpAvaliblesUseCaseInterface $getIpAvaliblesUseCaseInterface,
         GestionUserRequest $gestionUserRequest

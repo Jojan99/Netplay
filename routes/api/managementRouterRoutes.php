@@ -41,7 +41,10 @@ Route::prefix('management')->group(function () {
     Route::get('getOntInfo/{id}', [ManagementRouterController::class, 'getOntInfo'])->withoutMiddleware('jwt.verify');
     Route::post('getIpAvalibles', [ManagementRouterController::class, 'getIpAvalibles'])->withoutMiddleware('jwt.verify');
     Route::get('getLanSegments', [ManagementRouterController::class, 'getLanSegments'])->withoutMiddleware('jwt.verify');
-    Route::post('getIpAvalibles', [ManagementRouterController::class, 'getIpAvalibles'])->withoutMiddleware('jwt.verify');
+
+    // Clientes que comparten una misma IP. Sólo lee lo que la plataforma tiene
+    // registrado, así que exige sesión como cualquier pantalla del panel.
+    Route::get('ip-conflicts', [ManagementRouterController::class, 'ipConflicts']);
     Route::post('autorizarServicio', [ManagementRouterController::class, 'autorizarServicio'])->withoutMiddleware('jwt.verify');
     Route::post('migrarIp', [ManagementRouterController::class, 'migrarIp'])->withoutMiddleware('jwt.verify');
 
