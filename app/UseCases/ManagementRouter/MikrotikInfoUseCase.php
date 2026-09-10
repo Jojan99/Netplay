@@ -114,6 +114,12 @@ class MikrotikInfoUseCase implements MikrotikInfoUseCaseInterface
             $addrQuery->add('=.proplist=address,interface,disabled');
             $addresses = $api->query($addrQuery)->read();
 
+            // Cómo negoció cada puerto. Los 16 de un CCR1036 se leen de una
+            // sola vez en menos de un décimo de segundo, y con eso el panel
+            // puede marcar los que quedaron por debajo de lo que soportan
+            // —un Gigabit conectado a 100 Mbps suele ser cable o conector—.
+            $enlaces = $this->velocidadesDePuertos($api, $interfaces);
+
             $arpQuery = new Query('/ip/arp/print');
             $arpQuery->add('=.proplist=address,mac-address,interface,comment,disabled');
             $arpList = $api->query($arpQuery)->read();
@@ -137,6 +143,7 @@ class MikrotikInfoUseCase implements MikrotikInfoUseCaseInterface
                         'architecture' => $resource['architecture-name'] ?? '',
                     ],
                     'interfaces'     => $interfaces,
+                    'enlaces'        => $enlaces,
                     'addresses'      => $addresses,
                     'arp_count'      => count($arpList),
                     'active_clients' => count(array_filter($arpList, fn($r) => ($r['disabled'] ?? 'false') === 'false')),
@@ -144,6 +151,59 @@ class MikrotikInfoUseCase implements MikrotikInfoUseCaseInterface
             ];
         } catch (\Throwable $e) {
             return ['status' => 1, 'message' => 'Error al obtener info del router: ' . $e->getMessage(), 'data' => null];
+        }
+    }
+
+    /**
+     * Velocidad negociada de cada puerto físico.
+     *
+     * Se piden todos juntos: uno por uno serían tantas consultas como puertos
+     * y la pantalla tardaría. Si el router no soporta el comando —pasa con
+     * interfaces que no son ethernet— se devuelve vacío y el panel sigue
+     * mostrando lo demás.
+     *
+     * @param  array<int,array<string,mixed>>  $interfaces
+     * @return array<string,array{estado:string, velocidad:?string, full_duplex:bool}>
+     */
+    private function velocidadesDePuertos($api, array $interfaces): array
+    {
+        $fisicos = array_values(array_filter(
+            array_column($interfaces, 'name'),
+            fn ($n) => (bool) preg_match('/^(ether|sfp|combo|qsfp)/i', (string) $n)
+        ));
+
+        if (!$fisicos) {
+            return [];
+        }
+
+        try {
+            $q = new Query('/interface/ethernet/monitor');
+            $q->equal('numbers', implode(',', $fisicos));
+            $q->equal('once', '');
+
+            $salida = [];
+
+            foreach ($api->query($q)->read() as $fila) {
+                $nombre = $fila['name'] ?? '';
+
+                if ($nombre === '') {
+                    continue;
+                }
+
+                $salida[$nombre] = [
+                    'estado'      => $fila['status'] ?? '',
+                    'velocidad'   => $fila['rate'] ?? null,
+                    'full_duplex' => ($fila['full-duplex'] ?? '') === 'true',
+                ];
+            }
+
+            return $salida;
+        } catch (\Throwable $e) {
+            \Log::warning('[Router] No se pudieron leer las velocidades de los puertos', [
+                'error' => $e->getMessage(),
+            ]);
+
+            return [];
         }
     }
 
