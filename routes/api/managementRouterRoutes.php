@@ -92,6 +92,7 @@ Route::prefix('management')->group(function () {
         Route::post('/{oltId}/mover-ont',      [OltAdminController::class, 'moverOnt']);
         Route::get('/{oltId}/onts-incompletas', [OltAdminController::class, 'ontsIncompletas']);
         Route::get('/{oltId}/clientes-sin-ont',  [OltAdminController::class, 'clientesSinOnt']);
+        Route::post('/{oltId}/completar-service-port', [OltAdminController::class, 'completarServicePort']);
         Route::delete('/{oltId}/ont',      [OltAdminController::class, 'deleteONT']);
         Route::post('/{oltId}/assign',      [OltAdminController::class, 'assignONT']);
         Route::post('/{oltId}/auto-assign', [OltAdminController::class, 'autoAssignONT']);

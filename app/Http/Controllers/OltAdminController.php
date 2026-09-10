@@ -74,6 +74,14 @@ class OltAdminController extends Controller
         return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
     }
 
+    /** Reintenta sólo el service-port de una ONT que quedó a medias. */
+    public function completarServicePort(OltOntRequest $request, int $oltId): JsonResponse
+    {
+        $r = $this->uc->completarServicePort($oltId, $request->validated());
+
+        return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
+    }
+
     /** Clientes que todavía no tienen una ONT vinculada. */
     public function clientesSinOnt(Request $request, int $oltId): JsonResponse
     {

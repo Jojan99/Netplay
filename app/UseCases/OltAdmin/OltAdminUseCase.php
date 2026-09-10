@@ -255,11 +255,48 @@ class OltAdminUseCase
                 'service_port'    => $spIndex,
             ]);
 
+            // Un alta son varios pasos contra la OLT y cualquiera puede
+            // fallar por su cuenta. Se informa uno por uno: si se corta a
+            // mitad, hay que poder ver qué quedó hecho para no repetirlo todo
+            // ni dejar al cliente conectado sin navegar.
+            $pasos = [[
+                'paso'    => "Autorizar la ONT en {$data['fsp']}",
+                'ok'      => (bool) $result['success'],
+                'detalle' => $result['success']
+                    ? 'ONT ID ' . $result['ont_id']
+                    : ($result['message'] ?: 'la OLT no dio detalle'),
+            ]];
+
             if ($result['success']) {
                 Cache::forget("olt:{$oltId}:unauth_onts");
 
                 $ontId     = (int) $result['ont_id'];
                 $spCreated = $result['service_port_created'] ?? false;
+
+                if ($vlan !== null) {
+                    $pasos[] = [
+                        'paso'    => "Crear el service-port (VLAN {$vlan})",
+                        'ok'      => (bool) $spCreated,
+                        'detalle' => $spCreated
+                            ? "índice {$spIndex}"
+                            : 'sin esto el cliente conecta pero no navega',
+                    ];
+                } else {
+                    $pasos[] = [
+                        'paso'    => 'Crear el service-port',
+                        'ok'      => false,
+                        'omitido' => true,
+                        'detalle' => 'no se eligió VLAN, así que no se creó',
+                    ];
+                }
+
+                if (!empty($data['user_data_id'])) {
+                    $pasos[] = [
+                        'paso'    => 'Vincular el cliente',
+                        'ok'      => true,
+                        'detalle' => null,
+                    ];
+                }
 
                 OltOnt::updateOrCreate(
                     ['olt_id' => $oltId, 'fsp' => $data['fsp'], 'ont_id' => $ontId],
@@ -287,7 +324,11 @@ class OltAdminUseCase
                     . (($result['service_port_created'] ?? false) ? " · service-port {$spIndex} creado" : '')
                 : 'La OLT no autorizó la ONT: ' . ($result['message'] ?: 'sin detalle');
 
-            return ['status' => $result['success'] ? 0 : 1, 'message' => $msg, 'data' => $result];
+            return [
+                'status'  => $result['success'] ? 0 : 1,
+                'message' => $msg,
+                'data'    => $result + ['pasos' => $pasos, 'fsp' => $data['fsp']],
+            ];
         } catch (\Throwable $e) {
             \Log::error('OLT registerONT error', ['olt_id' => $oltId, 'error' => $e->getMessage()]);
             return ['status' => 1, 'message' => 'Error registrando ONT: ' . $e->getMessage(), 'data' => null];
@@ -433,6 +474,46 @@ class OltAdminUseCase
             ->filter(fn ($o) => $o['falta'] !== [])
             ->values()
             ->all();
+    }
+
+    /**
+     * Completa el service-port de una ONT que quedó a medias.
+     *
+     * Es el paso que más falla del alta: la ONT queda autorizada, el cliente
+     * conecta y no navega. Se puede reintentar solo, sin volver a autorizar ni
+     * repetir todo el alta.
+     */
+    public function completarServicePort(int $oltId, array $data): array
+    {
+        $fsp   = $data['fsp'];
+        $ontId = (int) $data['ont_id'];
+
+        $oltModel = $this->getOltModel($oltId);
+        $vlan     = (int) ($data['vlan'] ?? $oltModel->default_vlan);
+
+        if (!$vlan) {
+            return ['status' => 1, 'message' => 'Hace falta la VLAN para crear el service-port.', 'data' => null];
+        }
+
+        // Índice nuevo: el del intento anterior pudo quedar a medio crear.
+        $spIndex = $this->generateServicePort($oltId, $vlan);
+
+        $ont = OltOnt::where('olt_id', $oltId)->where('fsp', $fsp)->where('ont_id', $ontId)->first();
+
+        $r = $this->assignONTToClient($oltId, [
+            'fsp'          => $fsp,
+            'ont_id'       => $ontId,
+            'vlan'         => $vlan,
+            'service_port' => $spIndex,
+            'description'  => $data['description'] ?? ($ont->description ?? ''),
+        ]);
+
+        if ($r['status'] === 0 && $ont) {
+            $ont->update(['service_ports' => [['index' => $spIndex, 'vlan' => $vlan]]]);
+            Cache::forget("olt:{$oltId}:all_service_ports");
+        }
+
+        return $r;
     }
 
     public function assignONTToClient(int $oltId, array $data): array
