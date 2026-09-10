@@ -905,14 +905,18 @@ class OltAdminUseCase
     {
         $companyId = getSessionCompanyId();
 
-        $tomados = OltOnt::whereNotNull('user_data_id')->pluck('user_data_id')->all();
+        // Quiénes ya tienen una ONT. No se los saca de la lista: se los marca,
+        // para que se vean todos los clientes y quede claro cuál está tomado.
+        $tomados = OltOnt::whereNotNull('user_data_id')
+            ->pluck('user_data_id')
+            ->flip()
+            ->all();
 
         return \Illuminate\Support\Facades\DB::table('user_data as ud')
             ->join('users as u', 'u.id', '=', 'ud.user_id')
             ->leftJoin('internet_plans as p', 'p.id', '=', 'ud.internet_plans_id')
             ->where('u.company_id', $companyId)
             ->where('ud.active', 1)
-            ->when($tomados, fn ($q) => $q->whereNotIn('ud.id', $tomados))
             ->when($busca, function ($q) use ($busca) {
                 $t = '%' . trim($busca) . '%';
 
@@ -922,7 +926,6 @@ class OltAdminUseCase
                     ->orWhere('ud.address', 'like', $t));
             })
             ->orderBy('ud.names')
-            ->limit(80)
             ->get([
                 'ud.id',
                 'ud.user_id',
@@ -939,6 +942,7 @@ class OltAdminUseCase
                 'dni'       => $c->dni,
                 'direccion' => $c->address,
                 'plan'      => $c->plan_name,
+                'tiene_ont' => isset($tomados[$c->id]),
             ])
             ->all();
     }
