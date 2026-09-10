@@ -99,30 +99,64 @@ public function UpdateStatus(GestionUserRequest $gestionUserRequest): array
         }
 
         // 🔹 Obtener router_id del usuario
-        $userRouterId = UserData::where('user_id', $gestionUserRequest['id_user'])->value('router_id');
+        $cliente = UserData::where('user_id', $gestionUserRequest['id_user'])
+            ->first(['router_id', 'connection_type', 'pppoe_user']);
+
+        $userRouterId = $cliente->router_id ?? null;
 
         // ✅ UNA SOLA CONEXIÓN (al router del usuario o al default)
-        $client = $this->connection->conection($this->resolveToken($userRouterId ? (int) $userRouterId : null));
+        $token  = $this->resolveToken($userRouterId ? (int) $userRouterId : null);
+        $client = $this->connection->conection($token);
 
-        // BUSCAR ARP POR USERNAME
-        $query = (new Query('/ip/arp/print'))
-            ->where('comment', $routerResponse['username']);
+        // Un cliente PPPoE no tiene entrada en el ARP: lo que se corta es su
+        // credencial, y además hay que bajarle la sesión abierta o sigue
+        // navegando hasta que reconecte solo.
+        if (($cliente->connection_type ?? 'static') === 'pppoe') {
+            $usuario = trim((string) ($cliente->pppoe_user ?? ''));
 
-        $user = $client->query($query)->read();
+            if ($usuario === '') {
+                return [
+                    'message' => 'El cliente es PPPoE pero no tiene usuario configurado.',
+                    'status'  => 1,
+                    'data'    => null,
+                ];
+            }
 
-        if (empty($user) || !isset($user[0]['.id'])) {
-            return [
-                'message' => 'Usuario no encontrado en ARP',
-                'status'  => 1,
-                'data'    => null
-            ];
+            $pppoe = new \App\Services\Red\ServicioPppoe($this->connection, $token);
+
+            $gestionUserRequest['status'] == 2
+                ? $pppoe->suspender($usuario)
+                : $pppoe->reactivar($usuario);
+
+            \Log::info('[PPPoE] Estado cambiado', [
+                'usuario' => $usuario,
+                'estado'  => $gestionUserRequest['status'] == 2 ? 'suspendido' : 'activo',
+            ]);
+
+            $yaAplicado = true;
         }
 
-        // ENABLE / DISABLE ARP
-        $query = (new Query($statusCmd))
-            ->equal('.id', $user[0]['.id']);
+        if (empty($yaAplicado)) {
+            // BUSCAR ARP POR USERNAME
+            $query = (new Query('/ip/arp/print'))
+                ->where('comment', $routerResponse['username']);
 
-        $client->query($query)->read();
+            $user = $client->query($query)->read();
+
+            if (empty($user) || !isset($user[0]['.id'])) {
+                return [
+                    'message' => 'Usuario no encontrado en ARP',
+                    'status'  => 1,
+                    'data'    => null
+                ];
+            }
+
+            // ENABLE / DISABLE ARP
+            $query = (new Query($statusCmd))
+                ->equal('.id', $user[0]['.id']);
+
+            $client->query($query)->read();
+        }
 
         // Send WhatsApp notification on suspension
         if ($gestionUserRequest['status'] == 2) {

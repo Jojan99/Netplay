@@ -52,6 +52,9 @@ Route::prefix('management')->group(function () {
     // Todo lo que el router sabe de un puerto.
     Route::get('port-detail', [ManagementRouterController::class, 'portDetail']);
 
+    // PPPoE: qué tiene preparado el router y quién está conectado.
+    Route::get('pppoe', [ManagementRouterController::class, 'pppoeEstado']);
+
     // Copia al sistema la IP que cada cliente tiene en el router. Escribe sobre
     // los clientes, así que va con rol admin.
     Route::post('sync-ips', [ManagementRouterController::class, 'syncIps'])->middleware('role:admin');

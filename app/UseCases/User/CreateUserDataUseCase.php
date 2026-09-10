@@ -62,32 +62,48 @@ class CreateUserDataUseCase implements CreateUserDataUseCaseInterface
                 if ($this->userRepository->validateUserPhone($data['phone']))  return ['message' => 'The phone already exists', 'data' => 5, 'status' => 1];
                 if ($this->userRepository->validateUserDni($data['dni'])) return ['message' => 'ID already exists', 'data' => 6, 'status' => 1];
                 
-                    \Log::info('REGISTERING USER IN MIKROTIK', [
-                        'ip' => $data['ip_assignment_id'] ?? 'N/A',
-                        'vlan' => $data['vlan'] ?? 'N/A',
-                        'dni' => $data['dni'] ?? 'N/A'
-                    ]);
+                    // Los dos tipos de conexión se dan de alta distinto: con IP
+                    // fija el cliente vive en el ARP del router, con PPPoE se le
+                    // crea una credencial y la IP se la da el pool.
+                    $esPppoe = ($data['connection_type'] ?? 'static') === 'pppoe';
 
-                    $pasa = $this->getIpAvaliblesUseCaseInterface->registerIpInArp(
-                        ip: $data['ip_assignment_id'],
-                        mac: '',
-                        vlan: $data['vlan'] ?? '',
-                        comment: $data['dni']
-                    );
+                    if ($esPppoe) {
+                        $error = $this->altaPppoe($data);
 
-                    if(!$pasa){
-                        \Log::error('FAILED TO REGISTER IP IN MIKROTIK', [
+                        if ($error) {
+                            return ['message' => $error, 'status' => 1, 'data' => 'MIKROTIK_SYNC_ERROR'];
+                        }
+
+                        // Sin IP fija que asignar: la ficha de IP queda vacía.
+                        $data['ip_assignment_id'] = null;
+                    } else {
+                        \Log::info('REGISTERING USER IN MIKROTIK', [
+                            'ip' => $data['ip_assignment_id'] ?? 'N/A',
+                            'vlan' => $data['vlan'] ?? 'N/A',
+                            'dni' => $data['dni'] ?? 'N/A'
+                        ]);
+
+                        $pasa = $this->getIpAvaliblesUseCaseInterface->registerIpInArp(
+                            ip: $data['ip_assignment_id'],
+                            mac: '',
+                            vlan: $data['vlan'] ?? '',
+                            comment: $data['dni']
+                        );
+
+                        if(!$pasa){
+                            \Log::error('FAILED TO REGISTER IP IN MIKROTIK', [
+                                'ip' => $data['ip_assignment_id'],
+                                'vlan' => $data['vlan'] ?? '',
+                                'dni' => $data['dni']
+                            ]);
+                            return ['message' => 'Error registrando usuario en Mikrotik. Contacte al administrador.', 'status' => 1, 'data' => 'MIKROTIK_SYNC_ERROR'];
+                        }
+
+                        \Log::info('USER MIKROTIK REGISTRATION SUCCESSFUL', [
                             'ip' => $data['ip_assignment_id'],
-                            'vlan' => $data['vlan'] ?? '',
                             'dni' => $data['dni']
                         ]);
-                        return ['message' => 'Error registrando usuario en Mikrotik. Contacte al administrador.', 'status' => 1, 'data' => 'MIKROTIK_SYNC_ERROR'];
                     }
-
-                    \Log::info('USER MIKROTIK REGISTRATION SUCCESSFUL', [
-                        'ip' => $data['ip_assignment_id'],
-                        'dni' => $data['dni']
-                    ]);
 
                 $user = $this->userRepository->createUser($data);
                 if ($user) {
@@ -145,5 +161,55 @@ class CreateUserDataUseCase implements CreateUserDataUseCaseInterface
         }
 
         return ['message' => 'Usuario creado con éxito', 'status' => 0, 'data' => ApiResponseConstants::DATA_NULL];
+    }
+
+    /**
+     * Da de alta la credencial PPPoE en el router.
+     *
+     * Devuelve el mensaje de error si algo falla, o null si salió bien. Se
+     * crea antes que el cliente a propósito: si el router rechaza el alta no
+     * queda un cliente en la plataforma que no existe en la red.
+     *
+     * @param  array<string,mixed>  $data
+     */
+    private function altaPppoe(array $data): ?string
+    {
+        $usuario = trim((string) ($data['pppoe_user'] ?? ''));
+        $clave   = (string) ($data['pppoe_password'] ?? '');
+        $perfil  = trim((string) ($data['pppoe_profile'] ?? '')) ?: 'default';
+
+        if ($usuario === '' || $clave === '') {
+            return 'Para una conexión PPPoE hacen falta el usuario y la contraseña.';
+        }
+
+        $token = \Illuminate\Support\Facades\DB::table('conection_routers')
+            ->where('company_id', getSessionCompanyId())
+            ->when($data['router_id'] ?? null, fn ($q) => $q->where('id', $data['router_id']))
+            ->value('token');
+
+        if (!$token) {
+            return 'No hay un router configurado para dar de alta la conexión PPPoE.';
+        }
+
+        try {
+            $servicio = new \App\Services\Red\ServicioPppoe(
+                app(\App\Managers\Interfaces\ConectionRouterManagerInterface::class),
+                $token
+            );
+
+            $servicio->crear($usuario, $clave, $perfil, (string) $data['dni']);
+
+            \Log::info('[PPPoE] Cliente dado de alta', [
+                'usuario' => $usuario, 'dni' => $data['dni'], 'perfil' => $perfil,
+            ]);
+
+            return null;
+        } catch (\Throwable $e) {
+            \Log::error('[PPPoE] No se pudo dar de alta', [
+                'usuario' => $usuario, 'error' => $e->getMessage(),
+            ]);
+
+            return 'No se pudo crear el usuario PPPoE en el router: ' . $e->getMessage();
+        }
     }
 }

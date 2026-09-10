@@ -38,8 +38,15 @@ class CreateUserDataRequest extends FormRequest
             'email' => 'required|string',
             'phone' => 'required|string',
             'planInternet' => 'required|int',
-            'ip_assignment_id' => 'string',
+            'ip_assignment_id' => 'nullable|string',
             'group' => 'required|int',
+            'router_id' => 'nullable|int',
+            // Con PPPoE no hay IP que asignar: el cliente entra con usuario y
+            // contraseña y la IP se la da el pool del router.
+            'connection_type' => 'nullable|in:static,pppoe',
+            'pppoe_user' => 'nullable|string|max:120|required_if:connection_type,pppoe',
+            'pppoe_password' => 'nullable|string|max:120|required_if:connection_type,pppoe',
+            'pppoe_profile' => 'nullable|string|max:120',
               // 'genderId' => 'required|int',
             // 'dniId' => 'required|int',
             // 'birthday' => 'required|string',

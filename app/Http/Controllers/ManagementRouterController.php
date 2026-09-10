@@ -223,6 +223,44 @@ class ManagementRouterController extends Controller
         return standardApiReponse('Detalle del puerto', $datos, 0, JsonResponse::HTTP_OK);
     }
 
+    /** Qué tiene el router preparado para PPPoE y quién está conectado. */
+    public function pppoeEstado(Request $request, \App\Managers\Interfaces\ConectionRouterManagerInterface $conexion): object
+    {
+        $token = $this->tokenDelRouter($request);
+
+        if (!$token) {
+            return standardApiReponse('No hay router configurado', null, 1, JsonResponse::HTTP_OK);
+        }
+
+        try {
+            $servicio = new \App\Services\Red\ServicioPppoe($conexion, $token);
+
+            return standardApiReponse('Estado de PPPoE', [
+                'estado'   => $servicio->estado(),
+                'usuarios' => $servicio->usuarios(),
+            ], 0, JsonResponse::HTTP_OK);
+        } catch (\Throwable $e) {
+            return standardApiReponse('No se pudo consultar el router: ' . $e->getMessage(), null, 1, JsonResponse::HTTP_OK);
+        }
+    }
+
+    /** El token del router elegido, o el de la empresa si no vino ninguno. */
+    private function tokenDelRouter(Request $request): ?string
+    {
+        $companyId = getSessionCompanyId();
+
+        if (!$companyId) {
+            return null;
+        }
+
+        $routerId = $request->input('router_id') ? (int) $request->input('router_id') : null;
+
+        return \Illuminate\Support\Facades\DB::table('conection_routers')
+            ->where('company_id', $companyId)
+            ->when($routerId, fn ($q) => $q->where('id', $routerId))
+            ->value('token');
+    }
+
     public function getIpAvalibles(
         GetIpAvaliblesUseCaseInterface $getIpAvaliblesUseCaseInterface,
         GestionUserRequest $gestionUserRequest

@@ -96,6 +96,12 @@ class UserRepository implements UserRepositoryInterface
             'birthday'           => 1,
             'ip_assignment_id'   => $data['ip_assignment_id'],
             'router_id'          => $data['router_id'] ?? null,
+            // Con PPPoE el cliente no tiene IP propia: entra con usuario y
+            // contraseña y la IP se la da el pool del router.
+            'connection_type'    => ($data['connection_type'] ?? 'static') === 'pppoe' ? 'pppoe' : 'static',
+            'pppoe_user'         => $data['pppoe_user'] ?? null,
+            'pppoe_password'     => $data['pppoe_password'] ?? null,
+            'pppoe_profile'      => $data['pppoe_profile'] ?? null,
         ]);
     }
 

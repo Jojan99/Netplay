@@ -36,6 +36,13 @@ class UserData extends Authenticatable
         'active',
         'status',
         'whatsapp_enabled',
+        // router_id faltaba: Eloquent lo descartaba en silencio y todos los
+        // clientes creados desde el panel quedaban sin router asignado.
+        'router_id',
+        'connection_type',
+        'pppoe_user',
+        'pppoe_password',
+        'pppoe_profile',
     ];
 
      /**
@@ -46,6 +53,9 @@ class UserData extends Authenticatable
     protected $casts = [
         'created_at' => 'datetime:Y-m-d H:i:s',
         'updated_at' => 'datetime:Y-m-d H:i:s',
-        'active' => 'boolean'
+        'active' => 'boolean',
+        // Es la credencial con la que el cliente entra a la red: no queda en
+        // claro en la base.
+        'pppoe_password' => 'encrypted',
     ];
 }
