@@ -15,5 +15,12 @@ class TrimStrings extends Middleware
         'current_password',
         'password',
         'password_confirmation',
+        // El SDP de una llamada termina en salto de línea y cada línea se
+        // separa con \r\n. Al recortarlo se pierde el terminador de la última
+        // línea y el navegador del otro lado rechaza la sesión entera con
+        // "Invalid SDP line": la llamada sonaba pero el audio no abría nunca.
+        'sdp',
+        'payload.sdp',
+        'payload.candidate',
     ];
 }
