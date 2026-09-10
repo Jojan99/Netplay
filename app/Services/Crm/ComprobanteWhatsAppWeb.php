@@ -223,7 +223,10 @@ class ComprobanteWhatsAppWeb
             Storage::disk('public')->put($path, $contenido);
 
             return [
-                'path'       => $path,
+                // URL completa, igual que el flujo de Meta: el panel muestra la
+                // evidencia usando este campo tal cual, y con una ruta relativa
+                // la imagen no cargaba.
+                'path'       => url('/storage/' . $path),
                 'ruta_local' => storage_path('app/public/' . $path),
                 'nombre'     => $nombre,
                 'hash'       => hash('sha256', $contenido),
