@@ -244,6 +244,68 @@ class ManagementRouterController extends Controller
         }
     }
 
+    /** Pasa un cliente de IP fija a PPPoE o al revés. */
+    public function cambiarConexion(Request $request, \App\Managers\Interfaces\ConectionRouterManagerInterface $conexion): object
+    {
+        $companyId = getSessionCompanyId();
+
+        if (!$companyId) {
+            return standardApiReponse('Sesión sin empresa asociada', null, 1, JsonResponse::HTTP_UNAUTHORIZED);
+        }
+
+        $userId = (int) $request->input('user_id');
+
+        if (!$userId) {
+            return standardApiReponse('Falta el cliente', null, 1, JsonResponse::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $r = (new \App\Services\Red\CambiarConexionCliente($conexion, $companyId))->aplicar(
+            $userId,
+            $request->only(['connection_type', 'pppoe_user', 'pppoe_password', 'pppoe_profile', 'ip', 'vlan'])
+        );
+
+        return standardApiReponse($r['mensaje'], null, $r['ok'] ? 0 : 1, JsonResponse::HTTP_OK);
+    }
+
+    /** Qué hace falta decidir para montar el servidor PPPoE. */
+    public function pppoeOpciones(Request $request, \App\Managers\Interfaces\ConectionRouterManagerInterface $conexion): object
+    {
+        $token = $this->tokenDelRouter($request);
+
+        if (!$token) {
+            return standardApiReponse('No hay router configurado', null, 1, JsonResponse::HTTP_OK);
+        }
+
+        try {
+            $datos = (new \App\Services\Red\ConfigurarServidorPppoe($conexion, $token))->opciones();
+
+            return standardApiReponse('Opciones para PPPoE', $datos, 0, JsonResponse::HTTP_OK);
+        } catch (\Throwable $e) {
+            return standardApiReponse('No se pudo leer el router: ' . $e->getMessage(), null, 1, JsonResponse::HTTP_OK);
+        }
+    }
+
+    /** Monta el servidor PPPoE en el router: pool, perfil y servicio. */
+    public function pppoeMontar(Request $request, \App\Managers\Interfaces\ConectionRouterManagerInterface $conexion): object
+    {
+        $token = $this->tokenDelRouter($request);
+
+        if (!$token) {
+            return standardApiReponse('No hay router configurado', null, 1, JsonResponse::HTTP_OK);
+        }
+
+        $r = (new \App\Services\Red\ConfigurarServidorPppoe($conexion, $token))->montar(
+            $request->only(['interfaz', 'pool', 'rango', 'gateway', 'perfil', 'servicio'])
+        );
+
+        return standardApiReponse(
+            $r['ok'] ? 'Servidor PPPoE configurado' : ($r['error'] ?? 'No se pudo configurar'),
+            $r,
+            $r['ok'] ? 0 : 1,
+            JsonResponse::HTTP_OK
+        );
+    }
+
     /** El token del router elegido, o el de la empresa si no vino ninguno. */
     private function tokenDelRouter(Request $request): ?string
     {

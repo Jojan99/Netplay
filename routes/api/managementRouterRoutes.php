@@ -55,6 +55,13 @@ Route::prefix('management')->group(function () {
     // PPPoE: qué tiene preparado el router y quién está conectado.
     Route::get('pppoe', [ManagementRouterController::class, 'pppoeEstado']);
 
+    // Estas escriben en el router y cambian el servicio de clientes reales.
+    Route::middleware('role:admin')->group(function () {
+        Route::get('pppoe/opciones',  [ManagementRouterController::class, 'pppoeOpciones']);
+        Route::post('pppoe/montar',   [ManagementRouterController::class, 'pppoeMontar']);
+        Route::post('cambiar-conexion', [ManagementRouterController::class, 'cambiarConexion']);
+    });
+
     // Copia al sistema la IP que cada cliente tiene en el router. Escribe sobre
     // los clientes, así que va con rol admin.
     Route::post('sync-ips', [ManagementRouterController::class, 'syncIps'])->middleware('role:admin');

@@ -64,4 +64,41 @@ class AsignacionDeIp
 
         return 'ficha_propia';
     }
+
+    /**
+     * Le arma al cliente su propia ficha con esta IP y se la deja apuntada.
+     *
+     * Se usa cuando el cliente no venía de tener una —por ejemplo al volver de
+     * PPPoE a IP fija—. Si quedó una ficha suya sin dueño de una vuelta
+     * anterior se reutiliza: crear una cada vez llenaría la tabla de fichas
+     * huérfanas.
+     */
+    public static function fichaPropia(int $userId, string $ip, int $companyId): int
+    {
+        $suelta = TablaIp::where('company_id', $companyId)
+            ->where('id_user', $userId)
+            ->whereNotExists(fn ($q) => $q->select(DB::raw(1))
+                ->from('user_data')
+                ->whereColumn('user_data.ip_assignment_id', 'tabla_ips.id'))
+            ->first();
+
+        if ($suelta) {
+            $suelta->update(['ip' => $ip, 'active' => 1]);
+            $ficha = $suelta;
+        } else {
+            $ficha = TablaIp::create([
+                'company_id' => $companyId,
+                'id_user'    => $userId,
+                'ip'         => $ip,
+                'name'       => '',
+                'active'     => 1,
+            ]);
+        }
+
+        DB::table('user_data')
+            ->where('user_id', $userId)
+            ->update(['ip_assignment_id' => $ficha->id]);
+
+        return (int) $ficha->id;
+    }
 }

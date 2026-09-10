@@ -132,6 +132,19 @@ class OnboardingController extends Controller
                 'cuenta'      => $routers ? ($routers === 1 ? '1 router' : "$routers routers") : null,
             ],
             [
+                // Opcional a propósito: quien trabaja con IP fija no lo
+                // necesita, pero quien usa PPPoE tiene que montarlo antes de
+                // cargar clientes o no van a poder conectarse.
+                'clave'       => 'pppoe',
+                'titulo'      => 'Elegí cómo se conectan tus clientes',
+                'detalle'     => 'Si repartís IP fija ya está todo listo. Si trabajás con PPPoE, dejá el router preparado desde acá: se crea el rango de direcciones, el perfil y el servidor en un paso.',
+                'ruta'        => '/dashboard/mikrotik',
+                'boton'       => 'Configurar PPPoE',
+                'hecho'       => $routers > 0,
+                'opcional'    => true,
+                'cuenta'      => null,
+            ],
+            [
                 'clave'       => 'clientes',
                 'titulo'      => 'Registrá tus clientes',
                 'detalle'     => 'Podés cargarlos de a uno o importarlos. Cada cliente queda con su plan, su dirección y su estado de servicio.',
