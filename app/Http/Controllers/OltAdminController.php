@@ -74,6 +74,14 @@ class OltAdminController extends Controller
         return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
     }
 
+    /** Clientes que todavía no tienen una ONT vinculada. */
+    public function clientesSinOnt(Request $request, int $oltId): JsonResponse
+    {
+        $r = $this->uc->clientesSinOnt($oltId, $request->query('q'));
+
+        return standardApiReponse('Clientes sin ONT', $r, 0, JsonResponse::HTTP_OK);
+    }
+
     /** ONT que quedaron a medio provisionar. */
     public function ontsIncompletas(int $oltId): JsonResponse
     {

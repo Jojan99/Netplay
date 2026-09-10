@@ -266,6 +266,9 @@ class OltAdminUseCase
                     [
                         'serial'        => $data['serial'],
                         'description'   => $desc,
+                        // El cliente queda vinculado desde el alta: así se sabe
+                        // qué puerto lo atiende sin tener que asignarlo aparte.
+                        'user_data_id'  => $data['user_data_id'] ?? null,
                         'status'        => 'offline',
                         'service_ports' => ($spCreated && $vlan !== null && $spIndex !== null)
                                             ? [['index' => $spIndex, 'vlan' => $vlan]]
@@ -885,6 +888,59 @@ class OltAdminUseCase
         }
 
         return $onts;
+    }
+
+    /**
+     * Clientes que todavía no tienen una ONT vinculada.
+     *
+     * Al autorizar una ONT hay que decir de quién es, y elegir de una lista de
+     * los que faltan evita el error de vincularla a alguien que ya tiene la
+     * suya. El nombre sigue viajando a la OLT como descripción; lo que se
+     * guarda de más es el vínculo, para saber después qué puerto atiende a
+     * cada cliente.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    public function clientesSinOnt(int $oltId, ?string $busca = null): array
+    {
+        $companyId = getSessionCompanyId();
+
+        $tomados = OltOnt::whereNotNull('user_data_id')->pluck('user_data_id')->all();
+
+        return \Illuminate\Support\Facades\DB::table('user_data as ud')
+            ->join('users as u', 'u.id', '=', 'ud.user_id')
+            ->leftJoin('internet_plans as p', 'p.id', '=', 'ud.internet_plans_id')
+            ->where('u.company_id', $companyId)
+            ->where('ud.active', 1)
+            ->when($tomados, fn ($q) => $q->whereNotIn('ud.id', $tomados))
+            ->when($busca, function ($q) use ($busca) {
+                $t = '%' . trim($busca) . '%';
+
+                $q->where(fn ($w) => $w->where('ud.names', 'like', $t)
+                    ->orWhere('ud.lastname', 'like', $t)
+                    ->orWhere('ud.dni', 'like', $t)
+                    ->orWhere('ud.address', 'like', $t));
+            })
+            ->orderBy('ud.names')
+            ->limit(80)
+            ->get([
+                'ud.id',
+                'ud.user_id',
+                'ud.names',
+                'ud.lastname',
+                'ud.dni',
+                'ud.address',
+                'p.plan_name',
+            ])
+            ->map(fn ($c) => [
+                'id'        => (int) $c->id,
+                'user_id'   => (int) $c->user_id,
+                'nombre'    => trim($c->names . ' ' . $c->lastname),
+                'dni'       => $c->dni,
+                'direccion' => $c->address,
+                'plan'      => $c->plan_name,
+            ])
+            ->all();
     }
 
     /**
