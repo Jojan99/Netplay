@@ -49,6 +49,10 @@ Route::prefix('management')->group(function () {
     // Copia al sistema la IP que cada cliente tiene en el router. Escribe sobre
     // los clientes, así que va con rol admin.
     Route::post('sync-ips', [ManagementRouterController::class, 'syncIps'])->middleware('role:admin');
+
+    // Separa los registros de IP que varios clientes comparten. No toca el
+    // router, pero reescribe la asignación de esos clientes: va con admin.
+    Route::post('separar-fichas', [ManagementRouterController::class, 'separarFichas'])->middleware('role:admin');
     Route::post('autorizarServicio', [ManagementRouterController::class, 'autorizarServicio'])->withoutMiddleware('jwt.verify');
     Route::post('migrarIp', [ManagementRouterController::class, 'migrarIp'])->withoutMiddleware('jwt.verify');
 

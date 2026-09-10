@@ -142,6 +142,8 @@ class SincronizarIpsDesdeRouter
             ->join('users as u', 'u.id', '=', 'ud.user_id')
             ->leftJoin('tabla_ips as t', 't.id', '=', 'ud.ip_assignment_id')
             ->where('u.company_id', $this->companyId)
+            // Un retirado no debe recibir la IP del router: ya no es cliente.
+            ->where('ud.active', 1)
             ->whereNotNull('ud.dni')
             ->where('ud.dni', '<>', '')
             ->get(['ud.user_id', 'ud.dni', 'ud.names', 'ud.lastname', 't.ip as ip_actual']);

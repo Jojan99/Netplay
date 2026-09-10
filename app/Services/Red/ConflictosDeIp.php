@@ -23,9 +23,21 @@ class ConflictosDeIp
 {
     public function __construct(private int $companyId) {}
 
-    /** @return array{compartidas:array, repetidas:array, resumen:array} */
-    public function listar(): array
+    /** Documento => IP según el ARP del router; null si no se pudo leer. */
+    private ?array $arp = null;
+
+    /**
+     * @param  array<string,string>|null  $arp  documento => IP en el router.
+     *   Con esto se distingue el conflicto de verdad —dos clientes con la
+     *   misma IP en el router— del que es sólo el dato mal en la plataforma,
+     *   que es la mayoría: clientes pegados al registro de otro, sin entrada
+     *   propia en el ARP. Sin el ARP se cae al estado del cliente, que marca
+     *   de más.
+     * @return array{compartidas:array, repetidas:array, resumen:array}
+     */
+    public function listar(?array $arp = null): array
     {
+        $this->arp   = $arp;
         $compartidas = $this->fichasCompartidas();
         $repetidas   = $this->ipsRepetidas();
 
@@ -48,6 +60,11 @@ class ConflictosDeIp
                     array_merge($compartidas, $repetidas),
                     fn ($g) => $g['urgente']
                 )),
+                'solo_dato'          => count(array_filter(
+                    array_merge($compartidas, $repetidas),
+                    fn ($g) => $g['solo_dato'] ?? false
+                )),
+                'con_router'         => $arp !== null,
             ],
         ];
     }
@@ -61,6 +78,7 @@ class ConflictosDeIp
                     ->from('user_data as ud2')
                     ->join('users as u2', 'u2.id', '=', 'ud2.user_id')
                     ->where('u2.company_id', $this->companyId)
+                    ->where('ud2.active', 1)
                     ->whereNotNull('ud2.ip_assignment_id')
                     ->groupBy('ud2.ip_assignment_id')
                     ->havingRaw('COUNT(*) > 1');
@@ -81,6 +99,7 @@ class ConflictosDeIp
         $compartidas = DB::table('user_data as ud2')
             ->join('users as u2', 'u2.id', '=', 'ud2.user_id')
             ->where('u2.company_id', $this->companyId)
+            ->where('ud2.active', 1)
             ->whereNotNull('ud2.ip_assignment_id')
             ->groupBy('ud2.ip_assignment_id')
             ->havingRaw('COUNT(*) > 1')
@@ -95,6 +114,7 @@ class ConflictosDeIp
                     ->join('user_data as ud2', 'ud2.ip_assignment_id', '=', 't2.id')
                     ->join('users as u2', 'u2.id', '=', 'ud2.user_id')
                     ->where('u2.company_id', $this->companyId)
+                    ->where('ud2.active', 1)
                     ->whereNotNull('t2.ip')
                     ->where('t2.ip', '<>', '')
                     ->groupBy('t2.ip')
@@ -114,6 +134,10 @@ class ConflictosDeIp
             ->leftJoin('internet_status as st', 'st.id', '=', 'ud.status_internet_id')
             ->leftJoin('conection_routers as r', 'r.id', '=', 'ud.router_id')
             ->where('u.company_id', $this->companyId)
+            // Los retirados no cuentan: al darlos de baja se les deja el
+            // registro de IP como estaba, así que si no se filtran aparecen
+            // peleándole la IP a un cliente que sí está activo.
+            ->where('ud.active', 1)
             ->orderBy('t.ip')
             ->select([
                 'ud.user_id',
@@ -149,6 +173,9 @@ class ConflictosDeIp
                 'user_id'   => (int) $f->user_id,
                 'nombre'    => trim($f->names . ' ' . $f->lastname),
                 'dni'       => $f->dni,
+                'ip_router' => $this->arp === null
+                    ? null
+                    : ($this->arp[preg_replace('/\D/', '', (string) $f->dni)] ?? ''),
                 'phone'     => $f->phone,
                 'router_id' => $f->router_id ? (int) $f->router_id : null,
                 'router'    => $f->router,
@@ -161,13 +188,26 @@ class ConflictosDeIp
         $grupos = array_filter($grupos, fn ($g) => count($g['clientes']) > 1);
 
         foreach ($grupos as $k => $g) {
-            // Dos clientes activos con la misma IP se pelean el ARP ahora
-            // mismo. Si sólo uno está activo el problema está latente: salta
-            // el día que reconecten al otro.
             $activos = array_filter($g['clientes'], fn ($c) => strtoupper($c['estado']) === 'ACTIVE');
-
             $grupos[$k]['activos'] = count($activos);
-            $grupos[$k]['urgente'] = count($activos) > 1;
+
+            if ($this->arp === null) {
+                // Sin el router sólo queda mirar el estado del cliente, que
+                // marca de más: no sabe quién tiene la IP de verdad.
+                $grupos[$k]['urgente'] = count($activos) > 1;
+                $grupos[$k]['solo_dato'] = false;
+                continue;
+            }
+
+            // Se pelean el ARP únicamente si los dos tienen esa IP en el
+            // router. Si sólo uno la tiene, el otro la está heredando del
+            // registro compartido y no hay problema en la red: alcanza con
+            // separar los registros.
+            $duenos = array_filter($g['clientes'], fn ($c) => $c['ip_router'] === $g['ip']);
+
+            $grupos[$k]['duenos']    = count($duenos);
+            $grupos[$k]['urgente']   = count($duenos) > 1;
+            $grupos[$k]['solo_dato'] = count($duenos) <= 1;
         }
 
         // Primero lo que ya está causando cortes, después lo latente.

@@ -91,7 +91,7 @@ class ManagementRouterController extends Controller
      * registrado, para poder ir resolviéndolos de a uno con la migración de
      * IP que ya existe.
      */
-    public function ipConflicts(): object
+    public function ipConflicts(\App\Managers\Interfaces\ConectionRouterManagerInterface $conexion): object
     {
         $companyId = getSessionCompanyId();
 
@@ -99,9 +99,43 @@ class ManagementRouterController extends Controller
             return standardApiReponse('Sesión sin empresa asociada', null, 1, JsonResponse::HTTP_UNAUTHORIZED);
         }
 
-        $datos = (new \App\Services\Red\ConflictosDeIp($companyId))->listar();
+        // Se le pasa el ARP para poder distinguir el conflicto de verdad —dos
+        // clientes con la misma IP en el router— del que es sólo el dato mal
+        // en la plataforma. Si el router no responde igual se lista, con el
+        // criterio viejo, que marca de más.
+        $arp = \App\Services\Red\ArpDelRouter::documentos($conexion, $companyId);
+
+        $datos = (new \App\Services\Red\ConflictosDeIp($companyId))->listar($arp);
 
         return standardApiReponse('Conflictos de IP', $datos, 0, JsonResponse::HTTP_OK);
+    }
+
+    /**
+     * Le da a cada cliente su propio registro de IP, con la que tiene en el router.
+     *
+     * No toca el MikroTik: los clientes que comparten registro casi nunca
+     * comparten la IP de verdad, así que separarlos no le corta el servicio a
+     * nadie. Con simular=true sólo informa qué haría.
+     */
+    public function separarFichas(Request $request, \App\Managers\Interfaces\ConectionRouterManagerInterface $conexion): object
+    {
+        $companyId = getSessionCompanyId();
+
+        if (!$companyId) {
+            return standardApiReponse('Sesión sin empresa asociada', null, 1, JsonResponse::HTTP_UNAUTHORIZED);
+        }
+
+        $datos = (new \App\Services\Red\SepararFichasCompartidas($conexion, $companyId))
+            ->ejecutar($request->boolean('simular'));
+
+        $huboError = $datos['errores'] !== [];
+
+        return standardApiReponse(
+            $huboError ? implode(' ', $datos['errores']) : 'Registros separados',
+            $datos,
+            $huboError ? 1 : 0,
+            JsonResponse::HTTP_OK
+        );
     }
 
     /**
