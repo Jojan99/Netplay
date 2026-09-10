@@ -132,20 +132,39 @@ class HuaweiOltDriver implements OltDriverInterface
             $description
         );
 
-        $this->ssh->write($cmd);
+        // La OLT contesta "System is busy" cuando está ocupada con otra cosa
+        // —sobre todo mientras guarda la configuración en flash— y ella misma
+        // pide reintentar. Se hace acá en vez de dejarle el reintento al
+        // operador, que no tiene por qué saber que es pasajero.
+        $intentos = 0;
+        $output   = '';
 
-        // Huawei puede mostrar un prompt { <cr>|... } antes de la respuesta real
-        usleep(300000);
-        $buffer = $this->ssh->read('/[>#$\]]\s*$/');
+        do {
+            if ($intentos > 0) {
+                Log::info('[OLT] La OLT estaba ocupada, reintentando el alta', [
+                    'fsp' => $fsp, 'intento' => $intentos + 1,
+                ]);
+                sleep(4);
+                $this->resetToPrompt();
+            }
 
-        if (str_contains($buffer, '{')) {
-            $this->ssh->write("\r\n");
-            usleep(200000);
-            $output = $this->ssh->read('/[>#$\]]\s*$/');
-            $output = $buffer . $output;
-        } else {
-            $output = $buffer;
-        }
+            $this->ssh->write($cmd);
+
+            // Huawei puede mostrar un prompt { <cr>|... } antes de la respuesta real
+            usleep(300000);
+            $buffer = $this->ssh->read('/[>#$\]]\s*$/');
+
+            if (str_contains($buffer, '{')) {
+                $this->ssh->write("\r\n");
+                usleep(200000);
+                $output = $buffer . $this->ssh->read('/[>#$\]]\s*$/');
+            } else {
+                $output = $buffer;
+            }
+
+            $ocupada = stripos($output, 'System is busy') !== false;
+            $intentos++;
+        } while ($ocupada && $intentos < 3);
 
         Log::debug('HuaweiOLT registerONT: response', [
             'fsp'    => $fsp,

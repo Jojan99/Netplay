@@ -322,7 +322,9 @@ class OltAdminUseCase
             $msg = $result['success']
                 ? "ONT autorizada en {$data['fsp']} · ONT ID {$result['ont_id']}"
                     . (($result['service_port_created'] ?? false) ? " · service-port {$spIndex} creado" : '')
-                : 'La OLT no autorizó la ONT: ' . ($result['message'] ?: 'sin detalle');
+                : (stripos((string) $result['message'], 'System is busy') !== false
+                    ? 'La OLT está ocupada en este momento (suele ser porque está guardando la configuración). Probá de nuevo en unos segundos.'
+                    : 'La OLT no autorizó la ONT: ' . ($result['message'] ?: 'sin detalle'));
 
             return [
                 'status'  => $result['success'] ? 0 : 1,
