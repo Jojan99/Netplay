@@ -67,6 +67,13 @@ class SincronizarIpsDesdeRouter
         }
 
         if (!$simular && $resultado['cambios']) {
+            // Todo junto y en una transacción. De a un cliente por vez eran
+            // unas 3.000 consultas: tardaba minutos, la respuesta HTTP se
+            // cortaba antes de terminar y la pantalla decía que había fallado
+            // cuando en realidad estaba aplicándose. Y si se cortaba de
+            // verdad, quedaba a medias.
+            DB::transaction(fn () => $this->aplicarEnLote($resultado['cambios']));
+
             Log::info('[Sync IPs] Sincronización desde el router', [
                 'company_id' => $this->companyId,
                 'cambios'    => count($resultado['cambios']),
@@ -243,11 +250,161 @@ class SincronizarIpsDesdeRouter
                 'ahora'     => $ipRouter,
             ];
 
-            if (!$simular) {
-                $cambio['como'] = AsignacionDeIp::asignar((int) $cliente->user_id, $ipRouter, $this->companyId);
+            $resultado['cambios'][] = $cambio;
+        }
+    }
+
+    /* ── Escritura ────────────────────────────────────────────────────────── */
+
+    /**
+     * Guarda todas las IPs de una vez.
+     *
+     * Mantiene la misma regla que la asignación de a uno: se escribe sobre el
+     * registro del cliente sólo si es suyo y de nadie más; si lo comparte con
+     * otros, o si apunta a un registro que ya no existe, se le arma uno propio.
+     *
+     * @param  array<int,array<string,mixed>>  $cambios
+     */
+    private function aplicarEnLote(array $cambios): void
+    {
+        $ipPorUsuario = [];
+
+        foreach ($cambios as $c) {
+            $ipPorUsuario[(int) $c['user_id']] = $c['ahora'];
+        }
+
+        $usuarios = array_keys($ipPorUsuario);
+
+        $asignaciones = DB::table('user_data')
+            ->whereIn('user_id', $usuarios)
+            ->pluck('ip_assignment_id', 'user_id');
+
+        $fichasIds = array_values(array_filter($asignaciones->all()));
+
+        // Cuántos clientes referencian cada registro. Se cuenta sobre toda la
+        // tabla, no sólo sobre los que se están tocando: el que lo comparte
+        // puede ser un cliente que no entró en esta pasada.
+        $compartidas = $fichasIds
+            ? DB::table('user_data')->whereIn('ip_assignment_id', $fichasIds)
+                ->groupBy('ip_assignment_id')
+                ->select('ip_assignment_id', DB::raw('COUNT(*) as n'))
+                ->pluck('n', 'ip_assignment_id')
+            : collect();
+
+        $fichas = $fichasIds
+            ? DB::table('tabla_ips')->whereIn('id', $fichasIds)->get()->keyBy('id')
+            : collect();
+
+        $actualizar = [];   // id del registro => ip nueva
+        $crear      = [];   // user_id => datos del registro nuevo
+
+        foreach ($ipPorUsuario as $userId => $ip) {
+            $fichaId = $asignaciones[$userId] ?? null;
+            $ficha   = $fichaId ? ($fichas[$fichaId] ?? null) : null;
+
+            if ($ficha && (int) ($compartidas[$fichaId] ?? 0) === 1) {
+                $actualizar[$fichaId] = $ip;
+                continue;
             }
 
-            $resultado['cambios'][] = $cambio;
+            $crear[$userId] = [
+                'company_id' => $this->companyId,
+                'id_user'    => $userId,
+                'ip'         => $ip,
+                'name'       => $ficha->name ?? '',
+                'mac'        => $ficha->mac ?? null,
+                'active'     => 1,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ];
+        }
+
+        $this->actualizarIps($actualizar);
+        $this->crearFichas($crear);
+    }
+
+    /** @param  array<int,string>  $porFicha  id => ip */
+    private function actualizarIps(array $porFicha): void
+    {
+        foreach (array_chunk($porFicha, 500, true) as $lote) {
+            $casos = '';
+            $valores = [];
+
+            foreach ($lote as $id => $ip) {
+                $casos .= ' WHEN ? THEN ?';
+                $valores[] = $id;
+                $valores[] = $ip;
+            }
+
+            $ids = implode(',', array_map('intval', array_keys($lote)));
+
+            DB::update(
+                "UPDATE tabla_ips SET ip = CASE id{$casos} END, updated_at = ? WHERE id IN ({$ids})",
+                [...$valores, now()]
+            );
+        }
+    }
+
+    /** @param  array<int,array<string,mixed>>  $porUsuario  user_id => fila */
+    private function crearFichas(array $porUsuario): void
+    {
+        if (!$porUsuario) {
+            return;
+        }
+
+        // El insert masivo no devuelve los ids, así que se anota hasta dónde
+        // llegaba la tabla y después se leen los que aparecieron.
+        $ultimoId = (int) DB::table('tabla_ips')->max('id');
+
+        foreach (array_chunk(array_values($porUsuario), 200) as $lote) {
+            DB::table('tabla_ips')->insert($lote);
+        }
+
+        $nuevas = DB::table('tabla_ips')
+            ->where('id', '>', $ultimoId)
+            ->where('company_id', $this->companyId)
+            ->pluck('id', 'id_user');
+
+        $casos = '';
+        $valores = [];
+        $usuarios = [];
+
+        foreach ($porUsuario as $userId => $_) {
+            if (!isset($nuevas[$userId])) {
+                continue;
+            }
+
+            $casos .= ' WHEN ? THEN ?';
+            $valores[] = $userId;
+            $valores[] = $nuevas[$userId];
+            $usuarios[] = (int) $userId;
+        }
+
+        if (!$usuarios) {
+            return;
+        }
+
+        foreach (array_chunk($usuarios, 500) as $lote) {
+            $enLote = array_flip($lote);
+            $casosLote = '';
+            $valoresLote = [];
+
+            foreach ($porUsuario as $userId => $_) {
+                if (!isset($enLote[$userId], $nuevas[$userId])) {
+                    continue;
+                }
+
+                $casosLote .= ' WHEN ? THEN ?';
+                $valoresLote[] = $userId;
+                $valoresLote[] = $nuevas[$userId];
+            }
+
+            $ids = implode(',', $lote);
+
+            DB::update(
+                "UPDATE user_data SET ip_assignment_id = CASE user_id{$casosLote} END WHERE user_id IN ({$ids})",
+                $valoresLote
+            );
         }
     }
 
