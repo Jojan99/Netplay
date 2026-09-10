@@ -57,13 +57,40 @@ class ComprobanteWhatsAppWeb
                 ->first();
 
             if ($repetido) {
-                return ['ok' => true, 'proof_id' => (int) $repetido->id, 'motivo' => 'ya_registrado'];
+                // Devolver el cliente también acá: sin esto el bot respondía
+                // "lo registramos a nombre de undefined".
+                return [
+                    'ok'       => true,
+                    'proof_id' => (int) $repetido->id,
+                    'motivo'   => 'ya_registrado',
+                    'cliente'  => trim($cliente->names . ' ' . $cliente->lastname),
+                ];
             }
         }
 
         $ocr = $this->bot->extractTextFromProof($archivo['ruta_local']) ?? '';
         $texto = trim(($datos['caption'] ?? '') . "\n" . $ocr);
         $detalle = $this->bot->extractPaymentProofDetails($texto);
+
+        $referencia = $detalle['reference'] ?: ($detalle['invoice_number'] ?? null);
+
+        // La referencia tiene índice único por empresa: dos comprobantes con la
+        // misma referencia son el mismo pago. Antes el insert reventaba con un
+        // 500 y el servicio no sabía qué había pasado.
+        if ($referencia) {
+            $mismaRef = PaymentProof::where('company_id', $companyId)
+                ->where('reference_number', $referencia)
+                ->first();
+
+            if ($mismaRef) {
+                return [
+                    'ok'       => true,
+                    'proof_id' => (int) $mismaRef->id,
+                    'motivo'   => 'ya_registrado',
+                    'cliente'  => trim($cliente->names . ' ' . $cliente->lastname),
+                ];
+            }
+        }
 
         $factura = $this->facturaPendiente($companyId, (int) $cliente->user_id);
 
@@ -78,7 +105,7 @@ class ComprobanteWhatsAppWeb
             'reported_amount'  => $detalle['amount'] ?? null,
             'detected_amount'  => $detalle['amount'] ?? null,
             'payment_date'     => $detalle['date'] ?? null,
-            'reference_number' => $detalle['reference'] ?: ($detalle['invoice_number'] ?? null),
+            'reference_number' => $referencia,
             'bank_name'        => $detalle['bank_name'] ?? null,
             'ocr_text'         => $ocr ?: null,
             'status'           => 'pending',
@@ -107,7 +134,14 @@ class ComprobanteWhatsAppWeb
 
     /* ── Cliente ─────────────────────────────────────────────────────────── */
 
-    /** Primero por cédula (que es lo que el bot le pide), y si no por teléfono. */
+    /**
+     * Por cédula si la dieron; si no, por teléfono.
+     *
+     * Cuando viene una cédula NO se cae al teléfono: el bot se la pidió
+     * expresamente, así que si no existe hay que decirlo. Caer al dueño del
+     * número acreditaría el pago a la persona equivocada, que es justo lo que
+     * este flujo viene a evitar.
+     */
     private function resolverCliente(int $companyId, ?string $dni, string $phone): ?object
     {
         if ($dni) {
@@ -122,6 +156,8 @@ class ComprobanteWhatsAppWeb
                     return $c;
                 }
             }
+
+            return null;
         }
 
         $corto = substr(preg_replace('/\D/', '', $phone), -10);
