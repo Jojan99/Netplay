@@ -393,8 +393,19 @@ class OltAdminUseCase
             return [];
         }
 
+        // Sólo se opina de los puertos de los que se obtuvo respuesta. La
+        // consulta por puerto no siempre devuelve lo suyo, y dar por incompleta
+        // una ONT de un puerto que no se pudo leer sería inventar: son cientos
+        // de clientes que están funcionando bien.
+        $puertosLeidos = [];
+
+        foreach (array_keys($enLaOlt) as $clave) {
+            $puertosLeidos[explode(':', $clave)[0]] = true;
+        }
+
         return OltOnt::where('olt_id', $oltId)
             ->get()
+            ->filter(fn ($ont) => isset($puertosLeidos[$ont->fsp]))
             ->map(function ($ont) use ($enLaOlt) {
                 $falta = [];
 
@@ -812,10 +823,18 @@ class OltAdminUseCase
                 $delPuerto = $this->dispatcher->dispatch($oltId, 'getServicePorts', ['fsp' => $fsp]);
 
                 foreach ((array) $delPuerto as $sp) {
-                    // El puerto no siempre viene en la respuesta: se completa
-                    // con el que se preguntó, que es el que corresponde.
-                    $sp['fsp'] = $sp['fsp'] ?? $fsp;
-                    $todos[]   = $sp;
+                    // La respuesta trae el puerto real en "port" —"gpon0/0/1"—
+                    // y no siempre es el que se consultó: la OLT devuelve
+                    // service-ports de otros puertos en la misma salida. Antes
+                    // se les ponía a todos el puerto preguntado y el cruce con
+                    // las ONT no coincidía nunca.
+                    if (preg_match('#(\d+/\d+/\d+)#', (string) ($sp['port'] ?? ''), $m)) {
+                        $sp['fsp'] = $m[1];
+                    } else {
+                        $sp['fsp'] = $sp['fsp'] ?? $fsp;
+                    }
+
+                    $todos[] = $sp;
                 }
             } catch (\Throwable $e) {
                 \Log::warning('OLT getAllServicePorts: falló un puerto', [
