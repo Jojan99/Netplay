@@ -30,6 +30,10 @@ class OltTelnetWorker extends Command
 
     private const IDLE_TIMEOUT  = 300; // segundos — cierra la sesión tras 5 min sin comandos
     private const HEARTBEAT_TTL = 15;  // TTL del heartbeat en Redis
+    private const LOCK_TTL = 30;       // El lock se renueva en cada vuelta
+
+    /** Con esta llave este proceso reclama ser el único worker de la OLT. */
+    private ?string $lockKey = null;
     private const BLPOP_TIMEOUT = 5;   // segundos que espera por un comando antes de re-loop
     private const SAVE_DELAY    = 30;  // segundos de inactividad tras escritura antes de auto-save
 
@@ -48,6 +52,38 @@ class OltTelnetWorker extends Command
     {
         $oltId    = (int) $this->argument('olt_id');
         $queueKey = "olt:{$oltId}:cmd_queue";
+
+        // Un solo worker por OLT. Cada uno abre su propia sesión telnet, y la
+        // OLT admite unas pocas a la vez: con dos corriendo se agotaban los
+        // cupos y cualquier consulta moría con "Reenter times reached upper
+        // limit". El lock del dispatcher sólo cubre el arranque, así que si el
+        // worker anterior seguía vivo igual se lanzaba otro.
+        $lockKey = "olt:{$oltId}:worker_lock";
+
+        if (!Redis::set($lockKey, getmypid(), 'EX', self::LOCK_TTL, 'NX')) {
+            $this->warn("OLT Worker #{$oltId}: ya hay otro worker atendiendo esta OLT, este proceso termina.");
+            Log::info("OLT Worker #{$oltId}: no arranca, ya hay otro vivo");
+
+            return self::SUCCESS;
+        }
+
+        $this->lockKey = $lockKey;
+
+        // Si al proceso lo matan, el lock se suelta enseguida en vez de
+        // esperar a que venza y dejar la OLT sin worker todo ese rato.
+        register_shutdown_function(fn () => $this->soltarLock());
+
+        if (function_exists('pcntl_async_signals')) {
+            pcntl_async_signals(true);
+
+            foreach ([SIGTERM, SIGINT, SIGHUP] as $senal) {
+                pcntl_signal($senal, function () use ($oltId) {
+                    $this->disconnect($oltId);
+                    $this->soltarLock();
+                    exit(0);
+                });
+            }
+        }
 
         $this->info("OLT Worker #{$oltId} iniciado — esperando comandos en Redis [{$queueKey}]");
         $this->lastActivityAt = microtime(true);
@@ -69,6 +105,7 @@ class OltTelnetWorker extends Command
 
         while (true) {
             $this->publishHeartbeat($oltId);
+            $this->renovarLock();
             $this->checkIdleTimeout($oltId);
 
             // Espera hasta BLPOP_TIMEOUT segundos por un comando
@@ -164,6 +201,28 @@ class OltTelnetWorker extends Command
     private function publishHeartbeat(int $oltId): void
     {
         Redis::setex("olt:{$oltId}:worker_alive", self::HEARTBEAT_TTL, '1');
+    }
+
+    /** Mantiene el lock mientras este worker sigue vivo. */
+    private function renovarLock(): void
+    {
+        if ($this->lockKey) {
+            try { Redis::setex($this->lockKey, self::LOCK_TTL, getmypid()); } catch (\Throwable) {}
+        }
+    }
+
+    /**
+     * Suelta el lock al terminar.
+     *
+     * Si el proceso muere de golpe el lock vence solo por TTL, así que la OLT
+     * no queda bloqueada para siempre.
+     */
+    private function soltarLock(): void
+    {
+        if ($this->lockKey) {
+            try { Redis::del($this->lockKey); } catch (\Throwable) {}
+            $this->lockKey = null;
+        }
     }
 
     private function checkPendingSave(int $oltId): void
