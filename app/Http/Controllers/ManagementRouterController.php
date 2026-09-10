@@ -236,8 +236,10 @@ class ManagementRouterController extends Controller
             $servicio = new \App\Services\Red\ServicioPppoe($conexion, $token);
 
             return standardApiReponse('Estado de PPPoE', [
-                'estado'   => $servicio->estado(),
-                'usuarios' => $servicio->usuarios(),
+                'estado'     => $servicio->estado(),
+                'usuarios'   => $servicio->usuarios(),
+                'pools'      => $servicio->pools(),
+                'interfaces' => $servicio->interfaces(),
             ], 0, JsonResponse::HTTP_OK);
         } catch (\Throwable $e) {
             return standardApiReponse('No se pudo consultar el router: ' . $e->getMessage(), null, 1, JsonResponse::HTTP_OK);
@@ -347,6 +349,78 @@ class ManagementRouterController extends Controller
             $r['ok'] ? 0 : 1,
             JsonResponse::HTTP_OK
         );
+    }
+
+    /**
+     * Crear o editar perfiles, rangos y servidores desde el panel.
+     *
+     * Van juntos en un método porque son la misma operación sobre piezas
+     * distintas de PPP, y así la pantalla usa una sola ruta para todo.
+     */
+    public function pppoeGuardar(Request $request, \App\Managers\Interfaces\ConectionRouterManagerInterface $conexion): object
+    {
+        $token = $this->tokenDelRouter($request);
+
+        if (!$token) {
+            return standardApiReponse('No hay router configurado', null, 1, JsonResponse::HTTP_OK);
+        }
+
+        $que = (string) $request->input('que');
+
+        try {
+            $servicio = new \App\Services\Red\ServicioPppoe($conexion, $token);
+
+            match ($que) {
+                'perfil'    => $servicio->guardarPerfil($request->all()),
+                'pool'      => $servicio->guardarPool($request->all()),
+                'servidor'  => $servicio->guardarServidor($request->all()),
+                default     => throw new \InvalidArgumentException('No sé qué guardar.'),
+            };
+
+            return standardApiReponse('Guardado', null, 0, JsonResponse::HTTP_OK);
+        } catch (\InvalidArgumentException $e) {
+            return standardApiReponse($e->getMessage(), null, 1, JsonResponse::HTTP_OK);
+        } catch (\Throwable $e) {
+            return standardApiReponse('El router rechazó el cambio: ' . $e->getMessage(), null, 1, JsonResponse::HTTP_OK);
+        }
+    }
+
+    /** Borra un perfil, un rango o un servidor, si no está en uso. */
+    public function pppoeEliminar(Request $request, \App\Managers\Interfaces\ConectionRouterManagerInterface $conexion): object
+    {
+        $token = $this->tokenDelRouter($request);
+
+        if (!$token) {
+            return standardApiReponse('No hay router configurado', null, 1, JsonResponse::HTTP_OK);
+        }
+
+        $que    = (string) $request->input('que');
+        $nombre = trim((string) $request->input('nombre'));
+
+        if ($nombre === '') {
+            return standardApiReponse('Falta el nombre', null, 1, JsonResponse::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        try {
+            $servicio = new \App\Services\Red\ServicioPppoe($conexion, $token);
+
+            $r = match ($que) {
+                'perfil'   => $servicio->eliminarPerfil($nombre),
+                'pool'     => $servicio->eliminarPool($nombre),
+                'servidor' => tap(['ok' => true], fn () => $servicio->eliminarServidor($nombre)),
+                'usuario'  => tap(['ok' => true], fn () => $servicio->eliminar($nombre)),
+                default    => ['ok' => false, 'motivo' => 'No sé qué borrar.'],
+            };
+
+            return standardApiReponse(
+                $r['ok'] ? 'Eliminado' : ($r['motivo'] ?? 'No se pudo eliminar'),
+                null,
+                $r['ok'] ? 0 : 1,
+                JsonResponse::HTTP_OK
+            );
+        } catch (\Throwable $e) {
+            return standardApiReponse('El router rechazó el cambio: ' . $e->getMessage(), null, 1, JsonResponse::HTTP_OK);
+        }
     }
 
     /** El token del router elegido, o el de la empresa si no vino ninguno. */

@@ -61,6 +61,10 @@ Route::prefix('management')->group(function () {
         Route::post('pppoe/montar',   [ManagementRouterController::class, 'pppoeMontar']);
         Route::get('pppoe/que-se-borra', [ManagementRouterController::class, 'pppoeQueSeBorra']);
         Route::post('pppoe/desmontar',   [ManagementRouterController::class, 'pppoeDesmontar']);
+
+        // Crear, editar y borrar perfiles, rangos y servidores desde el panel.
+        Route::post('pppoe/guardar',  [ManagementRouterController::class, 'pppoeGuardar']);
+        Route::post('pppoe/eliminar', [ManagementRouterController::class, 'pppoeEliminar']);
         Route::post('cambiar-conexion', [ManagementRouterController::class, 'cambiarConexion']);
     });
 

@@ -238,6 +238,242 @@ class ServicioPppoe
         $this->cortarSesion($usuario);
     }
 
+    /* ── Perfiles ─────────────────────────────────────────────────────────── */
+
+    /**
+     * Crea o edita un perfil.
+     *
+     * El perfil es lo que define la velocidad y de qué rango sale la IP, así
+     * que es la pieza que más se toca: cada plan necesita el suyo.
+     *
+     * @param  array{nombre:string, nombre_anterior?:?string, velocidad?:?string,
+     *               gateway?:?string, pool?:?string, dns?:?string, una_sesion?:bool}  $datos
+     */
+    public function guardarPerfil(array $datos): void
+    {
+        $nombre = trim((string) ($datos['nombre'] ?? ''));
+
+        if ($nombre === '') {
+            throw new \InvalidArgumentException('El perfil necesita un nombre.');
+        }
+
+        $api = $this->api();
+
+        // Al renombrar hay que buscar por el nombre viejo, que es con el que
+        // el perfil existe todavía en el router.
+        $buscar = trim((string) ($datos['nombre_anterior'] ?? '')) ?: $nombre;
+        $id     = $this->idDeAlgo($api, '/ppp/profile/print', 'name', $buscar);
+
+        $q = new Query($id ? '/ppp/profile/set' : '/ppp/profile/add');
+
+        if ($id) {
+            $q->equal('.id', $id);
+        }
+
+        $q->equal('name', $nombre);
+
+        foreach ([
+            'local-address'  => $datos['gateway'] ?? null,
+            'remote-address' => $datos['pool'] ?? null,
+            'rate-limit'     => $datos['velocidad'] ?? null,
+            'dns-server'     => $datos['dns'] ?? null,
+        ] as $campo => $valor) {
+            $valor = trim((string) $valor);
+
+            // Vacío significa "sin definir": se manda igual para poder borrar
+            // un valor que estaba puesto.
+            $q->equal($campo, $valor);
+        }
+
+        $q->equal('only-one', !empty($datos['una_sesion']) ? 'yes' : 'default');
+
+        $api->query($q)->read();
+
+        Log::info('[PPPoE] Perfil guardado', ['perfil' => $nombre]);
+    }
+
+    /** @return array{ok:bool, motivo?:string} */
+    public function eliminarPerfil(string $nombre): array
+    {
+        $api = $this->api();
+
+        // Un perfil en uso no se puede borrar: los clientes que lo tienen
+        // quedarían apuntando a algo que no existe.
+        $enUso = $this->cuantosUsan($nombre);
+
+        if ($enUso > 0) {
+            return ['ok' => false, 'motivo' => "Lo están usando {$enUso} credencial(es). Cambialas de perfil primero."];
+        }
+
+        $id = $this->idDeAlgo($api, '/ppp/profile/print', 'name', $nombre);
+
+        if (!$id) {
+            return ['ok' => true];
+        }
+
+        $q = new Query('/ppp/profile/remove');
+        $q->equal('.id', $id);
+        $api->query($q)->read();
+
+        return ['ok' => true];
+    }
+
+    /* ── Rangos de IP ─────────────────────────────────────────────────────── */
+
+    /** @return array<int,array<string,mixed>> */
+    public function pools(): array
+    {
+        $api = $this->api();
+
+        // Qué perfiles reparten de cada rango: sirve para no borrar uno que
+        // esté en uso sin darse cuenta.
+        $perfiles = $this->leer($api, '/ppp/profile/print');
+
+        return array_map(function ($p) use ($perfiles) {
+            $nombre = $p['name'] ?? '';
+
+            $usan = array_values(array_map(
+                fn ($x) => $x['name'] ?? '',
+                array_filter($perfiles, fn ($x) => ($x['remote-address'] ?? '') === $nombre)
+            ));
+
+            return [
+                'nombre'    => $nombre,
+                'rangos'    => $p['ranges'] ?? '',
+                'siguiente' => $p['next-pool'] ?? null,
+                'usado_por' => $usan,
+            ];
+        }, $this->leer($api, '/ip/pool/print'));
+    }
+
+    /** @param  array{nombre:string, nombre_anterior?:?string, rangos:string}  $datos */
+    public function guardarPool(array $datos): void
+    {
+        $nombre = trim((string) ($datos['nombre'] ?? ''));
+        $rangos = trim((string) ($datos['rangos'] ?? ''));
+
+        if ($nombre === '' || $rangos === '') {
+            throw new \InvalidArgumentException('El rango necesita un nombre y las direcciones.');
+        }
+
+        $api = $this->api();
+        $buscar = trim((string) ($datos['nombre_anterior'] ?? '')) ?: $nombre;
+        $id = $this->idDeAlgo($api, '/ip/pool/print', 'name', $buscar);
+
+        $q = new Query($id ? '/ip/pool/set' : '/ip/pool/add');
+
+        if ($id) {
+            $q->equal('.id', $id);
+        }
+
+        $q->equal('name', $nombre);
+        $q->equal('ranges', $rangos);
+        $api->query($q)->read();
+
+        Log::info('[PPPoE] Rango guardado', ['pool' => $nombre, 'rangos' => $rangos]);
+    }
+
+    /** @return array{ok:bool, motivo?:string} */
+    public function eliminarPool(string $nombre): array
+    {
+        $api = $this->api();
+
+        $usan = array_filter(
+            $this->leer($api, '/ppp/profile/print'),
+            fn ($p) => ($p['remote-address'] ?? '') === $nombre
+        );
+
+        if ($usan) {
+            $nombres = implode(', ', array_map(fn ($p) => $p['name'] ?? '', $usan));
+
+            return ['ok' => false, 'motivo' => "Reparten de este rango: {$nombres}. Cambialos primero."];
+        }
+
+        $id = $this->idDeAlgo($api, '/ip/pool/print', 'name', $nombre);
+
+        if (!$id) {
+            return ['ok' => true];
+        }
+
+        $q = new Query('/ip/pool/remove');
+        $q->equal('.id', $id);
+        $api->query($q)->read();
+
+        return ['ok' => true];
+    }
+
+    /* ── Servidores ───────────────────────────────────────────────────────── */
+
+    /**
+     * @param  array{servicio:string, interfaz:string, perfil:string,
+     *               nombre_anterior?:?string, una_sesion?:bool}  $datos
+     */
+    public function guardarServidor(array $datos): void
+    {
+        $servicio = trim((string) ($datos['servicio'] ?? ''));
+        $interfaz = trim((string) ($datos['interfaz'] ?? ''));
+
+        if ($servicio === '' || $interfaz === '') {
+            throw new \InvalidArgumentException('El servidor necesita un nombre de servicio y una interfaz.');
+        }
+
+        $api = $this->api();
+        $buscar = trim((string) ($datos['nombre_anterior'] ?? '')) ?: $servicio;
+        $id = $this->idDeAlgo($api, '/interface/pppoe-server/server/print', 'service-name', $buscar);
+
+        $q = new Query($id ? '/interface/pppoe-server/server/set' : '/interface/pppoe-server/server/add');
+
+        if ($id) {
+            $q->equal('.id', $id);
+        }
+
+        $q->equal('service-name', $servicio);
+        $q->equal('interface', $interfaz);
+        $q->equal('default-profile', trim((string) ($datos['perfil'] ?? 'default')) ?: 'default');
+        $q->equal('authentication', 'pap,chap');
+        $q->equal('one-session-per-host', empty($datos['una_sesion']) ? 'no' : 'yes');
+        $q->equal('disabled', 'no');
+        $api->query($q)->read();
+
+        Log::info('[PPPoE] Servidor guardado', ['servicio' => $servicio, 'interfaz' => $interfaz]);
+    }
+
+    public function eliminarServidor(string $servicio): void
+    {
+        $api = $this->api();
+        $id  = $this->idDeAlgo($api, '/interface/pppoe-server/server/print', 'service-name', $servicio);
+
+        if (!$id) {
+            return;
+        }
+
+        $q = new Query('/interface/pppoe-server/server/remove');
+        $q->equal('.id', $id);
+        $api->query($q)->read();
+    }
+
+    /** Interfaces por donde puede escuchar un servidor. */
+    public function interfaces(): array
+    {
+        return array_values(array_filter(array_map(
+            fn ($i) => ['nombre' => $i['name'] ?? '', 'tipo' => $i['type'] ?? ''],
+            $this->leer($this->api(), '/interface/print')
+        ), fn ($i) => in_array($i['tipo'], ['ether', 'vlan', 'bridge'], true)));
+    }
+
+    private function idDeAlgo($api, string $comando, string $campo, string $valor): ?string
+    {
+        try {
+            $q = new Query($comando);
+            $q->where($campo, $valor);
+            $q->add('=.proplist=.id');
+
+            return $api->query($q)->read()[0]['.id'] ?? null;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
     /* ── Interno ──────────────────────────────────────────────────────────── */
 
     private function api()
