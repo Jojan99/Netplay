@@ -42,9 +42,18 @@ class PaymentProof extends Model
         'updated_at' => 'datetime:Y-m-d H:i:s',
     ];
 
+    /**
+     * El titular del comprobante.
+     *
+     * La clave de user_data es 'user_id', no su propio 'id'. Relacionar contra
+     * el id hacía que el panel mostrara un cliente completamente distinto: el
+     * comprobante del usuario 2300 aparecía a nombre de quien tuviera
+     * user_data.id = 2300, que es otra persona. El dato guardado siempre
+     * estuvo bien; lo que estaba mal era cómo se leía.
+     */
     public function user()
     {
-        return $this->belongsTo(UserData::class, 'user_id');
+        return $this->belongsTo(UserData::class, 'user_id', 'user_id');
     }
 
     public function invoice()
