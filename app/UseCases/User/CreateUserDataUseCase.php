@@ -176,7 +176,17 @@ class CreateUserDataUseCase implements CreateUserDataUseCaseInterface
     {
         $usuario = trim((string) ($data['pppoe_user'] ?? ''));
         $clave   = (string) ($data['pppoe_password'] ?? '');
-        $perfil  = trim((string) ($data['pppoe_profile'] ?? '')) ?: 'default';
+        // Si no eligieron perfil se usa el del plan: en PPPoE la velocidad la
+        // fija el perfil, así que el del plan es el que corresponde.
+        $perfil = trim((string) ($data['pppoe_profile'] ?? ''));
+
+        if ($perfil === '') {
+            $perfil = (string) \Illuminate\Support\Facades\DB::table('internet_plans')
+                ->where('id', $data['planInternet'] ?? 0)
+                ->value('pppoe_profile');
+        }
+
+        $perfil = $perfil ?: 'default';
 
         if ($usuario === '' || $clave === '') {
             return 'Para una conexión PPPoE hacen falta el usuario y la contraseña.';

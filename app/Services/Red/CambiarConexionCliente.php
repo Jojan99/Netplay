@@ -74,7 +74,16 @@ class CambiarConexionCliente
     {
         $usuario = trim((string) ($datos['pppoe_user'] ?? '')) ?: (string) $cliente->dni;
         $clave   = (string) ($datos['pppoe_password'] ?? '');
-        $perfil  = trim((string) ($datos['pppoe_profile'] ?? '')) ?: 'default';
+        $perfil = trim((string) ($datos['pppoe_profile'] ?? ''));
+
+        if ($perfil === '') {
+            // El del plan del cliente: es el que tiene su velocidad.
+            $perfil = (string) DB::table('internet_plans')
+                ->where('id', $cliente->internet_plans_id)
+                ->value('pppoe_profile');
+        }
+
+        $perfil = $perfil ?: ($cliente->pppoe_profile ?: 'default');
 
         // Al editar un cliente que ya es PPPoE se puede dejar la contraseña en
         // blanco para no cambiarla.

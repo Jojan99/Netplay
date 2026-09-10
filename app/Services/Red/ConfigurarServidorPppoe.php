@@ -3,6 +3,7 @@
 namespace App\Services\Red;
 
 use App\Managers\Interfaces\ConectionRouterManagerInterface;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use RouterOS\Query;
 
@@ -54,6 +55,10 @@ class ConfigurarServidorPppoe
                 'nombre'   => $s['service-name'] ?? '',
                 'interfaz' => $s['interface'] ?? '',
             ], $this->leer($api, '/interface/pppoe-server/server/print')),
+            // Por dónde sale el tráfico a internet, para el NAT.
+            'salidas' => $this->salidas($api),
+            // Un perfil por plan: en PPPoE la velocidad la fija el perfil.
+            'planes'  => $this->planesPropuestos(),
             // Un rango que no suele chocar con lo que ya haya armado.
             'sugerencia' => [
                 'pool'           => 'pool-pppoe',
@@ -63,6 +68,74 @@ class ConfigurarServidorPppoe
                 'servicio'       => 'pppoe-netplay',
             ],
         ];
+    }
+
+    /**
+     * Un perfil por cada plan de internet, con la velocidad del plan.
+     *
+     * MikroTik espera «subida/bajada» desde el punto de vista del cliente, y
+     * los planes ya tienen las dos velocidades en megas.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    public function planesPropuestos(): array
+    {
+        return DB::table('internet_plans')
+            ->where('company_id', getSessionCompanyId())
+            ->where('active', 1)
+            ->orderBy('plan_name')
+            ->get(['id', 'plan_name', 'download_speed', 'upload_speed', 'pppoe_profile'])
+            ->map(function ($plan) {
+                $bajada = (int) $plan->download_speed;
+                $subida = (int) $plan->upload_speed ?: $bajada;
+
+                return [
+                    'plan_id'   => (int) $plan->id,
+                    'plan'      => $plan->plan_name,
+                    'bajada'    => $bajada,
+                    'subida'    => $subida,
+                    'perfil'    => $plan->pppoe_profile ?: $this->nombrePerfil($plan->plan_name),
+                    'velocidad' => $bajada ? "{$subida}M/{$bajada}M" : null,
+                    'ya_creado' => !empty($plan->pppoe_profile),
+                ];
+            })
+            ->all();
+    }
+
+    /** Un nombre de perfil válido a partir del nombre del plan. */
+    private function nombrePerfil(string $plan): string
+    {
+        $limpio = preg_replace('/[^A-Za-z0-9]+/', '-', strtolower(trim($plan)));
+
+        return 'plan-' . trim($limpio, '-');
+    }
+
+    /**
+     * Interfaces y listas por donde puede salir el tráfico a internet.
+     *
+     * @return array<int,array{nombre:string, tipo:string}>
+     */
+    private function salidas($api): array
+    {
+        $salidas = [];
+
+        // Las listas son lo más común en configuraciones armadas con cuidado:
+        // ahí suele estar agrupada la WAN.
+        foreach ($this->leer($api, '/interface/list/print') as $l) {
+            $nombre = $l['name'] ?? '';
+
+            if ($nombre !== '' && !in_array($nombre, ['all', 'none', 'dynamic', 'static'], true)) {
+                $salidas[] = ['nombre' => $nombre, 'tipo' => 'lista'];
+            }
+        }
+
+        foreach ($this->leer($api, '/interface/print') as $i) {
+            if (($i['type'] ?? '') === 'ether') {
+                $salidas[] = ['nombre' => $i['name'] ?? '', 'tipo' => 'interfaz'];
+            }
+        }
+
+        return $salidas;
     }
 
     /**
@@ -97,6 +170,34 @@ class ConfigurarServidorPppoe
 
             $this->servidor($servicio, $interfaz, $perfil);
             $pasos[] = "Servidor PPPoE escuchando en «{$interfaz}».";
+
+            foreach ($datos['perfiles'] ?? [] as $plan) {
+                $nombre = trim((string) ($plan['perfil'] ?? ''));
+                $rate   = trim((string) ($plan['velocidad'] ?? ''));
+
+                if ($nombre === '') {
+                    continue;
+                }
+
+                $this->perfilDePlan($nombre, $gateway, $pool, $rate);
+
+                // Queda anotado en el plan: al dar de alta un cliente PPPoE se
+                // elige solo el perfil que le corresponde.
+                if (!empty($plan['plan_id'])) {
+                    DB::table('internet_plans')
+                        ->where('id', (int) $plan['plan_id'])
+                        ->update(['pppoe_profile' => $nombre]);
+                }
+
+                $pasos[] = "Perfil «{$nombre}»" . ($rate ? " a {$rate}" : '') . ' listo.';
+            }
+
+            $salida = trim((string) ($datos['salida'] ?? ''));
+
+            if ($salida !== '') {
+                $this->nat($pool, $salida);
+                $pasos[] = "Salida a internet por «{$salida}» lista.";
+            }
 
             Log::info('[PPPoE] Servidor montado', [
                 'interfaz' => $interfaz, 'pool' => $pool, 'perfil' => $perfil,
@@ -167,6 +268,93 @@ class ConfigurarServidorPppoe
         $q->equal('authentication', 'pap,chap');
         $q->equal('one-session-per-host', 'yes');
         $api->query($q)->read();
+    }
+
+    /**
+     * El perfil de un plan: mismo pool y puerta de enlace que el base, pero
+     * con la velocidad del plan.
+     */
+    private function perfilDePlan(string $nombre, string $gateway, string $pool, string $rate): void
+    {
+        $api = $this->api();
+        $id  = $this->buscar($api, '/ppp/profile/print', 'name', $nombre);
+
+        $q = new Query($id ? '/ppp/profile/set' : '/ppp/profile/add');
+        if ($id) $q->equal('.id', $id);
+        $q->equal('name', $nombre);
+        $q->equal('local-address', $gateway);
+        $q->equal('remote-address', $pool);
+        $q->equal('only-one', 'yes');
+
+        if ($rate !== '') {
+            $q->equal('rate-limit', $rate);
+        }
+
+        $api->query($q)->read();
+    }
+
+    /**
+     * Deja salir a internet a los clientes PPPoE.
+     *
+     * Sin esto se conectan y toman IP, pero no navegan. Se apunta al pool
+     * completo y no a cada cliente, y se marca con un comentario para poder
+     * reconocerla y no duplicarla.
+     */
+    private function nat(string $pool, string $salida): void
+    {
+        $api = $this->api();
+        $comentario = "netplay-pppoe-{$pool}";
+
+        $id = $this->buscar($api, '/ip/firewall/nat/print', 'comment', $comentario);
+
+        $q = new Query($id ? '/ip/firewall/nat/set' : '/ip/firewall/nat/add');
+        if ($id) $q->equal('.id', $id);
+        $q->equal('chain', 'srcnat');
+        $q->equal('action', 'masquerade');
+        $q->equal('src-address', $this->redDelPool($api, $pool));
+        $q->equal('comment', $comentario);
+
+        // La salida puede ser una lista de interfaces o una sola.
+        $esLista = collect($this->leer($api, '/interface/list/print'))
+            ->contains(fn ($l) => ($l['name'] ?? '') === $salida);
+
+        $esLista
+            ? $q->equal('out-interface-list', $salida)
+            : $q->equal('out-interface', $salida);
+
+        $api->query($q)->read();
+    }
+
+    /** La red que abarca el pool, para el NAT. */
+    private function redDelPool($api, string $pool): string
+    {
+        $rangos = null;
+
+        foreach ($this->leer($api, '/ip/pool/print') as $p) {
+            if (($p['name'] ?? '') === $pool) {
+                $rangos = $p['ranges'] ?? null;
+                break;
+            }
+        }
+
+        if (!$rangos) {
+            return '0.0.0.0/0';
+        }
+
+        // "10.20.0.2-10.20.3.254" → se toma el primero y se arma su /24, que
+        // es lo que alcanza para la regla; si ya viene en CIDR se usa tal cual.
+        if (str_contains($rangos, '/')) {
+            return trim(explode(',', $rangos)[0]);
+        }
+
+        $primera = trim(explode('-', explode(',', $rangos)[0])[0]);
+        $partes  = explode('.', $primera);
+
+        if (count($partes) !== 4) {
+            return '0.0.0.0/0';
+        }
+
+        return "{$partes[0]}.{$partes[1]}.0.0/16";
     }
 
     /* ── Interno ──────────────────────────────────────────────────────────── */
