@@ -104,6 +104,36 @@ class ManagementRouterController extends Controller
         return standardApiReponse('Conflictos de IP', $datos, 0, JsonResponse::HTTP_OK);
     }
 
+    /**
+     * Trae al sistema la IP que cada cliente tiene de verdad en el MikroTik.
+     *
+     * Con simular=true no escribe nada: devuelve qué cambiaría, que es como
+     * conviene mirarlo antes de aplicarlo.
+     */
+    public function syncIps(Request $request, \App\Managers\Interfaces\ConectionRouterManagerInterface $conexion): object
+    {
+        $companyId = getSessionCompanyId();
+
+        if (!$companyId) {
+            return standardApiReponse('Sesión sin empresa asociada', null, 1, JsonResponse::HTTP_UNAUTHORIZED);
+        }
+
+        $simular  = $request->boolean('simular');
+        $routerId = $request->input('router_id') ? (int) $request->input('router_id') : null;
+
+        $datos = (new \App\Services\Red\SincronizarIpsDesdeRouter($conexion, $companyId))
+            ->ejecutar($simular, $routerId);
+
+        $huboError = $datos['errores'] !== [] && $datos['cambios'] === [];
+
+        return standardApiReponse(
+            $huboError ? implode(' ', $datos['errores']) : 'Sincronización lista',
+            $datos,
+            $huboError ? 1 : 0,
+            JsonResponse::HTTP_OK
+        );
+    }
+
     public function getIpAvalibles(
         GetIpAvaliblesUseCaseInterface $getIpAvaliblesUseCaseInterface,
         GestionUserRequest $gestionUserRequest

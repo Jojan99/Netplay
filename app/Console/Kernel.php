@@ -27,6 +27,25 @@ class Kernel extends ConsoleKernel
         // Sincroniza ARP MikroTik con STATUS de plataforma — corrige desyncs diariamente
         $schedule->command('arp:sync')->dailyAt('06:00')->user('www-data');
 
+        // Trae al sistema la IP que cada cliente tiene realmente en el router.
+        // En el MikroTik el cliente se identifica por su documento (el comment
+        // del ARP), y esa es la IP con la que navega de verdad: si la
+        // plataforma dice otra cosa, se rompe el diagnóstico, la suspensión y
+        // la lista de IPs libres.
+        //
+        // Queda apagado hasta que se revise la primera pasada: hoy la primera
+        // corrida tocaría 634 clientes de la empresa 1 (481 que no tienen IP
+        // registrada y 153 que la tienen distinta a la del router). Conviene
+        // mirarlo antes desde MikroTik → Conflictos de IP → Sincronizar con el
+        // router, que muestra el detalle sin escribir nada, o con
+        // `php artisan red:sincronizar-ips --simular`.
+        //
+        // Para dejarlo automático, descomentar:
+        // $schedule->command('red:sincronizar-ips')
+        //     ->hourly()
+        //     ->user('www-data')
+        //     ->withoutOverlapping();
+
         // Envía facturas pendientes por email para todas las empresas (respeta límite diario por empresa)
         $schedule->command('invoices:send-pending-emails')->dailyAt('08:00')->user('www-data');
 
