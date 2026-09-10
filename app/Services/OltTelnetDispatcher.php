@@ -161,7 +161,18 @@ class OltTelnetDispatcher
                                        $p['fsp'] ?? null,
                                        isset($p['ont_id']) ? (int) $p['ont_id'] : null
                                    ),
-            'registerONT'       => $driver->registerONT($p['fsp'], $p['serial'], $p['description'] ?? $p['serial']),
+            // Se pasaban sólo los tres primeros, así que los perfiles caían
+            // siempre a los de la configuración y la VLAN llegaba nula: por eso
+            // el service-port no se creaba nunca al autorizar.
+            'registerONT'       => $driver->registerONT(
+                                       $p['fsp'],
+                                       $p['serial'],
+                                       $p['description'] ?? $p['serial'],
+                                       isset($p['line_profile_id']) ? (int) $p['line_profile_id'] : null,
+                                       isset($p['srv_profile_id'])  ? (int) $p['srv_profile_id']  : null,
+                                       isset($p['vlan'])            ? (int) $p['vlan']            : null,
+                                       isset($p['service_port'])    ? (int) $p['service_port']    : null,
+                                   ),
             'deleteONT'         => $driver->deleteONT($p['fsp'], (int) $p['ont_id'], (array) ($p['service_ports'] ?? [])),
             'assignToClient'    => $driver->assignToClient(
                                        $p['fsp'], (int) $p['ont_id'], (int) $p['vlan'],

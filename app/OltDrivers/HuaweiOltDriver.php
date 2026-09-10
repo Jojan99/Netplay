@@ -118,12 +118,17 @@ class HuaweiOltDriver implements OltDriverInterface
         $this->ssh->write("interface gpon {$frame}/{$slot}\n");
         $this->ssh->read('/[>#$]\s*$/');
 
+        // Los argumentos estaban corridos un lugar: al perfil de línea le
+        // llegaba la VLAN y al de servicio el de línea, mientras que el de
+        // servicio no se usaba nunca. Cuando esos números casualmente existían
+        // en la OLT el alta funcionaba, y cuando no, respondía "The service
+        // profile does not exist" sin que se entendiera por qué.
         $cmd = sprintf(
             "ont confirm %d sn-auth %s omci ont-lineprofile-id %d ont-srvprofile-id %d desc %s\n",
             $port,
             strtoupper($serial),
-            $vlan,
             $lineProfileId,
+            $srvProfileId,
             $description
         );
 
@@ -149,6 +154,21 @@ class HuaweiOltDriver implements OltDriverInterface
         ]);
 
         $result = $this->parseRegistrationResponse($output, $port);
+
+        // Cuando la OLT rechaza, queda anotado con qué se le pidió. Antes sólo
+        // se guardaba en debug —que en producción no se escribe— así que no
+        // había forma de saber qué perfil se había enviado.
+        if (!$result['success']) {
+            Log::error('[OLT] Alta de ONT rechazada', [
+                'fsp'          => $fsp,
+                'serial'       => $serial,
+                'line_profile' => $lineProfileId,
+                'srv_profile'  => $srvProfileId,
+                'vlan'         => $vlan,
+                'comando'      => trim($cmd),
+                'respuesta'    => $result['message'],
+            ]);
+        }
 
         // Salir de interface gpon — volvemos a config mode
         $this->ssh->write("quit\n");
