@@ -235,10 +235,20 @@ public function getOntInfo(string $fsp, int $ontId): array
 
 protected function getIfIndexByFsp(string $fsp): ?int
 {
-    // Calcula ifIndex dinámicamente usando la misma fórmula inversa de decodeIfIndex.
-    // base=0xFA000000, portStep=256, portsPerSlot=8
     [$frame, $slot, $port] = $this->parseFsp($fsp);
+
+    // Se busca en el nombre que publica la propia OLT, igual que al leer: la
+    // cuenta de abajo parte los puertos cada 8 y en las placas de 16 apunta a
+    // otro puerto.
+    foreach ($this->mapaDePuertos() as $idx => [$s, $p]) {
+        if ($s === $slot && $p === $port) {
+            return $idx;
+        }
+    }
+
+    // Respaldo para cuando la OLT no contesta el nombre.
     $portIndex = $slot * 8 + $port;
+
     return 0xFA000000 + $portIndex * 256;
 }
 
@@ -777,24 +787,73 @@ protected function getIfIndexByFsp(string $fsp): ?int
         return null;
     }
 
+    /** ifIndex => [slot, port], tal como los nombra la propia OLT. */
+    private ?array $mapaPuertos = null;
+
+    /**
+     * Qué puerto es cada ifIndex, preguntándoselo a la OLT.
+     *
+     * La OLT publica el nombre real de cada interfaz en ifName: "GPON 0/0/9".
+     * Es el único dato confiable, porque cuántos puertos entran en una placa
+     * depende del modelo —las hay de 8 y de 16— y no se puede deducir del
+     * número.
+     *
+     * @return array<int,array{0:int,1:int}>
+     */
+    private function mapaDePuertos(): array
+    {
+        if ($this->mapaPuertos !== null) {
+            return $this->mapaPuertos;
+        }
+
+        $this->mapaPuertos = [];
+
+        try {
+            foreach ($this->walk('1.3.6.1.2.1.31.1.1.1.1') as $oid => $valor) {
+                $nombre = trim(str_replace('STRING:', '', (string) $valor), " \"'");
+
+                // Sólo los puertos GPON: los uplinks ethernet también se
+                // numeran F/S/P y podrían pisar a un puerto de fibra.
+                if (stripos($nombre, 'gpon') === false) {
+                    continue;
+                }
+
+                // "GPON 0/0/9" → frame 0, slot 0, puerto 9
+                if (!preg_match('#(\d+)/(\d+)/(\d+)\s*$#', $nombre, $m)) {
+                    continue;
+                }
+
+                $idx = (int) substr((string) $oid, strrpos((string) $oid, '.') + 1);
+
+                if ($idx > 0) {
+                    $this->mapaPuertos[$idx] = [(int) $m[2], (int) $m[3]];
+                }
+            }
+        } catch (\Throwable $e) {
+            \Log::warning('[OLT] No se pudo leer el nombre de los puertos', ['error' => $e->getMessage()]);
+        }
+
+        return $this->mapaPuertos;
+    }
+
     /**
      * Decode a Huawei GPON port ifIndex into [slot, port].
      *
-     * Huawei MA5600T/MA5800 GPON port ifIndex formula:
-     *   base      = 0xFA000000 (4 194 304 000)
-     *   step      = 128 per port
-     *   per_slot  = 8 ports
-     *
-     *   ifIndex = base + (slot * 8 + port) * 128
-     *
-     * Verified against live OLT data:
-     *   4 194 304 000 = 0/0/0  (offset 0,   port_idx 0, slot 0, port 0)
-     *   4 194 304 256 = 0/0/2  (offset 256, port_idx 2, slot 0, port 2)
+     * Primero se busca el nombre que publica la OLT. El cálculo queda de
+     * respaldo para cuando no responde, pero da mal en las placas de más de
+     * ocho puertos: partía el número cada 8, así que el puerto 0/0/9 salía
+     * como 0/1/1 y la autorización mostraba una tarjeta que no era.
      */
     private function decodeIfIndex(int $ifIndex): ?array
     {
+        $mapa = $this->mapaDePuertos();
+
+        if (isset($mapa[$ifIndex])) {
+            return $mapa[$ifIndex];
+        }
+
         $base         = 0xFA000000; // 4194304000
-        $portStep     = 256;        // observed: ports are 256 apart (4194304256 - 4194304000)
+        $portStep     = 256;        // los puertos van de 256 en 256
         $portsPerSlot = 8;
 
         if ($ifIndex < $base) return null;
