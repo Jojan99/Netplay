@@ -133,6 +133,102 @@ class OltAdminUseCase
         return ['status' => 0, 'message' => 'OK', 'data' => ['line' => $line, 'srv' => $srv]];
     }
 
+    /**
+     * Dónde está ya esta ONT, si es que está.
+     *
+     * Una ONT sólo puede estar autorizada en un puerto. Cuando se cambia de
+     * fibra queda registrada en el anterior, y al intentar autorizarla en el
+     * nuevo la OLT la rechaza sin decir por qué. Preguntando antes se puede
+     * avisar dónde está y ofrecer moverla.
+     *
+     * @return array{encontrada:bool, fsp?:string, ont_id?:int, descripcion?:?string, estado?:?string}
+     */
+    public function buscarOntPorSerial(int $oltId, string $serial): array
+    {
+        $serial = strtoupper(trim($serial));
+
+        if ($serial === '') {
+            return ['encontrada' => false];
+        }
+
+        try {
+            $autorizadas = $this->dispatcher->dispatch($oltId, 'getAuthorizedONTs', []);
+
+            foreach ($autorizadas as $ont) {
+                if (strtoupper(trim((string) ($ont['serial'] ?? ''))) !== $serial) {
+                    continue;
+                }
+
+                return [
+                    'encontrada'  => true,
+                    'fsp'         => $ont['fsp'] ?? null,
+                    'ont_id'      => isset($ont['ont_id']) ? (int) $ont['ont_id'] : null,
+                    'descripcion' => $ont['description'] ?? null,
+                    'estado'      => $ont['run_state'] ?? ($ont['status'] ?? null),
+                ];
+            }
+
+            return ['encontrada' => false];
+        } catch (\Throwable $e) {
+            \Log::warning('OLT buscarOntPorSerial: no se pudo consultar', [
+                'olt_id' => $oltId, 'serial' => $serial, 'error' => $e->getMessage(),
+            ]);
+
+            // Que no se pueda consultar no debe frenar el alta: se sigue y, si
+            // ya existía, la OLT lo va a rechazar igual.
+            return ['encontrada' => false, 'error' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Autoriza una ONT que ya estaba en otro puerto.
+     *
+     * Se borra de donde estaba y se autoriza en el nuevo, en ese orden: al
+     * revés la OLT rechaza el alta por serial duplicado.
+     */
+    public function moverOnt(int $oltId, array $data): array
+    {
+        $serial = strtoupper(trim((string) ($data['serial'] ?? '')));
+        $donde  = $this->buscarOntPorSerial($oltId, $serial);
+
+        $pasos = [];
+
+        if ($donde['encontrada']) {
+            $baja = $this->deleteONT($oltId, [
+                'fsp'    => $donde['fsp'],
+                'ont_id' => $donde['ont_id'],
+            ]);
+
+            $pasos[] = [
+                'paso'    => "Quitar de {$donde['fsp']} (ONT ID {$donde['ont_id']})",
+                'ok'      => $baja['status'] === 0,
+                'detalle' => $baja['message'],
+            ];
+
+            if ($baja['status'] !== 0) {
+                return [
+                    'status'  => 1,
+                    'message' => "No se pudo quitar la ONT de {$donde['fsp']}, así que no se movió.",
+                    'data'    => ['pasos' => $pasos],
+                ];
+            }
+        }
+
+        $alta = $this->registerONT($oltId, $data);
+
+        $pasos[] = [
+            'paso'    => "Autorizar en {$data['fsp']}",
+            'ok'      => $alta['status'] === 0,
+            'detalle' => $alta['message'],
+        ];
+
+        return [
+            'status'  => $alta['status'],
+            'message' => $alta['message'],
+            'data'    => ['pasos' => $pasos] + (array) ($alta['data'] ?? []),
+        ];
+    }
+
     public function registerONT(int $oltId, array $data): array
     {
         try {
@@ -181,9 +277,12 @@ class OltAdminUseCase
                 Cache::forget("olt:{$oltId}:all_service_ports");
             }
 
+            // Cuando falla se muestra lo que dijo la OLT: "Error al registrar
+            // ONT" no le sirve a nadie para saber qué pasó.
             $msg = $result['success']
-                ? "ONT registrada — Port {$result['port_id']}, ONTID {$result['ont_id']}"
-                : 'Error al registrar ONT';
+                ? "ONT autorizada en {$data['fsp']} · ONT ID {$result['ont_id']}"
+                    . (($result['service_port_created'] ?? false) ? " · service-port {$spIndex} creado" : '')
+                : 'La OLT no autorizó la ONT: ' . ($result['message'] ?: 'sin detalle');
 
             return ['status' => $result['success'] ? 0 : 1, 'message' => $msg, 'data' => $result];
         } catch (\Throwable $e) {
@@ -244,13 +343,82 @@ class OltAdminUseCase
 
             return [
                 'status'  => $ok ? 0 : 1,
-                'message' => $ok ? 'ONT eliminada correctamente' : 'Error al eliminar ONT',
+                'message' => $ok
+                    ? "ONT eliminada de {$fsp} (ONT ID {$ontId})"
+                    : 'La OLT no pudo eliminar la ONT. Revisá que el ONT ID sea el correcto.',
                 'data'    => null,
             ];
         } catch (\Throwable $e) {
             \Log::error('OLT deleteONT error', ['olt_id' => $oltId, 'error' => $e->getMessage()]);
             return ['status' => 1, 'message' => 'Error eliminando ONT: ' . $e->getMessage(), 'data' => null];
         }
+    }
+
+    /**
+     * ONT que quedaron a medio provisionar.
+     *
+     * Cada alta son varios pasos contra la OLT y cualquiera puede fallar. Si
+     * se corta después de autorizar, la ONT queda registrada pero sin
+     * service-port —conectada y sin navegar— y nadie se entera hasta que el
+     * cliente llama.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    public function ontsIncompletas(int $oltId): array
+    {
+        // Lo que la OLT tiene de verdad. Mirar sólo la tabla local daba
+        // cientos de falsos positivos: las ONT sincronizadas desde el equipo
+        // llegan sin los service-ports anotados, y parecían todas a medias.
+        $enLaOlt = [];
+
+        try {
+            foreach ($this->getAllServicePorts($oltId) as $sp) {
+                $enLaOlt[($sp['fsp'] ?? '') . ':' . ($sp['ont_id'] ?? '')] = true;
+            }
+        } catch (\Throwable $e) {
+            \Log::warning('OLT ontsIncompletas: sin datos de la OLT, no se puede comparar', [
+                'olt_id' => $oltId, 'error' => $e->getMessage(),
+            ]);
+
+            // Sin poder comparar es mejor no listar nada que listar de más.
+            return [];
+        }
+
+        // Un equipo con ONT registradas no tiene cero service-ports: si vino
+        // vacío es que la lectura falló, y marcarlas todas como incompletas
+        // sería puro ruido.
+        if (!$enLaOlt) {
+            \Log::warning('OLT ontsIncompletas: la OLT no devolvió service-ports', ['olt_id' => $oltId]);
+
+            return [];
+        }
+
+        return OltOnt::where('olt_id', $oltId)
+            ->get()
+            ->map(function ($ont) use ($enLaOlt) {
+                $falta = [];
+
+                if (!isset($enLaOlt[$ont->fsp . ':' . $ont->ont_id])) {
+                    $falta[] = 'service-port';
+                }
+
+                if (empty($ont->user_data_id)) {
+                    $falta[] = 'cliente asignado';
+                }
+
+                return [
+                    'fsp'         => $ont->fsp,
+                    'ont_id'      => $ont->ont_id,
+                    'serial'      => $ont->serial,
+                    'descripcion' => $ont->description,
+                    'estado'      => $ont->status,
+                    'falta'       => $falta,
+                    'desde'       => optional($ont->synced_at)->diffForHumans(),
+                ];
+            })
+            ->filter(fn ($o) => $o['falta'] !== [])
+            ->values()
+            ->all();
     }
 
     public function assignONTToClient(int $oltId, array $data): array
@@ -611,6 +779,30 @@ class OltAdminUseCase
      * y los añade a cada ONT como 'service_ports' => [['index'=>100,'vlan'=>200], ...].
      * Se cachea separado para no invalidar el listado SNMP cada vez.
      */
+    /**
+     * Todos los service-ports del equipo, con la misma caché que usa el
+     * listado: así preguntarlo no cuesta una consulta más a la OLT.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function getAllServicePorts(int $oltId): array
+    {
+        $cacheKey = "olt:{$oltId}:all_service_ports";
+        $todos    = Cache::get($cacheKey);
+
+        if (!is_array($todos) || $todos === []) {
+            $todos = $this->dispatcher->dispatch($oltId, 'getServicePorts');
+
+            // Sólo se guarda si trajo algo: cachear un vacío por cinco minutos
+            // hacía que todo pareciera sin service-port en ese rato.
+            if (is_array($todos) && $todos !== []) {
+                Cache::put($cacheKey, $todos, now()->addMinutes(5));
+            }
+        }
+
+        return is_array($todos) ? $todos : [];
+    }
+
     private function mergeServicePorts(int $oltId, array $onts): array
     {
         $cacheKey = "olt:{$oltId}:all_service_ports";

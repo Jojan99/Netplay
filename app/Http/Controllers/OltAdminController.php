@@ -52,6 +52,34 @@ class OltAdminController extends Controller
         return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
     }
 
+    /** Dónde está ya esta ONT, para avisar antes de intentar autorizarla. */
+    public function buscarOnt(Request $request, int $oltId): JsonResponse
+    {
+        $serial = trim((string) $request->query('serial'));
+
+        if ($serial === '') {
+            return standardApiReponse('Falta el serial', null, 1, JsonResponse::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $r = $this->uc->buscarOntPorSerial($oltId, $serial);
+
+        return standardApiReponse('Búsqueda lista', $r, 0, JsonResponse::HTTP_OK);
+    }
+
+    /** Quita la ONT de donde esté y la autoriza en el puerto pedido. */
+    public function moverOnt(OltOntRequest $request, int $oltId): JsonResponse
+    {
+        $r = $this->uc->moverOnt($oltId, $request->validated());
+
+        return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
+    }
+
+    /** ONT que quedaron a medio provisionar. */
+    public function ontsIncompletas(int $oltId): JsonResponse
+    {
+        return standardApiReponse('ONT incompletas', $this->uc->ontsIncompletas($oltId), 0, JsonResponse::HTTP_OK);
+    }
+
     public function deleteONT(OltOntRequest $request, int $oltId): JsonResponse
     {
         $r = $this->uc->deleteONT($oltId, $request->validated());

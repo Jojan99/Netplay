@@ -274,8 +274,27 @@ class HuaweiOltDriver implements OltDriverInterface
         $this->ssh->write("quit\n");
         $this->ssh->read('/[>#$]\s*$/');
 
-        return stripos($output, 'success') !== false
-            || stripos($output, 'Succeeded') !== false;
+        return $this->salioBien($output);
+    }
+
+    /**
+     * ¿Salió bien un comando de la OLT?
+     *
+     * Se mira el "success: N" cuando está, y si no, que no haya queja. Buscar
+     * la palabra "success" suelta daba verdadero siempre, porque la OLT la
+     * escribe también cuando el resultado es 0.
+     */
+    private function salioBien(string $raw): bool
+    {
+        if (preg_match('/success\s*:\s*(\d+)/i', $raw, $m)) {
+            return ((int) $m[1]) > 0;
+        }
+
+        if ($this->tieneError($raw)) {
+            return false;
+        }
+
+        return (bool) preg_match('/(success|succeeded)/i', $raw);
     }
 
     public function assignToClient(string $fsp, int $ontId, int $vlan, int $servicePort, string $description): bool
@@ -772,23 +791,74 @@ public function parseServicePorts(string $output): array
         return $onts;
     }
 
+    /**
+     * Lee la respuesta de "ont confirm".
+     *
+     * La OLT contesta así:
+     *
+     *   Number of ONTs that can be added: 1, success: 1
+     *   PortID :3, ONTID :82
+     *
+     * Antes se daba por bueno cualquier texto que contuviera la palabra
+     * "success", y esa línea aparece siempre — con 1 cuando funcionó y con 0
+     * cuando no. El sistema informaba éxito en los dos casos. Hay que leer el
+     * número.
+     */
     private function parseRegistrationResponse(string $raw, int $portId): array
     {
         $ontId = null;
-        if (preg_match('/ONTID\s*:\s*(\d+)/i', $raw, $m)
-            || preg_match('/ont\s+(\d+)\s+/i', $raw, $m)) {
+
+        if (preg_match('/ONTID\s*:\s*(\d+)/i', $raw, $m)) {
             $ontId = (int) $m[1];
         }
 
-        $success = stripos($raw, 'success') !== false
-                || stripos($raw, 'Succeeded') !== false;
+        if (preg_match('/PortID\s*:\s*(\d+)/i', $raw, $m)) {
+            $portId = (int) $m[1];
+        }
+
+        // "success: N" — el dato que de verdad dice si entró.
+        if (preg_match('/success\s*:\s*(\d+)/i', $raw, $m)) {
+            $success = ((int) $m[1]) > 0;
+        } else {
+            // Sin esa línea, se acepta sólo si dio un ONTID y no hay error.
+            $success = $ontId !== null && !$this->tieneError($raw);
+        }
 
         return [
             'success'  => $success,
             'port_id'  => $portId,
             'ont_id'   => $ontId,
-            'message'  => trim($raw),
+            'message'  => $this->mensajeDeLaOlt($raw),
         ];
+    }
+
+    /** ¿La OLT devolvió una queja? */
+    private function tieneError(string $raw): bool
+    {
+        return (bool) preg_match('/(Failure|Failed|Error|invalid|does not exist|already exist)/i', $raw);
+    }
+
+    /**
+     * La línea que le sirve a una persona, sin el eco del comando ni los
+     * códigos del terminal.
+     */
+    private function mensajeDeLaOlt(string $raw): string
+    {
+        $limpio = preg_replace('/\x1b\[[0-9;]*[A-Za-z]/', '', $raw);
+        $utiles = [];
+
+        foreach (preg_split('/\r?\n/', (string) $limpio) as $linea) {
+            $linea = trim($linea);
+
+            // Fuera el eco del comando y el prompt.
+            if ($linea === '' || str_starts_with($linea, 'ont ') || str_contains($linea, '#')) {
+                continue;
+            }
+
+            $utiles[] = $linea;
+        }
+
+        return trim(implode(' · ', $utiles)) ?: trim((string) $limpio);
     }
 
     /**

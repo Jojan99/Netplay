@@ -86,6 +86,11 @@ Route::prefix('management')->group(function () {
         Route::delete('/{id}',             [OltAdminController::class, 'destroy']);
         Route::get('/{oltId}/unauth',      [OltAdminController::class, 'unauthONTs']);
         Route::post('/{oltId}/register',   [OltAdminController::class, 'registerONT']);
+
+        // Antes de autorizar: ¿esta ONT ya está en otro puerto?
+        Route::get('/{oltId}/buscar-ont',      [OltAdminController::class, 'buscarOnt']);
+        Route::post('/{oltId}/mover-ont',      [OltAdminController::class, 'moverOnt']);
+        Route::get('/{oltId}/onts-incompletas', [OltAdminController::class, 'ontsIncompletas']);
         Route::delete('/{oltId}/ont',      [OltAdminController::class, 'deleteONT']);
         Route::post('/{oltId}/assign',      [OltAdminController::class, 'assignONT']);
         Route::post('/{oltId}/auto-assign', [OltAdminController::class, 'autoAssignONT']);
