@@ -109,6 +109,23 @@ public function GetIpAvalibles(GestionUserRequest $gestionUserRequest, ?int $rou
         $arpRows = $api->query($query)->read();
         $usedIps = array_column($arpRows, 'address');
 
+        // El ARP solo ve lo que está prendido: la IP de un cliente apagado
+        // desaparece de ahí y volvía a ofrecerse como libre. Así se entregó la
+        // misma IP a varios clientes. Se descuentan también las que la
+        // plataforma ya tiene registradas para esta empresa.
+        $companyId = getSessionCompanyId();
+
+        if ($companyId) {
+            $enPlataforma = \Illuminate\Support\Facades\DB::table('tabla_ips as t')
+                ->join('user_data as ud', 'ud.ip_assignment_id', '=', 't.id')
+                ->where('t.company_id', $companyId)
+                ->whereNotNull('t.ip')
+                ->pluck('t.ip')
+                ->all();
+
+            $usedIps = array_unique(array_merge($usedIps, $enPlataforma));
+        }
+
         /** 3️⃣ IPs DISPONIBLES LIMITADAS */
         $availableIps = [];
         $maxIps = 20;
