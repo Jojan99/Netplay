@@ -253,7 +253,9 @@ class OltAdminUseCase
      */
     public function capacidades(int $oltId): array
     {
-        $clave = "olt:{$oltId}:capacidades";
+        // Versión en la clave: cambiarla invalida lo guardado desde un deploy,
+        // sin depender de poder borrar archivos de caché que creó la web.
+        $clave = "olt:{$oltId}:capacidades:v2";
 
         $capacidades = Cache::get($clave);
 
