@@ -184,6 +184,11 @@ class OltTelnetDispatcher
             'getLineProfiles'   => $driver->getLineProfiles(),
             'getSrvProfiles'    => $driver->getSrvProfiles(),
             'runCommand'        => $driver->runCommand($p['command']),
+            // Sólo algunos equipos la tienen (hoy, C-Data EPON).
+            'autoAutorizacion'  => method_exists($driver, 'autoAutorizacion')
+                                       ? $driver->autoAutorizacion() : null,
+            'cambiarAutoAutorizacion' => method_exists($driver, 'cambiarAutoAutorizacion')
+                                       ? $driver->cambiarAutoAutorizacion((bool) ($p['activar'] ?? false), isset($p['puerto']) ? (int) $p['puerto'] : null) : null,
             default             => throw new \RuntimeException("Método OLT desconocido: {$method}"),
         };
     }

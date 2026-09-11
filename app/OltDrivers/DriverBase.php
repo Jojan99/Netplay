@@ -29,8 +29,16 @@ abstract class DriverBase implements OltDriverInterface
     /** Prompt de la consola: termina en > o # */
     protected string $prompt = '/[>#]\s*$/';
 
-    /** Lo que el equipo muestra cuando pagina la salida. */
-    protected string $paginador = '/(?:----\s*More\s*----|--More--|\(q to quit\))/i';
+    /**
+     * Lo que el equipo muestra cuando pagina la salida.
+     *
+     * Cada fabricante lo escribe distinto: "--More--" a secas, Huawei
+     * "---- More ( Press 'Q' to break ) ----", la C-Data EPON
+     * "--More ( Press 'Q' to quit )--". Se reconoce por los guiones con "More"
+     * en el medio; buscar sólo "--More--" dejaba al driver esperando un prompt
+     * que no llegaba, porque la OLT estaba parada esperando una tecla.
+     */
+    protected string $paginador = '/-{2,}\s*More\b[^\r\n]*?-{2,}|\(\s*q to quit\s*\)|Press any key/i';
 
     /** Palabras con las que el equipo reporta un rechazo. */
     protected array $errores = [
@@ -79,12 +87,15 @@ abstract class DriverBase implements OltDriverInterface
     /** Lee hasta el prompt, avanzando el paginador cuantas veces haga falta. */
     protected function leer(): string
     {
-        $salida = '';
+        $salida  = '';
         $vueltas = 0;
+
+        // Se espera el prompt o el paginador, lo que llegue primero.
+        $esperar = '/(?:[>#]\s*$|-{2,}\s*More\b[^\r\n]*?-{2,}|\(\s*q to quit\s*\)|Press any key)/i';
 
         try {
             while ($vueltas++ < 200) {
-                $trozo = $this->ssh->read('/(?:[>#]\s*$|----\s*More\s*----|--More--|\(q to quit\))/i');
+                $trozo = $this->ssh->read($esperar);
                 $salida .= $trozo;
 
                 if (preg_match($this->paginador, $trozo)) {
@@ -98,7 +109,12 @@ abstract class DriverBase implements OltDriverInterface
             // Tiempo agotado: devolvemos lo que alcanzó a llegar.
         }
 
-        return preg_replace('/\s*(?:----\s*More\s*----|--More--)\s*/i', "\n", $salida);
+        // Fuera el aviso del paginador, los NUL que lo acompañan y los
+        // retrocesos con que algunos equipos lo borran de la pantalla.
+        $salida = preg_replace($this->paginador, "\n", $salida);
+        $salida = preg_replace('/[\x00\x08]|\x1b\[[0-9;]*[A-Za-z]/', '', $salida);
+
+        return $salida;
     }
 
     /**

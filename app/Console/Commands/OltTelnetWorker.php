@@ -41,6 +41,8 @@ class OltTelnetWorker extends Command
     private const WRITE_METHODS = [
         'registerONT', 'deleteONT', 'assignToClient',
         'transferONT', 'deactivateONT', 'activateONT',
+        // Cambia la configuración: si no se guarda, vuelve atrás al reiniciar.
+        'cambiarAutoAutorizacion',
     ];
 
     private ?object          $connection     = null;
@@ -321,6 +323,11 @@ class OltTelnetWorker extends Command
             'deactivateONT'     => $this->driver->deactivateONT($p['fsp'], (int) $p['ont_id']),
             'activateONT'       => $this->driver->activateONT($p['fsp'], (int) $p['ont_id']),
             'runCommand'        => $this->driver->runCommand($p['command']),
+            // Sólo algunos equipos la tienen (hoy, C-Data EPON).
+            'autoAutorizacion'  => method_exists($this->driver, 'autoAutorizacion')
+                                       ? $this->driver->autoAutorizacion() : null,
+            'cambiarAutoAutorizacion' => method_exists($this->driver, 'cambiarAutoAutorizacion')
+                                       ? $this->driver->cambiarAutoAutorizacion((bool) ($p['activar'] ?? false), isset($p['puerto']) ? (int) $p['puerto'] : null) : null,
             default             => throw new \RuntimeException("Método OLT desconocido: {$method}"),
         };
     }

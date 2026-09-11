@@ -24,6 +24,18 @@ class TelnetConnection
         // stream_set_blocking is intentionally NOT called here.
         // SshTunnelStream::stream_read has its own 10-second select timeout,
         // and stream_set_blocking on a user-space wrapper is a no-op anyway.
+        //
+        // Pero cuando la OLT se alcanza directo —por la VPN, sin jump— el
+        // stream es un socket TCP común y fread() bloquea hasta que llegue algo.
+        // Si la OLT se queda esperando una tecla en el paginador, fread no
+        // vuelve nunca, el límite de read() no se llega a evaluar y el worker
+        // queda colgado indefinidamente. Con un segundo de espera por lectura,
+        // fread vuelve aunque no haya datos y el límite funciona.
+        $meta = @stream_get_meta_data($stream);
+
+        if (is_array($meta) && str_contains((string) ($meta['stream_type'] ?? ''), 'socket')) {
+            @stream_set_timeout($stream, 1);
+        }
     }
 
     // ── phpseclib SSH2 PTY-compatible interface ───────────────────────────

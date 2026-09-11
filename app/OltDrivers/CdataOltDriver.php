@@ -45,16 +45,129 @@ class CdataOltDriver extends DriverBase
         $this->ssh->setTimeout(15);
     }
 
+    /** "epon" o "gpon", según lo que acepte el equipo. Se averigua una vez. */
+    private ?string $tecnologia = null;
+
+    /**
+     * C-Data vende las dos familias con la misma consola: las EPON ("EasyPath")
+     * entran con `interface epon 0/0` y autorizan por MAC; las GPON con
+     * `interface gpon 0/0` y por serial. Se prueba EPON y, si el equipo la
+     * rechaza, es GPON.
+     */
+    private function tecnologia(): string
+    {
+        if ($this->tecnologia !== null) {
+            return $this->tecnologia;
+        }
+
+        $this->volverAlPrompt();
+        $this->cmd('config', 8);
+        $salida = $this->cmd('interface epon 0/0', 10);
+        $this->volverAlPrompt();
+
+        return $this->tecnologia = (!$this->fallo($salida) && stripos($salida, 'epon') !== false)
+            ? 'epon'
+            : 'gpon';
+    }
+
+    private function esEpon(): bool
+    {
+        return $this->tecnologia() === 'epon';
+    }
+
     /** Entra al puerto PON y devuelve el número de puerto dentro de la tarjeta. */
     private function entrarAlPuerto(string $fsp): int
     {
         ['frame' => $f, 'slot' => $s, 'port' => $p] = $this->partirFsp($fsp);
 
+        $tipo = $this->tecnologia();
+
         $this->volverAlPrompt();
         $this->cmd('config', 8);
-        $this->cmd("interface gpon {$f}/{$s}", 10);
+        $this->cmd("interface {$tipo} {$f}/{$s}", 10);
 
         return $p;
+    }
+
+    /** Una MAC en el formato que pide la OLT: AA:BB:CC:DD:EE:FF. */
+    private static function mac(string $valor): ?string
+    {
+        $hex = strtoupper(preg_replace('/[^0-9A-Fa-f]/', '', $valor));
+
+        return strlen($hex) === 12 ? implode(':', str_split($hex, 2)) : null;
+    }
+
+    /**
+     * La tabla de "show ont info 0/0 <puerto> all":
+     *
+     *   F/S  P  ONT MAC               Control   Run        Config   Match     Desc
+     *           ID                    flag      state      state    state
+     *   0/0  2  1   80:F7:A6:BD:C3:2A active    online     success  match
+     *
+     * El detalle de una sola ONT viene en bloques clave-valor y el listado en
+     * esta tabla; leer la tabla con el parser de bloques no devolvía nada, y
+     * el alta calculaba mal el siguiente ID libre.
+     *
+     * @return list<array{puerto:int, ont_id:int, mac:string, control:string, estado:string, descripcion:?string}>
+     */
+    private static function tablaDeOnts(string $salida): array
+    {
+        $filas = [];
+
+        foreach (preg_split('/\r?\n/', $salida) as $linea) {
+            if (!preg_match(
+                '#^\s*\d+/\d+\s+(\d+)\s+(\d+)\s+([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})\s+(\S+)\s+(\S+)\s+\S+\s+\S+\s*(.*)$#',
+                $linea,
+                $m
+            )) {
+                continue;
+            }
+
+            $filas[] = [
+                'puerto'      => (int) $m[1],
+                'ont_id'      => (int) $m[2],
+                'mac'         => strtoupper($m[3]),
+                'control'     => strtolower($m[4]),
+                'estado'      => strtolower($m[5]),
+                'descripcion' => trim($m[6]) !== '' ? trim($m[6]) : null,
+            ];
+        }
+
+        return $filas;
+    }
+
+    /**
+     * Bloques clave-valor de "show ont info": uno por ONT, separados por
+     * líneas de guiones. La misma forma que usa Huawei.
+     *
+     * @return list<array<string,string>>
+     */
+    private static function bloques(string $salida): array
+    {
+        $bloques = [];
+        $actual  = [];
+
+        foreach (preg_split('/\r?\n/', $salida) as $linea) {
+            if (!preg_match('/^\s*([A-Za-z][A-Za-z \/-]*?)\s*:\s*(.*?)\s*$/', $linea, $m)) {
+                continue;
+            }
+
+            $clave = strtolower(trim($m[1]));
+
+            // Un "Frame/Slot" nuevo abre el bloque de la ONT siguiente.
+            if ($clave === 'frame/slot' && isset($actual['ont-id'])) {
+                $bloques[] = $actual;
+                $actual    = [];
+            }
+
+            $actual[$clave] = $m[2];
+        }
+
+        if (isset($actual['ont-id'])) {
+            $bloques[] = $actual;
+        }
+
+        return $bloques;
     }
 
     // ── Consultas ─────────────────────────────────────────────────────────
@@ -66,6 +179,10 @@ class CdataOltDriver extends DriverBase
 
     public function getUnauthONTs(): array
     {
+        if ($this->esEpon()) {
+            return $this->autofindEpon();
+        }
+
         $this->volverAlPrompt();
         $intento = $this->primeraQueSirva([
             'show ont autofind all',
@@ -137,6 +254,10 @@ class CdataOltDriver extends DriverBase
 
     public function getAuthorizedONTs(): array
     {
+        if ($this->esEpon()) {
+            return $this->ontsEpon();
+        }
+
         $this->volverAlPrompt();
         $intento = $this->primeraQueSirva([
             'show ont info all',
@@ -173,6 +294,10 @@ class CdataOltDriver extends DriverBase
 
     public function getOntInfo(string $fsp, int $ontId): array
     {
+        if ($this->esEpon()) {
+            return $this->infoEpon($fsp, $ontId);
+        }
+
         $puerto  = $this->entrarAlPuerto($fsp);
         $detalle = $this->cmd("show ont info {$puerto} {$ontId}", 30);
         $optico  = $this->cmd("show ont optical-info {$puerto} {$ontId}", 30);
@@ -229,6 +354,269 @@ class CdataOltDriver extends DriverBase
         return $puertos;
     }
 
+    // ── EPON (verificado contra una C-Data "EasyPath Ethernet-PON") ──────
+
+    /** Los puertos PON que tiene el equipo. La EPON de C-Data acepta 1-4. */
+    private const PUERTOS_EPON = [1, 2, 3, 4];
+
+    /**
+     * ONU que la OLT encontró pero no están autorizadas.
+     *
+     *   show ont autofind <puerto> all
+     */
+    private function autofindEpon(): array
+    {
+        $onts = [];
+
+        foreach (self::PUERTOS_EPON as $puerto) {
+            $this->entrarAlPuerto("0/0/{$puerto}");
+            $salida = $this->cmd("show ont autofind {$puerto} all", 30);
+
+            foreach (preg_split('/\r?\n/', $salida) as $linea) {
+                if (!preg_match('/([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})/', $linea, $m)) {
+                    continue;
+                }
+
+                $mac = strtoupper($m[1]);
+
+                $onts[$mac] = [
+                    'fsp'      => "0/0/{$puerto}",
+                    'serial'   => $mac,
+                    'vendor'   => null,
+                    'ont_id'   => null,
+                    'status'   => 'autofind',
+                    'password' => null,
+                ];
+            }
+        }
+
+        $this->volverAlPrompt();
+
+        return array_values($onts);
+    }
+
+    /**
+     * Las ONU autorizadas, puerto por puerto.
+     *
+     *   show ont info 0/0 <puerto> all
+     */
+    private function ontsEpon(): array
+    {
+        $onts = [];
+
+        $this->volverAlPrompt();
+        $this->cmd('config', 8);
+
+        foreach (self::PUERTOS_EPON as $puerto) {
+            $salida = $this->cmd("show ont info 0/0 {$puerto} all", 60);
+
+            foreach (self::tablaDeOnts($salida) as $f) {
+                $onts[] = [
+                    'fsp'         => '0/0/' . $f['puerto'],
+                    'ont_id'      => $f['ont_id'],
+                    'serial'      => $f['mac'],
+                    'status'      => $f['estado'] === 'online' ? 'online' : 'offline',
+                    'description' => $f['descripcion'],
+                ];
+            }
+        }
+
+        $this->volverAlPrompt();
+
+        return $onts;
+    }
+
+    /** El detalle de una ONU: estado, MAC, distancia, perfil. */
+    private function infoEpon(string $fsp, int $ontId): array
+    {
+        ['port' => $puerto] = $this->partirFsp($fsp);
+
+        $this->volverAlPrompt();
+        $this->cmd('config', 8);
+        $salida = $this->cmd("show ont info 0/0 {$puerto} {$ontId}", 30);
+        $this->volverAlPrompt();
+
+        $b = self::bloques($salida)[0] ?? [];
+
+        return [
+            'fsp'           => $fsp,
+            'ont_id'        => $ontId,
+            'serial'        => self::mac($b['mac'] ?? '') ?? null,
+            'status'        => strtolower($b['run state'] ?? '') === 'online' ? 'online' : 'offline',
+            'description'   => ($b['description'] ?? '') !== '' ? $b['description'] : null,
+            'distancia_m'   => isset($b['ont distance']) ? (int) $b['ont distance'] : null,
+            'modo_auth'     => $b['auth mode'] ?? null,
+            'perfil_linea'  => $b['line profile name'] ?? null,
+            'raw'           => $salida,
+        ];
+    }
+
+    /**
+     * Autoriza una ONU por MAC.
+     *
+     *   interface epon 0/0
+     *   ont add <puerto> <id> mac-auth <MAC> [ont-lineprofile-id <n>]
+     *   ont description <puerto> <id> <texto>
+     *
+     * El perfil de línea sólo se manda si el alta lo pide explícitamente: sin
+     * él la OLT usa el suyo por defecto, que es el que tienen las ONU que ya
+     * están andando. Mandar el valor por defecto de la plataforma (10) fallaba
+     * en un equipo que no tiene ese perfil.
+     */
+    private function altaEpon(string $fsp, string $serial, string $description, ?int $lineProfileId): array
+    {
+        $mac = self::mac($serial);
+
+        if ($mac === null) {
+            return [
+                'success' => false,
+                'ont_id'  => 0,
+                'message' => "«{$serial}» no es una MAC válida: en EPON la ONU se autoriza por MAC.",
+            ];
+        }
+
+        $puerto = $this->entrarAlPuerto($fsp);
+        $ontId  = $this->siguienteOntIdEpon($puerto);
+
+        if ($ontId === null) {
+            $this->volverAlPrompt();
+
+            return ['success' => false, 'ont_id' => 0, 'message' => "El puerto {$fsp} ya tiene sus 64 ONU."];
+        }
+
+        // Buscar el siguiente ID sale de config: hay que volver a la interfaz.
+        $this->entrarAlPuerto($fsp);
+
+        $comando = "ont add {$puerto} {$ontId} mac-auth {$mac}"
+            . ($lineProfileId !== null ? " ont-lineprofile-id {$lineProfileId}" : '');
+
+        $salida = $this->cmd($comando, 30);
+
+        if ($this->fallo($salida)) {
+            $this->volverAlPrompt();
+
+            Log::error('[OLT C-Data EPON] Alta de ONU rechazada', [
+                'fsp' => $fsp, 'mac' => $mac, 'comando' => $comando, 'salida' => $salida,
+            ]);
+
+            return ['success' => false, 'ont_id' => 0, 'message' => $this->mensaje($salida)];
+        }
+
+        if ($description !== '') {
+            // La descripción no admite espacios sin comillas; hasta 64 caracteres.
+            $texto = substr(preg_replace('/[^A-Za-z0-9_.-]+/', '_', $description), 0, 64);
+            $this->cmd("ont description {$puerto} {$ontId} {$texto}", 15);
+        }
+
+        $this->volverAlPrompt();
+
+        return [
+            'success'              => true,
+            'ont_id'               => $ontId,
+            'port_id'              => $puerto,
+            'message'              => "ONU {$mac} autorizada en {$fsp} con ID {$ontId}",
+            // El service-port de EPON no está implementado todavía.
+            'service_port_created' => false,
+        ];
+    }
+
+    /** El primer ID libre del puerto, leyendo las ONU que ya tiene. */
+    private function siguienteOntIdEpon(int $puerto): ?int
+    {
+        $this->volverAlPrompt();
+        $this->cmd('config', 8);
+
+        $ocupados = array_column(
+            self::tablaDeOnts($this->cmd("show ont info 0/0 {$puerto} all", 60)),
+            'ont_id'
+        );
+
+        for ($id = 1; $id <= 64; $id++) {
+            if (!in_array($id, $ocupados, true)) {
+                return $id;
+            }
+        }
+
+        return null;
+    }
+
+    // ── Autorización automática ───────────────────────────────────────────
+
+    /**
+     * Qué puertos autorizan solos las ONU que encuentran.
+     *
+     * En la C-Data EPON esto es el modo de autenticación de cada puerto:
+     * `ont authmode <puerto> auto` deja pasar cualquier ONU por MAC y la agrega
+     * a la configuración; `mac` sólo deja pasar las que se agregaron a mano.
+     * (`ont policy-auth` es otra cosa: autorizar según fabricante o modelo.)
+     *
+     * Se lee de la configuración. Un puerto sin línea `ont authmode` está en el
+     * valor de fábrica, que en este firmware se comporta como `auto`: con
+     * policy-auth apagado, una ONU borrada de un puerto así volvió a quedar
+     * autorizada sola en segundos.
+     *
+     * @return array<int, array{auto:bool, modo:string, de_fabrica:bool}>|null
+     */
+    public function autoAutorizacion(): ?array
+    {
+        if (!$this->esEpon()) {
+            return null;
+        }
+
+        $this->volverAlPrompt();
+        $this->cmd('config', 8);
+        $config = $this->cmd('show current-config section epon all', 60);
+        $this->volverAlPrompt();
+
+        $explicitos = [];
+
+        if (preg_match_all('/^\s*ont authmode\s+(\d)\s+(\S+)/mi', $config, $m, PREG_SET_ORDER)) {
+            foreach ($m as $x) {
+                $explicitos[(int) $x[1]] = strtolower($x[2]);
+            }
+        }
+
+        $puertos = [];
+
+        foreach (self::PUERTOS_EPON as $p) {
+            $modo = $explicitos[$p] ?? 'auto';
+
+            $puertos[$p] = [
+                'auto'       => $modo === 'auto',
+                'modo'       => $modo,
+                'de_fabrica' => !isset($explicitos[$p]),
+            ];
+        }
+
+        return $puertos;
+    }
+
+    /**
+     * Prende o apaga la autorización automática de un puerto y devuelve cómo
+     * quedaron todos, releídos de la OLT.
+     *
+     * Apagarla no toca las ONU ya autorizadas: siguen con su `ont add`. Sólo
+     * cambia qué pasa con las nuevas, que quedan esperando en el autofind.
+     */
+    public function cambiarAutoAutorizacion(bool $activar, ?int $puerto = null): ?array
+    {
+        if (!$this->esEpon() || $puerto === null || !in_array($puerto, self::PUERTOS_EPON, true)) {
+            return null;
+        }
+
+        $this->entrarAlPuerto("0/0/{$puerto}");
+        $salida = $this->cmd("ont authmode {$puerto} " . ($activar ? 'auto' : 'mac'), 20);
+        $this->volverAlPrompt();
+
+        if ($this->fallo($salida)) {
+            Log::error('[OLT C-Data] No se pudo cambiar el modo de autenticación', [
+                'puerto' => $puerto, 'salida' => $salida,
+            ]);
+        }
+
+        return $this->autoAutorizacion();
+    }
+
     // ── Altas y bajas ─────────────────────────────────────────────────────
 
     public function registerONT(
@@ -240,6 +628,10 @@ class CdataOltDriver extends DriverBase
         ?int $vlan = null,
         ?int $servicePort = null
     ): array {
+        if ($this->esEpon()) {
+            return $this->altaEpon($fsp, $serial, $description, $lineProfileId);
+        }
+
         $puerto = $this->entrarAlPuerto($fsp);
         $ontId  = $this->siguienteOntId($fsp, $puerto);
 

@@ -89,6 +89,26 @@ class OltAdminController extends Controller
         return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
     }
 
+    /** Qué puertos autorizan solos las ONU nuevas. */
+    public function autoAutorizacion(int $oltId): JsonResponse
+    {
+        $r = $this->uc->autoAutorizacion($oltId);
+
+        return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
+    }
+
+    public function cambiarAutoAutorizacion(Request $request, int $oltId): JsonResponse
+    {
+        $datos = $request->validate([
+            'puerto'  => 'required|integer|min:1|max:64',
+            'activar' => 'required|boolean',
+        ]);
+
+        $r = $this->uc->cambiarAutoAutorizacion($oltId, (int) $datos['puerto'], (bool) $datos['activar']);
+
+        return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
+    }
+
     /** Marcas de OLT que la plataforma sabe manejar. */
     public function marcas(): JsonResponse
     {

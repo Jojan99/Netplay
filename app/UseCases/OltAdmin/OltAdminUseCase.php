@@ -183,6 +183,69 @@ class OltAdminUseCase
         ];
     }
 
+    /**
+     * Qué puertos PON autorizan solos las ONU nuevas.
+     *
+     * No todos los equipos lo permiten; los que no, devuelven null y la
+     * pantalla no muestra el control.
+     */
+    public function autoAutorizacion(int $oltId): array
+    {
+        try {
+            $puertos = $this->dispatcher->dispatch($oltId, 'autoAutorizacion');
+        } catch (\Throwable $e) {
+            return ['status' => 1, 'message' => 'No se pudo leer: ' . $e->getMessage(), 'data' => null];
+        }
+
+        if ($puertos === null) {
+            return [
+                'status'  => 0,
+                'message' => 'Este equipo no permite controlar la autorización automática desde la plataforma.',
+                'data'    => ['soportado' => false, 'puertos' => []],
+            ];
+        }
+
+        return ['status' => 0, 'message' => 'OK', 'data' => ['soportado' => true, 'puertos' => $puertos]];
+    }
+
+    /** Prende o apaga la autorización automática de un puerto. */
+    public function cambiarAutoAutorizacion(int $oltId, int $puerto, bool $activar): array
+    {
+        try {
+            $puertos = $this->dispatcher->dispatch($oltId, 'cambiarAutoAutorizacion', [
+                'activar' => $activar,
+                'puerto'  => $puerto,
+            ]);
+        } catch (\Throwable $e) {
+            return ['status' => 1, 'message' => 'No se pudo cambiar: ' . $e->getMessage(), 'data' => null];
+        }
+
+        if (!is_array($puertos) || !isset($puertos[$puerto])) {
+            return ['status' => 1, 'message' => 'La OLT no aceptó el cambio.', 'data' => null];
+        }
+
+        // Se informa lo que la OLT dice que quedó, no lo que se pidió.
+        $quedo = $puertos[$puerto]['auto'];
+
+        if ($quedo !== $activar) {
+            return [
+                'status'  => 1,
+                'message' => "El puerto {$puerto} sigue " . ($quedo ? 'autorizando solo' : 'en manual') . ': la OLT no aplicó el cambio.',
+                'data'    => ['soportado' => true, 'puertos' => $puertos],
+            ];
+        }
+
+        Cache::forget("olt:{$oltId}:unauth_onts");
+
+        return [
+            'status'  => 0,
+            'message' => $activar
+                ? "Puerto {$puerto}: las ONU nuevas se autorizan solas."
+                : "Puerto {$puerto}: las ONU nuevas quedan esperando en «Sin autorizar».",
+            'data'    => ['soportado' => true, 'puertos' => $puertos],
+        ];
+    }
+
     /** Marcas de OLT que la plataforma sabe manejar. */
     public function marcasSoportadas(): array
     {
