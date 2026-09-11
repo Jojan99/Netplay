@@ -803,7 +803,11 @@ class OltAdminUseCase
                         // qué puerto lo atiende sin tener que asignarlo aparte.
                         'user_data_id'  => $data['user_data_id'] ?? null,
                         'status'        => 'offline',
-                        'service_ports' => ($spCreated && $vlan !== null && $spIndex !== null)
+                        // En equipos sin service-port (C-Data EPON) el paso de
+                        // VLAN sólo verifica el puerto PON: no hay índice que
+                        // guardar, y guardarlo inventaba un service-port que
+                        // aparecía en la lista y se intentaba borrar después.
+                        'service_ports' => ($spCreated && $vlan !== null && $spIndex !== null && empty($result['vlan_paso']))
                                             ? [['index' => $spIndex, 'vlan' => $vlan]]
                                             : [],
                         'synced_at'     => now(),
@@ -817,7 +821,9 @@ class OltAdminUseCase
             // ONT" no le sirve a nadie para saber qué pasó.
             $msg = $result['success']
                 ? "ONT autorizada en {$data['fsp']} · ONT ID {$result['ont_id']}"
-                    . (($result['service_port_created'] ?? false) ? " · service-port {$spIndex} creado" : '')
+                    . (!empty($result['vlan_paso'])
+                        ? ($result['vlan_paso']['ok'] ? " · VLAN {$vlan} verificada en el puerto" : " · falta la VLAN {$vlan} en el puerto")
+                        : (($result['service_port_created'] ?? false) ? " · service-port {$spIndex} creado" : ''))
                 : (stripos((string) $result['message'], 'System is busy') !== false
                     ? 'La OLT está ocupada en este momento (suele ser porque está guardando la configuración). Probá de nuevo en unos segundos.'
                     : 'La OLT no autorizó la ONT: ' . ($result['message'] ?: 'sin detalle'));

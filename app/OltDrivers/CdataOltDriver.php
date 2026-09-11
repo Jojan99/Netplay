@@ -455,7 +455,7 @@ class CdataOltDriver extends DriverBase
      * Autoriza una ONU por MAC.
      *
      *   interface epon 0/0
-     *   ont add <puerto> <id> mac-auth <MAC> [ont-lineprofile-id <n>]
+     *   ont add <puerto> <id> mac-auth <MAC> [ont-lineprofile-id <n> ont-srvprofile-id <m>]
      *   ont description <puerto> <id> <texto>
      *
      * El perfil de línea sólo se manda si el alta lo pide explícitamente: sin
@@ -463,7 +463,7 @@ class CdataOltDriver extends DriverBase
      * están andando. Mandar el valor por defecto de la plataforma (10) fallaba
      * en un equipo que no tiene ese perfil.
      */
-    private function altaEpon(string $fsp, string $serial, string $description, ?int $lineProfileId, ?int $vlan = null): array
+    private function altaEpon(string $fsp, string $serial, string $description, ?int $lineProfileId, ?int $vlan = null, ?int $srvProfileId = null): array
     {
         $mac = self::mac($serial);
 
@@ -487,8 +487,17 @@ class CdataOltDriver extends DriverBase
         // Buscar el siguiente ID sale de config: hay que volver a la interfaz.
         $this->entrarAlPuerto($fsp);
 
-        $comando = "ont add {$puerto} {$ontId} mac-auth {$mac}"
-            . ($lineProfileId !== null ? " ont-lineprofile-id {$lineProfileId}" : '');
+        // Los perfiles van de a dos: con el de línea la OLT exige también el de
+        // servicio ("Command incomplete" si falta). Sin ninguno, asigna los
+        // suyos. Si se pide sólo uno, el otro sale de la configuración de la OLT.
+        $perfiles = '';
+
+        if ($lineProfileId !== null || $srvProfileId !== null) {
+            $perfiles = ' ont-lineprofile-id ' . ($lineProfileId ?? $this->lineProfileId)
+                . ' ont-srvprofile-id ' . ($srvProfileId ?? $this->srvProfileId);
+        }
+
+        $comando = "ont add {$puerto} {$ontId} mac-auth {$mac}{$perfiles}";
 
         $salida = $this->cmd($comando, 30);
 
@@ -633,7 +642,7 @@ class CdataOltDriver extends DriverBase
         ?int $servicePort = null
     ): array {
         if ($this->esEpon()) {
-            return $this->altaEpon($fsp, $serial, $description, $lineProfileId, $vlan);
+            return $this->altaEpon($fsp, $serial, $description, $lineProfileId, $vlan, $srvProfileId);
         }
 
         $puerto = $this->entrarAlPuerto($fsp);
@@ -877,7 +886,8 @@ class CdataOltDriver extends DriverBase
                 'tecnologia'              => 'epon',
                 'identificador'           => 'mac',
                 'service_port'            => false,
-                'perfil_servicio_en_alta' => false,
+                // Se elige junto con el de línea: la OLT no acepta uno sin el otro.
+                'perfil_servicio_en_alta' => true,
                 'vlan'                    => 'puerto-pon',
                 'explicacion_vlan'        => 'En EPON no hay service-port: el perfil de servicio deja pasar la VLAN tal cual la manda la ONU, y lo que hace falta es que el puerto PON lleve esa VLAN.',
             ];
