@@ -38,6 +38,59 @@ class OltAdminController extends Controller
         return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
     }
 
+    // ── Ficha del equipo ──────────────────────────────────────────────────
+
+    /** Marca, modelo, tarjetas y puertos de la OLT, leídos por SNMP. */
+    public function equipo(Request $request, int $oltId): JsonResponse
+    {
+        $r = $this->uc->equipo($oltId, $request->boolean('refrescar'));
+
+        return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
+    }
+
+    /** Prueba la conexión con la OLT paso por paso. */
+    public function diagnostico(int $oltId): JsonResponse
+    {
+        $r = $this->uc->diagnosticar($oltId);
+
+        return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
+    }
+
+    /** Olvida el mapa de puertos y la ficha guardadas de la OLT. */
+    public function olvidarPuertos(int $oltId): JsonResponse
+    {
+        $r = $this->uc->olvidarPuertos($oltId);
+
+        return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
+    }
+
+    /** Marcas de OLT que la plataforma sabe manejar. */
+    public function marcas(): JsonResponse
+    {
+        $r = $this->uc->marcasSoportadas();
+
+        return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
+    }
+
+    /** Foto del equipo que el operador sube desde la pantalla. */
+    public function guardarFoto(Request $request, int $oltId): JsonResponse
+    {
+        $request->validate([
+            'foto' => 'required|image|mimes:jpg,jpeg,png,webp|max:4096',
+        ]);
+
+        $r = $this->uc->guardarFoto($oltId, $request->file('foto'));
+
+        return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
+    }
+
+    public function borrarFoto(int $oltId): JsonResponse
+    {
+        $r = $this->uc->borrarFoto($oltId);
+
+        return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
+    }
+
     // ── ONT operations ────────────────────────────────────────────────────
 
     public function unauthONTs(int $oltId): JsonResponse

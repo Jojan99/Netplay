@@ -12,6 +12,7 @@ class OltAdmin extends Model
         'company_id',
         'name',
         'brand',
+        'model',
         'host',
         'port',
         'username',
@@ -33,6 +34,10 @@ class OltAdmin extends Model
         'snmp_jump_user',
         'snmp_jump_pass',
         'enable_password',
+        'zte_onu_type',
+        'zte_dba_profile',
+        'vsol_onu_profile',
+        'photo_path',
     ];
 
     protected $hidden = ['password', 'enable_password', 'jump_pass'];

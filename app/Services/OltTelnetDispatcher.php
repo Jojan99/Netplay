@@ -3,7 +3,8 @@
 namespace App\Services;
 
 use App\Models\OltAdmin;
-use App\OltDrivers\HuaweiOltDriver;
+use App\OltDrivers\FabricaDeDrivers;
+use App\OltDrivers\Interfaces\OltDriverInterface;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Str;
@@ -137,8 +138,7 @@ class OltTelnetDispatcher
     {
         $olt    = OltAdmin::findOrFail($oltId);
         $conn   = $this->factory->connect($olt);
-        $config = array_merge($olt->toArray(), ['enable_password' => $olt->enable_password ?? null]);
-        $driver = new HuaweiOltDriver($conn, $config);
+        $driver = FabricaDeDrivers::para($olt, $conn);
 
         try {
             return $this->call($driver, $method, $params);
@@ -150,7 +150,7 @@ class OltTelnetDispatcher
         }
     }
 
-    private function call(HuaweiOltDriver $driver, string $method, array $p): mixed
+    private function call(OltDriverInterface $driver, string $method, array $p): mixed
     {
         return match ($method) {
             'getVersion'        => $driver->getVersion(),

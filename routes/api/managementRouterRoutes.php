@@ -84,6 +84,15 @@ Route::prefix('management')->group(function () {
         Route::post('/',                   [OltAdminController::class, 'store']);
         Route::put('/{id}',                [OltAdminController::class, 'update']);
         Route::delete('/{id}',             [OltAdminController::class, 'destroy']);
+        Route::get('/marcas',              [OltAdminController::class, 'marcas']);
+
+        // Ficha del equipo: marca, modelo, tarjetas y puertos, por SNMP.
+        Route::get('/{oltId}/equipo',       [OltAdminController::class, 'equipo']);
+        Route::get('/{oltId}/diagnostico',  [OltAdminController::class, 'diagnostico']);
+        Route::post('/{oltId}/olvidar-puertos', [OltAdminController::class, 'olvidarPuertos']);
+        Route::post('/{oltId}/foto',        [OltAdminController::class, 'guardarFoto']);
+        Route::delete('/{oltId}/foto',      [OltAdminController::class, 'borrarFoto']);
+
         Route::get('/{oltId}/unauth',      [OltAdminController::class, 'unauthONTs']);
         Route::post('/{oltId}/register',   [OltAdminController::class, 'registerONT']);
 

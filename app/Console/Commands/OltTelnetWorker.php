@@ -3,7 +3,8 @@
 namespace App\Console\Commands;
 
 use App\Models\OltAdmin;
-use App\OltDrivers\HuaweiOltDriver;
+use App\OltDrivers\FabricaDeDrivers;
+use App\OltDrivers\Interfaces\OltDriverInterface;
 use App\Services\OltConnectionFactory;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
@@ -43,7 +44,7 @@ class OltTelnetWorker extends Command
     ];
 
     private ?object          $connection     = null;
-    private ?HuaweiOltDriver $driver         = null;
+    private ?OltDriverInterface $driver         = null;
     private float            $lastActivityAt = 0.0;
     private bool             $pendingSave    = false;
     private float            $lastWriteAt    = 0.0;
@@ -170,10 +171,7 @@ class OltTelnetWorker extends Command
 
         $this->connection = $factory->connect($olt);
 
-        $config                    = $olt->toArray();
-        $config['enable_password'] = $olt->enable_password ?? null;
-
-        $this->driver = new HuaweiOltDriver($this->connection, $config);
+        $this->driver = FabricaDeDrivers::para($olt, $this->connection);
 
         Log::info("OLT Worker #{$oltId}: sesión Telnet establecida");
         $this->info("OLT #{$oltId}: sesión abierta");

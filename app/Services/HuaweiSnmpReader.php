@@ -264,6 +264,26 @@ protected function getIfIndexByFsp(string $fsp): ?int
         return $this->walk($oid);
     }
 
+    /** GET público de un solo OID — devuelve el valor crudo o cadena vacía. */
+    public function getRaw(string $oid): string
+    {
+        return $this->get($oid);
+    }
+
+    /**
+     * Marca, modelo y datos generales del equipo, leídos con los OID del
+     * estándar. Sirve para cualquier fabricante, no sólo Huawei.
+     *
+     * @return array<string,mixed>
+     */
+    public function identidad(): array
+    {
+        return \App\Services\Olt\IdentificarOlt::desde(
+            fn (string $oid) => $this->get($oid),
+            fn (string $oid) => $this->walk($oid),
+        );
+    }
+
     /**
      * SNMP walk: returns [oid_suffix => raw_value_string, ...]
      * suffix = everything after the base OID.

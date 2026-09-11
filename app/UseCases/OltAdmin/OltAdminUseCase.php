@@ -24,6 +24,135 @@ class OltAdminUseCase
         return ['status' => 0, 'message' => 'OK', 'data' => $this->repo->getAllByCompany()];
     }
 
+    // ── Ficha del equipo ──────────────────────────────────────────────────
+
+    /**
+     * Qué equipo es la OLT y en qué estado está: marca, modelo, tarjetas y
+     * puertos. Se lee por SNMP con OID del estándar, así que responde igual sin
+     * importar el fabricante.
+     */
+    public function equipo(int $oltId, bool $refrescar = false): array
+    {
+        $olt = OltAdmin::find($oltId);
+
+        if (!$olt) {
+            return ['status' => 1, 'message' => 'OLT no encontrada', 'data' => null];
+        }
+
+        $ficha = \App\Services\Olt\EquipoDeOlt::de($olt, $refrescar);
+
+        $ficha['foto'] = $olt->photo_path
+            ? url('/storage/' . $olt->photo_path)
+            : null;
+
+        // El modelo que declara el equipo se guarda para poder mostrarlo en el
+        // listado sin volver a consultar la OLT.
+        $modelo = $ficha['identidad']['modelo'] ?? null;
+
+        if ($modelo && $olt->model !== $modelo) {
+            $olt->forceFill(['model' => $modelo])->save();
+        }
+
+        return [
+            'status'  => $ficha['responde'] ? 0 : 1,
+            'message' => $ficha['responde']
+                ? 'OK'
+                : ($ficha['error'] ?: 'La OLT no respondió por SNMP'),
+            'data'    => $ficha,
+        ];
+    }
+
+    /**
+     * Prueba cada eslabón de la conexión con la OLT y dice dónde se corta:
+     * marca configurada, jump host, consola y SNMP.
+     */
+    public function diagnosticar(int $oltId): array
+    {
+        $olt = OltAdmin::find($oltId);
+
+        if (!$olt) {
+            return ['status' => 1, 'message' => 'OLT no encontrada', 'data' => null];
+        }
+
+        $r = \App\Services\Olt\DiagnosticoDeOlt::correr($olt);
+
+        return [
+            'status'  => $r['ok'] ? 0 : 1,
+            'message' => $r['resumen'],
+            'data'    => $r,
+        ];
+    }
+
+    /**
+     * Olvida el mapa de puertos guardado. Hace falta cuando le mueven una
+     * placa a la OLT: si no, se sigue resolviendo el puerto viejo.
+     */
+    public function olvidarPuertos(int $oltId): array
+    {
+        $olt = OltAdmin::find($oltId);
+
+        if (!$olt) {
+            return ['status' => 1, 'message' => 'OLT no encontrada', 'data' => null];
+        }
+
+        (new HuaweiSnmpReader($olt))->olvidarMapaDePuertos();
+        \App\Services\Olt\EquipoDeOlt::olvidar($olt);
+
+        return ['status' => 0, 'message' => 'Se volverá a leer el mapa de puertos y la ficha del equipo', 'data' => null];
+    }
+
+    /** Marcas de OLT que la plataforma sabe manejar. */
+    public function marcasSoportadas(): array
+    {
+        return [
+            'status'  => 0,
+            'message' => 'OK',
+            'data'    => \App\OltDrivers\FabricaDeDrivers::marcas(),
+        ];
+    }
+
+    /** Guarda la foto que el operador subió de su OLT. */
+    public function guardarFoto(int $oltId, \Illuminate\Http\UploadedFile $archivo): array
+    {
+        $olt = OltAdmin::find($oltId);
+
+        if (!$olt) {
+            return ['status' => 1, 'message' => 'OLT no encontrada', 'data' => null];
+        }
+
+        // La anterior se borra: si no, cada cambio deja un archivo suelto.
+        if ($olt->photo_path) {
+            \Illuminate\Support\Facades\Storage::disk('public')->delete($olt->photo_path);
+        }
+
+        $ruta = $archivo->store('olts', 'public');
+
+        $olt->forceFill(['photo_path' => $ruta])->save();
+
+        return [
+            'status'  => 0,
+            'message' => 'Foto guardada',
+            'data'    => ['foto' => url('/storage/' . $ruta)],
+        ];
+    }
+
+    /** Quita la foto y vuelve al diagrama que se dibuja con los datos reales. */
+    public function borrarFoto(int $oltId): array
+    {
+        $olt = OltAdmin::find($oltId);
+
+        if (!$olt) {
+            return ['status' => 1, 'message' => 'OLT no encontrada', 'data' => null];
+        }
+
+        if ($olt->photo_path) {
+            \Illuminate\Support\Facades\Storage::disk('public')->delete($olt->photo_path);
+            $olt->forceFill(['photo_path' => null])->save();
+        }
+
+        return ['status' => 0, 'message' => 'Foto eliminada', 'data' => null];
+    }
+
     public function createOlt(array $data): array
     {
         $olt = $this->repo->create($data);

@@ -6,6 +6,23 @@ interface OltDriverInterface
 {
     public function __construct(object $ssh, array $config);
 
+    /** Versión de software del equipo. Sirve además para probar la conexión. */
+    public function getVersion(): string;
+
+    /**
+     * Perfiles de línea disponibles (en ZTE, los perfiles de tráfico tcont).
+     *
+     * @return array<int,string>
+     */
+    public function getLineProfiles(): array;
+
+    /**
+     * Perfiles de servicio disponibles.
+     *
+     * @return array<int,string>
+     */
+    public function getSrvProfiles(): array;
+
     /**
      * Returns list of ONTs pending authentication.
      * Each entry: ['fsp' => '0/0/3', 'serial' => 'HWTC1234ABCD', 'vendor' => 'HWTC', ...]
