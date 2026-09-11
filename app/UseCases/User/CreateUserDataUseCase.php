@@ -77,6 +77,17 @@ class CreateUserDataUseCase implements CreateUserDataUseCaseInterface
                         // Sin IP fija que asignar: la ficha de IP queda vacía.
                         $data['ip_assignment_id'] = null;
                     } else {
+                        // IP fija sin IP no es un alta posible. Antes esto
+                        // llegaba a registerIpInArp(null) y respondía 500: pasaba
+                        // con un alta PPPoE cuyo tipo no llegaba al servidor.
+                        if (empty($data['ip_assignment_id'])) {
+                            return [
+                                'message' => 'Falta la IP: un cliente de IP fija necesita una IP asignada. Si se conecta por PPPoE, elegí ese tipo de conexión.',
+                                'status'  => 1,
+                                'data'    => 'IP_REQUIRED',
+                            ];
+                        }
+
                         \Log::info('REGISTERING USER IN MIKROTIK', [
                             'ip' => $data['ip_assignment_id'] ?? 'N/A',
                             'vlan' => $data['vlan'] ?? 'N/A',
@@ -110,7 +121,12 @@ class CreateUserDataUseCase implements CreateUserDataUseCaseInterface
                     $data['userId'] = $user['id'];
                     $ipReal = $data['ip_assignment_id'] ?? 'N/A';
 
-                    $data['ip_assignment_id'] = $this->internetInfoRepository->AssignemetIpUser($data['ip_assignment_id'],$user['id']);
+                    // Un cliente PPPoE no tiene IP fija: no se le crea ficha de IP.
+                    // Antes se creaba igual, con la IP vacía, y quedaba colgada
+                    // del cliente.
+                    $data['ip_assignment_id'] = $esPppoe
+                        ? null
+                        : $this->internetInfoRepository->AssignemetIpUser($data['ip_assignment_id'], $user['id']);
                
                     $this->userRepository->createUserData($data);
     
@@ -150,8 +166,9 @@ class CreateUserDataUseCase implements CreateUserDataUseCaseInterface
                 "Cédula: *{$data['dni']}*\n" .
                 "Teléfono: *{$data['phone']}*\n" .
                 "Dirección: *{$data['address']}*\n" .
-                "IP: *{$ipReal}*\n" .
-                "VLAN: *{$data['vlan']}*\n"
+                (($esPppoe ?? false)
+                    ? "Conexión: *PPPoE* (usuario {$data['pppoe_user']})\n"
+                    : "IP: *{$ipReal}*\n" . "VLAN: *{$data['vlan']}*\n")
             );
         } catch (\Throwable $e) {
             \Log::error('Error enviando notificación new_user', [
