@@ -226,7 +226,10 @@ class UserRepository implements UserRepositoryInterface
             'users.created_at as date_create',
             DB::raw("COALESCE(tabla_ips.ip, '') AS ip"),
             'users.username as alias',
-            'user_data.router_id'
+            'user_data.router_id',
+            // Sin esto la lista marcaba "Sin IP" a todo cliente PPPoE: no tiene
+            // IP fija porque la recibe al conectarse.
+            'user_data.connection_type'
         )
             ->join('user_data', 'users.id', 'user_data.user_id')
             ->join('internet_status', 'user_data.status_internet_id', 'internet_status.id')
@@ -260,6 +263,11 @@ class UserRepository implements UserRepositoryInterface
                 'internet_status.name AS status_internet',
                 'user_data.created_at AS date_create',
                 'user_data.router_id',
+                // La ficha decide con esto si el cliente es IP fija o PPPoE. No
+                // se traía, y la pantalla decía siempre "IP fija".
+                'user_data.connection_type',
+                'user_data.pppoe_user',
+                'user_data.pppoe_profile',
                 DB::raw("COALESCE(tabla_ips.ip, '') AS ip_address"),
                 DB::raw("COALESCE(tabla_ips.ip, '') AS ip")
             )

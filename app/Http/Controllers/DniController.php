@@ -242,17 +242,20 @@ class DniController extends Controller
 
     $user = $connection->query($query)->read();
 
-    if (empty($user)) {
-        \Log::warning('⚠️ Usuario no encontrado en ARP', [
+    // Un cliente PPPoE no está en el ARP: su IP es la que recibe al conectar.
+    // Antes el ping terminaba acá con "no encontrado en ARP" y no había forma
+    // de probar a un cliente PPPoE.
+    $ip = $user[0]['address'] ?? $this->ipDeSesionPppoe($connection, (string) $gestionUserRequest['dni']);
+
+    if (!$ip) {
+        \Log::warning('⚠️ Usuario no encontrado en ARP ni con sesión PPPoE', [
             'dni' => $gestionUserRequest['dni']
         ]);
 
-        echo "data: " . json_encode(["error" => "Usuario no encontrado en ARP"]) . "\n\n";
+        echo "data: " . json_encode(["error" => "El cliente no está en el ARP ni tiene una sesión PPPoE activa"]) . "\n\n";
         flush();
         exit();
     }
-
-    $ip = $user[0]['address'];
 
     \Log::info('✅ IP encontrada', [
         'ip' => $ip
@@ -527,6 +530,32 @@ public function diagnosticoConexionBot(GestionUserRequest $request)
         ],500);
     }
 }
+
+
+    /**
+     * La IP de la sesión PPPoE activa del cliente con ese documento.
+     *
+     * Se busca por el usuario PPPoE guardado en la ficha y, si no hay, por el
+     * documento, que es el usuario por defecto.
+     */
+    private function ipDeSesionPppoe($connection, string $dni): ?string
+    {
+        $usuario = \Illuminate\Support\Facades\DB::table('user_data')
+            ->where('dni', $dni)
+            ->value('pppoe_user') ?: $dni;
+
+        try {
+            foreach ($connection->query((new Query('/ppp/active/print'))->where('name', $usuario))->read() as $sesion) {
+                if (($sesion['service'] ?? '') === 'pppoe' && !empty($sesion['address'])) {
+                    return $sesion['address'];
+                }
+            }
+        } catch (\Throwable $e) {
+            \Log::warning('No se pudo leer la sesión PPPoE para el ping', ['dni' => $dni, 'error' => $e->getMessage()]);
+        }
+
+        return null;
+    }
 
 }
     

@@ -23,7 +23,8 @@ class SearchRepository implements SearchRepositoryInterface
         ,'internet_status.name as internet_status','internet_plans.plan_name',
         DB::raw("COALESCE(tabla_ips.ip, '') AS ip"),
         'users.username as alias',
-        'cab_facturations.id as id_cab')
+        'cab_facturations.id as id_cab',
+        'user_data.connection_type')
         ->join('user_data', 'users.id', 'user_data.user_id')
         ->join('internet_status', 'user_data.status_internet_id', 'internet_status.id')
         ->join('internet_plans', 'user_data.internet_plans_id', 'internet_plans.id')
