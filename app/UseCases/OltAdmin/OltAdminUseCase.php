@@ -254,7 +254,10 @@ class OltAdminUseCase
             return ['status' => 0, 'message' => 'OLT creada correctamente', 'data' => $olt];
         }
 
-        return $this->conTunel($olt, $tunel);
+        // El repositorio devuelve la OLT como arreglo; para el túnel hace falta
+        // el modelo. Pasarle el arreglo directo reventaba con un error 500
+        // después de haber creado la OLT, así que cada reintento dejaba otra.
+        return $this->conTunel(OltAdmin::findOrFail($olt['id']), $tunel);
     }
 
     /**
@@ -344,7 +347,22 @@ class OltAdminUseCase
             return ['status' => 1, 'message' => 'OLT no encontrada', 'data' => null];
         }
         $this->repo->delete($id);
-        $this->closeConnection($id);
+
+        // Antes se llamaba a closeConnection(), que dejó de existir con el
+        // pooling de conexiones: la OLT se borraba y la respuesta era un 500.
+        // Ahora la sesión la tiene el worker, así que se le pide que termine
+        // —al volver no encuentra la OLT y no se reinicia— y se limpia lo que
+        // quedó guardado de ella.
+        try {
+            \Illuminate\Support\Facades\Redis::setex("olt:{$id}:recargar", 300, 1);
+        } catch (\Throwable) {
+            // Sin Redis no hay worker que detener.
+        }
+
+        foreach (["olt:{$id}:mapa_puertos", "olt:{$id}:equipo", "olt:{$id}:senal", "olt:{$id}:auth_onts", "olt:{$id}:all_service_ports"] as $clave) {
+            Cache::forget($clave);
+        }
+
         return ['status' => 0, 'message' => 'OLT eliminada', 'data' => null];
     }
 
