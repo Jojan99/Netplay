@@ -107,24 +107,7 @@ class ServidorVpn
             }
         }
 
-        // WireGuard asigna cada red a un único par: si dos túneles declaran la
-        // misma, el tráfico va al último que se cargó y el otro queda sin
-        // servicio sin ningún aviso. Se revisa contra los túneles de todas las
-        // empresas, porque la interfaz es una sola.
-        foreach ($redes as $red) {
-            foreach (VpnTunel::where('activo', true)->get() as $existente) {
-                foreach ($existente->redes_remotas ?? [] as $ocupada) {
-                    if (self::seSolapan($red, $ocupada)) {
-                        throw new RuntimeException(
-                            "La red {$red} ya la usa otro túnel ({$ocupada}). "
-                            . 'Dos túneles no pueden llegar a la misma red: el tráfico iría sólo a uno. '
-                            . 'Pasa mucho con rangos comunes como 192.168.1.0/24 o 192.168.88.0/24 de '
-                            . 'clientes distintos; en ese caso hay que mapear la red a otro rango en el router.'
-                        );
-                    }
-                }
-            }
-        }
+        self::verificarRedesLibres($redes);
 
         $claves      = ClavesWireguard::par();
         $compartida  = ClavesWireguard::compartida();
@@ -204,6 +187,38 @@ class ServidorVpn
         $tunel->delete();
 
         self::aplicar();
+    }
+
+    /**
+     * Ninguna de estas redes puede estar ya en otro túnel.
+     *
+     * WireGuard asigna cada red a un único par: si dos túneles declaran la
+     * misma, el tráfico va al último que se cargó y el otro queda sin servicio
+     * sin ningún aviso. Se revisa contra los túneles de todas las empresas,
+     * porque la interfaz es una sola.
+     *
+     * @param  list<string>  $redes
+     */
+    public static function verificarRedesLibres(array $redes, ?int $salvoTunel = null): void
+    {
+        $otros = VpnTunel::where('activo', true)
+            ->when($salvoTunel !== null, fn ($q) => $q->where('id', '!=', $salvoTunel))
+            ->get();
+
+        foreach ($redes as $red) {
+            foreach ($otros as $existente) {
+                foreach ($existente->redes_remotas ?? [] as $ocupada) {
+                    if (self::seSolapan($red, $ocupada)) {
+                        throw new RuntimeException(
+                            "La red {$red} ya la usa otro túnel ({$ocupada}). "
+                            . 'Dos túneles no pueden llegar a la misma red: el tráfico iría sólo a uno. '
+                            . 'Si las dos OLT están detrás del mismo router, agregá la red a ese túnel '
+                            . 'en vez de crear otro.'
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /** La primera IP libre de la subred, salteando la del servidor. */

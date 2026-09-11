@@ -242,11 +242,12 @@ class OltAdminUseCase
         // Los datos del túnel no son columnas de la OLT: se guardan aparte
         // antes de sacarlos del arreglo que va al repositorio.
         $tunel = [
+            'id'     => isset($data['tunel_id']) ? (int) $data['tunel_id'] : null,
             'nombre' => $data['tunel_nombre'] ?? null,
             'redes'  => $data['tunel_redes'] ?? null,
         ];
 
-        unset($data['crear_tunel_vpn'], $data['tunel_nombre'], $data['tunel_redes']);
+        unset($data['crear_tunel_vpn'], $data['tunel_nombre'], $data['tunel_redes'], $data['tunel_id']);
 
         $olt = $this->repo->create($data);
 
@@ -268,10 +269,14 @@ class OltAdminUseCase
      * túnel que cubre su red se reutiliza —lo que hace falta es uno por router,
      * no uno por equipo.
      *
-     * @param  array{nombre:?string, redes:?string}  $pedido
+     * @param  array{id:?int, nombre:?string, redes:?string}  $pedido
      */
     private function conTunel(OltAdmin $olt, array $pedido): array
     {
+        if ($pedido['id']) {
+            return $this->sumarATunel($olt, $pedido);
+        }
+
         $existente = \App\Services\Vpn\ServidorVpn::tunelQueCubre($olt->host, (int) $olt->company_id);
 
         if ($existente) {
@@ -330,6 +335,65 @@ class OltAdminUseCase
                 'data'    => ['olt' => $olt, 'tunel' => null],
             ];
         }
+    }
+
+    /**
+     * Suma la red de la OLT a un túnel que ya existe.
+     *
+     * Es el caso de un router con varias OLT: el router lleva un solo túnel,
+     * así que crear otro y correr su script pisaba el anterior y dejaba sin
+     * acceso a las demás OLT del mismo equipo.
+     *
+     * @param  array{id:?int, nombre:?string, redes:?string}  $pedido
+     */
+    private function sumarATunel(OltAdmin $olt, array $pedido): array
+    {
+        $tunel = \App\Models\VpnTunel::where('id', $pedido['id'])
+            ->where('company_id', $olt->company_id)
+            ->first();
+
+        if (!$tunel) {
+            return [
+                'status'  => 0,
+                'message' => 'OLT creada, pero el túnel elegido no existe en esta empresa.',
+                'data'    => ['olt' => $olt, 'tunel' => null],
+            ];
+        }
+
+        $nuevas = \App\Services\Vpn\ServidorVpn::normalizarRedes(
+            trim((string) ($pedido['redes'] ?? '')) ?: (string) \App\Services\Vpn\ServidorVpn::redDe((string) $olt->host)
+        );
+
+        $redes = array_values(array_unique(array_merge($tunel->redes_remotas ?? [], $nuevas)));
+
+        try {
+            \App\Services\Vpn\ServidorVpn::verificarRedesLibres($redes, $tunel->id);
+        } catch (\Throwable $e) {
+            return [
+                'status'  => 0,
+                'message' => 'OLT creada, pero su red no se pudo sumar al túnel: ' . $e->getMessage(),
+                'data'    => ['olt' => $olt, 'tunel' => null],
+            ];
+        }
+
+        $tunel->forceFill(['redes_remotas' => $redes])->save();
+        \App\Services\Vpn\ServidorVpn::aplicar();
+
+        return [
+            'status'  => 0,
+            'message' => "OLT creada y su red sumada al túnel «{$tunel->nombre}». "
+                . 'Volvé a pegar el script en ese router para que agregue el acceso a la red nueva.',
+            'data'    => [
+                'olt'    => $olt,
+                'tunel'  => $tunel,
+                'script' => \App\Services\Vpn\ScriptMikrotik::para(
+                    $tunel,
+                    \App\Services\Vpn\ServidorVpn::configuracion(),
+                    (string) $tunel->clave_privada,
+                    (string) $tunel->clave_compartida,
+                ),
+            ],
+        ];
     }
 
     public function updateOlt(int $id, array $data): array
@@ -882,7 +946,7 @@ class OltAdminUseCase
         try {
             $olt    = $this->getOltModel($oltId);
             $reader = $this->snmpReader($olt);
-            $onts   = $reader->getAuthorizedONTs();
+            $onts   = $this->ontsPorSnmp($olt, $reader);
 
             if (empty($onts)) {
                 \Log::info('OLT getAuthorizedONTs SNMP returned empty, falling back to Telnet driver', ['olt_id' => $oltId]);
@@ -915,6 +979,29 @@ class OltAdminUseCase
      * Persiste el snapshot de ONTs en olt_onts.
      * Hace upsert por (olt_id, fsp, ont_id) y elimina las que ya no existen.
      */
+    /**
+     * Las ONT por SNMP, con la MIB que corresponda al equipo.
+     *
+     * El lector de Huawei usa la MIB propia de Huawei; en una OLT de otra marca
+     * esos OID no existen y la lista volvía vacía, y la consola tampoco servía
+     * si el driver no coincide con el firmware. Las OLT EPON que publican la
+     * MIB NSCRTV (C-Data "EasyPath" y compatibles) se leen con ese lector.
+     *
+     * @return list<array<string,mixed>>
+     */
+    private function ontsPorSnmp(OltAdmin $olt, HuaweiSnmpReader $reader): array
+    {
+        if (strtolower((string) $olt->brand) !== 'huawei') {
+            $epon = new \App\Services\Olt\SnmpEponNscrtv($reader);
+
+            if ($epon->esCompatible()) {
+                return $epon->onts();
+            }
+        }
+
+        return $reader->getAuthorizedONTs();
+    }
+
     private function syncONTsToDb(int $oltId, array $onts): void
     {
         $now  = now();

@@ -54,6 +54,9 @@ class OltAdminRequest extends FormRequest
             'crear_tunel_vpn' => 'sometimes|boolean',
             'tunel_nombre'    => 'nullable|string|max:120',
             'tunel_redes'     => 'nullable|string|max:255',
+            // Si la OLT está detrás de un router que ya tiene túnel, su red se
+            // suma a ése: un router lleva un solo túnel.
+            'tunel_id'        => 'nullable|integer',
 
             // Lo propio de cada marca al autorizar una ONT.
             'zte_onu_type'       => 'nullable|string|max:60',

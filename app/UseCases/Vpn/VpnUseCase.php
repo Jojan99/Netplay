@@ -137,6 +137,7 @@ class VpnUseCase
         try {
             if (array_key_exists('redes_remotas', $datos)) {
                 $datos['redes_remotas'] = ServidorVpn::normalizarRedes($datos['redes_remotas']);
+                ServidorVpn::verificarRedesLibres($datos['redes_remotas'], $tunel->id);
             }
 
             $tunel->fill(array_intersect_key($datos, array_flip([

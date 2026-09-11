@@ -50,6 +50,16 @@ class ScriptMikrotik
         $l[] = '';
         $l[] = ':put "Netplay: configurando tunel de gestion...";';
         $l[] = '';
+        $l[] = '# Seguro: si este router ya tiene el túnel de OTRO nodo, no se toca.';
+        $l[] = '# Un router lleva un solo túnel; si tiene más de una OLT, sus redes';
+        $l[] = '# se agregan a ese mismo túnel desde la plataforma. Sin este control';
+        $l[] = '# el script borraba el túnel anterior y dejaba sin acceso a la otra OLT.';
+        $l[] = ':if ([:len [/interface/wireguard find name="' . $iface . '"]] > 0) do={';
+        $l[] = '    :if ([/interface/wireguard get [find name="' . $iface . '"] public-key] != "' . $tunel->clave_publica . '") do={';
+        $l[] = '        :error "Netplay: este router ya tiene otro tunel de gestion. No se cambio nada. Agrega la red de esta OLT a ese tunel en la plataforma y usa su script.";';
+        $l[] = '    }';
+        $l[] = '}';
+        $l[] = '';
         $l[] = '# 0. Limpieza de una corrida anterior.';
         $l[] = '#    Las reglas se buscan por comentario, que es texto y siempre';
         $l[] = '#    se puede comparar. Lo que cuelga de la interfaz se toca sólo';
