@@ -135,6 +135,7 @@ class EquipoDeOlt
         $velocidad = self::columna($snmp, self::IF_VELOC);
 
         $pon = $uplinks = [];
+        $onusPorPuerto = [];
 
         foreach ($nombres as $indice => $nombre) {
             $enlace = self::estado($estados[$indice] ?? '');
@@ -147,6 +148,14 @@ class EquipoDeOlt
                 'habilitado'=> self::estado($admin[$indice] ?? '') !== 'down',
                 'mbps'      => (int) filter_var((string) ($velocidad[$indice] ?? ''), FILTER_SANITIZE_NUMBER_INT) ?: null,
             ];
+
+            // "pon0/0/1:5" no es un puerto: es la ONU 5 del puerto 0/0/1. Las
+            // OLT EPON publican cada ONU como interfaz, y sin este filtro la
+            // ficha dibujaba 64 "puertos PON" que eran en realidad las ONU.
+            if (preg_match('#\d+/\d+/\d+:(\d+)\s*$#', $nombre)) {
+                $onusPorPuerto[preg_replace('#:\d+\s*$#', '', $nombre)][] = $enlace;
+                continue;
+            }
 
             if (preg_match('/(?:g|e|x|10g)?pon/i', $nombre)) {
                 // "GPON 0/0/9" → el F/S/P con el que trabaja la plataforma.
@@ -162,9 +171,22 @@ class EquipoDeOlt
 
             // Los uplinks son los ethernet; se dejan fuera los lógicos.
             if (preg_match('/(?:gigabit|ethernet|^ge|^xge|^eth|^10ge|uplink)/i', $nombre)) {
+                // "ge0/0/1" y "xge0/0/1" terminan los dos en 1: sin el prefijo
+                // la ficha mostraba dos puertos "1" distintos.
+                $tipo = preg_match('/^(x?ge|10ge|eth)/i', $nombre, $t) ? strtoupper($t[1]) : '';
+                $numero = preg_match('#(\d+)\s*$#', $nombre, $n) ? $n[1] : '';
+                $puerto['etiqueta'] = $tipo . $numero;
+
                 $uplinks[] = $puerto;
             }
         }
+
+        foreach ($pon as &$p) {
+            $delPuerto = $onusPorPuerto[$p['nombre']] ?? [];
+            $p['onus']        = count($delPuerto);
+            $p['onus_arriba'] = count(array_filter($delPuerto, fn ($e) => $e === 'up'));
+        }
+        unset($p);
 
         usort($pon, fn ($a, $b) => strnatcasecmp((string) $a['nombre'], (string) $b['nombre']));
         usort($uplinks, fn ($a, $b) => strnatcasecmp((string) $a['nombre'], (string) $b['nombre']));

@@ -72,7 +72,21 @@ class SenalDeLaOlt
         try {
             $snmp = new HuaweiSnmpReader($olt);
 
-            $mediciones = $snmp->senalDeTodasLasOnts();
+            // Cada familia de equipos publica la señal en su propia MIB: Huawei
+            // en la suya, las EPON con la NSCRTV. Se prueba la EPON primero en
+            // las que no son Huawei, para no gastarle un barrido de más a una
+            // Huawei con cientos de ONT.
+            $epon = strtolower((string) $olt->brand) !== 'huawei'
+                ? new SnmpEponNscrtv($snmp)
+                : null;
+
+            if ($epon && $epon->esCompatible()) {
+                $mediciones = $epon->senal();
+                $lista      = $epon->onts();
+            } else {
+                $mediciones = $snmp->senalDeTodasLasOnts();
+                $lista      = null;
+            }
 
             if ($mediciones === []) {
                 return array_merge($vacio, [
@@ -84,7 +98,7 @@ class SenalDeLaOlt
             // lista de ONT autorizadas, que es otro barrido del mismo equipo.
             $datos = [];
 
-            foreach ($snmp->getAuthorizedONTs() as $ont) {
+            foreach ($lista ?? $snmp->getAuthorizedONTs() as $ont) {
                 $datos[$ont['fsp'] . ':' . $ont['ont_id']] = $ont;
             }
 

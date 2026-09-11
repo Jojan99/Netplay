@@ -182,8 +182,13 @@ class IdentificarOlt
             return $modelo;
         }
 
-        // Sin ENTITY-MIB ni patrón conocido, al menos el nombre del chasis.
-        return self::deChasis($inventario, 'modelo') ?: self::deChasis($inventario, 'nombre');
+        // Sin ENTITY-MIB ni patrón conocido, al menos el nombre del chasis, y
+        // si tampoco hay, la descripción que da el equipo de sí mismo: una
+        // C-Data EPON no publica inventario y la ficha decía "Modelo no
+        // declarado" cuando el equipo sí dice qué es ("EasyPath Ethernet-PON").
+        return self::deChasis($inventario, 'modelo')
+            ?: self::deChasis($inventario, 'nombre')
+            ?: ($descripcion !== '' ? mb_substr($descripcion, 0, 60) : null);
     }
 
     /**

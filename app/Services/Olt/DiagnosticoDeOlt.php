@@ -109,6 +109,26 @@ class DiagnosticoDeOlt
         try {
             $version = trim((string) app(OltTelnetDispatcher::class)->dispatch((int) $olt->id, 'getVersion'));
 
+            // Que conteste no alcanza: una C-Data EPON respondía "Unknown
+            // command" y el diagnóstico lo daba por bueno. Si el equipo no
+            // reconoce el comando, el driver no coincide con su firmware y las
+            // altas y bajas de ONT por consola no van a funcionar.
+            $rechazo = preg_match('/unknown command|invalid|unrecognized|% ?error|incomplete command/i', $version);
+
+            if ($rechazo) {
+                $linea = collect(preg_split('/\r?\n/', $version))
+                    ->first(fn ($l) => preg_match('/unknown|invalid|unrecognized|error|incomplete/i', $l));
+
+                return [
+                    'paso'    => 'Consola de la OLT',
+                    'ok'      => false,
+                    'detalle' => 'La consola responde, pero no reconoce los comandos del driver ('
+                        . trim((string) $linea) . '). El firmware de este equipo usa otra sintaxis: '
+                        . 'la lectura por SNMP funciona, pero autorizar o borrar ONT por consola no.',
+                    'salida'  => mb_substr($version, 0, 1200),
+                ];
+            }
+
             return [
                 'paso'    => 'Consola de la OLT',
                 'ok'      => $version !== '',
