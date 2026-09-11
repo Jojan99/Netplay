@@ -22,7 +22,11 @@ class OltOntRequest extends FormRequest
             'vlan'         => 'nullable|integer',  // assign
             // A quién se le está poniendo esta ONT. El nombre igual viaja a la
             // OLT como descripción; esto guarda el vínculo del lado nuestro.
-            'user_data_id'    => 'nullable|integer|exists:user_data,id',
+            // Pese al nombre, es el id de USUARIO (users.id): así lo guarda y
+            // lo lee toda la plataforma (ver OltOnt::client). Validarlo contra
+            // user_data rechazaba clientes cuyo id de usuario no coincide con
+            // ningún id de ficha, y aceptaba ids que eran de otro cliente.
+            'user_data_id'    => 'nullable|integer|exists:users,id',
             'line_profile_id' => 'nullable|integer',
             'srv_profile_id'  => 'nullable|integer',
         ];

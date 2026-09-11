@@ -1577,14 +1577,20 @@ class OltAdminUseCase
                 'ud.address',
                 'p.plan_name',
             ])
+            // `id` es el id de USUARIO, no el de la ficha: olt_onts.user_data_id
+            // guarda el id de usuario (ver OltOnt::client). Devolver el de la
+            // ficha hacía que el alta vinculara la ONT a otro cliente —el que
+            // tiene ese número como usuario— y que "ya tiene ONT" no marcara a
+            // nadie bien.
             ->map(fn ($c) => [
-                'id'        => (int) $c->id,
+                'id'        => (int) $c->user_id,
                 'user_id'   => (int) $c->user_id,
+                'ficha_id'  => (int) $c->id,
                 'nombre'    => trim($c->names . ' ' . $c->lastname),
                 'dni'       => $c->dni,
                 'direccion' => $c->address,
                 'plan'      => $c->plan_name,
-                'tiene_ont' => isset($tomados[$c->id]),
+                'tiene_ont' => isset($tomados[$c->user_id]),
             ])
             ->all();
     }
