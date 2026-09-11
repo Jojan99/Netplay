@@ -223,7 +223,11 @@ class HuaweiOltDriver implements OltDriverInterface
                 $spOutput = $spBuffer;
             }
 
-            $spOk = stripos($spOutput, 'success') !== false || stripos($spOutput, 'Succeeded') !== false;
+            $spOk = $this->servicePortQuedo($spOutput, $fsp, (int) $ontId, $vlan);
+
+            if (!$spOk) {
+                $result['service_port_error'] = $this->respuestaDeLaOlt($spOutput);
+            }
 
             Log::debug('HuaweiOLT registerONT: service-port creation', [
                 'fsp'          => $fsp,
@@ -383,12 +387,48 @@ class HuaweiOltDriver implements OltDriverInterface
             'output'       => $output,
         ]);
 
+        $ok = $this->servicePortQuedo($output, $fsp, $ontId, $vlan);
+
         // Salir de config
         $this->ssh->write("quit\n");
         $this->ssh->read('/[>#$]\s*$/');
 
-        return stripos($output, 'success') !== false
-            || stripos($output, 'Succeeded') !== false;
+        return $ok;
+    }
+
+    /**
+     * ¿Quedó creado el service-port?
+     *
+     * Muchas Huawei no contestan nada cuando lo crean bien: buscar "success"
+     * en la respuesta daba por fallido un service-port que estaba andando, y
+     * el panel pedía crearlo de nuevo. Se decide leyéndolo de la OLT.
+     */
+    private function servicePortQuedo(string $respuesta, string $fsp, int $ontId, int $vlan): bool
+    {
+        try {
+            foreach ($this->getServicePorts($fsp, $ontId) as $sp) {
+                if ((int) ($sp['vlan'] ?? 0) === $vlan) {
+                    return true;
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::warning('[OLT] No se pudo verificar el service-port', ['fsp' => $fsp, 'ont' => $ontId, 'error' => $e->getMessage()]);
+
+            // Sin poder leerlo, se decide por la respuesta: callada o con
+            // "success" es que salió; con "Failure" o un error, no.
+            return !preg_match('/failure|error|unknown command|incomplete|parameter/i', $respuesta);
+        }
+
+        return false;
+    }
+
+    /** Lo que dijo la OLT, sin el eco del comando ni el prompt. */
+    private function respuestaDeLaOlt(string $salida): string
+    {
+        $lineas = array_filter(array_map('trim', preg_split('/\r?\n/', preg_replace('/\x1B\[[0-9;]*[A-Za-z]/', '', $salida))),
+            fn ($l) => $l !== '' && !preg_match('/^service-port\s|[>#]\s*$|^\{|<cr>/i', $l));
+
+        return mb_substr(implode(' ', $lineas), 0, 200);
     }
 
     public function getAuthorizedONTs(): array

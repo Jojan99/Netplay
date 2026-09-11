@@ -777,7 +777,9 @@ class OltAdminUseCase
                         'ok'      => (bool) $spCreated,
                         'detalle' => $spCreated
                             ? "índice {$spIndex}"
-                            : 'sin esto el cliente conecta pero no navega',
+                            : (!empty($result['service_port_error'])
+                                ? 'la OLT respondió: ' . $result['service_port_error']
+                                : 'sin esto el cliente conecta pero no navega'),
                     ];
                 } else {
                     $pasos[] = [
@@ -1016,10 +1018,32 @@ class OltAdminUseCase
             ];
         }
 
+        $ont = OltOnt::where('olt_id', $oltId)->where('fsp', $fsp)->where('ont_id', $ontId)->first();
+
+        // Primero se mira si ya está: el alta pudo haberlo creado aunque la
+        // OLT no lo confirmara, y crear otro con la misma VLAN lo duplica o
+        // la OLT lo rechaza con un error que no explica nada.
+        try {
+            $existentes = $this->dispatcher->dispatch($oltId, 'getServicePorts', ['fsp' => $fsp, 'ont_id' => $ontId]) ?: [];
+        } catch (\Throwable $e) {
+            $existentes = [];
+        }
+
+        foreach ($existentes as $sp) {
+            if ((int) ($sp['vlan'] ?? 0) === $vlan && !empty($sp['index'])) {
+                $ont?->update(['service_ports' => [['index' => (int) $sp['index'], 'vlan' => $vlan]]]);
+                Cache::forget("olt:{$oltId}:all_service_ports");
+
+                return [
+                    'status'  => 0,
+                    'message' => "El service-port ya estaba creado en la OLT (índice {$sp['index']}, VLAN {$vlan}). Quedó registrado.",
+                    'data'    => ['service_port' => (int) $sp['index']],
+                ];
+            }
+        }
+
         // Índice nuevo: el del intento anterior pudo quedar a medio crear.
         $spIndex = $this->generateServicePort($oltId, $vlan);
-
-        $ont = OltOnt::where('olt_id', $oltId)->where('fsp', $fsp)->where('ont_id', $ontId)->first();
 
         $r = $this->assignONTToClient($oltId, [
             'fsp'          => $fsp,
@@ -1146,21 +1170,48 @@ class OltAdminUseCase
         $keys = [];
 
         foreach ($onts as $ont) {
-            OltOnt::updateOrCreate(
-                ['olt_id' => $oltId, 'fsp' => $ont['fsp'], 'ont_id' => $ont['ont_id']],
-                [
-                    'serial'        => $ont['serial']        ?? null,
-                    'description'   => $ont['description']   ?? null,
-                    'status'        => $ont['status']        ?? 'offline',
-                    'service_ports' => $ont['service_ports'] ?? [],
-                    'synced_at'     => $now,
-                ]
-            );
+            $campos = [
+                'serial'      => $ont['serial']      ?? null,
+                'description' => $ont['description'] ?? null,
+                'status'      => $ont['status']      ?? 'offline',
+                'synced_at'   => $now,
+            ];
+
+            // Los service-ports salen de otra lectura, guardada aparte y que
+            // puede ser de antes del alta. Una lista vacía no borra los que ya
+            // están registrados: eso dejaba sin service-port a una ONT recién
+            // autorizada. Se quitan al eliminar la ONT o el service-port.
+            if (!empty($ont['service_ports'])) {
+                $campos['service_ports'] = $ont['service_ports'];
+            }
+
+            $fila = OltOnt::firstOrNew(['olt_id' => $oltId, 'fsp' => $ont['fsp'], 'ont_id' => $ont['ont_id']]);
+
+            if (!$fila->exists && !isset($campos['service_ports'])) {
+                $campos['service_ports'] = [];
+            }
+
+            $fila->fill($campos)->save();
             $keys[] = $ont['fsp'] . ':' . $ont['ont_id'];
         }
 
-        // Eliminar de BD las ONTs que ya no existen en la OLT
+        // Una lectura que vuelve con mucho menos de lo guardado es una lectura
+        // cortada, no ONT eliminadas: no se borra nada.
+        $guardadas = OltOnt::where('olt_id', $oltId)->count();
+
+        if ($guardadas > 10 && count($keys) < $guardadas * 0.5) {
+            \Log::warning('[OLT] Sincronización incompleta, no se borran ONT', [
+                'olt_id' => $oltId, 'leidas' => count($keys), 'guardadas' => $guardadas,
+            ]);
+
+            return;
+        }
+
+        // Eliminar de BD las ONTs que ya no existen en la OLT. Las tocadas en
+        // los últimos 15 minutos se dejan: la lista de la OLT tarda en
+        // mostrar una ONT recién autorizada, y borrarla perdía su cliente.
         OltOnt::where('olt_id', $oltId)
+            ->where('updated_at', '<', now()->subMinutes(15))
             ->get(['id', 'fsp', 'ont_id'])
             ->each(function ($row) use ($keys) {
                 if (!in_array($row->fsp . ':' . $row->ont_id, $keys)) {
