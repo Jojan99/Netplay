@@ -68,7 +68,9 @@ class CreateUserDataUseCase implements CreateUserDataUseCaseInterface
                     $esPppoe = ($data['connection_type'] ?? 'static') === 'pppoe';
 
                     if ($esPppoe) {
-                        $error = $this->altaPppoe($data);
+                        // $data es el FormRequest, no un arreglo: pasarlo tal cual
+                        // hacía que el alta PPPoE fallara siempre con un 500.
+                        $error = $this->altaPppoe($data->all());
 
                         if ($error) {
                             return ['message' => $error, 'status' => 1, 'data' => 'MIKROTIK_SYNC_ERROR'];
