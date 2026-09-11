@@ -101,15 +101,32 @@ abstract class DriverBase implements OltDriverInterface
         return preg_replace('/\s*(?:----\s*More\s*----|--More--)\s*/i', "\n", $salida);
     }
 
-    /** Vuelve a un prompt limpio, sin importar en qué submodo quedó. */
+    /**
+     * Vuelve al modo privilegiado (#), sin importar en qué submodo quedó.
+     *
+     * `end` no significa lo mismo en todos los equipos: en Cisco y ZTE baja al
+     * modo privilegiado, pero en el firmware vtysh de las C-Data EPON baja al
+     * modo vista ("End current mode and change to view mode"). El driver
+     * entraba bien con enable y en la primera consulta se tiraba a sí mismo a
+     * "OLT>", donde ningún comando de configuración existe. Por eso, si después
+     * de `end` el prompt termina en ">", se vuelve a pedir enable.
+     */
     protected function volverAlPrompt(): void
     {
         try {
             $this->ssh->setTimeout(3);
 
-            foreach (['end', ''] as $salir) {
-                $this->ssh->write($salir . "\n");
-                $this->ssh->read($this->prompt);
+            $this->ssh->write("end\n");
+            $prompt = (string) $this->ssh->read($this->prompt);
+
+            if (preg_match('/>\s*$/', $prompt)) {
+                $this->ssh->write("enable\n");
+                $respuesta = (string) $this->ssh->read('/(?:[>#]\s*$|[Pp]assword)/');
+
+                if (preg_match('/[Pp]assword/', $respuesta) && $this->enablePassword) {
+                    $this->ssh->write($this->enablePassword . "\n");
+                    $this->ssh->read($this->prompt);
+                }
             }
         } catch (\Throwable) {
             // El buffer ya estaba limpio.
