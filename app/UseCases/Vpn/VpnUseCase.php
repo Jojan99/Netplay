@@ -11,10 +11,39 @@ use Illuminate\Support\Facades\Log;
 
 class VpnUseCase
 {
-    /** Estado del servidor y de cada túnel. */
+    /** Estado del servidor y de los túneles de la empresa que consulta. */
     public function estado(): array
     {
-        return ['status' => 0, 'message' => 'OK', 'data' => ServidorVpn::estado()];
+        return ['status' => 0, 'message' => 'OK', 'data' => ServidorVpn::estado(self::empresa())];
+    }
+
+    /**
+     * La empresa de la sesión.
+     *
+     * Todo lo que se lista o se modifica va contra ella: el servidor VPN es uno
+     * para toda la instalación, pero los túneles son de cada cliente y no se
+     * pueden ver ni tocar entre empresas.
+     */
+    private static function empresa(): ?int
+    {
+        $empresa = getSessionCompanyId();
+
+        return $empresa ? (int) $empresa : null;
+    }
+
+    /**
+     * Un túnel de la empresa de la sesión, o null.
+     *
+     * En consola no hay sesión: ahí se permite operar sin filtro, que es lo que
+     * necesitan las tareas de mantenimiento.
+     */
+    private static function tunelDeLaEmpresa(int $id): ?VpnTunel
+    {
+        $empresa = self::empresa();
+
+        return VpnTunel::where('id', $id)
+            ->when($empresa !== null, fn ($q) => $q->where('company_id', $empresa))
+            ->first();
     }
 
     /** El script de instalación del lado servidor, para correr con sudo. */
@@ -76,7 +105,7 @@ class VpnUseCase
      */
     public function script(int $id): array
     {
-        $tunel = VpnTunel::find($id);
+        $tunel = self::tunelDeLaEmpresa($id);
 
         if (!$tunel) {
             return ['status' => 1, 'message' => 'Túnel no encontrado', 'data' => null];
@@ -99,7 +128,7 @@ class VpnUseCase
     /** Cambia las redes alcanzables o los datos del túnel. */
     public function actualizarTunel(int $id, array $datos): array
     {
-        $tunel = VpnTunel::find($id);
+        $tunel = self::tunelDeLaEmpresa($id);
 
         if (!$tunel) {
             return ['status' => 1, 'message' => 'Túnel no encontrado', 'data' => null];
@@ -130,7 +159,7 @@ class VpnUseCase
 
     public function eliminarTunel(int $id): array
     {
-        $tunel = VpnTunel::find($id);
+        $tunel = self::tunelDeLaEmpresa($id);
 
         if (!$tunel) {
             return ['status' => 1, 'message' => 'Túnel no encontrado', 'data' => null];
@@ -164,8 +193,8 @@ class VpnUseCase
      */
     public function usarTunelEnOlt(int $tunelId, int $oltId, bool $verificar = true): array
     {
-        $tunel = VpnTunel::find($tunelId);
-        $olt   = OltAdmin::find($oltId);
+        $tunel = self::tunelDeLaEmpresa($tunelId);
+        $olt   = self::oltDeLaEmpresa($oltId);
 
         if (!$tunel || !$olt) {
             return ['status' => 1, 'message' => 'Túnel u OLT no encontrados', 'data' => null];
@@ -180,13 +209,17 @@ class VpnUseCase
             ];
         }
 
-        if ($verificar && !$this->contesta($olt->host, (int) ($olt->port ?: 23))) {
-            return [
-                'status'  => 1,
-                'message' => "El túnel está configurado pero {$olt->host}:{$olt->port} todavía no responde. "
-                    . 'Verificá que el script ya se aplicó en el router y que el túnel está saludando.',
-                'data'    => null,
-            ];
+        if ($verificar) {
+            $prueba = $this->alcanzable($olt);
+
+            if (!$prueba['ok']) {
+                return [
+                    'status'  => 1,
+                    'message' => "El túnel está configurado pero {$olt->host} todavía no responde. "
+                        . 'Verificá que el script ya se aplicó en el router y que el túnel está saludando.',
+                    'data'    => null,
+                ];
+            }
         }
 
         $antes = [
@@ -195,18 +228,38 @@ class VpnUseCase
             'snmp_jump_host' => $olt->snmp_jump_host,
         ];
 
+        // Se borran también las credenciales del jump: son la contraseña SSH de
+        // un router en producción guardada en la base, y con el túnel andando
+        // ya no hacen falta. Si algún día hay que volver atrás, se cargan de
+        // nuevo en la configuración de la OLT.
         $olt->forceFill([
             'access_mode'    => 'direct',
+            'jump_host'      => null,
+            'jump_user'      => null,
+            'jump_pass'      => null,
             'snmp_jump_host' => null,
+            'snmp_jump_user' => null,
+            'snmp_jump_pass' => null,
             'snmp_host'      => null,   // SNMP directo a la OLT por el túnel
         ])->save();
 
         // El mapa de puertos y la ficha quedaron atados al camino anterior.
         \App\Services\Olt\EquipoDeOlt::olvidar($olt);
+        \App\Services\Olt\SenalDeLaOlt::olvidar($olt);
+
+        // El worker mantiene la sesión abierta por el jump: hay que pedirle que
+        // se reinicie, o seguiría entrando por el camino viejo hasta que se
+        // caiga por inactividad.
+        try {
+            \Illuminate\Support\Facades\Redis::setex("olt:{$olt->id}:recargar", 300, 1);
+        } catch (\Throwable $e) {
+            Log::warning('[VPN] No se pudo pedir la recarga del worker', ['olt' => $olt->id, 'error' => $e->getMessage()]);
+        }
 
         return [
             'status'  => 0,
-            'message' => "La OLT {$olt->name} ahora se alcanza por el túnel, sin jump host.",
+            'message' => "La OLT {$olt->name} ahora se alcanza por el túnel. Se quitó el jump host"
+                . ($antes['jump_host'] ? " ({$antes['jump_host']})" : '') . ' y sus credenciales.',
             'data'    => ['antes' => $antes, 'olt' => $olt->fresh()],
         ];
     }
@@ -214,7 +267,7 @@ class VpnUseCase
     /** Prueba de alcance a una IP por el túnel. */
     public function probarAlcance(int $tunelId, string $ip, int $puerto): array
     {
-        $tunel = VpnTunel::find($tunelId);
+        $tunel = self::tunelDeLaEmpresa($tunelId);
 
         if (!$tunel) {
             return ['status' => 1, 'message' => 'Túnel no encontrado', 'data' => null];
@@ -241,10 +294,22 @@ class VpnUseCase
         ];
     }
 
+    /** Una OLT de la empresa de la sesión, o null. */
+    private static function oltDeLaEmpresa(int $id): ?OltAdmin
+    {
+        $empresa = self::empresa();
+
+        return OltAdmin::where('id', $id)
+            ->when($empresa !== null, fn ($q) => $q->where('company_id', $empresa))
+            ->first();
+    }
+
     /** ¿Alguna OLT depende de este túnel para llegar? */
     private function oltsQueUsan(VpnTunel $tunel)
     {
-        return OltAdmin::where('access_mode', 'direct')->get()
+        return OltAdmin::where('access_mode', 'direct')
+            ->when($tunel->company_id !== null, fn ($q) => $q->where('company_id', $tunel->company_id))
+            ->get()
             ->filter(fn (OltAdmin $olt) => $this->estaEnAlgunaRed($olt->host, $tunel))
             ->values();
     }
@@ -265,6 +330,56 @@ class VpnUseCase
         }
 
         return false;
+    }
+
+    /**
+     * ¿Se llega a la OLT por el túnel?
+     *
+     * Se prueba con SNMP y, si no, con un ping. A propósito NO se abre una
+     * sesión de consola: las OLT Huawei reservan el cupo de sesión durante
+     * varios minutos aunque el socket se cierre enseguida, así que comprobar
+     * por telnet le gastaba una sesión en cada verificación, y con unas pocas
+     * la OLT empieza a contestarle "session limit reached" a la plataforma.
+     *
+     * @return array{ok:bool, como:?string}
+     */
+    private function alcanzable(OltAdmin $olt): array
+    {
+        // SNMP es UDP: no consume sesiones y además confirma que la comunidad
+        // sigue sirviendo por el camino nuevo.
+        if (extension_loaded('snmp') && $olt->snmp_community) {
+            $destino = $olt->host . ':' . ((int) ($olt->snmp_port ?: 161));
+            $oid     = '1.3.6.1.2.1.1.5.0';   // sysName
+
+            $valor = ($olt->snmp_version === '1')
+                ? @snmpget($destino, $olt->snmp_community, $oid, 3_000_000, 1)
+                : @snmp2_get($destino, $olt->snmp_community, $oid, 3_000_000, 1);
+
+            if (is_string($valor) && trim($valor) !== '') {
+                return ['ok' => true, 'como' => 'snmp'];
+            }
+        }
+
+        if ($this->respondePing($olt->host)) {
+            return ['ok' => true, 'como' => 'ping'];
+        }
+
+        return ['ok' => false, 'como' => null];
+    }
+
+    /** Un ping corto. No necesita privilegios en Linux. */
+    private function respondePing(string $host): bool
+    {
+        if (!filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            return false;
+        }
+
+        $salida = [];
+        $codigo = 1;
+
+        exec(sprintf('ping -c 2 -W 2 %s 2>/dev/null', escapeshellarg($host)), $salida, $codigo);
+
+        return $codigo === 0;
     }
 
     /** ¿Hay algo escuchando del otro lado? */

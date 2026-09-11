@@ -49,6 +49,12 @@ class OltAdminRequest extends FormRequest
             'snmp_jump_user'     => 'nullable|string',
             'snmp_jump_pass'     => 'nullable|string',
 
+            // Túnel de gestión creado junto con la OLT: es el caso normal
+            // cuando el equipo está en una red privada detrás de un MikroTik.
+            'crear_tunel_vpn' => 'sometimes|boolean',
+            'tunel_nombre'    => 'nullable|string|max:120',
+            'tunel_redes'     => 'nullable|string|max:255',
+
             // Lo propio de cada marca al autorizar una ONT.
             'zte_onu_type'       => 'nullable|string|max:60',
             'zte_dba_profile'    => 'nullable|string|max:60',

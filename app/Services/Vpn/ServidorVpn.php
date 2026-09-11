@@ -134,6 +134,52 @@ class ServidorVpn
         ];
     }
 
+    /**
+     * El túnel que ya cubre esa IP, si existe.
+     *
+     * Sirve para no crear un túnel por OLT cuando varias están en el mismo
+     * nodo: lo que se necesita es uno por router, no uno por equipo.
+     */
+    public static function tunelQueCubre(?string $ip, ?int $companyId = null): ?VpnTunel
+    {
+        if (!$ip || !filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            return null;
+        }
+
+        $candidatos = VpnTunel::where('activo', true)
+            ->when($companyId !== null, fn ($q) => $q->where('company_id', $companyId))
+            ->get();
+
+        foreach ($candidatos as $tunel) {
+            foreach ($tunel->redes_remotas ?? [] as $red) {
+                [$base, $bits] = explode('/', $red);
+                $mascara = (int) $bits === 0 ? 0 : (-1 << (32 - (int) $bits)) & 0xFFFFFFFF;
+
+                if ((ip2long($ip) & $mascara) === (ip2long($base) & $mascara)) {
+                    return $tunel;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * La red /24 a la que pertenece una IP.
+     *
+     * Es el valor por defecto cuando se crea el túnel junto con la OLT: casi
+     * siempre la red de gestión es la /24 del equipo, y si no lo es se corrige
+     * en la pantalla antes de generar el script.
+     */
+    public static function redDe(string $ip): ?string
+    {
+        if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            return null;
+        }
+
+        return long2ip(ip2long($ip) & 0xFFFFFF00) . '/24';
+    }
+
     public static function eliminarTunel(VpnTunel $tunel): void
     {
         $tunel->delete();
@@ -343,9 +389,13 @@ class ServidorVpn
      * Lo que está pasando en el servidor: si la interfaz existe, y de cada
      * túnel cuándo saludó por última vez y cuánto transfirió.
      *
+     * El listado se filtra por empresa. La configuración de WireGuard, en
+     * cambio, se arma con los túneles de todas: es estado del sistema, y
+     * filtrarla ahí dejaría sin servicio a los demás clientes.
+     *
      * @return array<string,mixed>
      */
-    public static function estado(): array
+    public static function estado(?int $companyId = null): array
     {
         $servidor = self::configuracion();
 
@@ -364,7 +414,7 @@ class ServidorVpn
         ];
 
         if (!$base['ayudante_instalado']) {
-            return $base + ['tuneles' => self::tunelesConEstado([])];
+            return $base + ['tuneles' => self::tunelesConEstado([], $companyId)];
         }
 
         $salida = self::ejecutarAyudante('status');
@@ -372,7 +422,7 @@ class ServidorVpn
         if (!$salida['ok']) {
             return array_merge($base, [
                 'error'   => $salida['salida'] ?: 'El ayudante no respondió.',
-                'tuneles' => self::tunelesConEstado([]),
+                'tuneles' => self::tunelesConEstado([], $companyId),
             ]);
         }
 
@@ -382,7 +432,7 @@ class ServidorVpn
 
         return array_merge($base, [
             'levantada' => $porClave !== [],
-            'tuneles'   => self::tunelesConEstado($porClave),
+            'tuneles'   => self::tunelesConEstado($porClave, $companyId),
         ]);
     }
 
@@ -442,9 +492,10 @@ class ServidorVpn
      * @param  array<string,array<string,mixed>>  $porClave
      * @return list<array<string,mixed>>
      */
-    private static function tunelesConEstado(array $porClave): array
+    private static function tunelesConEstado(array $porClave, ?int $companyId = null): array
     {
-        return VpnTunel::orderBy('nombre')->get()->map(function (VpnTunel $tunel) use ($porClave) {
+        return VpnTunel::when($companyId !== null, fn ($q) => $q->where('company_id', $companyId))
+            ->orderBy('nombre')->get()->map(function (VpnTunel $tunel) use ($porClave) {
             $vivo = $porClave[$tunel->clave_publica] ?? null;
 
             return [

@@ -13,6 +13,17 @@ class HuaweiOltDriver implements OltDriverInterface
     private int     $srvProfileId;
     private ?string $enablePassword;
 
+    /**
+     * Queda en true cuando una lectura terminó sin encontrar el prompt.
+     *
+     * Cuando eso pasa la sesión queda con datos sin leer, y el comando
+     * siguiente los consume como si fueran su propia respuesta: se llegó a ver
+     * "display ont optical-info 0/0 0 0" llegando a la OLT como
+     * "display ont optical-info0/". Antes se devolvía cadena vacía y nadie se
+     * enteraba, así que la consulta siguiente fallaba sin motivo aparente.
+     */
+    private bool $desincronizada = false;
+
     public function __construct(object $ssh, array $config)
     {
         $this->ssh            = $ssh;
@@ -1144,6 +1155,8 @@ public function parseServicePorts(string $output): array
         try {
             return $this->ssh->read('/(?:(?<!<cr)>|[#$])\s*$/');
         } catch (\Throwable) {
+            $this->desincronizada = true;
+
             return '';
         }
     }
@@ -1182,12 +1195,28 @@ public function parseServicePorts(string $output): array
             }
         }
 
-    } catch (\Throwable $e) {}
+    } catch (\Throwable $e) {
+        // Se agotó el tiempo sin llegar al prompt: lo que quedó en el buffer
+        // va a aparecer pegado a la respuesta del comando siguiente.
+        $this->desincronizada = true;
+    }
 
     $fullOutput = preg_replace('/\s*----\s*More\s*----\s*/i', "\n", $fullOutput);
 
     return $fullOutput;
 }
+    /**
+     * ¿La sesión quedó desincronizada?
+     *
+     * El worker la consulta después de cada comando: si quedó así, cierra la
+     * sesión en vez de reutilizarla, porque el próximo comando leería la
+     * respuesta a medias del anterior.
+     */
+    public function estaDesincronizada(): bool
+    {
+        return $this->desincronizada;
+    }
+
     /**
      * Extract a single value using a regex pattern from raw text.
      */

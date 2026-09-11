@@ -237,8 +237,96 @@ class OltAdminUseCase
 
     public function createOlt(array $data): array
     {
+        $tunelPedido = (bool) ($data['crear_tunel_vpn'] ?? false);
+
+        // Los datos del túnel no son columnas de la OLT: se guardan aparte
+        // antes de sacarlos del arreglo que va al repositorio.
+        $tunel = [
+            'nombre' => $data['tunel_nombre'] ?? null,
+            'redes'  => $data['tunel_redes'] ?? null,
+        ];
+
+        unset($data['crear_tunel_vpn'], $data['tunel_nombre'], $data['tunel_redes']);
+
         $olt = $this->repo->create($data);
-        return ['status' => 0, 'message' => 'OLT creada correctamente', 'data' => $olt];
+
+        if (!$tunelPedido) {
+            return ['status' => 0, 'message' => 'OLT creada correctamente', 'data' => $olt];
+        }
+
+        return $this->conTunel($olt, $tunel);
+    }
+
+    /**
+     * Crea la OLT junto con su túnel de gestión.
+     *
+     * Tiene más sentido acá que como paso aparte: cuando se registra una OLT en
+     * red privada, el camino para llegar a ella es parte del alta. Si ya hay un
+     * túnel que cubre su red se reutiliza —lo que hace falta es uno por router,
+     * no uno por equipo.
+     *
+     * @param  array{nombre:?string, redes:?string}  $pedido
+     */
+    private function conTunel(OltAdmin $olt, array $pedido): array
+    {
+        $existente = \App\Services\Vpn\ServidorVpn::tunelQueCubre($olt->host, (int) $olt->company_id);
+
+        if ($existente) {
+            return [
+                'status'  => 0,
+                'message' => "OLT creada. Ya hay un túnel que cubre su red: «{$existente->nombre}». "
+                    . 'Aplicá ese script en el router si todavía no está levantado.',
+                'data'    => ['olt' => $olt, 'tunel' => $existente, 'reutilizado' => true],
+            ];
+        }
+
+        $redes = trim((string) ($pedido['redes'] ?? ''))
+            ?: (string) \App\Services\Vpn\ServidorVpn::redDe((string) $olt->host);
+
+        if ($redes === '') {
+            return [
+                'status'  => 0,
+                'message' => 'OLT creada, pero no se pudo deducir la red de gestión para el túnel. '
+                    . 'Crealo desde la pestaña VPN.',
+                'data'    => ['olt' => $olt, 'tunel' => null],
+            ];
+        }
+
+        try {
+            $creado = \App\Services\Vpn\ServidorVpn::crearTunel([
+                'company_id'    => $olt->company_id,
+                'nombre'        => trim((string) ($pedido['nombre'] ?? '')) ?: ('Nodo ' . $olt->name),
+                'redes_remotas' => $redes,
+                'notas'         => "Creado con la OLT {$olt->name} ({$olt->host}).",
+            ]);
+
+            return [
+                'status'  => 0,
+                'message' => 'OLT y túnel creados. Pegá el script en el router para levantarlo.',
+                'data'    => [
+                    'olt'    => $olt,
+                    'tunel'  => $creado['tunel'],
+                    'script' => \App\Services\Vpn\ScriptMikrotik::para(
+                        $creado['tunel'],
+                        \App\Services\Vpn\ServidorVpn::configuracion(),
+                        $creado['clave_privada'],
+                        $creado['clave_compartida'],
+                    ),
+                ],
+            ];
+        } catch (\Throwable $e) {
+            // La OLT ya quedó creada: se informa el problema del túnel sin
+            // deshacerla, porque el alta en sí fue correcta.
+            \Log::warning('[OLT] No se pudo crear el túnel junto con la OLT', [
+                'olt' => $olt->id, 'error' => $e->getMessage(),
+            ]);
+
+            return [
+                'status'  => 0,
+                'message' => 'OLT creada, pero el túnel no: ' . $e->getMessage(),
+                'data'    => ['olt' => $olt, 'tunel' => null],
+            ];
+        }
     }
 
     public function updateOlt(int $id, array $data): array

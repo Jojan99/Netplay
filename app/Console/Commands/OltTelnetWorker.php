@@ -144,6 +144,14 @@ class OltTelnetWorker extends Command
                 $data = $this->executeCommand($command);
                 Redis::rpush($resultKey, json_encode(['success' => true, 'data' => $data]));
 
+                // Si la lectura terminó sin llegar al prompt, la sesión quedó
+                // con datos sin consumir y el próximo comando los leería como
+                // su propia respuesta. Se cierra para volver con una limpia.
+                if (method_exists($this->driver, 'estaDesincronizada') && $this->driver->estaDesincronizada()) {
+                    Log::warning("OLT Worker #{$oltId}: sesión desincronizada tras {$command['method']}, se reabrirá");
+                    $this->disconnect($oltId);
+                }
+
                 if (in_array($command['method'], self::WRITE_METHODS, true)) {
                     $this->pendingSave = true;
                     $this->lastWriteAt = microtime(true);
