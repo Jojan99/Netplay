@@ -456,10 +456,21 @@ protected function getIfIndexByFsp(string $fsp): ?int
             return [];
         }
 
-        $result  = [];
-        $baseLen = strlen($oid) + 1;
+        // La extensión de PHP devuelve los OID con punto inicial (".1.3.6...")
+        // y el camino por jump host no, así que restar el largo del OID base a
+        // secas corría el sufijo un carácter: "4194304000.0" se leía como
+        // ".4194304000.0" y, al partirlo por puntos, el ifIndex terminaba en el
+        // lugar del número de puerto. Los puertos salían como
+        // "0/0/4194304000" en vez de "0/0/0".
+        $base   = ltrim($oid, '.');
+        $result = [];
+
         foreach ($real as $fullOid => $value) {
-            $result[substr($fullOid, $baseLen)] = $value;
+            $limpio = ltrim((string) $fullOid, '.');
+
+            $result[str_starts_with($limpio, $base . '.')
+                ? substr($limpio, strlen($base) + 1)
+                : $limpio] = $value;
         }
 
         return $result;
