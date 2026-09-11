@@ -89,6 +89,14 @@ class OltAdminController extends Controller
         return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
     }
 
+    /** Qué admite el equipo al autorizar una ONT. */
+    public function capacidades(int $oltId): JsonResponse
+    {
+        $r = $this->uc->capacidades($oltId);
+
+        return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
+    }
+
     /** Qué puertos autorizan solos las ONU nuevas. */
     public function autoAutorizacion(int $oltId): JsonResponse
     {

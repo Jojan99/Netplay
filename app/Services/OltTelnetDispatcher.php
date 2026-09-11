@@ -184,6 +184,10 @@ class OltTelnetDispatcher
             'getLineProfiles'   => $driver->getLineProfiles(),
             'getSrvProfiles'    => $driver->getSrvProfiles(),
             'runCommand'        => $driver->runCommand($p['command']),
+            'capacidades'       => method_exists($driver, 'capacidades')
+                                       ? $driver->capacidades() : null,
+            'pasoVlan'          => method_exists($driver, 'pasoVlan')
+                                       ? $driver->pasoVlan($p['fsp'], (int) $p['vlan']) : null,
             // Sólo algunos equipos la tienen (hoy, C-Data EPON).
             'autoAutorizacion'  => method_exists($driver, 'autoAutorizacion')
                                        ? $driver->autoAutorizacion() : null,

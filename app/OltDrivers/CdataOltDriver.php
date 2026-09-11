@@ -463,7 +463,7 @@ class CdataOltDriver extends DriverBase
      * están andando. Mandar el valor por defecto de la plataforma (10) fallaba
      * en un equipo que no tiene ese perfil.
      */
-    private function altaEpon(string $fsp, string $serial, string $description, ?int $lineProfileId): array
+    private function altaEpon(string $fsp, string $serial, string $description, ?int $lineProfileId, ?int $vlan = null): array
     {
         $mac = self::mac($serial);
 
@@ -510,13 +510,17 @@ class CdataOltDriver extends DriverBase
 
         $this->volverAlPrompt();
 
+        $pasoVlan = $vlan ? $this->pasoVlan($fsp, $vlan) : null;
+
         return [
             'success'              => true,
             'ont_id'               => $ontId,
             'port_id'              => $puerto,
             'message'              => "ONU {$mac} autorizada en {$fsp} con ID {$ontId}",
-            // El service-port de EPON no está implementado todavía.
-            'service_port_created' => false,
+            // En EPON no hay service-port: lo que cuenta es que el puerto PON
+            // lleve la VLAN (ver pasoVlan).
+            'service_port_created' => $pasoVlan['ok'] ?? false,
+            'vlan_paso'            => $pasoVlan,
         ];
     }
 
@@ -629,7 +633,7 @@ class CdataOltDriver extends DriverBase
         ?int $servicePort = null
     ): array {
         if ($this->esEpon()) {
-            return $this->altaEpon($fsp, $serial, $description, $lineProfileId);
+            return $this->altaEpon($fsp, $serial, $description, $lineProfileId, $vlan);
         }
 
         $puerto = $this->entrarAlPuerto($fsp);
@@ -750,6 +754,13 @@ class CdataOltDriver extends DriverBase
 
     public function assignToClient(string $fsp, int $ontId, int $vlan, int $servicePort, string $description): bool
     {
+        // En EPON la sintaxis de GPON ("ont port native-vlan" + service-port)
+        // cambiaba el puerto de la ONU y después fallaba en el service-port,
+        // que no existe: un cambio a medias. Acá sólo se verifica la VLAN.
+        if ($this->esEpon()) {
+            return $this->pasoVlan($fsp, $vlan)['ok'];
+        }
+
         $puerto = $this->entrarAlPuerto($fsp);
         $ok     = $this->servicio($puerto, $ontId, $vlan, $servicePort, $fsp, $description);
         $this->volverAlPrompt();
@@ -799,35 +810,150 @@ class CdataOltDriver extends DriverBase
     public function getLineProfiles(): array
     {
         $this->volverAlPrompt();
+        $this->cmd('config', 8);
 
-        return $this->leerPerfiles($this->primeraQueSirva([
-            'show ont-lineprofile gpon all',
-            'show ont-lineprofile all',
-        ], 30)['salida']);
+        $salida = $this->esEpon()
+            ? $this->cmd('show ont-lineprofile epon all', 30)
+            : $this->primeraQueSirva(['show ont-lineprofile gpon all', 'show ont-lineprofile all'], 30)['salida'];
+
+        $this->volverAlPrompt();
+
+        return $this->leerPerfiles($salida);
     }
 
     public function getSrvProfiles(): array
     {
         $this->volverAlPrompt();
+        $this->cmd('config', 8);
 
-        return $this->leerPerfiles($this->primeraQueSirva([
-            'show ont-srvprofile gpon all',
-            'show ont-srvprofile all',
-        ], 30)['salida']);
+        $salida = $this->esEpon()
+            ? $this->cmd('show ont-srvprofile epon all', 30)
+            : $this->primeraQueSirva(['show ont-srvprofile gpon all', 'show ont-srvprofile all'], 30)['salida'];
+
+        $this->volverAlPrompt();
+
+        return $this->leerPerfiles($salida);
     }
 
-    /** @return array<int,string> */
+    /**
+     *   Profile-ID  Profile-name        Binding times
+     *   0           lineprofile_0       65
+     *
+     * Con la forma que espera la sincronización ({id, name}): antes se
+     * devolvía [id => nombre] y la pantalla mostraba "Sin perfil" aunque la
+     * OLT tuviera perfiles.
+     *
+     * @return list<array{id:int, name:string, uso:?int}>
+     */
     private function leerPerfiles(string $salida): array
     {
         $perfiles = [];
 
         foreach (preg_split('/\r?\n/', $salida) as $linea) {
-            if (preg_match('/^\s*(\d+)\s+(\S+)/', $linea, $m)) {
-                $perfiles[(int) $m[1]] = $m[2];
+            if (preg_match('/^\s*(\d+)\s+(\S+)(?:\s+(\d+))?\s*$/', $linea, $m)) {
+                $perfiles[] = [
+                    'id'   => (int) $m[1],
+                    'name' => $m[2],
+                    'uso'  => isset($m[3]) ? (int) $m[3] : null,
+                ];
             }
         }
 
         return $perfiles;
+    }
+
+    // ── VLAN en EPON ──────────────────────────────────────────────────────
+
+    /**
+     * Qué puede y qué no puede este equipo, para que la pantalla de alta
+     * muestre sólo lo que aplica.
+     *
+     * @return array<string,mixed>
+     */
+    public function capacidades(): array
+    {
+        if ($this->esEpon()) {
+            return [
+                'tecnologia'              => 'epon',
+                'identificador'           => 'mac',
+                'service_port'            => false,
+                'perfil_servicio_en_alta' => false,
+                'vlan'                    => 'puerto-pon',
+                'explicacion_vlan'        => 'En EPON no hay service-port: el perfil de servicio deja pasar la VLAN tal cual la manda la ONU, y lo que hace falta es que el puerto PON lleve esa VLAN.',
+            ];
+        }
+
+        return [
+            'tecnologia'              => 'gpon',
+            'identificador'           => 'serial',
+            'service_port'            => true,
+            'perfil_servicio_en_alta' => true,
+            'vlan'                    => 'service-port',
+            'explicacion_vlan'        => null,
+        ];
+    }
+
+    /**
+     * Las VLAN que lleva cada puerto PON, leídas de la configuración:
+     *
+     *   vlan mode 2 trunk
+     *   vlan trunk 2 100
+     *
+     * @return array<int, list<int>>
+     */
+    private function vlansPorPuerto(): array
+    {
+        $this->volverAlPrompt();
+        $this->cmd('config', 8);
+        $config = $this->cmd('show current-config section epon all', 60);
+        $this->volverAlPrompt();
+
+        $vlans = [];
+
+        if (preg_match_all('/^\s*vlan\s+(?:trunk|hybrid(?:\s+tagged)?)\s+(\d)\s+([\d,\s-]+)$/mi', $config, $m, PREG_SET_ORDER)) {
+            foreach ($m as $x) {
+                foreach (preg_split('/[\s,]+/', trim($x[2])) as $tramo) {
+                    if (preg_match('/^(\d+)-(\d+)$/', $tramo, $r)) {
+                        $vlans[(int) $x[1]] = array_merge($vlans[(int) $x[1]] ?? [], range((int) $r[1], (int) $r[2]));
+                    } elseif (ctype_digit($tramo)) {
+                        $vlans[(int) $x[1]][] = (int) $tramo;
+                    }
+                }
+            }
+        }
+
+        return array_map(fn ($l) => array_values(array_unique($l)), $vlans);
+    }
+
+    /**
+     * El paso de VLAN de un alta en EPON: el equivalente al service-port de
+     * Huawei es que el puerto PON lleve la VLAN. Sólo se verifica; no se
+     * agrega sola, porque no está confirmado si `vlan trunk` suma a la lista
+     * o la reemplaza, y reemplazarla dejaría sin servicio a todo el puerto.
+     *
+     * @return array{ok:bool, titulo:string, detalle:string}
+     */
+    public function pasoVlan(string $fsp, int $vlan): array
+    {
+        ['port' => $puerto] = $this->partirFsp($fsp);
+
+        $lleva = $this->vlansPorPuerto()[$puerto] ?? [];
+
+        if (in_array($vlan, $lleva, true)) {
+            return [
+                'ok'      => true,
+                'titulo'  => "VLAN {$vlan} en el puerto PON {$fsp}",
+                'detalle' => "El puerto ya la lleva. Con el perfil de servicio transparente la ONU la entrega tal cual: no hace falta service-port.",
+            ];
+        }
+
+        return [
+            'ok'      => false,
+            'titulo'  => "VLAN {$vlan} en el puerto PON {$fsp}",
+            'detalle' => "El puerto no lleva la VLAN {$vlan}"
+                . ($lleva ? ' (lleva ' . implode(', ', $lleva) . ')' : '')
+                . ". Hay que agregarla en la OLT: interface epon 0/0 → vlan trunk {$puerto} …",
+        ];
     }
 
     private function dato(string $raw, string $patron): ?string

@@ -246,6 +246,49 @@ class OltAdminUseCase
         ];
     }
 
+    /**
+     * Qué admite el equipo al autorizar: si identifica por MAC o serial, si
+     * tiene service-port, si el perfil de servicio se elige en el alta. Se
+     * guarda un día: no cambia salvo que cambien el equipo.
+     */
+    public function capacidades(int $oltId): array
+    {
+        $clave = "olt:{$oltId}:capacidades";
+
+        $capacidades = Cache::get($clave);
+
+        if (!is_array($capacidades)) {
+            $consultada = true;
+
+            try {
+                $capacidades = $this->dispatcher->dispatch($oltId, 'capacidades');
+            } catch (\Throwable $e) {
+                // Sin respuesta (OLT caída, worker con código viejo) se muestra el
+                // formulario estándar en vez de dejar la pantalla sin datos, y no
+                // se guarda, para volver a preguntar la próxima vez.
+                \Log::warning('[OLT] No se pudieron leer las capacidades', ['olt' => $oltId, 'error' => $e->getMessage()]);
+                $capacidades = null;
+                $consultada  = false;
+            }
+
+            // Los drivers que no la declaran se comportan como Huawei.
+            $capacidades ??= [
+                'tecnologia'              => 'gpon',
+                'identificador'           => 'serial',
+                'service_port'            => true,
+                'perfil_servicio_en_alta' => true,
+                'vlan'                    => 'service-port',
+                'explicacion_vlan'        => null,
+            ];
+
+            if ($consultada) {
+                Cache::put($clave, $capacidades, now()->addDay());
+            }
+        }
+
+        return ['status' => 0, 'message' => 'OK', 'data' => $capacidades];
+    }
+
     /** Marcas de OLT que la plataforma sabe manejar. */
     public function marcasSoportadas(): array
     {
@@ -717,7 +760,16 @@ class OltAdminUseCase
                 $ontId     = (int) $result['ont_id'];
                 $spCreated = $result['service_port_created'] ?? false;
 
-                if ($vlan !== null) {
+                if ($vlan !== null && !empty($result['vlan_paso'])) {
+                    // Equipos sin service-port (C-Data EPON): el driver dice qué
+                    // verificó. El mensaje de Huawei ("sin esto el cliente
+                    // conecta pero no navega") no aplica y confundía.
+                    $pasos[] = [
+                        'paso'    => $result['vlan_paso']['titulo'],
+                        'ok'      => (bool) $result['vlan_paso']['ok'],
+                        'detalle' => $result['vlan_paso']['detalle'],
+                    ];
+                } elseif ($vlan !== null) {
                     $pasos[] = [
                         'paso'    => "Crear el service-port (VLAN {$vlan})",
                         'ok'      => (bool) $spCreated,
@@ -939,6 +991,21 @@ class OltAdminUseCase
 
         if (!$vlan) {
             return ['status' => 1, 'message' => 'Hace falta la VLAN para crear el service-port.', 'data' => null];
+        }
+
+        // Equipos sin service-port: no se crea nada, se verifica que el puerto
+        // PON lleve la VLAN. Mandarles la secuencia de Huawei cambiaba el
+        // puerto de la ONU y fallaba después.
+        $capacidades = $this->capacidades($oltId)['data'] ?? null;
+
+        if (is_array($capacidades) && ($capacidades['service_port'] ?? true) === false) {
+            $paso = $this->dispatcher->dispatch($oltId, 'pasoVlan', ['fsp' => $fsp, 'vlan' => $vlan]);
+
+            return [
+                'status'  => ($paso['ok'] ?? false) ? 0 : 1,
+                'message' => $paso['detalle'] ?? 'No se pudo verificar la VLAN del puerto.',
+                'data'    => $paso,
+            ];
         }
 
         // Índice nuevo: el del intento anterior pudo quedar a medio crear.

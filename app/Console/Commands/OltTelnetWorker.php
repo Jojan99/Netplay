@@ -323,6 +323,10 @@ class OltTelnetWorker extends Command
             'deactivateONT'     => $this->driver->deactivateONT($p['fsp'], (int) $p['ont_id']),
             'activateONT'       => $this->driver->activateONT($p['fsp'], (int) $p['ont_id']),
             'runCommand'        => $this->driver->runCommand($p['command']),
+            'capacidades'       => method_exists($this->driver, 'capacidades')
+                                       ? $this->driver->capacidades() : null,
+            'pasoVlan'          => method_exists($this->driver, 'pasoVlan')
+                                       ? $this->driver->pasoVlan($p['fsp'], (int) $p['vlan']) : null,
             // Sólo algunos equipos la tienen (hoy, C-Data EPON).
             'autoAutorizacion'  => method_exists($this->driver, 'autoAutorizacion')
                                        ? $this->driver->autoAutorizacion() : null,

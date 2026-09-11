@@ -104,6 +104,7 @@ Route::prefix('management')->group(function () {
         // Ficha del equipo: marca, modelo, tarjetas y puertos, por SNMP.
         Route::get('/{oltId}/equipo',       [OltAdminController::class, 'equipo']);
         Route::get('/{oltId}/senal',        [OltAdminController::class, 'senal']);
+        Route::get('/{oltId}/capacidades',        [OltAdminController::class, 'capacidades']);
         Route::get('/{oltId}/auto-autorizacion',  [OltAdminController::class, 'autoAutorizacion']);
         Route::post('/{oltId}/auto-autorizacion', [OltAdminController::class, 'cambiarAutoAutorizacion']);
         Route::get('/{oltId}/diagnostico',  [OltAdminController::class, 'diagnostico']);
