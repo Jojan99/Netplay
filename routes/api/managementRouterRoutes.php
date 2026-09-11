@@ -88,6 +88,7 @@ Route::prefix('management')->group(function () {
 
         // Ficha del equipo: marca, modelo, tarjetas y puertos, por SNMP.
         Route::get('/{oltId}/equipo',       [OltAdminController::class, 'equipo']);
+        Route::get('/{oltId}/senal',        [OltAdminController::class, 'senal']);
         Route::get('/{oltId}/diagnostico',  [OltAdminController::class, 'diagnostico']);
         Route::post('/{oltId}/olvidar-puertos', [OltAdminController::class, 'olvidarPuertos']);
         Route::post('/{oltId}/foto',        [OltAdminController::class, 'guardarFoto']);
@@ -118,6 +119,7 @@ Route::prefix('management')->group(function () {
         Route::post('/{oltId}/ont/deactivate',[OltAdminController::class, 'deactivateONT']);
         Route::post('/{oltId}/ont/activate',  [OltAdminController::class, 'activateONT']);
         Route::post('/{oltId}/profiles/sync', [OltAdminController::class, 'syncProfiles']);
+        Route::post('/{oltId}/profiles/default', [OltAdminController::class, 'fijarPerfiles']);
         Route::post('/{oltId}/cli',                  [OltAdminController::class, 'cliCommand']);
         Route::post('/{oltId}/ont/assign-client',    [OltAdminController::class, 'assignClientToOnt']);
         Route::get('/ont/by-user/{userId}',          [OltAdminController::class, 'getOntByUser']);

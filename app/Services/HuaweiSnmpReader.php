@@ -32,6 +32,10 @@ private const OID_DISCOV_PORT = '1.3.6.1.4.1.2011.6.128.1.1.2.48.1.4'; // ifInde
 
     // hwGponOntOptInfoTable: 1.3.6.1.4.1.2011.6.128.1.1.2.47
     // Values are INTEGER × 0.01 dBm  (e.g. -2030 → -20.30 dBm)
+    // hwGponOntOpticalDdmTable: una fila por ONT. Las columnas se identifican
+    // por el rango de sus valores (ver magnitudDe), no por su número.
+    private const OID_OPT_BASE      = '1.3.6.1.4.1.2011.6.128.1.1.2.51.1';
+
 private const OID_OPT_OLT_RX    = '1.3.6.1.4.1.2011.6.128.1.1.2.51.1.3'; // + .<ONT_ID>.0 → OLT Rx from ONT (×0.01 dBm)
 private const OID_OPT_ONT_TX    = '1.3.6.1.4.1.2011.6.128.1.1.2.51.1.4'; // + .<ONT_ID>.0 → ONT Tx (×0.01 dBm)
 private const OID_OPT_ONT_RX    = '1.3.6.1.4.1.2011.6.128.1.1.2.51.1.5'; // + .<ONT_ID>.0 → ONT Rx from OLT (×0.01 dBm)
@@ -268,6 +272,144 @@ protected function getIfIndexByFsp(string $fsp): ?int
     public function getRaw(string $oid): string
     {
         return $this->get($oid);
+    }
+
+    /**
+     * La medición óptica de TODAS las ONT de la OLT, en un solo barrido.
+     *
+     * La tabla de diagnóstico óptico (hwGponOntOpticalDdm) trae una fila por
+     * ONT, así que un walk por columna devuelve la red completa: 474 ONT en
+     * cuatro consultas en vez de seis consultas por ONT. Eso es lo que permite
+     * mostrar la salud de la señal de toda la OLT.
+     *
+     * Qué mide cada columna se decide por el rango de los valores y no por un
+     * número de columna fijo: el orden cambia entre versiones de firmware —en
+     * este equipo la columna que el código daba por "Rx" es en realidad el
+     * voltaje— y una potencia mal leída manda a un técnico a revisar un
+     * enlace que está bien.
+     *
+     * @return list<array<string,mixed>>
+     */
+    public function senalDeTodasLasOnts(): array
+    {
+        $columnas = [];
+        $cobertura = [];
+
+        foreach (range(1, 8) as $col) {
+            $walk = $this->walk(self::OID_OPT_BASE . '.' . $col);
+
+            if ($walk === []) {
+                continue;
+            }
+
+            [$magnitud, $medidos] = self::magnitudDe($walk);
+
+            if ($magnitud === null) {
+                continue;
+            }
+
+            // Dos columnas pueden caer en el mismo rango; se queda la que mide
+            // a más ONT. Sin esto, una columna suelta con doce filas —y valores
+            // imposibles como +25 dBm— tapaba la tabla real de 474 ONT.
+            if ($medidos > ($cobertura[$magnitud] ?? 0)) {
+                $columnas[$magnitud]  = $walk;
+                $cobertura[$magnitud] = $medidos;
+            }
+        }
+
+        if (!isset($columnas['dbm'])) {
+            \Log::warning('[OLT] La tabla óptica no trajo ninguna columna de potencia', [
+                'olt'       => $this->oltId,
+                'columnas'  => array_keys($columnas),
+            ]);
+        }
+
+        $filas = [];
+
+        foreach ($columnas['dbm'] ?? ($columnas['temperatura'] ?? []) as $sufijo => $_) {
+            $idx = $this->parseIndex((string) $sufijo);
+
+            if ($idx === null) {
+                continue;
+            }
+
+            [$slot, $port, $ontId] = $idx;
+
+            $filas[] = [
+                'fsp'          => "0/{$slot}/{$port}",
+                'ont_id'       => $ontId,
+                'potencia'     => self::valor($columnas['dbm']         ?? [], $sufijo, 100),
+                'temperatura'  => self::valor($columnas['temperatura'] ?? [], $sufijo, 1),
+                'voltaje'      => self::valor($columnas['voltaje']     ?? [], $sufijo, 1000),
+                'corriente'    => self::valor($columnas['corriente']   ?? [], $sufijo, 100),
+            ];
+        }
+
+        usort($filas, fn ($a, $b) => strnatcmp($a['fsp'], $b['fsp']) ?: $a['ont_id'] <=> $b['ont_id']);
+
+        return $filas;
+    }
+
+    /**
+     * Qué magnitud física contiene una columna, según sus valores, y a cuántas
+     * ONT le pudo medir.
+     *
+     *   potencia óptica   negativa, entre -40 y -5 dBm (×0.01)
+     *   voltaje           3,0 a 3,6 V, que es lo que alimenta una ONT (×0.001)
+     *   temperatura       0 a 100 °C en grados enteros
+     *   corriente láser   décimas de mA (×0.01)
+     *
+     * @param  array<string,mixed>  $walk
+     * @return array{0:?string, 1:int}
+     */
+    private static function magnitudDe(array $walk): array
+    {
+        $valores = [];
+
+        foreach ($walk as $crudo) {
+            $n = (int) filter_var((string) $crudo, FILTER_SANITIZE_NUMBER_INT);
+
+            // 2147483647 y -32768 son los "sin dato" que usa el equipo.
+            if ($n === 0 || $n === 2147483647 || $n === -2147483648 || $n === -32768) {
+                continue;
+            }
+
+            $valores[] = $n;
+        }
+
+        if (count($valores) < 5) {
+            return [null, 0];
+        }
+
+        sort($valores);
+
+        $mediana = $valores[intdiv(count($valores), 2)];
+
+        $magnitud = match (true) {
+            $mediana <= -400  && $mediana >= -4000 => 'dbm',
+            $mediana >= 2500  && $mediana <= 4000  => 'voltaje',
+            $mediana >= 1     && $mediana <= 100   => 'temperatura',
+            $mediana >= 101   && $mediana <= 400   => 'corriente',
+            default                                => null,
+        };
+
+        return [$magnitud, count($valores)];
+    }
+
+    /** Un valor de la columna, ya convertido a su unidad. */
+    private static function valor(array $columna, string $sufijo, int $divisor): ?float
+    {
+        if (!isset($columna[$sufijo])) {
+            return null;
+        }
+
+        $n = (int) filter_var((string) $columna[$sufijo], FILTER_SANITIZE_NUMBER_INT);
+
+        if ($n === 0 || $n === 2147483647 || $n === -2147483648 || $n === -32768) {
+            return null;
+        }
+
+        return round($n / $divisor, $divisor > 100 ? 3 : 2);
     }
 
     /**

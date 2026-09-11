@@ -97,8 +97,90 @@ class OltAdminUseCase
 
         (new HuaweiSnmpReader($olt))->olvidarMapaDePuertos();
         \App\Services\Olt\EquipoDeOlt::olvidar($olt);
+        \App\Services\Olt\SenalDeLaOlt::olvidar($olt);
 
         return ['status' => 0, 'message' => 'Se volverá a leer el mapa de puertos y la ficha del equipo', 'data' => null];
+    }
+
+    /**
+     * La salud de la señal óptica de toda la OLT: clasificación por ONT,
+     * histograma, estado de cada puerto PON y los enlaces peores.
+     */
+    public function senal(int $oltId, bool $refrescar = false): array
+    {
+        $olt = OltAdmin::find($oltId);
+
+        if (!$olt) {
+            return ['status' => 1, 'message' => 'OLT no encontrada', 'data' => null];
+        }
+
+        $r = \App\Services\Olt\SenalDeLaOlt::de($olt, $refrescar);
+
+        return [
+            'status'  => $r['onts'] === [] ? 1 : 0,
+            'message' => $r['onts'] === []
+                ? ($r['error'] ?: 'La OLT no devolvió mediciones ópticas')
+                : 'OK',
+            'data'    => $r,
+        ];
+    }
+
+    /**
+     * Fija qué perfiles usa la OLT al autorizar una ONT.
+     *
+     * Se validan contra los que la OLT tiene realmente: apuntar a un perfil que
+     * no existe es lo que hacía fallar el alta con "The service profile does
+     * not exist", y el error sólo se veía al intentar registrar un cliente.
+     */
+    public function fijarPerfiles(int $oltId, ?int $lineProfileId, ?int $srvProfileId): array
+    {
+        $olt = OltAdmin::find($oltId);
+
+        if (!$olt) {
+            return ['status' => 1, 'message' => 'OLT no encontrada', 'data' => null];
+        }
+
+        $cambios = [];
+
+        foreach ([
+            'ont_lineprofile_id' => ['valor' => $lineProfileId, 'tipo' => 'line', 'nombre' => 'line profile'],
+            'ont_srvprofile_id'  => ['valor' => $srvProfileId,  'tipo' => 'srv',  'nombre' => 'service profile'],
+        ] as $campo => $dato) {
+            if ($dato['valor'] === null) {
+                continue;
+            }
+
+            $existe = OltProfile::where('olt_id', $oltId)
+                ->where('type', $dato['tipo'])
+                ->where('profile_id', $dato['valor'])
+                ->exists();
+
+            if (!$existe) {
+                return [
+                    'status'  => 1,
+                    'message' => "El {$dato['nombre']} {$dato['valor']} no está entre los que tiene la OLT. "
+                        . 'Sincronizá los perfiles y volvé a intentar.',
+                    'data'    => null,
+                ];
+            }
+
+            $cambios[$campo] = $dato['valor'];
+        }
+
+        if ($cambios === []) {
+            return ['status' => 1, 'message' => 'No se indicó ningún perfil', 'data' => null];
+        }
+
+        $olt->forceFill($cambios)->save();
+
+        return [
+            'status'  => 0,
+            'message' => 'Perfiles predeterminados actualizados',
+            'data'    => [
+                'ont_lineprofile_id' => $olt->ont_lineprofile_id,
+                'ont_srvprofile_id'  => $olt->ont_srvprofile_id,
+            ],
+        ];
     }
 
     /** Marcas de OLT que la plataforma sabe manejar. */
@@ -796,8 +878,25 @@ class OltAdminUseCase
      */
     public function getServicePorts(int $oltId, ?string $fsp, ?int $ontId): array
     {
-        if ($fsp === null || $ontId === null) {
-            return ['status' => 1, 'message' => 'Selecciona una ONT para ver sus service-ports.', 'data' => []];
+        // Sin ONT se devuelven los de toda la OLT. Antes esta pantalla obligaba
+        // a elegir una ONT a la vez, así que para ver cómo estaban repartidas
+        // las VLAN había que consultar cliente por cliente.
+        if ($ontId === null) {
+            $todos = $this->getAllServicePorts($oltId);
+
+            if ($fsp !== null) {
+                $todos = array_values(array_filter($todos, fn ($sp) => ($sp['fsp'] ?? null) === $fsp));
+            }
+
+            return [
+                'status'  => 0,
+                'message' => count($todos) . ' service-ports',
+                'data'    => $todos,
+            ];
+        }
+
+        if ($fsp === null) {
+            return ['status' => 1, 'message' => 'Falta el puerto de la ONT.', 'data' => []];
         }
 
         $cacheKey = "olt:{$oltId}:service_ports:{$fsp}:{$ontId}";
@@ -1011,7 +1110,7 @@ class OltAdminUseCase
      *
      * @return array<int,array<string,mixed>>
      */
-    private function getAllServicePorts(int $oltId): array
+    public function getAllServicePorts(int $oltId): array
     {
         $cacheKey = "olt:{$oltId}:all_service_ports";
         $todos    = Cache::get($cacheKey);

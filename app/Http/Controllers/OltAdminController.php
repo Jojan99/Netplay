@@ -64,6 +64,31 @@ class OltAdminController extends Controller
         return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
     }
 
+    /** Señal óptica de todas las ONT de la OLT, en un solo barrido. */
+    public function senal(Request $request, int $oltId): JsonResponse
+    {
+        $r = $this->uc->senal($oltId, $request->boolean('refrescar'));
+
+        return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
+    }
+
+    /** Fija los perfiles que se usan al autorizar una ONT en esta OLT. */
+    public function fijarPerfiles(Request $request, int $oltId): JsonResponse
+    {
+        $datos = $request->validate([
+            'ont_lineprofile_id' => 'nullable|integer|min:0',
+            'ont_srvprofile_id'  => 'nullable|integer|min:0',
+        ]);
+
+        $r = $this->uc->fijarPerfiles(
+            $oltId,
+            $datos['ont_lineprofile_id'] ?? null,
+            $datos['ont_srvprofile_id'] ?? null,
+        );
+
+        return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
+    }
+
     /** Marcas de OLT que la plataforma sabe manejar. */
     public function marcas(): JsonResponse
     {
