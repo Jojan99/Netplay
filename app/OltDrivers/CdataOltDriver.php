@@ -172,6 +172,101 @@ class CdataOltDriver extends DriverBase
 
     // ── Consultas ─────────────────────────────────────────────────────────
 
+    /**
+     * El equipo del cliente: fabricante, modelo, versiones y su WiFi.
+     *
+     * Las ONU EPON se gestionan desde la OLT por OAM (CTC), así que la OLT
+     * sabe qué equipo es y cómo tiene configurado el WiFi, clave incluida:
+     *
+     *   interface epon 0/0
+     *   show ont version <puerto> <ont>
+     *   show ont wifi info <puerto> <ont>
+     *   show ont wifi <puerto> <ont> ssid all
+     *
+     * Sólo lee. En GPON no hay equivalente y se devuelve vacío.
+     *
+     * @return array<string,mixed>
+     */
+    public function equipoDeOnt(string $fsp, int $ontId): array
+    {
+        if (!$this->esEpon()) {
+            return [];
+        }
+
+        $puerto = $this->entrarAlPuerto($fsp);
+
+        $version = $this->cmd("show ont version {$puerto} {$ontId}", 30);
+        $wifi    = $this->cmd("show ont wifi info {$puerto} {$ontId}", 30);
+        $ssids   = $this->cmd("show ont wifi {$puerto} {$ontId} ssid all", 30);
+
+        $this->volverAlPrompt();
+
+        $v = self::bloques($version)[0] ?? [];
+        $w = self::bloques($wifi)[0] ?? [];
+
+        // "25AR(0x32354152)" → "25AR": lo de paréntesis es el mismo código en hex.
+        $modelo = trim(preg_replace('/\(0x[0-9a-f]+\)/i', '', $v['ont model'] ?? '')) ?: null;
+
+        return [
+            'version' => $v ? [
+                'fabricante_id' => ($v['vendor-id'] ?? '') ?: null,
+                'modelo'        => $modelo,
+                'modelo_ext'    => ($v['extended model'] ?? '') ?: null,
+                'hardware'      => ($v['ont hardware version'] ?? '') ?: null,
+                'software'      => ($v['ont software version'] ?? '') ?: null,
+                'firmware'      => ($v['ont firmware version'] ?? '') ?: null,
+                'chipset'       => trim(($v['ont chipset vendor id'] ?? '') . ' ' . ($v['ont chipset model'] ?? '')) ?: null,
+                'oui'           => ($v['oui version'] ?? '') ?: null,
+            ] : null,
+            // Las ONU de otra marca (una Huawei colgada de esta OLT, por
+            // ejemplo) no le entregan el WiFi por OAM: la OLT responde "ERROR".
+            'wifi_soportado' => !$this->fallo($wifi) && stripos($wifi, 'ERROR') === false,
+            'wifi' => $w || str_contains($ssids, 'Ssid') ? [
+                'activo'   => isset($w['wifi state']) ? strtolower($w['wifi state']) === 'enable' : null,
+                'estandar' => ($w['wlan standard'] ?? '') ?: null,
+                'canal'    => isset($w['channel id']) ? ((int) $w['channel id'] ?: 'auto') : null,
+                'ancho'    => ($w['channel bandwidth'] ?? '') ?: null,
+                'ssids'    => self::ssids($ssids),
+            ] : null,
+        ];
+    }
+
+    /**
+     * La tabla de "show ont wifi … ssid all":
+     *
+     *   Ssid Name          Admin   BcastAdmin  EncryptMode  EncryptKey   MaxUsers
+     *   1    HGW-BDC32A    enable    enable     wpa_wpa2    12345678       0
+     *   2    HGW-BDC32A-1  disable   enable     wpa_wpa2                   0
+     *
+     * El nombre puede llevar espacios y la clave puede venir vacía, así que se
+     * ancla en las columnas fijas (enable/disable) y en el número del final.
+     *
+     * @return list<array<string,mixed>>
+     */
+    private static function ssids(string $salida): array
+    {
+        $ssids = [];
+
+        foreach (preg_split('/\r?\n/', $salida) as $linea) {
+            if (!preg_match('/^\s*(\d+)\s+(.+?)\s+(enable|disable)\s+(enable|disable)\s+(\S+)\s+(?:(.*?)\s+)?(\d+)\s*$/i', $linea, $m)) {
+                continue;
+            }
+
+            $ssids[] = [
+                'id'       => (int) $m[1],
+                'nombre'   => trim($m[2]),
+                'activo'   => strtolower($m[3]) === 'enable',
+                'visible'  => strtolower($m[4]) === 'enable',
+                'cifrado'  => $m[5],
+                'clave'    => ($m[6] ?? '') !== '' ? $m[6] : null,
+                'max_usuarios' => (int) $m[7],
+            ];
+        }
+
+        return $ssids;
+    }
+
+
     public function getVersion(): string
     {
         return $this->cmd('show version', 30) . "\n" . $this->cmd('show device', 30);

@@ -1632,16 +1632,57 @@ class OltAdminUseCase
     }
 
     /**
+     * El equipo del cliente: fabricante, modelo, versiones, WiFi y foto.
+     *
+     * @param int $userId users.id
+     */
+    public function equipoDeCliente(int $userId, bool $refrescar = false): array
+    {
+        $ont = $this->ontDelCliente($userId);
+
+        if (!$ont) {
+            return ['status' => 0, 'message' => 'Sin equipo ONT asignado.', 'data' => null];
+        }
+
+        $equipo = \App\Services\Olt\EquipoDeOnt::de(
+            $ont->olt, (string) $ont->fsp, (int) $ont->ont_id, (int) getSessionCompanyId(), $refrescar
+        );
+
+        return ['status' => 0, 'message' => $equipo['error'] ?? 'Equipo consultado', 'data' => $equipo];
+    }
+
+    /** Foto de un modelo de ONT, para todas las de ese modelo en la empresa. */
+    public function guardarFotoDeModelo(string $fabricante, string $modelo, \Illuminate\Http\UploadedFile $archivo): array
+    {
+        $url = \App\Services\Olt\EquipoDeOnt::guardarFoto((int) getSessionCompanyId(), $fabricante, $modelo, $archivo);
+
+        return ['status' => 0, 'message' => 'Foto guardada para el modelo ' . $modelo, 'data' => ['foto' => $url]];
+    }
+
+    public function borrarFotoDeModelo(string $fabricante, string $modelo): array
+    {
+        \App\Services\Olt\EquipoDeOnt::borrarFoto((int) getSessionCompanyId(), $fabricante, $modelo);
+
+        return ['status' => 0, 'message' => 'Foto quitada', 'data' => null];
+    }
+
+    /** La ONT vinculada al cliente, sólo si su OLT es de la empresa en sesión. */
+    private function ontDelCliente(int $userId): ?OltOnt
+    {
+        return OltOnt::where('user_data_id', $userId)
+            ->whereHas('olt', fn ($q) => $q->where('company_id', getSessionCompanyId()))
+            ->with('olt')
+            ->first();
+    }
+
+    /**
      * La ONT del cliente con su estado real, preguntándole a la OLT.
      *
      * @param int $userId users.id: es lo que guarda olt_onts.user_data_id
      */
     public function ontEnVivoDeCliente(int $userId, bool $refrescar = false): array
     {
-        $ont = OltOnt::where('user_data_id', $userId)
-            ->whereHas('olt', fn ($q) => $q->where('company_id', getSessionCompanyId()))
-            ->with('olt')
-            ->first();
+        $ont = $this->ontDelCliente($userId);
 
         if (!$ont) {
             return ['status' => 0, 'message' => 'Sin equipo ONT asignado.', 'data' => null];

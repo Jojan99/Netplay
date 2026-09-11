@@ -373,6 +373,41 @@ class OltAdminController extends Controller
     }
 
     /**
+     * GET /management/olt/ont/by-user/{userId}/equipo?refrescar=1
+     * Fabricante, modelo, versiones, WiFi y foto del equipo del cliente.
+     */
+    public function equipoDeCliente(int $userId, Request $request): JsonResponse
+    {
+        $r = $this->uc->equipoDeCliente($userId, $request->boolean('refrescar'));
+        return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
+    }
+
+    /** POST /management/olt/ont/modelo/foto — una foto por modelo de ONT. */
+    public function guardarFotoDeModelo(Request $request): JsonResponse
+    {
+        $request->validate([
+            'fabricante' => 'required|string|max:20',
+            'modelo'     => 'required|string|max:40',
+            'foto'       => 'required|image|mimes:jpg,jpeg,png,webp|max:4096',
+        ]);
+
+        $r = $this->uc->guardarFotoDeModelo($request->input('fabricante'), $request->input('modelo'), $request->file('foto'));
+        return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
+    }
+
+    /** DELETE /management/olt/ont/modelo/foto?fabricante=&modelo= */
+    public function borrarFotoDeModelo(Request $request): JsonResponse
+    {
+        $request->validate([
+            'fabricante' => 'required|string|max:20',
+            'modelo'     => 'required|string|max:40',
+        ]);
+
+        $r = $this->uc->borrarFotoDeModelo($request->query('fabricante'), $request->query('modelo'));
+        return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
+    }
+
+    /**
      * GET /management/olt/ont/by-user/{userId}/en-vivo?refrescar=1
      * La ONT del cliente con su estado y su señal leídos de la OLT ahora.
      */

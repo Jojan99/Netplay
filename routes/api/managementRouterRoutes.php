@@ -142,6 +142,9 @@ Route::prefix('management')->group(function () {
         Route::post('/{oltId}/ont/assign-client',    [OltAdminController::class, 'assignClientToOnt']);
         Route::get('/ont/by-user/{userId}',          [OltAdminController::class, 'getOntByUser']);
         Route::get('/ont/by-user/{userId}/en-vivo',  [OltAdminController::class, 'ontEnVivo']);
+        Route::get('/ont/by-user/{userId}/equipo',   [OltAdminController::class, 'equipoDeCliente']);
+        Route::post('/ont/modelo/foto',              [OltAdminController::class, 'guardarFotoDeModelo']);
+        Route::delete('/ont/modelo/foto',            [OltAdminController::class, 'borrarFotoDeModelo']);
     });
 
   // 📥 Inbox

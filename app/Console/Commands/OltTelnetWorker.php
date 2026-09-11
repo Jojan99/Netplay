@@ -328,6 +328,8 @@ class OltTelnetWorker extends Command
             'pasoVlan'          => method_exists($this->driver, 'pasoVlan')
                                        ? $this->driver->pasoVlan($p['fsp'], (int) $p['vlan']) : null,
             // Sólo algunos equipos la tienen (hoy, C-Data EPON).
+            'equipoDeOnt'       => method_exists($this->driver, 'equipoDeOnt')
+                                       ? $this->driver->equipoDeOnt($p['fsp'], (int) $p['ont_id']) : [],
             'autoAutorizacion'  => method_exists($this->driver, 'autoAutorizacion')
                                        ? $this->driver->autoAutorizacion() : null,
             'cambiarAutoAutorizacion' => method_exists($this->driver, 'cambiarAutoAutorizacion')
