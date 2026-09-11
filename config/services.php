@@ -14,6 +14,13 @@ return [
     |
     */
 
+    // Servidor TR-069 (GenieACS). Su API (NBI) no tiene autenticación: debe
+    // escuchar sólo en localhost y la plataforma la consume desde el backend.
+    'genieacs' => [
+        'nbi' => env('GENIEACS_NBI_URL', 'http://127.0.0.1:7557'),
+        'cwmp_url' => env('GENIEACS_CWMP_URL', 'http://181.48.150.43:7547'),
+    ],
+
     'mailgun' => [
         'domain' => env('MAILGUN_DOMAIN'),
         'secret' => env('MAILGUN_SECRET'),

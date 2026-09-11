@@ -93,6 +93,21 @@ Route::prefix('management')->group(function () {
         Route::post('/tuneles/{id}/probar',      [VpnController::class, 'probar']);
     });
 
+    // ── Router del cliente por TR-069 (GenieACS) ───────────────────────────
+    Route::prefix('acs')->group(function () {
+        Route::get('/cliente/{userId}', [\App\Http\Controllers\AcsController::class, 'deCliente'])
+            ->whereNumber('userId')->middleware('module:router,usuario');
+
+        Route::middleware('module:router')->group(function () {
+            Route::get('/estado',              [\App\Http\Controllers\AcsController::class, 'estado']);
+            Route::get('/equipos',             [\App\Http\Controllers\AcsController::class, 'equipos']);
+            Route::get('/equipos/detalle',     [\App\Http\Controllers\AcsController::class, 'detalle']);
+            Route::post('/equipos/refrescar',  [\App\Http\Controllers\AcsController::class, 'refrescar']);
+            Route::post('/equipos/reiniciar',  [\App\Http\Controllers\AcsController::class, 'reiniciar']);
+            Route::post('/equipos/wifi',       [\App\Http\Controllers\AcsController::class, 'wifi']);
+        });
+    });
+
     // ── OLT Admin ──────────────────────────────────────────────────────────
     Route::prefix('olt')->group(function () {
         Route::get('/',                    [OltAdminController::class, 'index']);
