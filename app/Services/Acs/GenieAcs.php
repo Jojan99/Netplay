@@ -75,6 +75,15 @@ class GenieAcs
             throw new \RuntimeException("El ACS rechazó la tarea ({$r->status()}): " . mb_substr($r->body(), 0, 200));
         }
 
-        return ['hecha' => $r->status() === 200, 'en_cola' => $r->status() === 202, 'estado' => $r->status()];
+        $cuerpo = $r->json();
+
+        return [
+            'hecha'   => $r->status() === 200,
+            'en_cola' => $r->status() === 202,
+            'estado'  => $r->status(),
+            // Al crear un objeto, GenieACS devuelve el número de instancia que
+            // le asignó el equipo: hace falta para escribir dentro de ella.
+            'instancia' => is_array($cuerpo) ? ($cuerpo['instance'] ?? null) : null,
+        ];
     }
 }

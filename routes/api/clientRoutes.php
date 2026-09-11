@@ -63,6 +63,13 @@ Route::prefix('client')->middleware(['jwt.client'])->group(function () {
 
     // Perfil
     // ── Cuenta: estado del servicio, pagos, contratos y actividad ──
+    // ── Mi WiFi: el equipo del cliente por TR-069 ──────────────────────────
+    Route::get('router',              [\App\Http\Controllers\Client\ClientRouterController::class, 'panel']);
+    Route::post('router/wifi',        [\App\Http\Controllers\Client\ClientRouterController::class, 'wifi']);
+    Route::post('router/bloquear',    [\App\Http\Controllers\Client\ClientRouterController::class, 'bloquear']);
+    Route::post('router/desbloquear', [\App\Http\Controllers\Client\ClientRouterController::class, 'desbloquear']);
+    Route::post('router/refrescar',   [\App\Http\Controllers\Client\ClientRouterController::class, 'refrescar']);
+
     Route::get('status',                       [\App\Http\Controllers\Client\ClientAccountController::class, 'status']);
     Route::get('payments',                     [\App\Http\Controllers\Client\ClientAccountController::class, 'payments']);
     Route::get('payments/{invoiceId}/receipt', [\App\Http\Controllers\Client\ClientAccountController::class, 'receipt']);

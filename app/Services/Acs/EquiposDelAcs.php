@@ -107,6 +107,20 @@ class EquiposDelAcs
         ]);
     }
 
+    /**
+     * El documento completo del equipo, si es de la empresa.
+     *
+     * Trae todo lo que el equipo publica —incluidas las claves de telnet y ssh
+     * del fabricante—, así que es para uso interno del servidor: no se manda
+     * al panel ni al portal.
+     *
+     * @return array<string,mixed>|null
+     */
+    public function documento(string $id): ?array
+    {
+        return $this->propio($id) ? $this->acs->dispositivo($id) : null;
+    }
+
     // ── Acciones ──────────────────────────────────────────────────────────
 
     /** Le pide al equipo que vuelva a mandar todos sus parámetros. */
