@@ -1,0 +1,99 @@
+#!/bin/bash
+#
+# Ayudante de la VPN de Netplay.
+#
+# Es lo único que corre como root en todo el circuito. La plataforma (www-data)
+# escribe el estado deseado en dos archivos y este script lo aplica; no evalúa
+# nada de lo que lee: valida cada valor antes de usarlo, así que aunque alguien
+# lograra escribir en esos archivos no consigue ejecutar comandos.
+#
+# Acciones: sync | status | down
+#
+set -uo pipefail
+
+BASE=/var/www/netplay/storage/app/vpn
+ENTORNO="$BASE/servidor.env"
+
+morir() { echo "netplay-vpn: $*" >&2; exit 1; }
+
+[ -r "$ENTORNO" ] || morir "falta $ENTORNO (todavía no se configuró la VPN)"
+
+# Se leen sólo las tres claves esperadas, con grep: nada de 'source'.
+IFACE=$(grep -oP '^IFACE=\K[A-Za-z0-9_.-]{1,15}$'            "$ENTORNO" | head -1)
+DIRECCION=$(grep -oP '^DIRECCION=\K[0-9.]{7,15}/[0-9]{1,2}$' "$ENTORNO" | head -1)
+PUERTO=$(grep -oP '^PUERTO=\K[0-9]{1,5}$'                    "$ENTORNO" | head -1)
+
+[ -n "${IFACE:-}" ]     || morir "IFACE inválido"
+[ -n "${DIRECCION:-}" ] || morir "DIRECCION inválida"
+[ -n "${PUERTO:-}" ]    || morir "PUERTO inválido"
+
+CONF="$BASE/$IFACE.conf"
+
+command -v wg >/dev/null 2>&1 || morir "falta wireguard-tools (apt install wireguard-tools)"
+
+levantar_interfaz() {
+    if ! ip link show "$IFACE" >/dev/null 2>&1; then
+        ip link add "$IFACE" type wireguard || morir "no se pudo crear $IFACE"
+    fi
+
+    # La dirección se agrega si no la tiene ya.
+    if ! ip -4 addr show dev "$IFACE" | grep -qF "${DIRECCION%%/*}"; then
+        ip address replace "$DIRECCION" dev "$IFACE" || morir "no se pudo direccionar $IFACE"
+    fi
+
+    ip link set "$IFACE" up
+}
+
+# Una ruta por cada red que un par declara, salvo las /32 del propio túnel:
+# `wg syncconf` no toca la tabla de rutas.
+sincronizar_rutas() {
+    local clave redes red
+    local dentro
+    # Se excluyen las rutas 'proto kernel': la de la propia subred del túnel
+    # la pone el kernel al direccionar la interfaz y no hay que tocarla.
+    dentro=$(ip -4 route show dev "$IFACE" | grep -v 'proto kernel' | awk '{print $1}')
+
+    wg show "$IFACE" allowed-ips | while read -r clave redes; do
+        for red in $redes; do
+            case "$red" in
+                */32) continue ;;
+            esac
+            ip route replace "$red" dev "$IFACE" 2>/dev/null
+        done
+    done
+
+    # Las rutas que quedaron de un túnel que ya no existe se retiran.
+    local vigentes
+    vigentes=$(wg show "$IFACE" allowed-ips | tr '\t' ' ' | cut -d' ' -f2- | tr ' ' '\n' | grep -v '/32$' | sort -u)
+
+    for red in $dentro; do
+        if ! echo "$vigentes" | grep -qxF "$red"; then
+            ip route del "$red" dev "$IFACE" 2>/dev/null
+        fi
+    done
+}
+
+case "${1:-}" in
+    sync)
+        [ -r "$CONF" ] || morir "falta $CONF"
+        levantar_interfaz
+        # syncconf y no setconf: aplica los cambios sin reiniciar el estado de
+        # los pares que ya están conectados.
+        wg syncconf "$IFACE" "$CONF" || morir "wg syncconf falló"
+        # El puerto se fija aparte por si la interfaz ya existía con otro.
+        wg set "$IFACE" listen-port "$PUERTO"
+        sincronizar_rutas
+        echo "ok"
+        ;;
+    status)
+        ip link show "$IFACE" >/dev/null 2>&1 || morir "la interfaz $IFACE no existe"
+        wg show "$IFACE" dump
+        ;;
+    down)
+        ip link del "$IFACE" 2>/dev/null
+        echo "ok"
+        ;;
+    *)
+        morir "uso: netplay-vpn sync|status|down"
+        ;;
+esac

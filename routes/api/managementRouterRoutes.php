@@ -3,6 +3,7 @@
 use App\Http\Controllers\Crm\ConversationController;
 use App\Http\Controllers\ManagementRouterController;
 use App\Http\Controllers\OltAdminController;
+use App\Http\Controllers\VpnController;
 use App\Http\Controllers\SnmpController;
 
 use Illuminate\Support\Facades\Route;
@@ -77,6 +78,20 @@ Route::prefix('management')->group(function () {
     Route::post('separar-fichas', [ManagementRouterController::class, 'separarFichas'])->middleware('role:admin');
     Route::post('autorizarServicio', [ManagementRouterController::class, 'autorizarServicio'])->withoutMiddleware('jwt.verify');
     Route::post('migrarIp', [ManagementRouterController::class, 'migrarIp'])->withoutMiddleware('jwt.verify');
+
+    // ── VPN de gestión ─────────────────────────────────────────────────────
+    // El túnel por el que se llega a equipos que están en redes privadas, sin
+    // depender de abrir una sesión SSH en el router del cliente.
+    Route::prefix('vpn')->group(function () {
+        Route::get('/estado',            [VpnController::class, 'estado']);
+        Route::get('/instalador',        [VpnController::class, 'instalador']);
+        Route::post('/tuneles',          [VpnController::class, 'crearTunel']);
+        Route::get('/tuneles/{id}/script', [VpnController::class, 'script']);
+        Route::put('/tuneles/{id}',      [VpnController::class, 'actualizarTunel']);
+        Route::delete('/tuneles/{id}',   [VpnController::class, 'eliminarTunel']);
+        Route::post('/tuneles/{id}/usar-en-olt', [VpnController::class, 'usarEnOlt']);
+        Route::post('/tuneles/{id}/probar',      [VpnController::class, 'probar']);
+    });
 
     // ── OLT Admin ──────────────────────────────────────────────────────────
     Route::prefix('olt')->group(function () {
