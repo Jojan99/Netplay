@@ -371,4 +371,14 @@ class OltAdminController extends Controller
         $r = $this->uc->getOntByUserId($userId);
         return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
     }
+
+    /**
+     * GET /management/olt/ont/by-user/{userId}/en-vivo?refrescar=1
+     * La ONT del cliente con su estado y su señal leídos de la OLT ahora.
+     */
+    public function ontEnVivo(int $userId, Request $request): JsonResponse
+    {
+        $r = $this->uc->ontEnVivoDeCliente($userId, $request->boolean('refrescar'));
+        return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
+    }
 }

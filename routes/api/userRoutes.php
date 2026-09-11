@@ -14,6 +14,8 @@ Route::prefix('user')->group(function () {
         Route::post('createUserData', [UserController::class, 'createUserData']);
         Route::put('updateUserData', [UserController::class, 'updateUserData']);
         Route::delete('deleteUserDataById/{id}', [UserController::class, 'DeleteUserData']);
+        // Qué tiene el cliente en el MikroTik, antes de eliminarlo.
+        Route::get('{id}/en-router', [UserController::class, 'enRouter'])->whereNumber('id');
     });
 
     // Admin y contador: consultar clientes y generar PDF

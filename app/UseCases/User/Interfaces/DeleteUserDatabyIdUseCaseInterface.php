@@ -15,8 +15,10 @@ interface DeleteUserDatabyIdUseCaseInterface
           
 {
     /**
-     * @param int $id
+     * @param int    $id
+     * @param string $enRouter  'quitar' borra sus credenciales del MikroTik,
+     *                          'suspender' las deshabilita, 'nada' no toca el router
      * @return mixed
      */
-    public function DeleteUserData($id): mixed;
+    public function DeleteUserData($id, string $enRouter = 'suspender'): mixed;
 }

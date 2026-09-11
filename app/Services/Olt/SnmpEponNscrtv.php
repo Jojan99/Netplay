@@ -137,6 +137,73 @@ class SnmpEponNscrtv
         return $filas;
     }
 
+    /**
+     * Una sola ONU, con GET puntuales en vez de recorrer la OLT entera.
+     *
+     * Sirve para la ficha del cliente: de otro modo, mirar un equipo costaba
+     * los mismos barridos que la pantalla de señal de toda la red.
+     *
+     * @return array<string,mixed>|null  null si la OLT no conoce esa ONU
+     */
+    public function una(string $fsp, int $ontId, ?int $ifIndex = null): ?array
+    {
+        $ifIndex ??= $this->mapa()["{$fsp}:{$ontId}"] ?? null;
+
+        if ($ifIndex === null) {
+            return null;
+        }
+
+        $onu = fn (int $col) => $this->valor(self::ONU . ".{$col}.{$ifIndex}");
+        $opt = fn (int $col) => $this->valor(self::OPT . ".{$col}.{$ifIndex}.0.0");
+
+        $estado = self::entero($this->valor(self::IF_ESTADO . ".{$ifIndex}"));
+
+        return [
+            'fsp'         => $fsp,
+            'ont_id'      => $ontId,
+            'serial'      => self::mac($onu(7)),
+            'description' => self::texto($onu(2)),
+            'status'      => $estado === null || $estado === 1 ? 'online' : 'offline',
+            'modelo'      => self::texto($onu(26)),
+            'firmware'    => self::texto($onu(13)),
+            'distancia_m' => self::entero($onu(15)),
+            'potencia'    => self::escalar($opt(4), 100),
+            'tx'          => self::escalar($opt(5), 100),
+            'corriente'   => self::escalar($opt(6), 100),
+            'voltaje'     => self::escalar($opt(7), 100000),
+            'temperatura' => self::escalar($opt(8), 100),
+        ];
+    }
+
+    /**
+     * "puerto:ONU" → ifIndex. Recorrer IF-MIB tarda varios segundos y el
+     * ifIndex de una ONU no cambia, así que quien lo llama lo puede guardar.
+     *
+     * @return array<string,int>
+     */
+    public function mapa(): array
+    {
+        $mapa = [];
+
+        foreach ($this->ubicaciones() as $ifIndex => [$fsp, $ontId]) {
+            $mapa["{$fsp}:{$ontId}"] = $ifIndex;
+        }
+
+        return $mapa;
+    }
+
+    /** GET de un OID; null si la OLT no lo tiene. */
+    private function valor(string $oid): ?string
+    {
+        try {
+            $crudo = $this->snmp->getRaw($oid);
+        } catch (\Throwable) {
+            return null;
+        }
+
+        return $crudo === '' || stripos($crudo, 'No Such') !== false ? null : $crudo;
+    }
+
     // ── Lectura ───────────────────────────────────────────────────────────
 
     /**

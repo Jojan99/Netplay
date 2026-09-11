@@ -137,7 +137,7 @@ class SenalDeLaOlt
     }
 
     /** En qué estado está un enlace según su potencia recibida. */
-    private static function clasificar(?float $dbm): string
+    public static function clasificar(?float $dbm): string
     {
         return match (true) {
             $dbm === null           => 'sin_dato',

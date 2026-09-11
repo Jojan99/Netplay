@@ -106,14 +106,46 @@ class ServicioPppoe
         }
 
         // El documento del cliente va en el comment, así que se puede mostrar
-        // de quién es cada credencial y no sólo el usuario.
-        $clientes = DB::table('user_data as ud')
+        // de quién es cada credencial y no sólo el usuario. También se busca
+        // por usuario PPPoE, y entran los clientes eliminados: una credencial
+        // que quedó de un cliente dado de baja es justo la que hay que limpiar.
+        $filas = DB::table('user_data as ud')
             ->join('users as u', 'u.id', '=', 'ud.user_id')
+            ->leftJoin('internet_plans as ip', 'ip.id', '=', 'ud.internet_plans_id')
+            ->leftJoin('internet_status as st', 'st.id', '=', 'ud.status_internet_id')
             ->where('u.company_id', $this->companyId())
-            ->where('ud.active', 1)
-            ->whereNotNull('ud.dni')
-            ->get(['ud.user_id', 'ud.dni', 'ud.names', 'ud.lastname', 'ud.pppoe_user'])
-            ->keyBy(fn ($c) => preg_replace('/\D/', '', (string) $c->dni));
+            ->orderByDesc('ud.active')
+            ->get([
+                'ud.user_id', 'ud.dni', 'ud.names', 'ud.lastname', 'ud.pppoe_user',
+                'ud.active', 'ud.connection_type', 'ud.phone', 'ud.address',
+                'ip.plan_name', 'st.name as estado_servicio',
+            ]);
+
+        $porDocumento = [];
+        $porUsuario   = [];
+
+        // Ordenados con los activos primero: si un documento se repite entre un
+        // cliente activo y uno eliminado, gana el activo.
+        foreach ($filas as $c) {
+            $doc = preg_replace('/\D/', '', (string) $c->dni);
+
+            if ($doc !== '' && !isset($porDocumento[$doc])) {
+                $porDocumento[$doc] = $c;
+            }
+
+            if ($c->pppoe_user && !isset($porUsuario[$c->pppoe_user])) {
+                $porUsuario[$c->pppoe_user] = $c;
+            }
+        }
+
+        // La ONT de cada cliente, para ver desde la credencial si el equipo
+        // está en línea. olt_onts.user_data_id guarda users.id.
+        $onts = DB::table('olt_onts as o')
+            ->join('olt_admins as t', 't.id', '=', 'o.olt_id')
+            ->where('t.company_id', $this->companyId())
+            ->whereNotNull('o.user_data_id')
+            ->get(['o.user_data_id', 'o.olt_id', 't.name as olt', 'o.fsp', 'o.ont_id', 'o.serial', 'o.status'])
+            ->keyBy('user_data_id');
 
         // MikroTik guarda en el mismo lugar las credenciales de PPPoE y las de
         // las VPN —L2TP, PPTP, SSTP, OpenVPN—. Acá interesan sólo las de
@@ -123,10 +155,11 @@ class ServicioPppoe
             fn ($s) => in_array($s['service'] ?? '', ['pppoe', 'any', ''], true)
         );
 
-        return array_values(array_map(function ($s) use ($activas, $clientes) {
+        return array_values(array_map(function ($s) use ($activas, $porDocumento, $porUsuario, $onts) {
             $usuario = $s['name'] ?? '';
             $documento = trim((string) ($s['comment'] ?? ''));
-            $cliente = $clientes[preg_replace('/\D/', '', $documento)] ?? null;
+            $cliente = $porUsuario[$usuario] ?? ($porDocumento[preg_replace('/\D/', '', $documento)] ?? null);
+            $ont = $cliente ? ($onts[$cliente->user_id] ?? null) : null;
 
             return [
                 'usuario'    => $usuario,
@@ -136,6 +169,23 @@ class ServicioPppoe
                 'habilitado' => ($s['disabled'] ?? 'false') !== 'true',
                 'cliente'    => $cliente ? trim($cliente->names . ' ' . $cliente->lastname) : null,
                 'user_id'    => $cliente->user_id ?? null,
+                'ficha'      => $cliente ? [
+                    'documento' => $cliente->dni,
+                    'telefono'  => $cliente->phone,
+                    'direccion' => $cliente->address,
+                    'plan'      => $cliente->plan_name,
+                    'estado'    => $cliente->estado_servicio,
+                    'conexion'  => $cliente->connection_type ?: 'static',
+                    'eliminado' => !$cliente->active,
+                ] : null,
+                'ont'        => $ont ? [
+                    'olt_id' => $ont->olt_id,
+                    'olt'    => $ont->olt,
+                    'fsp'    => $ont->fsp,
+                    'ont_id' => $ont->ont_id,
+                    'serial' => $ont->serial,
+                    'estado' => $ont->status,
+                ] : null,
                 'ultima_salida' => $s['last-logged-out'] ?? null,
                 'ultimo_motivo' => $s['last-disconnect-reason'] ?? null,
                 'ultima_mac'    => $s['last-caller-id'] ?? null,

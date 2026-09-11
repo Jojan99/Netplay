@@ -1630,4 +1630,41 @@ class OltAdminUseCase
 
         return ['status' => 0, 'message' => 'Equipo ONT encontrado.', 'data' => $ont];
     }
+
+    /**
+     * La ONT del cliente con su estado real, preguntándole a la OLT.
+     *
+     * @param int $userId users.id: es lo que guarda olt_onts.user_data_id
+     */
+    public function ontEnVivoDeCliente(int $userId, bool $refrescar = false): array
+    {
+        $ont = OltOnt::where('user_data_id', $userId)
+            ->whereHas('olt', fn ($q) => $q->where('company_id', getSessionCompanyId()))
+            ->with('olt')
+            ->first();
+
+        if (!$ont) {
+            return ['status' => 0, 'message' => 'Sin equipo ONT asignado.', 'data' => null];
+        }
+
+        $vivo = \App\Services\Olt\EstadoDeUnaOnt::de($ont->olt, (string) $ont->fsp, (int) $ont->ont_id, $refrescar);
+
+        return [
+            'status'  => 0,
+            'message' => $vivo['error'] ?? 'ONT consultada',
+            'data'    => [
+                'olt' => [
+                    'id'    => $ont->olt->id,
+                    'name'  => $ont->olt->name,
+                    'brand' => $ont->olt->brand,
+                ],
+                'fsp'         => $ont->fsp,
+                'ont_id'      => $ont->ont_id,
+                'serial'      => $ont->serial,
+                'description' => $ont->description,
+                'guardado'    => $ont->status,
+                'vivo'        => $vivo,
+            ],
+        ];
+    }
 }

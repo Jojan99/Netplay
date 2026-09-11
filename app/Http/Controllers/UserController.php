@@ -111,6 +111,26 @@ class UserController extends Controller
     }
 
     /**
+     * Lo que el cliente tiene en su MikroTik, para decidir al eliminarlo si
+     * se borra también de ahí. Sólo lee.
+     */
+    public function enRouter(int $id): object
+    {
+        $companyId = (int) getSessionCompanyId();
+
+        if (!$companyId) {
+            return standardApiReponse('Sesión sin empresa asociada', null, 1, JsonResponse::HTTP_UNAUTHORIZED);
+        }
+
+        $r = (new \App\Services\Red\ClienteEnElRouter(
+            app(\App\Managers\Interfaces\ConectionRouterManagerInterface::class),
+            $companyId
+        ))->queHay($id);
+
+        return standardApiReponse($r['error'] ?? 'En el router', $r, $r['ok'] ? 0 : 1, JsonResponse::HTTP_OK);
+    }
+
+    /**
      * @param CreateUserDataRequest $createUserDataRequest
      * @param int id
      * @param UpdateUserDataUseCaseInterface $updateUserDataUseCaseInterface
@@ -122,7 +142,12 @@ class UserController extends Controller
 
     ): object {
         try {
-            $deleteUserData = $deleteUserDatabyIdUseCaseInterface->DeleteUserData($id);
+            // Qué hacer con sus credenciales en el MikroTik: lo decide quien
+            // elimina. Sin el parámetro se suspenden, como hacía antes el panel.
+            $deleteUserData = $deleteUserDatabyIdUseCaseInterface->DeleteUserData(
+                $id,
+                (string) request()->query('router', 'suspender')
+            );
         } catch (JWTException $e) {
             // Respuesta en caso de excepción
             return standardApiReponse(

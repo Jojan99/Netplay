@@ -141,6 +141,7 @@ Route::prefix('management')->group(function () {
         Route::post('/{oltId}/cli',                  [OltAdminController::class, 'cliCommand']);
         Route::post('/{oltId}/ont/assign-client',    [OltAdminController::class, 'assignClientToOnt']);
         Route::get('/ont/by-user/{userId}',          [OltAdminController::class, 'getOntByUser']);
+        Route::get('/ont/by-user/{userId}/en-vivo',  [OltAdminController::class, 'ontEnVivo']);
     });
 
   // 📥 Inbox
