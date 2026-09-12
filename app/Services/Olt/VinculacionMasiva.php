@@ -72,23 +72,14 @@ class VinculacionMasiva
                     'direccion' => $cliente->address,
                     'ya_tiene_ont' => isset($conOnt[$cliente->user_id]),
                 ],
-                'confianza' => $candidato['confianza'],
-                'motivo'    => $candidato['motivo'],
-                'ambiguo'   => $candidato['ambiguo'],
+                'confianza'  => $candidato['confianza'],
+                'motivo'     => $candidato['motivo'],
+                'ambiguo'    => $candidato['ambiguo'],
+                'candidatos' => $candidato['candidatos'] ?? [],
             ];
         }
 
-        // Una misma persona propuesta para dos ONT es señal de duda: se marcan
-        // las dos para que alguien mire, en vez de vincular la primera.
-        $vecesPorCliente = array_count_values(array_map(fn ($p) => $p['cliente']['user_id'], $propuestas));
-
-        foreach ($propuestas as $i => $p) {
-            if (($vecesPorCliente[$p['cliente']['user_id']] ?? 0) > 1) {
-                $propuestas[$i]['ambiguo'] = true;
-                $propuestas[$i]['confianza'] = 'baja';
-                $propuestas[$i]['motivo'] .= ' · el mismo cliente aparece en otra ONT';
-            }
-        }
+        $propuestas = $this->resolverRepetidos($propuestas);
 
         usort($propuestas, fn ($a, $b) => [self::peso($a['confianza']), $a['ont']['fsp']] <=> [self::peso($b['confianza']), $b['ont']['fsp']]);
 
@@ -104,6 +95,49 @@ class VinculacionMasiva
                 'ambiguas'      => $ambiguas,
             ],
         ];
+    }
+
+    /**
+     * Cuando un cliente aparece en dos ONT, casi siempre una es el equipo que
+     * usa hoy y la otra el que le cambiaron y quedó autorizado en la OLT. La
+     * que está en línea es la buena; si las dos lo están, decide una persona.
+     *
+     * @param  list<array<string,mixed>>  $propuestas
+     * @return list<array<string,mixed>>
+     */
+    private function resolverRepetidos(array $propuestas): array
+    {
+        $porCliente = [];
+
+        foreach ($propuestas as $i => $p) {
+            $porCliente[$p['cliente']['user_id']][] = $i;
+        }
+
+        foreach ($porCliente as $indices) {
+            if (count($indices) < 2) {
+                continue;
+            }
+
+            $enLinea = array_values(array_filter($indices, fn ($i) => $propuestas[$i]['ont']['estado'] === 'online'));
+
+            foreach ($indices as $i) {
+                $esta = $propuestas[$i]['ont']['estado'] === 'online';
+
+                if (count($enLinea) === 1 && $esta) {
+                    $propuestas[$i]['motivo'] .= ' · es el que está en línea; el otro parece el equipo anterior';
+                    continue;
+                }
+
+                $propuestas[$i]['ambiguo']   = true;
+                $propuestas[$i]['confianza'] = 'baja';
+                $propuestas[$i]['motivo']   .= count($enLinea) === 1 && !$esta
+                    ? ' · está fuera de línea y el cliente tiene otro en línea: parece el equipo anterior'
+                    : ' · el cliente tiene ' . count($enLinea) . ' equipos en línea con el mismo nombre';
+                $propuestas[$i]['equipo_anterior'] = count($enLinea) === 1 && !$esta;
+            }
+        }
+
+        return $propuestas;
     }
 
     /**
@@ -291,13 +325,18 @@ class VinculacionMasiva
         }
 
         if (count($contienen) > 1) {
-            $userId = (int) $contienen[0];
-
             return [
-                'user_id'   => $userId,
+                'user_id'   => (int) $contienen[0],
                 'confianza' => 'baja',
-                'motivo'    => 'Hay ' . count($contienen) . ' clientes con ese nombre',
+                'motivo'    => 'Hay ' . count($contienen) . ' clientes con ese nombre: elegí cuál',
                 'ambiguo'   => true,
+                // Para que la pantalla ofrezca los dos y no haya que adivinar.
+                'candidatos' => array_map(fn ($id) => [
+                    'user_id'   => (int) $id,
+                    'nombre'    => $clientes[$id]->nombre,
+                    'documento' => $clientes[$id]->dni,
+                    'direccion' => $clientes[$id]->address,
+                ], array_slice($contienen, 0, 6)),
             ];
         }
 
