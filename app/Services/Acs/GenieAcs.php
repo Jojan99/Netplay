@@ -22,6 +22,18 @@ class GenieAcs
     }
 
     /**
+     * El servidor de esa empresa: el suyo si lo configuró, si no el de la
+     * plataforma. Así una empresa con su propio ACS ve sus equipos y nadie ve
+     * los de otra.
+     */
+    public static function deEmpresa(int $companyId): self
+    {
+        $propio = \App\Models\AcsServidor::where('company_id', $companyId)->where('activo', true)->first();
+
+        return new self(rtrim($propio?->urlNbi() ?: (string) config('services.genieacs.nbi'), '/'));
+    }
+
+    /**
      * @param  array<string,mixed>  $query       filtro de MongoDB
      * @param  list<string>|null    $proyeccion  parámetros a traer
      * @return list<array<string,mixed>>

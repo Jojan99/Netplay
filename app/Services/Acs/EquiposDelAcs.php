@@ -30,7 +30,7 @@ class EquiposDelAcs
 
     public function __construct(private int $companyId, private ?GenieAcs $acs = null)
     {
-        $this->acs ??= GenieAcs::make();
+        $this->acs ??= GenieAcs::deEmpresa($companyId);
     }
 
     // ── Lista ─────────────────────────────────────────────────────────────
@@ -295,7 +295,19 @@ class EquiposDelAcs
                 $series[self::serial((string) $o->serial)] = $o;
             }
 
-            return compact('ips', 'pppoe', 'series');
+            // Las redes que la empresa declaró en el asistente. Sirven para no
+            // atribuirle un equipo de otra empresa cuando las dos usan el
+            // mismo rango privado, que con 192.168.1.x pasa todo el tiempo.
+            $propias = \App\Models\AcsServidor::where('company_id', $this->companyId)->value('redes');
+            $propias = collect(is_array($propias) ? $propias : [])
+                ->filter(fn ($r) => $r['elegida'] ?? false)->pluck('red')->values()->all();
+
+            if (!$propias) {
+                $propias = \App\Models\VpnTunel::where('company_id', $this->companyId)
+                    ->get()->flatMap(fn ($t) => $t->redes_remotas ?? [])->unique()->values()->all();
+            }
+
+            return compact('ips', 'pppoe', 'series') + ['propias' => $propias];
         });
     }
 
@@ -307,7 +319,7 @@ class EquiposDelAcs
      */
     private function todos(): array
     {
-        return Cache::remember('acs:equipos', self::VIGENCIA, fn () => $this->acs->dispositivos([], [
+        return Cache::remember("acs:equipos:{$this->companyId}", self::VIGENCIA, fn () => $this->acs->dispositivos([], [
             '_id', '_deviceId', '_lastInform', '_lastBoot', '_registered',
             'InternetGatewayDevice.WANDevice', 'InternetGatewayDevice.DeviceInfo.SoftwareVersion',
             'Device.PPP.Interface', 'Device.IP.Interface', 'Device.DeviceInfo.SoftwareVersion',
@@ -336,7 +348,11 @@ class EquiposDelAcs
         $ont = null;
         $via = null;
 
-        foreach ($usuarios as $u) {
+        // Si la empresa declaró sus redes, el equipo tiene que estar en una de
+        // ellas para ser suyo. El serial no necesita esto: es único.
+        $enSuRed = !$vinculos['propias'] || self::enAlgunaRed($ips, $vinculos['propias']);
+
+        foreach ($enSuRed ? $usuarios : [] as $u) {
             if (isset($vinculos['pppoe'][$u])) {
                 [$cliente, $via] = [$vinculos['pppoe'][$u], 'pppoe'];
                 break;
@@ -344,7 +360,7 @@ class EquiposDelAcs
         }
 
         if (!$cliente) {
-            foreach ($ips as $ip) {
+            foreach ($enSuRed ? $ips : [] as $ip) {
                 if (isset($vinculos['ips'][$ip])) {
                     [$cliente, $via] = [$vinculos['ips'][$ip], 'ip'];
                     break;
@@ -578,6 +594,40 @@ class EquiposDelAcs
                 yield from self::parametros($v, $ruta);
             }
         }
+    }
+
+    /**
+     * ¿Alguna de las IP del equipo cae en las redes de la empresa?
+     *
+     * @param  list<string>  $ips
+     * @param  list<string>  $redes  en CIDR
+     */
+    private static function enAlgunaRed(array $ips, array $redes): bool
+    {
+        foreach ($ips as $ip) {
+            $n = ip2long($ip);
+
+            if ($n === false) {
+                continue;
+            }
+
+            foreach ($redes as $red) {
+                [$base, $bits] = array_pad(explode('/', $red), 2, '32');
+                $b = ip2long($base);
+
+                if ($b === false) {
+                    continue;
+                }
+
+                $mascara = (int) $bits === 0 ? 0 : (-1 << (32 - (int) $bits)) & 0xFFFFFFFF;
+
+                if (($n & $mascara) === ($b & $mascara)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /** Serial comparable: GPON "HWTC1234ABCD" → "485754431234ABCD", MAC sin separadores. */

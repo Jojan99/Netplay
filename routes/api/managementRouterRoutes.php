@@ -98,6 +98,15 @@ Route::prefix('management')->group(function () {
         Route::get('/cliente/{userId}', [\App\Http\Controllers\AcsController::class, 'deCliente'])
             ->whereNumber('userId')->middleware('module:router,usuario');
 
+        // El asistente: toca redes y túneles, así que sólo administradores.
+        Route::middleware('role:admin')->group(function () {
+            Route::get('/servidor',           [\App\Http\Controllers\AcsSetupController::class, 'estado']);
+            Route::put('/servidor',           [\App\Http\Controllers\AcsSetupController::class, 'guardar']);
+            Route::post('/servidor/detectar', [\App\Http\Controllers\AcsSetupController::class, 'detectar']);
+            Route::post('/servidor/aplicar',  [\App\Http\Controllers\AcsSetupController::class, 'aplicar']);
+            Route::get('/servidor/script',    [\App\Http\Controllers\AcsSetupController::class, 'script']);
+        });
+
         Route::middleware('module:router')->group(function () {
             Route::get('/estado',              [\App\Http\Controllers\AcsController::class, 'estado']);
             Route::get('/equipos',             [\App\Http\Controllers\AcsController::class, 'equipos']);
