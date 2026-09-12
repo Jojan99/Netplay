@@ -70,6 +70,66 @@ class EquiposDelAcs
         return null;
     }
 
+    /**
+     * Clientes con ONT que todavía no reportan al TR-069.
+     *
+     * La dirección del ACS hay que cargarla una vez en cada equipo: ni la OLT
+     * ni el PPPoE la pueden empujar. Esta lista es la que va bajando el
+     * técnico en cada visita, y se vacía sola a medida que los equipos entran.
+     *
+     * @return array{pendientes: list<array<string,mixed>>, con_tr069: int, total: int}
+     */
+    public function pendientes(): array
+    {
+        $enElAcs = collect($this->lista());
+
+        // Un equipo se reconoce por el serial de su ONT o por su cliente.
+        $serialesEnAcs = $enElAcs->pluck('serial')->filter()->map(fn ($s) => self::serial((string) $s))->flip();
+        $clientesEnAcs = $enElAcs->pluck('cliente.user_id')->filter()->flip();
+
+        $filas = DB::table('olt_onts as o')
+            ->join('olt_admins as a', 'a.id', '=', 'o.olt_id')
+            ->join('user_data as ud', 'ud.user_id', '=', 'o.user_data_id')
+            ->join('users as u', 'u.id', '=', 'ud.user_id')
+            ->where('a.company_id', $this->companyId)
+            ->where('ud.active', 1)
+            ->orderBy('a.name')->orderBy('o.fsp')->orderBy('o.ont_id')
+            ->get([
+                'o.id', 'o.fsp', 'o.ont_id', 'o.serial', 'o.status', 'o.user_data_id',
+                'a.name as olt', 'ud.names', 'ud.lastname', 'ud.dni', 'ud.address', 'ud.phone',
+            ]);
+
+        $pendientes = [];
+
+        foreach ($filas as $f) {
+            if ($serialesEnAcs->has(self::serial((string) $f->serial)) || $clientesEnAcs->has((int) $f->user_data_id)) {
+                continue;
+            }
+
+            $pendientes[] = [
+                'ont_id_db' => (int) $f->id,
+                'olt'       => $f->olt,
+                'fsp'       => $f->fsp,
+                'ont'       => (int) $f->ont_id,
+                'serial'    => $f->serial,
+                'estado'    => $f->status,
+                'cliente'   => [
+                    'user_id'   => (int) $f->user_data_id,
+                    'nombre'    => trim($f->names . ' ' . $f->lastname),
+                    'documento' => $f->dni,
+                    'direccion' => $f->address,
+                    'telefono'  => $f->phone,
+                ],
+            ];
+        }
+
+        return [
+            'pendientes' => $pendientes,
+            'con_tr069'  => $enElAcs->whereNotNull('cliente')->count(),
+            'total'      => $filas->count(),
+        ];
+    }
+
     // ── Detalle ───────────────────────────────────────────────────────────
 
     /**

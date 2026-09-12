@@ -32,6 +32,12 @@ class AcsController extends Controller
         });
     }
 
+    /** Clientes con ONT que todavía no reportan al TR-069. */
+    public function pendientes(): JsonResponse
+    {
+        return $this->responder(fn (EquiposDelAcs $acs) => $acs->pendientes());
+    }
+
     public function equipos(): JsonResponse
     {
         return $this->responder(fn (EquiposDelAcs $acs) => $acs->lista());

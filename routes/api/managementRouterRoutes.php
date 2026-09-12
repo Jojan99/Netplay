@@ -111,6 +111,7 @@ Route::prefix('management')->group(function () {
         Route::middleware('module:router')->group(function () {
             Route::get('/estado',              [\App\Http\Controllers\AcsController::class, 'estado']);
             Route::get('/equipos',             [\App\Http\Controllers\AcsController::class, 'equipos']);
+            Route::get('/pendientes',          [\App\Http\Controllers\AcsController::class, 'pendientes']);
             Route::get('/equipos/detalle',     [\App\Http\Controllers\AcsController::class, 'detalle']);
             Route::post('/equipos/refrescar',  [\App\Http\Controllers\AcsController::class, 'refrescar']);
             Route::post('/equipos/reiniciar',  [\App\Http\Controllers\AcsController::class, 'reiniciar']);
