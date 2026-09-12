@@ -47,6 +47,23 @@ class GenieAcs
         return $r->json() ?? [];
     }
 
+    /**
+     * Las tareas que el equipo tiene sin ejecutar.
+     *
+     * @return list<array<string,mixed>>
+     */
+    public function tareasPendientes(string $id): array
+    {
+        $r = Http::timeout(15)->get("{$this->base}/tasks", ['query' => json_encode(['device' => $id])]);
+
+        return $r->successful() ? ($r->json() ?? []) : [];
+    }
+
+    public function borrarTarea(string $tareaId): void
+    {
+        Http::timeout(10)->delete("{$this->base}/tasks/" . rawurlencode($tareaId));
+    }
+
     /** @return array<string,mixed>|null */
     public function dispositivo(string $id): ?array
     {

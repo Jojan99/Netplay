@@ -202,26 +202,23 @@ class RouterDelCliente
      */
     private function filtro(array $raw): ?array
     {
-        // C-Data y compatibles con el modelo de China Telecom.
-        if (self::nodo($raw, 'InternetGatewayDevice.Services.X_CT-COM_USER.MACFilter') !== null) {
-            return [
-                'lista'  => 'InternetGatewayDevice.Services.X_CT-COM_USER.MACFilter.MACFilterList.',
-                'enable' => 'InternetGatewayDevice.Services.X_CT-COM_USER.MACFilter.MACFilterEnable',
-                'modo'   => 'InternetGatewayDevice.Services.X_CT-COM_USER.MACFilter.MACFilterMode',
-                'campo'  => 'MACAddress',
-            ];
-        }
-
-        // Huawei publica el filtro de WiFi en su propia rama.
+        // Huawei publica el filtro de WiFi en su propia rama. Las rutas van sin
+        // punto final: GenieACS rechaza "…MACList." al crear la entrada.
         if (self::nodo($raw, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.X_HW_WlanMacFilter') !== null) {
             return [
-                'lista'  => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.X_HW_WlanMacFilter.',
+                'lista'  => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.X_HW_WlanMacFilter',
                 'enable' => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.MACAddressControlEnabled',
                 'modo'   => null,
                 'campo'  => 'MACAddress',
             ];
         }
 
+        // Las C-Data con el modelo de China Telecom tienen la tabla
+        // X_CT-COM_USER.MACFilter.MACList, pero probado contra una FD512XWX el
+        // equipo crea la entrada y después rechaza la MAC con "Invalid
+        // arguments", en cualquier formato. Hasta que no haya un modelo donde
+        // funcione, el portal no ofrece el botón: prometer un bloqueo que no
+        // bloquea es peor que no tenerlo.
         return null;
     }
 
@@ -237,7 +234,7 @@ class RouterDelCliente
         $macs = [];
 
         foreach (self::hojas($raw) as $ruta => $valor) {
-            if (str_starts_with($ruta, $filtro['lista']) && str_ends_with($ruta, '.' . $filtro['campo']) && $valor) {
+            if (str_starts_with($ruta, $filtro['lista'] . '.') && str_ends_with($ruta, '.' . $filtro['campo']) && $valor) {
                 $macs[] = strtoupper((string) $valor);
             }
         }
@@ -267,9 +264,9 @@ class RouterDelCliente
 
         if (!$bloquear) {
             foreach (self::hojas($raw) as $ruta => $valor) {
-                if (str_starts_with($ruta, $filtro['lista']) && str_ends_with($ruta, '.' . $filtro['campo'])
+                if (str_starts_with($ruta, $filtro['lista'] . '.') && str_ends_with($ruta, '.' . $filtro['campo'])
                     && strtoupper((string) $valor) === $mac) {
-                    $objeto = substr($ruta, 0, -strlen('.' . $filtro['campo'])) . '.';
+                    $objeto = substr($ruta, 0, -strlen('.' . $filtro['campo']));
                     $r = $api->tarea($equipo['id'], ['name' => 'deleteObject', 'objectName' => $objeto]);
 
                     return ['ok' => true, 'mensaje' => self::cuando($r, 'El dispositivo quedó desbloqueado')];
@@ -289,7 +286,7 @@ class RouterDelCliente
         }
 
         $valores = [
-            [$filtro['lista'] . $nuevo['instancia'] . '.' . $filtro['campo'], $mac, 'xsd:string'],
+            [$filtro['lista'] . '.' . $nuevo['instancia'] . '.' . $filtro['campo'], $mac, 'xsd:string'],
             [$filtro['enable'], 'true', 'xsd:boolean'],
         ];
 

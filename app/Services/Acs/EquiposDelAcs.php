@@ -3,6 +3,7 @@
 namespace App\Services\Acs;
 
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -123,13 +124,55 @@ class EquiposDelAcs
 
     // ── Acciones ──────────────────────────────────────────────────────────
 
-    /** Le pide al equipo que vuelva a mandar todos sus parámetros. */
+    /**
+     * Le pide al equipo los datos que muestra el panel.
+     *
+     * No se pide el árbol entero: hay equipos con una rama que responde error
+     * —una C-Data contesta 9002 en X_CMS_PrivateNode— y esa falla corta la
+     * sesión, así que las órdenes que venían detrás nunca llegaban y se
+     * acumulaban. Se piden las ramas que se usan, y antes se limpia lo que
+     * haya quedado trabado.
+     */
     public function refrescar(string $id): array
     {
         $this->exigirPropio($id);
         $raiz = $this->raiz($id);
 
-        return $this->acs->tarea($id, ['name' => 'refreshObject', 'objectName' => $raiz]);
+        $this->limpiarCola($id);
+
+        $ramas = $raiz === 'InternetGatewayDevice'
+            ? [
+                'InternetGatewayDevice.DeviceInfo',
+                'InternetGatewayDevice.LANDevice.1.WLANConfiguration',
+                'InternetGatewayDevice.LANDevice.1.Hosts',
+                'InternetGatewayDevice.WANDevice.1.WANConnectionDevice',
+            ]
+            : ['Device.DeviceInfo', 'Device.WiFi', 'Device.Hosts', 'Device.IP'];
+
+        $r = ['hecha' => true, 'en_cola' => false, 'estado' => 200, 'instancia' => null];
+
+        foreach ($ramas as $rama) {
+            $paso = $this->acs->tarea($id, ['name' => 'refreshObject', 'objectName' => $rama]);
+
+            // Con que una quede en cola, el conjunto no está completo.
+            if (!($paso['hecha'] ?? false)) {
+                $r = $paso;
+            }
+        }
+
+        return $r;
+    }
+
+    /** Borra las tareas viejas del equipo: una trabada bloquea a las demás. */
+    private function limpiarCola(string $id): void
+    {
+        try {
+            foreach ($this->acs->tareasPendientes($id) as $tarea) {
+                $this->acs->borrarTarea((string) $tarea['_id']);
+            }
+        } catch (\Throwable $e) {
+            Log::warning('[ACS] No se pudo limpiar la cola del equipo', ['equipo' => $id, 'error' => $e->getMessage()]);
+        }
     }
 
     public function reiniciar(string $id): array
