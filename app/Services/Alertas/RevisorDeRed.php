@@ -1,0 +1,229 @@
+<?php
+
+namespace App\Services\Alertas;
+
+use App\Models\Alerta;
+use App\Models\OltAdmin;
+use App\Models\OltOnt;
+use App\Models\VpnTunel;
+use App\Services\Olt\SenalDeLaOlt;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+
+/**
+ * Revisa la red y deja anotado lo que hay que mirar.
+ *
+ * La idea es enterarse antes que el cliente: una fibra con la señal caída,
+ * un puerto PON que se apagó entero, un túnel que no saluda. Cada situación
+ * abre un aviso con una clave estable, se actualiza mientras dure y se cierra
+ * sola cuando se arregla, para que la lista sea lo que pasa ahora y no un
+ * historial que nadie mira.
+ */
+class RevisorDeRed
+{
+    /** Una ONT sola apagada no es noticia; medio puerto apagado, sí. */
+    private const ONTS_PARA_CORTE = 5;
+    private const PORCENTAJE_CORTE = 0.6;
+
+    /** Sin saludo por más de esto, el túnel se da por caído. */
+    private const MINUTOS_TUNEL = 15;
+
+    public function __construct(private int $companyId) {}
+
+    /** @return array{abiertas:int, cerradas:int} */
+    public function revisar(): array
+    {
+        $vistas = [];
+
+        foreach ([$this->senalYCortes(...), $this->tuneles(...), $this->oltsSinSincronizar(...)] as $revision) {
+            try {
+                $vistas = array_merge($vistas, $revision());
+            } catch (\Throwable $e) {
+                Log::warning('[Alertas] Una revisión falló', ['empresa' => $this->companyId, 'error' => $e->getMessage()]);
+            }
+        }
+
+        // Lo que ya no aparece, se cierra: la alerta vive mientras el problema.
+        $cerradas = Alerta::where('company_id', $this->companyId)
+            ->abiertas()
+            ->when($vistas, fn ($q) => $q->whereNotIn('clave', $vistas))
+            ->update(['cerrada_en' => now()]);
+
+        return ['abiertas' => count($vistas), 'cerradas' => $cerradas];
+    }
+
+    // ── Revisiones ────────────────────────────────────────────────────────
+
+    /**
+     * Señal óptica fuera de rango y puertos PON que se cayeron enteros.
+     *
+     * @return list<string>
+     */
+    private function senalYCortes(): array
+    {
+        $claves = [];
+
+        foreach (OltAdmin::where('company_id', $this->companyId)->get() as $olt) {
+            $medicion = SenalDeLaOlt::de($olt);
+
+            $clientes = OltOnt::where('olt_id', $olt->id)
+                ->whereNotNull('user_data_id')
+                ->get(['fsp', 'ont_id', 'user_data_id', 'description'])
+                ->keyBy(fn ($o) => $o->fsp . ':' . $o->ont_id);
+
+            $apagadasPorPuerto = [];
+            $totalPorPuerto = [];
+
+            foreach ($medicion['onts'] ?? [] as $ont) {
+                $clave = $ont['fsp'] . ':' . $ont['ont_id'];
+                $totalPorPuerto[$ont['fsp']] = ($totalPorPuerto[$ont['fsp']] ?? 0) + 1;
+
+                if (($ont['status'] ?? null) === 'offline') {
+                    $apagadasPorPuerto[$ont['fsp']] = ($apagadasPorPuerto[$ont['fsp']] ?? 0) + 1;
+                }
+
+                if (!in_array($ont['estado'] ?? '', ['baja', 'critica', 'saturada'], true)) {
+                    continue;
+                }
+
+                $ligada = $clientes[$clave] ?? null;
+                $nombre = $ligada ? $this->nombreDelCliente((int) $ligada->user_data_id) : ($ont['description'] ?? $clave);
+
+                $claves[] = $this->anotar(
+                    "senal:{$olt->id}:{$clave}",
+                    'senal',
+                    $ont['estado'] === 'critica' || $ont['estado'] === 'saturada' ? 'critico' : 'aviso',
+                    "Señal {$this->enCastellano($ont['estado'])} · {$nombre}",
+                    $this->explicacionSenal($ont),
+                    [
+                        'olt' => $olt->name, 'fsp' => $ont['fsp'], 'ont_id' => $ont['ont_id'],
+                        'potencia' => $ont['potencia'], 'estado' => $ont['estado'],
+                    ],
+                    $ligada?->user_data_id,
+                );
+            }
+
+            // Muchas ONT apagadas en el mismo puerto es fibra cortada, no
+            // clientes que apagaron el equipo.
+            foreach ($apagadasPorPuerto as $fsp => $apagadas) {
+                $total = $totalPorPuerto[$fsp] ?? 0;
+
+                if ($apagadas < self::ONTS_PARA_CORTE || $total === 0 || $apagadas / $total < self::PORCENTAJE_CORTE) {
+                    continue;
+                }
+
+                $claves[] = $this->anotar(
+                    "pon:{$olt->id}:{$fsp}",
+                    'corte',
+                    'critico',
+                    "Puerto {$fsp} de {$olt->name} con {$apagadas} de {$total} equipos apagados",
+                    'Cuando se apaga casi todo un puerto suele ser la fibra troncal o el puerto de la OLT, no los clientes.',
+                    ['olt' => $olt->name, 'fsp' => $fsp, 'apagadas' => $apagadas, 'total' => $total],
+                );
+            }
+        }
+
+        return $claves;
+    }
+
+    /** @return list<string> */
+    private function tuneles(): array
+    {
+        $claves = [];
+
+        foreach (VpnTunel::where('company_id', $this->companyId)->where('activo', true)->get() as $tunel) {
+            if ($tunel->ultimo_saludo && $tunel->ultimo_saludo->gt(now()->subMinutes(self::MINUTOS_TUNEL))) {
+                continue;
+            }
+
+            $claves[] = $this->anotar(
+                "tunel:{$tunel->id}",
+                'tunel',
+                'critico',
+                "El túnel «{$tunel->nombre}» no está saludando",
+                'Sin túnel no se gestionan las OLT de ese nodo ni los equipos de sus clientes. '
+                . 'Último saludo: ' . ($tunel->ultimo_saludo?->diffForHumans() ?? 'nunca') . '.',
+                ['tunel' => $tunel->nombre, 'ultimo_saludo' => $tunel->ultimo_saludo?->toIso8601String()],
+            );
+        }
+
+        return $claves;
+    }
+
+    /**
+     * Una OLT que hace horas no se deja leer: o está caída o se perdió el
+     * camino hasta ella.
+     *
+     * @return list<string>
+     */
+    private function oltsSinSincronizar(): array
+    {
+        $claves = [];
+
+        foreach (OltAdmin::where('company_id', $this->companyId)->get() as $olt) {
+            $ultima = OltOnt::where('olt_id', $olt->id)->max('synced_at');
+
+            if (!$ultima || now()->parse($ultima)->gt(now()->subHours(6))) {
+                continue;
+            }
+
+            $claves[] = $this->anotar(
+                "olt:{$olt->id}",
+                'olt',
+                'aviso',
+                "Hace rato que no se lee la OLT {$olt->name}",
+                'La última lectura de sus ONT fue ' . now()->parse($ultima)->diffForHumans()
+                . '. Puede ser la OLT, el túnel o las credenciales.',
+                ['olt' => $olt->name, 'ultima_lectura' => (string) $ultima],
+            );
+        }
+
+        return $claves;
+    }
+
+    // ── Interno ───────────────────────────────────────────────────────────
+
+    /** Abre el aviso o lo mantiene al día, y devuelve su clave. */
+    private function anotar(string $clave, string $tipo, string $nivel, string $titulo, string $detalle, array $datos = [], ?int $userId = null): string
+    {
+        $alerta = Alerta::firstOrNew(['company_id' => $this->companyId, 'clave' => $clave]);
+
+        $alerta->fill([
+            'tipo' => $tipo, 'nivel' => $nivel, 'titulo' => $titulo, 'detalle' => $detalle,
+            'datos' => $datos, 'user_id' => $userId, 'cerrada_en' => null,
+        ]);
+
+        // La fecha de apertura es la de la primera vez: sirve para saber si
+        // esto lleva cinco minutos o tres días.
+        $alerta->abierta_en ??= now();
+        $alerta->save();
+
+        return $clave;
+    }
+
+    private function nombreDelCliente(int $userId): string
+    {
+        static $cache = [];
+
+        return $cache[$userId] ??= (string) DB::table('user_data')
+            ->where('user_id', $userId)
+            ->selectRaw("TRIM(CONCAT(names, ' ', lastname)) as n")
+            ->value('n') ?: "Cliente {$userId}";
+    }
+
+    private function enCastellano(string $estado): string
+    {
+        return ['baja' => 'baja', 'critica' => 'crítica', 'saturada' => 'saturada'][$estado] ?? $estado;
+    }
+
+    private function explicacionSenal(array $ont): string
+    {
+        $dbm = $ont['potencia'] !== null ? $ont['potencia'] . ' dBm' : 'sin medición';
+
+        return match ($ont['estado']) {
+            'saturada' => "Recibe demasiada luz ({$dbm}): el equipo está muy cerca o falta un atenuador.",
+            'critica'  => "Recibe muy poca luz ({$dbm}): revisá el empalme, el conector o la roseta.",
+            default    => "La señal va justa ({$dbm}): todavía navega, pero con lluvia o un empalme más ya falla.",
+        };
+    }
+}

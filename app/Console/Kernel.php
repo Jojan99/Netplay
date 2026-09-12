@@ -24,6 +24,10 @@ class Kernel extends ConsoleKernel
         // Reactiva clientes que ya están al día — corre cada 4 minutos para respuesta rápida tras un pago
         $schedule->command('clients:auto-reactivate')->everyFourMinutes()->user('www-data');
 
+        // Revisa la red y deja anotado lo que hay que mirar: señal caída,
+        // puertos PON apagados, túneles sin saludo, OLT que no se dejan leer.
+        $schedule->command('alertas:revisar')->everyFifteenMinutes()->user('www-data')->withoutOverlapping();
+
         // Saca del servidor TR-069 los equipos falsos que dejan los escáneres:
         // el puerto tiene que estar abierto para las ONT y lo encuentran solos.
         $schedule->command('acs:limpiar')->dailyAt('05:30')->user('www-data');

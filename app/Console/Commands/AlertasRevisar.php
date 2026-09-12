@@ -1,0 +1,30 @@
+<?php
+
+namespace App\Console\Commands;
+
+use App\Models\Company;
+use App\Services\Alertas\RevisorDeRed;
+use Illuminate\Console\Command;
+
+/** Revisa la red de cada empresa y deja anotado lo que hay que mirar. */
+class AlertasRevisar extends Command
+{
+    protected $signature = 'alertas:revisar {empresa? : Sólo esta empresa}';
+
+    protected $description = 'Revisa señal óptica, cortes de puerto PON, túneles y OLT';
+
+    public function handle(): int
+    {
+        $empresas = $this->argument('empresa')
+            ? [(int) $this->argument('empresa')]
+            : Company::pluck('id')->all();
+
+        foreach ($empresas as $companyId) {
+            $r = (new RevisorDeRed((int) $companyId))->revisar();
+
+            $this->line("Empresa {$companyId}: {$r['abiertas']} avisos abiertos, {$r['cerradas']} cerrados.");
+        }
+
+        return self::SUCCESS;
+    }
+}

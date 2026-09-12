@@ -119,6 +119,13 @@ Route::prefix('management')->group(function () {
         });
     });
 
+    // ── Avisos de la red ───────────────────────────────────────────────────
+    Route::prefix('alertas')->group(function () {
+        Route::get('/',          [\App\Http\Controllers\AlertaController::class, 'index']);
+        Route::post('/vistas',   [\App\Http\Controllers\AlertaController::class, 'marcarVistas']);
+        Route::post('/revisar',  [\App\Http\Controllers\AlertaController::class, 'revisar']);
+    });
+
     // ── OLT Admin ──────────────────────────────────────────────────────────
     Route::prefix('olt')->group(function () {
         Route::get('/',                    [OltAdminController::class, 'index']);
