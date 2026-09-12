@@ -165,6 +165,12 @@ Route::prefix('management')->group(function () {
         Route::post('/{oltId}/profiles/default', [OltAdminController::class, 'fijarPerfiles']);
         Route::post('/{oltId}/cli',                  [OltAdminController::class, 'cliCommand']);
         Route::post('/{oltId}/ont/assign-client',    [OltAdminController::class, 'assignClientToOnt']);
+        // Vincular en tanda las ONT con sus clientes.
+        Route::middleware('role:admin')->group(function () {
+            Route::get('/vinculos/propuestas', [OltAdminController::class, 'propuestasDeVinculo']);
+            Route::post('/vinculos/aplicar',   [OltAdminController::class, 'aplicarVinculos']);
+        });
+
         Route::get('/ont/by-user/{userId}',          [OltAdminController::class, 'getOntByUser']);
         Route::get('/ont/by-user/{userId}/en-vivo',  [OltAdminController::class, 'ontEnVivo']);
         Route::get('/ont/by-user/{userId}/equipo',   [OltAdminController::class, 'equipoDeCliente']);

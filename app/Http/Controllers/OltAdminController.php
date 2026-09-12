@@ -373,6 +373,49 @@ class OltAdminController extends Controller
     }
 
     /**
+     * GET /management/olt/vinculos/propuestas?olt_id=
+     * Qué ONT se pueden vincular con qué cliente, y con cuánta certeza.
+     */
+    public function propuestasDeVinculo(Request $request): JsonResponse
+    {
+        $companyId = (int) getSessionCompanyId();
+
+        if (!$companyId) {
+            return standardApiReponse('Sesión sin empresa asociada', null, 1, JsonResponse::HTTP_UNAUTHORIZED);
+        }
+
+        $oltId = $request->query('olt_id') ? (int) $request->query('olt_id') : null;
+        $datos = (new \App\Services\Olt\VinculacionMasiva($companyId))->propuestas($oltId);
+
+        return standardApiReponse('Propuestas listas', $datos, 0, JsonResponse::HTTP_OK);
+    }
+
+    /** POST /management/olt/vinculos/aplicar — guarda los vínculos confirmados. */
+    public function aplicarVinculos(Request $request): JsonResponse
+    {
+        $request->validate([
+            'pares'           => 'required|array|min:1',
+            'pares.*.ont'     => 'required|integer',
+            'pares.*.user_id' => 'required|integer',
+        ]);
+
+        $companyId = (int) getSessionCompanyId();
+
+        if (!$companyId) {
+            return standardApiReponse('Sesión sin empresa asociada', null, 1, JsonResponse::HTTP_UNAUTHORIZED);
+        }
+
+        $r = (new \App\Services\Olt\VinculacionMasiva($companyId))->aplicar($request->input('pares'));
+
+        return standardApiReponse(
+            $r['vinculadas'] . ' ONT vinculadas' . ($r['errores'] ? ', con ' . count($r['errores']) . ' errores' : ''),
+            $r,
+            0,
+            JsonResponse::HTTP_OK
+        );
+    }
+
+    /**
      * GET /management/olt/ont/by-user/{userId}/equipo?refrescar=1
      * Fabricante, modelo, versiones, WiFi y foto del equipo del cliente.
      */
