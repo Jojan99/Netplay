@@ -104,6 +104,8 @@ class EquiposDelAcs
             'equipos'   => self::hosts($d, $raiz),
             'optica'    => self::optica($d),
             'url_acs'   => self::v($d, "{$raiz}.ManagementServer.URL"),
+            // Por dónde el ACS le habla al equipo para aplicar algo al momento.
+            'url_conexion' => self::v($d, "{$raiz}.ManagementServer.ConnectionRequestURL"),
             'intervalo' => self::entero(self::v($d, "{$raiz}.ManagementServer.PeriodicInformInterval")),
         ]);
     }

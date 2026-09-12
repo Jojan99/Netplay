@@ -30,6 +30,14 @@ class ConfiguradorAcs
     /** @return array<string,mixed> */
     public function estado(): array
     {
+        // El saludo del túnel se lee de WireGuard, no de la base: sin esto la
+        // pantalla decía "todavía no saluda" con el túnel andando.
+        try {
+            ServidorVpn::estado($this->companyId);
+        } catch (\Throwable $e) {
+            Log::warning('[ACS] No se pudo refrescar el estado del túnel', ['error' => $e->getMessage()]);
+        }
+
         $s = $this->servidor();
         $tunel = $s->vpn_tunel_id ? VpnTunel::find($s->vpn_tunel_id) : $this->tunelDeLaEmpresa();
 
@@ -249,6 +257,135 @@ class ConfiguradorAcs
             'router'   => $script,
             'servidor' => $s->modo === 'propio' ? $this->configDelServidorPropio($tunel) : null,
             'notas'    => $notas,
+        ];
+    }
+
+    /**
+     * ¿Está funcionando el TR-069? Una revisión de punta a punta, en cuatro
+     * preguntas que se responden solas.
+     *
+     * @return array{nivel:string, resumen:string, checks:list<array<string,mixed>>}
+     */
+    public function diagnostico(): array
+    {
+        $s = $this->servidor();
+        $checks = [];
+
+        // 1. El servidor contesta.
+        $servidorOk = false;
+
+        try {
+            GenieAcs::deEmpresa($this->companyId)->dispositivos([], ['_id']);
+            $servidorOk = true;
+        } catch (\Throwable $e) {
+            $detalleServidor = $e->getMessage();
+        }
+
+        $checks[] = [
+            'clave'   => 'servidor',
+            'titulo'  => 'El servidor TR-069 responde',
+            'ok'      => $servidorOk,
+            'detalle' => $servidorOk
+                ? ($s->esPropio() ? 'Tu servidor en ' . $s->host : 'El servidor de la plataforma')
+                : ('No contesta: ' . ($detalleServidor ?? 'sin detalle')),
+        ];
+
+        // 2. El camino hasta los equipos.
+        $tunel = $s->vpn_tunel_id ? VpnTunel::find($s->vpn_tunel_id) : $this->tunelDeLaEmpresa();
+        $porTunel = !($s->esPropio() && $s->alcance === 'publica');
+        $tunelOk = !$porTunel || ($tunel && $tunel->ultimo_saludo && $tunel->ultimo_saludo->gt(now()->subMinutes(5)));
+
+        $checks[] = [
+            'clave'   => 'camino',
+            'titulo'  => $porTunel ? 'El túnel con tu router está arriba' : 'Tu servidor tiene IP pública',
+            'ok'      => (bool) $tunelOk,
+            'detalle' => !$porTunel
+                ? 'Los equipos llegan por internet.'
+                : ($tunelOk
+                    ? 'Último saludo ' . ($tunel->ultimo_saludo?->diffForHumans() ?? '')
+                    : 'El router no saluda. Pegá el script del paso 3 en el router.'),
+        ];
+
+        // 3. Los equipos reportan.
+        $equipos = [];
+
+        try {
+            $equipos = (new EquiposDelAcs($this->companyId))->lista();
+        } catch (\Throwable) {
+        }
+
+        $reportando = collect($equipos)->where('reportando', true)->count();
+        $ultimo = collect($equipos)->max('ultimo_reporte');
+
+        $checks[] = [
+            'clave'   => 'equipos',
+            'titulo'  => 'Tus equipos reportan',
+            'ok'      => $reportando > 0,
+            'detalle' => $equipos === []
+                ? 'Ningún equipo configurado todavía: cargales la dirección ' . $s->urlCwmp() . '.'
+                : ($reportando > 0
+                    ? "{$reportando} de " . count($equipos) . ' reportando'
+                    : 'Ninguno reporta. El último lo hizo ' . ($ultimo ? \Carbon\Carbon::parse($ultimo)->diffForHumans() : 'nunca') . '.'),
+        ];
+
+        // 4. Los cambios se aplican al momento: hace falta llegar al equipo.
+        $alInstante = $this->alcanzaUnEquipo($equipos);
+
+        $checks[] = [
+            'clave'   => 'inmediato',
+            'titulo'  => 'Los cambios se aplican al momento',
+            'ok'      => $alInstante['ok'],
+            'detalle' => $alInstante['detalle'],
+        ];
+
+        $fallan = collect($checks)->where('ok', false);
+
+        return [
+            'nivel'   => $fallan->isEmpty() ? 'ok' : ($fallan->contains(fn ($c) => in_array($c['clave'], ['servidor', 'camino'], true)) ? 'error' : 'warn'),
+            'resumen' => $fallan->isEmpty()
+                ? 'TR-069 funcionando'
+                : ($fallan->first()['titulo'] . ': revisá abajo'),
+            'checks'  => $checks,
+            'equipos' => count($equipos),
+            'reportando' => $reportando,
+        ];
+    }
+
+    /**
+     * ¿El servidor alcanza a algún equipo? Es lo que hace que un cambio se
+     * aplique en segundos en vez de esperar el próximo reporte.
+     *
+     * @param  list<array<string,mixed>>  $equipos
+     * @return array{ok:bool, detalle:string}
+     */
+    private function alcanzaUnEquipo(array $equipos): array
+    {
+        $enLinea = collect($equipos)->where('reportando', true)->first();
+
+        if (!$enLinea) {
+            return ['ok' => false, 'detalle' => 'Hace falta al menos un equipo reportando para poder probarlo.'];
+        }
+
+        $detalle = (new EquiposDelAcs($this->companyId))->detalle($enLinea['id']);
+        $url = $detalle['url_conexion'] ?? null;
+
+        if (!$url || !preg_match('#^https?://([^:/]+):?(\d+)?#', (string) $url, $m)) {
+            return ['ok' => false, 'detalle' => 'El equipo todavía no informó por dónde se le puede llamar.'];
+        }
+
+        $puerto = (int) ($m[2] ?: 80);
+        $socket = @fsockopen($m[1], $puerto, $errno, $error, 3);
+
+        if ($socket) {
+            fclose($socket);
+
+            return ['ok' => true, 'detalle' => 'Probado contra ' . ($enLinea['modelo'] ?? 'un equipo') . ' en ' . $m[1] . '.'];
+        }
+
+        return [
+            'ok'      => false,
+            'detalle' => 'No se llega a ' . $m[1] . ': los cambios van a quedar en cola hasta el próximo reporte del equipo. '
+                . 'Revisá que la red de ese equipo esté marcada en el paso 2.',
         ];
     }
 

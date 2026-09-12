@@ -53,6 +53,11 @@ class AcsSetupController extends Controller
         ));
     }
 
+    public function diagnostico(ConectionRouterManagerInterface $conexion): JsonResponse
+    {
+        return $this->responder($conexion, fn (ConfiguradorAcs $c) => $c->diagnostico());
+    }
+
     public function script(Request $request, ConectionRouterManagerInterface $conexion): JsonResponse
     {
         $routerId = $request->query('router_id') ? (int) $request->query('router_id') : null;

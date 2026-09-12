@@ -105,6 +105,7 @@ Route::prefix('management')->group(function () {
             Route::post('/servidor/detectar', [\App\Http\Controllers\AcsSetupController::class, 'detectar']);
             Route::post('/servidor/aplicar',  [\App\Http\Controllers\AcsSetupController::class, 'aplicar']);
             Route::get('/servidor/script',    [\App\Http\Controllers\AcsSetupController::class, 'script']);
+            Route::get('/servidor/diagnostico', [\App\Http\Controllers\AcsSetupController::class, 'diagnostico']);
         });
 
         Route::middleware('module:router')->group(function () {
