@@ -44,11 +44,108 @@ class RouterDelCliente
                 'ultimo_reporte' => $d['ultimo_reporte'],
                 'encendido_hace' => $d['encendido_hace'] ?? null,
             ],
+            // Con qué cara mostrarle esto al cliente: no es lo mismo que su
+            // equipo esté apagado a que nosotros tengamos datos de hace un rato.
+            'estado'        => $this->comoEsta($d),
             'redes'         => $this->redes($d),
             'dispositivos'  => $this->dispositivos($d, $raw),
             'consumo'       => $this->consumo($d, $raw),
             'puede_bloquear' => (bool) $this->filtro($raw),
         ];
+    }
+
+    /**
+     * Cómo está el servicio del cliente, cruzando lo que dice el ACS con lo
+     * que ve la OLT.
+     *
+     * Decirle "tu equipo no se comunica" a alguien cuyo equipo está encendido
+     * y con buena señal es asustarlo por un problema nuestro. La OLT sabe si
+     * el equipo está ahí:
+     *
+     *   · reporta                    → todo bien
+     *   · no reporta, ONT en línea   → estamos actualizando; sus datos son de
+     *                                  hace un rato y sus cambios se aplican igual
+     *   · no reporta, ONT apagada    → eso sí es suyo: equipo apagado o sin fibra
+     *
+     * @return array{clave:string, titulo:string, detalle:string}
+     */
+    private function comoEsta(array $d): array
+    {
+        if ($d['reportando'] ?? false) {
+            return ['clave' => 'ok', 'titulo' => '', 'detalle' => ''];
+        }
+
+        $ont = \App\Models\OltOnt::where('user_data_id', $this->userId)
+            ->whereHas('olt', fn ($q) => $q->where('company_id', $this->companyId))
+            ->with('olt')
+            ->first();
+
+        $enLinea = null;
+
+        if ($ont) {
+            try {
+                $vivo = \App\Services\Olt\EstadoDeUnaOnt::de($ont->olt, (string) $ont->fsp, (int) $ont->ont_id);
+                $enLinea = ($vivo['error'] ?? null) === null ? ($vivo['status'] ?? null) === 'online' : ($ont->status === 'online');
+            } catch (\Throwable) {
+                $enLinea = $ont->status === 'online';
+            }
+        }
+
+        if ($enLinea === false) {
+            return [
+                'clave'   => 'sin_servicio',
+                'titulo'  => 'Tu equipo está apagado o sin señal',
+                'detalle' => 'Revisá que esté enchufado y que el cable de fibra esté conectado. '
+                    . 'Si las luces están encendidas y sigue así, reportalo y vamos a verlo.',
+            ];
+        }
+
+        // La ONT puede estar encendida y aun así no tener internet: en PPPoE
+        // el servicio existe cuando hay sesión. Sin ella el cliente no navega,
+        // y eso no se puede disfrazar de "estamos actualizando".
+        if ($this->esPppoe() && !$this->tieneSesion()) {
+            return [
+                'clave'   => 'sin_servicio',
+                'titulo'  => 'Tu equipo está encendido pero no logra conectarse',
+                'detalle' => 'La fibra llega bien, así que no es el cable. Probá apagarlo y encenderlo; '
+                    . 'si en unos minutos sigue igual, reportalo y lo revisamos nosotros.',
+            ];
+        }
+
+        return [
+            'clave'   => 'actualizando',
+            'titulo'  => 'Estamos actualizando los datos de tu equipo',
+            'detalle' => 'Tu servicio está funcionando. Lo que ves es de la última lectura; '
+                . 'los cambios que hagas se aplican igual.',
+        ];
+    }
+
+    private function esPppoe(): bool
+    {
+        return \Illuminate\Support\Facades\DB::table('user_data')
+            ->where('user_id', $this->userId)->value('connection_type') === 'pppoe';
+    }
+
+    /** ¿El cliente tiene sesión abierta en el router ahora mismo? */
+    private function tieneSesion(): bool
+    {
+        try {
+            $enElRouter = new \App\Services\Red\ClienteEnElRouter(
+                app(\App\Managers\Interfaces\ConectionRouterManagerInterface::class),
+                $this->companyId,
+            );
+
+            foreach ($enElRouter->queHay($this->userId)['pppoe'] ?? [] as $credencial) {
+                if ($credencial['sesion'] ?? null) {
+                    return true;
+                }
+            }
+        } catch (\Throwable) {
+            // Sin poder preguntarle al router, mejor no alarmar al cliente.
+            return true;
+        }
+
+        return false;
     }
 
     /** Cambia el nombre o la contraseña de una de sus redes WiFi. */
