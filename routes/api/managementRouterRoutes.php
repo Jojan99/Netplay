@@ -119,6 +119,14 @@ Route::prefix('management')->group(function () {
         });
     });
 
+    // ── Velocidad de los planes ────────────────────────────────────────────
+    Route::prefix('velocidades')->middleware('role:admin')->group(function () {
+        Route::get('/',                    [\App\Http\Controllers\VelocidadController::class, 'index']);
+        Route::put('/{plan}',              [\App\Http\Controllers\VelocidadController::class, 'guardar'])->whereNumber('plan');
+        Route::post('/{plan}/aplicar',     [\App\Http\Controllers\VelocidadController::class, 'aplicar'])->whereNumber('plan');
+        Route::put('/cliente/{userId}',    [\App\Http\Controllers\VelocidadController::class, 'cliente'])->whereNumber('userId');
+    });
+
     // ── Avisos de la red ───────────────────────────────────────────────────
     Route::prefix('alertas')->group(function () {
         Route::get('/',          [\App\Http\Controllers\AlertaController::class, 'index']);
