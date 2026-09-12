@@ -35,7 +35,7 @@ class RedesDelOperador
             ->first();
 
         if (!$router) {
-            return ['redes' => [], 'router' => null, 'error' => 'La empresa no tiene un MikroTik configurado.'];
+            return ['redes' => [], 'router' => null, 'router_id' => null, 'error' => 'La empresa no tiene un MikroTik configurado.'];
         }
 
         $redes = $this->deLasOlt();
@@ -48,13 +48,16 @@ class RedesDelOperador
             Log::warning('[ACS] No se pudieron leer las redes del router', ['error' => $e->getMessage()]);
 
             return [
-                'redes'  => $redes,
-                'router' => $router->name,
-                'error'  => 'No se pudo leer el MikroTik: ' . $e->getMessage(),
+                'redes'     => array_map(fn ($r) => $r + ['router_id' => (int) $router->id], $redes),
+                'router'    => $router->name,
+                'router_id' => (int) $router->id,
+                'error'     => 'No se pudo leer el MikroTik: ' . $e->getMessage(),
             ];
         }
 
-        return ['redes' => self::ordenar($redes), 'router' => $router->name ?: $router->host, 'error' => null];
+        $redes = array_map(fn ($r) => $r + ['router_id' => (int) $router->id], self::ordenar($redes));
+
+        return ['redes' => $redes, 'router' => $router->name ?: $router->host, 'router_id' => (int) $router->id, 'error' => null];
     }
 
     // ── De dónde sale cada red ────────────────────────────────────────────

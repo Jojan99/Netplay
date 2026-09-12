@@ -42,14 +42,22 @@ class AcsSetupController extends Controller
 
     public function aplicar(Request $request, ConectionRouterManagerInterface $conexion): JsonResponse
     {
-        $request->validate(['redes' => 'required|array|min:1', 'redes.*' => 'string|max:40']);
+        $request->validate([
+            'redes' => 'required|array|min:1', 'redes.*' => 'string|max:40',
+            'router_id' => 'nullable|integer',
+        ]);
 
-        return $this->responder($conexion, fn (ConfiguradorAcs $c) => $c->aplicar($request->input('redes')));
+        return $this->responder($conexion, fn (ConfiguradorAcs $c) => $c->aplicar(
+            $request->input('redes'),
+            $request->input('router_id') ? (int) $request->input('router_id') : null,
+        ));
     }
 
-    public function script(ConectionRouterManagerInterface $conexion): JsonResponse
+    public function script(Request $request, ConectionRouterManagerInterface $conexion): JsonResponse
     {
-        return $this->responder($conexion, fn (ConfiguradorAcs $c) => $c->script());
+        $routerId = $request->query('router_id') ? (int) $request->query('router_id') : null;
+
+        return $this->responder($conexion, fn (ConfiguradorAcs $c) => $c->script($routerId));
     }
 
     private function responder(ConectionRouterManagerInterface $conexion, callable $fn): JsonResponse
