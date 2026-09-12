@@ -26,7 +26,7 @@ class RevisorDeRed
     private const PORCENTAJE_CORTE = 0.6;
 
     /** Sin saludo por más de esto, el túnel se da por caído. */
-    private const MINUTOS_TUNEL = 15;
+    private const MINUTOS_TUNEL = 30;
 
     public function __construct(private int $companyId) {}
 
@@ -35,7 +35,7 @@ class RevisorDeRed
     {
         $vistas = [];
 
-        foreach ([$this->senalYCortes(...), $this->tuneles(...), $this->oltsSinSincronizar(...)] as $revision) {
+        foreach ([$this->senalYCortes(...), $this->tuneles(...), $this->oltsSinSincronizar(...), $this->datosIncompletos(...)] as $revision) {
             try {
                 $vistas = array_merge($vistas, $revision());
             } catch (\Throwable $e) {
@@ -131,6 +131,14 @@ class RevisorDeRed
     {
         $claves = [];
 
+        // El saludo vive en WireGuard, no en la base: sin refrescar, un túnel
+        // sano aparecía como caído sólo porque nadie abrió la pantalla.
+        try {
+            \App\Services\Vpn\ServidorVpn::estado($this->companyId);
+        } catch (\Throwable $e) {
+            Log::warning('[Alertas] No se pudo refrescar el estado de los túneles', ['error' => $e->getMessage()]);
+        }
+
         foreach (VpnTunel::where('company_id', $this->companyId)->where('activo', true)->get() as $tunel) {
             if ($tunel->ultimo_saludo && $tunel->ultimo_saludo->gt(now()->subMinutes(self::MINUTOS_TUNEL))) {
                 continue;
@@ -163,18 +171,84 @@ class RevisorDeRed
         foreach (OltAdmin::where('company_id', $this->companyId)->get() as $olt) {
             $ultima = OltOnt::where('olt_id', $olt->id)->max('synced_at');
 
-            if (!$ultima || now()->parse($ultima)->gt(now()->subHours(6))) {
+            // Que nadie haya abierto la pantalla en seis horas no es una
+            // falla: se avisa sólo si además la OLT no responde.
+            if (($ultima && now()->parse($ultima)->gt(now()->subHours(6))) || $this->responde((string) $olt->host)) {
                 continue;
             }
 
             $claves[] = $this->anotar(
                 "olt:{$olt->id}",
                 'olt',
+                'critico',
+                "La OLT {$olt->name} no responde",
+                'No contesta en ' . $olt->host . '. Última lectura de sus ONT: '
+                . ($ultima ? now()->parse($ultima)->diffForHumans() : 'nunca')
+                . '. Puede ser la OLT, el túnel o el camino hasta ella.',
+                ['olt' => $olt->name, 'host' => $olt->host, 'ultima_lectura' => (string) $ultima],
+            );
+        }
+
+        return $claves;
+    }
+
+    /**
+     * Datos del sistema que no cuadran y terminan en un cliente sin servicio o
+     * en un equipo que no se puede gestionar.
+     *
+     * @return list<string>
+     */
+    private function datosIncompletos(): array
+    {
+        $claves = [];
+
+        // Un cliente de IP fija sin IP asignada no navega y nadie se entera
+        // hasta que llama: no tiene entrada en el ARP del router.
+        $sinIp = DB::table('user_data as ud')
+            ->join('users as u', 'u.id', '=', 'ud.user_id')
+            ->leftJoin('tabla_ips as t', 't.id', '=', 'ud.ip_assignment_id')
+            ->where('u.company_id', $this->companyId)
+            ->where('ud.active', 1)
+            ->where(fn ($q) => $q->where('ud.connection_type', '!=', 'pppoe')->orWhereNull('ud.connection_type'))
+            ->whereNull('t.ip')
+            ->get(['ud.user_id', 'ud.names', 'ud.lastname', 'ud.dni']);
+
+        foreach ($sinIp as $c) {
+            $nombre = trim($c->names . ' ' . $c->lastname);
+
+            $claves[] = $this->anotar(
+                "sin-ip:{$c->user_id}",
+                'datos',
                 'aviso',
-                "Hace rato que no se lee la OLT {$olt->name}",
-                'La última lectura de sus ONT fue ' . now()->parse($ultima)->diffForHumans()
-                . '. Puede ser la OLT, el túnel o las credenciales.',
-                ['olt' => $olt->name, 'ultima_lectura' => (string) $ultima],
+                "{$nombre} figura con IP fija pero no tiene IP asignada",
+                'Sin IP no queda en el ARP del router, así que no navega. Asignale una o pasalo a PPPoE.',
+                ['documento' => $c->dni],
+                (int) $c->user_id,
+            );
+        }
+
+        // Dos OLT con la misma dirección privada: la plataforma llega por IP,
+        // así que sólo alcanza a una de las dos.
+        $mias = OltAdmin::where('company_id', $this->companyId)->get(['id', 'name', 'host']);
+        $ajenas = OltAdmin::where('company_id', '!=', $this->companyId)
+            ->whereIn('host', $mias->pluck('host')->filter()->all())
+            ->get(['name', 'host']);
+
+        foreach ($mias as $olt) {
+            $choca = $ajenas->firstWhere('host', $olt->host);
+
+            if (!$choca) {
+                continue;
+            }
+
+            $claves[] = $this->anotar(
+                "olt-ip:{$olt->id}",
+                'datos',
+                'aviso',
+                "La OLT {$olt->name} comparte dirección con otra del sistema",
+                "Otra OLT usa la misma dirección {$olt->host}. Como se llega por IP, sólo una de las dos queda alcanzable: "
+                . 'conviene cambiarle la dirección a una.',
+                ['olt' => $olt->name, 'host' => $olt->host],
             );
         }
 
@@ -199,6 +273,18 @@ class RevisorDeRed
         $alerta->save();
 
         return $clave;
+    }
+
+    /** Un ping corto: sirve para distinguir "nadie la miró" de "está caída". */
+    private function responde(string $host): bool
+    {
+        if (!filter_var($host, FILTER_VALIDATE_IP)) {
+            return true;
+        }
+
+        exec('ping -c 1 -W 2 ' . escapeshellarg($host) . ' 2>/dev/null', $salida, $codigo);
+
+        return $codigo === 0;
     }
 
     private function nombreDelCliente(int $userId): string
