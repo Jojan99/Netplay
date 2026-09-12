@@ -35,12 +35,17 @@ class VelocidadController extends Controller
     public function aplicar(Request $request, int $planId, ConectionRouterManagerInterface $conexion): JsonResponse
     {
         return $this->responder($conexion, function (ControlDeVelocidad $c) use ($request, $planId) {
-            $r = $c->aplicar($planId, $request->input('router_id') ? (int) $request->input('router_id') : null);
+            $r = $c->aplicar(
+                $planId,
+                $request->input('router_id') ? (int) $request->input('router_id') : null,
+                $request->boolean('reconectar'),
+            );
 
             Log::info('[Velocidad] Aplicado desde el panel', ['plan' => $planId, 'resultado' => $r]);
 
             return $r + [
                 'mensaje' => "Perfil {$r['perfil']} listo · {$r['pppoe']} clientes PPPoE y {$r['colas']} de IP fija"
+                    . ($r['cortadas'] ? " · {$r['cortadas']} sesiones reconectadas" : '')
                     . ($r['saltados'] ? " · {$r['saltados']} sin límite, sin tocar" : ''),
             ];
         });

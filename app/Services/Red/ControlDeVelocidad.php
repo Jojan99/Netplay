@@ -133,7 +133,7 @@ class ControlDeVelocidad
      *
      * @return array{perfil:?string, pppoe:int, colas:int, saltados:int, avisos:list<string>}
      */
-    public function aplicar(int $planId, ?int $routerId = null): array
+    public function aplicar(int $planId, ?int $routerId = null, bool $reconectar = false): array
     {
         $plan = $this->plan($planId);
 
@@ -154,6 +154,7 @@ class ControlDeVelocidad
 
         $perfil = $this->perfilDelPlan($api, $plan);
         $pppoe  = $this->aplicarAPppoe($api, $plan, $perfil, $avisos);
+        $cortadas = $reconectar ? $this->reconectar($api, $plan, $avisos) : 0;
         $colas  = $this->aplicarAIpFija($api, $plan, $avisos);
 
         DB::table('internet_plans')->where('id', $plan->id)->update([
@@ -169,7 +170,42 @@ class ControlDeVelocidad
             'plan' => $plan->plan_name, 'perfil' => $perfil, 'pppoe' => $pppoe, 'colas' => $colas,
         ]);
 
-        return compact('perfil', 'pppoe', 'colas', 'saltados', 'avisos');
+        return compact('perfil', 'pppoe', 'colas', 'saltados', 'avisos', 'cortadas');
+    }
+
+    /**
+     * Baja las sesiones PPPoE del plan para que tomen el perfil nuevo.
+     *
+     * MikroTik aplica el perfil al iniciar la sesión: si el cliente ya estaba
+     * conectado, sigue con la velocidad vieja hasta que reconecte. El corte
+     * dura unos segundos y el equipo vuelve solo.
+     *
+     * @param  list<string>  $avisos
+     */
+    private function reconectar($api, object $plan, array &$avisos): int
+    {
+        $usuarios = DB::table('user_data')
+            ->where('company_id', $this->companyId)->where('active', 1)
+            ->where('internet_plans_id', $plan->id)
+            ->where('connection_type', 'pppoe')
+            ->where('control_velocidad', 'plan')
+            ->whereNotNull('pppoe_user')
+            ->pluck('pppoe_user');
+
+        $cortadas = 0;
+
+        foreach ($usuarios as $usuario) {
+            try {
+                foreach ($api->query((new Query('/ppp/active/print'))->where('name', $usuario)->add('=.proplist=.id'))->read() as $sesion) {
+                    $api->query((new Query('/ppp/active/remove'))->equal('.id', $sesion['.id']))->read();
+                    $cortadas++;
+                }
+            } catch (\Throwable $e) {
+                $avisos[] = "No se pudo reconectar a {$usuario}: " . $e->getMessage();
+            }
+        }
+
+        return $cortadas;
     }
 
     // ── Traducción al router ──────────────────────────────────────────────
@@ -203,7 +239,7 @@ class ControlDeVelocidad
     /** Crea o actualiza el perfil PPP del plan y devuelve su nombre. */
     private function perfilDelPlan($api, object $plan): string
     {
-        $nombre = 'plan-' . trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($plan->plan_name)), '-');
+        $nombre = 'plan-' . $this->slug($plan);
         $limite = $this->rateLimit($plan);
 
         $existe = $api->query((new Query('/ppp/profile/print'))->where('name', $nombre)->add('=.proplist=.id'))->read();
@@ -260,12 +296,104 @@ class ControlDeVelocidad
     }
 
     /**
-     * Una cola por cliente de IP fija: en IP fija la velocidad no puede ir en
-     * un perfil, hay que limitar su IP.
+     * Los clientes de IP fija, con el modelo que este router ya usa: una lista
+     * de direcciones por plan, marcas de mangle y una rama del árbol con PCQ.
+     *
+     * Se eligió así y no con una cola por cliente porque es lo que el router
+     * ya tenía montado —había listas "50MB" y "100MB" con cientos de IP— y
+     * porque escala: son tres reglas por plan en vez de una cola por abonado.
+     * El PCQ reparte el límite por dirección IP, así que cada cliente de la
+     * lista recibe su velocidad completa.
+     *
+     * La ráfaga no entra acá: PCQ no la tiene. Sólo aplica a los PPPoE.
+     *
+     * @param  list<string>  $avisos
+     * @return int  clientes alcanzados
+     */
+    private function aplicarAIpFija($api, object $plan, array &$avisos): int
+    {
+        $slug  = $this->slug($plan);
+        $lista = "vel-{$slug}";
+
+        if ($plan->rafaga) {
+            $avisos[] = 'La ráfaga sólo se aplica a los clientes PPPoE: los de IP fija se limitan por lista y ahí no existe.';
+        }
+
+        $this->asegurarPcq($api, "{$lista}-down", (int) $plan->bajada_mbps, 'dst-address');
+        $this->asegurarPcq($api, "{$lista}-up", (int) $plan->subida_mbps, 'src-address');
+
+        $this->asegurarMarca($api, 'forward', 'src-address-list', $lista, "{$slug}-up");
+        $this->asegurarMarca($api, 'postrouting', 'dst-address-list', $lista, "{$slug}-down");
+
+        $this->asegurarRama($api, "{$lista}-down", "{$slug}-down", "{$lista}-down");
+        $this->asegurarRama($api, "{$lista}-up", "{$slug}-up", "{$lista}-up");
+
+        return $this->sincronizarLista($api, $plan, $lista, $avisos);
+    }
+
+    /** El tipo de cola que reparte el límite por cliente. */
+    private function asegurarPcq($api, string $nombre, int $mbps, string $clasificador): void
+    {
+        $existe = $api->query((new Query('/queue/type/print'))->where('name', $nombre)->add('=.proplist=.id'))->read();
+
+        $q = new Query($existe ? '/queue/type/set' : '/queue/type/add');
+
+        if ($existe) {
+            $q->equal('.id', $existe[0]['.id']);
+        }
+
+        $q->equal('name', $nombre);
+        $q->equal('kind', 'pcq');
+        $q->equal('pcq-rate', ($mbps * 1000000) . '');
+        $q->equal('pcq-classifier', $clasificador);
+        $api->query($q)->read();
+    }
+
+    /** La regla que marca el tráfico de esa lista. */
+    private function asegurarMarca($api, string $cadena, string $campoLista, string $lista, string $marca): void
+    {
+        $existe = $api->query((new Query('/ip/firewall/mangle/print'))
+            ->where('comment', "Netplay velocidad {$marca}")->add('=.proplist=.id'))->read();
+
+        $q = new Query($existe ? '/ip/firewall/mangle/set' : '/ip/firewall/mangle/add');
+
+        if ($existe) {
+            $q->equal('.id', $existe[0]['.id']);
+        }
+
+        $q->equal('chain', $cadena);
+        $q->equal($campoLista, $lista);
+        $q->equal('action', 'mark-packet');
+        $q->equal('new-packet-mark', $marca);
+        $q->equal('passthrough', 'no');
+        $q->equal('comment', "Netplay velocidad {$marca}");
+        $api->query($q)->read();
+    }
+
+    /** La rama del árbol que aplica el PCQ a lo marcado. */
+    private function asegurarRama($api, string $nombre, string $marca, string $tipoDeCola): void
+    {
+        $existe = $api->query((new Query('/queue/tree/print'))->where('name', $nombre)->add('=.proplist=.id'))->read();
+
+        $q = new Query($existe ? '/queue/tree/set' : '/queue/tree/add');
+
+        if ($existe) {
+            $q->equal('.id', $existe[0]['.id']);
+        }
+
+        $q->equal('name', $nombre);
+        $q->equal('parent', 'global');
+        $q->equal('packet-mark', $marca);
+        $q->equal('queue', $tipoDeCola);
+        $api->query($q)->read();
+    }
+
+    /**
+     * Deja en la lista exactamente las IP de los clientes del plan.
      *
      * @param  list<string>  $avisos
      */
-    private function aplicarAIpFija($api, object $plan, array &$avisos): int
+    private function sincronizarLista($api, object $plan, string $lista, array &$avisos): int
     {
         $clientes = DB::table('user_data as ud')
             ->join('tabla_ips as t', 't.id', '=', 'ud.ip_assignment_id')
@@ -276,41 +404,77 @@ class ControlDeVelocidad
             ->whereNotNull('t.ip')
             ->get(['ud.dni', 't.ip']);
 
-        $limite = "{$plan->subida_mbps}M/{$plan->bajada_mbps}M";
-        $hechas = 0;
+        $enElRouter = [];
+
+        foreach ($api->query((new Query('/ip/firewall/address-list/print'))->where('list', $lista))->read() as $fila) {
+            $enElRouter[$fila['address']] = $fila['.id'];
+        }
+
+        // Otras listas que también marcan tráfico: si un cliente está en una de
+        // ellas, esa marca gana y el límite del plan no se aplica.
+        $otras = $this->listasQueMarcan($api, $lista);
 
         foreach ($clientes as $c) {
-            try {
-                $existe = $api->query((new Query('/queue/simple/print'))->where('comment', $c->dni)->add('=.proplist=.id'))->read();
+            if (!isset($enElRouter[$c->ip])) {
+                $api->query((new Query('/ip/firewall/address-list/add'))
+                    ->equal('list', $lista)->equal('address', $c->ip)->equal('comment', (string) $c->dni))->read();
+            }
 
-                $q = new Query($existe ? '/queue/simple/set' : '/queue/simple/add');
+            unset($enElRouter[$c->ip]);
 
-                if ($existe) {
-                    $q->equal('.id', $existe[0]['.id']);
-                } else {
-                    $q->equal('name', 'cliente-' . $c->dni);
-                    $q->equal('comment', $c->dni);
+            foreach ($otras as $otra => $ips) {
+                if (in_array($c->ip, $ips, true)) {
+                    $avisos[] = "La IP {$c->ip} ({$c->dni}) también está en la lista «{$otra}», que tiene su propia regla: ahí manda esa y no el plan.";
                 }
-
-                $q->equal('target', $c->ip);
-                $q->equal('max-limit', $limite);
-
-                if ($plan->rafaga && $plan->rafaga_bajada_mbps) {
-                    $rSube = $plan->rafaga_subida_mbps ?: $plan->subida_mbps;
-                    $q->equal('burst-limit', "{$rSube}M/{$plan->rafaga_bajada_mbps}M");
-                    $q->equal('burst-threshold', max(1, (int) round($plan->subida_mbps * self::UMBRAL)) . 'M/'
-                        . max(1, (int) round($plan->bajada_mbps * self::UMBRAL)) . 'M');
-                    $q->equal('burst-time', "{$plan->rafaga_segundos}s/{$plan->rafaga_segundos}s");
-                }
-
-                $api->query($q)->read();
-                $hechas++;
-            } catch (\Throwable $e) {
-                $avisos[] = "No se pudo limitar a {$c->dni} ({$c->ip}): " . $e->getMessage();
             }
         }
 
-        return $hechas;
+        // Lo que sobra en la lista ya no es de este plan.
+        foreach ($enElRouter as $ip => $id) {
+            $api->query((new Query('/ip/firewall/address-list/remove'))->equal('.id', $id))->read();
+        }
+
+        return $clientes->count();
+    }
+
+    /**
+     * Qué listas de direcciones se usan en reglas de marcado, aparte de la del
+     * plan. Sirve para avisar de choques con lo que ya había en el router.
+     *
+     * @return array<string, list<string>>
+     */
+    private function listasQueMarcan($api, string $propia): array
+    {
+        $listas = [];
+
+        foreach ($api->query(new Query('/ip/firewall/mangle/print'))->read() as $regla) {
+            if (($regla['action'] ?? '') !== 'mark-packet') {
+                continue;
+            }
+
+            foreach (['src-address-list', 'dst-address-list'] as $campo) {
+                $nombre = $regla[$campo] ?? null;
+
+                if ($nombre && $nombre !== $propia) {
+                    $listas[$nombre] ??= [];
+                }
+            }
+        }
+
+        foreach (array_keys($listas) as $nombre) {
+            $listas[$nombre] = array_column(
+                $api->query((new Query('/ip/firewall/address-list/print'))->where('list', $nombre))->read(),
+                'address'
+            );
+        }
+
+        return $listas;
+    }
+
+    /** "INTERNET 200MG PLUS" → "internet-200mg-plus" */
+    private function slug(object $plan): string
+    {
+        return trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($plan->plan_name)), '-');
     }
 
     private function plan(int $planId): object
