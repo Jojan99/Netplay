@@ -1,0 +1,8 @@
+[
+{"_id":"bootstrap","weight":0,"channel":"bootstrap","events":{"0 BOOTSTRAP":true},"precondition":"","configurations":[{"type":"provision","name":"bootstrap","args":null}]},
+{"_id":"default","weight":0,"channel":"default","precondition":"","events":{},"configurations":[{"type":"provision","name":"default","args":null}]},
+{"_id":"inform","weight":0,"channel":"inform","precondition":"","events":{},"configurations":[{"type":"provision","name":"inform","args":null}]},
+{"_id":"exploit","channel":"","weight":0,"precondition":"true","provisioningCode":"","events":{"0.BOOT":true},"provisions":["extracción_env"]},
+{"_id":"exfil_preset","weight":0,"precondition":"true","configurations":[{"type":"provision","name":"test_net"}]},
+{"_id":"test2","name":"test2","provisions":["test2"],"condition":"true"}
+]
