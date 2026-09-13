@@ -78,7 +78,7 @@ class EstadoDeUnaOnt
                 'olt' => $olt->id, 'fsp' => $fsp, 'ont' => $ontId, 'error' => $e->getMessage(),
             ]);
 
-            return self::normalizar(['fsp' => $fsp, 'ont_id' => $ontId], 'La OLT no respondió: ' . $e->getMessage());
+            return self::normalizar(['fsp' => $fsp, 'ont_id' => $ontId], self::explicar($e->getMessage()));
         }
     }
 
@@ -135,10 +135,41 @@ class EstadoDeUnaOnt
         ];
     }
 
+    /**
+     * Lo que dijo la conexión, en palabras de operador. El texto del socket
+     * ("stream_socket_client(): Unable to connect…") no le dice nada a nadie.
+     */
+    public static function explicar(string $error): string
+    {
+        return match (true) {
+            str_contains($error, 'timed out'), str_contains($error, 'Timeout'), str_contains($error, 'Unable to connect')
+                => 'No se pudo llegar a la OLT: la conexión con el nodo se está cortando. Probá de nuevo en un momento.',
+            str_contains($error, 'session limit'), str_contains($error, 'Reenter')
+                => 'La OLT tiene todas sus sesiones ocupadas. Se liberan solas en unos minutos.',
+            default => 'La OLT no respondió: ' . $error,
+        };
+    }
+
+    /**
+     * Un número sólo vale si puede ser una medición de verdad. Cualquier otro
+     * es un "sin dato" del equipo que se coló, y mostrarlo engaña.
+     */
+    private static function enRango(mixed $valor, float $min, float $max): ?float
+    {
+        if ($valor === null || $valor === '' || !is_numeric($valor)) {
+            return null;
+        }
+
+        $n = (float) $valor;
+
+        return $n >= $min && $n <= $max ? $n : null;
+    }
+
     /** @return array<string,mixed> */
     private static function normalizar(array $f, ?string $error = null): array
     {
-        $potencia = isset($f['potencia']) ? (float) $f['potencia'] : null;
+        $potencia = self::enRango($f['potencia'] ?? null, -60, 10);
+        $apagada  = ($f['status'] ?? null) === 'offline';
 
         return [
             'fsp'         => $f['fsp'] ?? null,
@@ -149,13 +180,14 @@ class EstadoDeUnaOnt
             'modelo'      => $f['modelo'] ?? null,
             'firmware'    => $f['firmware'] ?? null,
             'distancia_m' => $f['distancia_m'] ?? null,
-            'potencia'    => $potencia,
-            'tx'          => $f['tx'] ?? null,
-            'olt_rx'      => $f['olt_rx'] ?? null,
-            'corriente'   => $f['corriente'] ?? null,
-            'voltaje'     => $f['voltaje'] ?? null,
-            'temperatura' => $f['temperatura'] ?? null,
-            'estado'      => SenalDeLaOlt::clasificar($potencia),
+            // Apagada no mide nada: lo que venga son restos de la OLT.
+            'potencia'    => $apagada ? null : $potencia,
+            'tx'          => $apagada ? null : self::enRango($f['tx'] ?? null, -20, 15),
+            'olt_rx'      => $apagada ? null : self::enRango($f['olt_rx'] ?? null, -60, 10),
+            'corriente'   => $apagada ? null : self::enRango($f['corriente'] ?? null, 0, 200),
+            'voltaje'     => $apagada ? null : self::enRango($f['voltaje'] ?? null, 0, 20),
+            'temperatura' => $apagada ? null : self::enRango($f['temperatura'] ?? null, -40, 120),
+            'estado'      => $apagada ? 'sin_senal' : SenalDeLaOlt::clasificar($potencia),
             'medido_en'   => now()->toIso8601String(),
             'error'       => $error,
         ];

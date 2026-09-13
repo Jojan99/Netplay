@@ -135,6 +135,10 @@ Route::prefix('management')->group(function () {
         Route::post('/desactivar',  [\App\Http\Controllers\GestionRemotaController::class, 'desactivar']);
         Route::post('/al-dia',      [\App\Http\Controllers\GestionRemotaController::class, 'alDia']);
         Route::post('/olt/{oltId}/ont', [\App\Http\Controllers\GestionRemotaController::class, 'darAcceso'])->whereNumber('oltId');
+        Route::get('/diagnostico',  [\App\Http\Controllers\GestionRemotaController::class, 'diagnostico']);
+        Route::get('/olt/{oltId}/perfiles', [\App\Http\Controllers\GestionRemotaController::class, 'perfiles'])->whereNumber('oltId');
+        Route::post('/olt/{oltId}/perfiles/{perfil}', [\App\Http\Controllers\GestionRemotaController::class, 'prepararPerfil'])
+            ->whereNumber('oltId')->whereNumber('perfil');
     });
 
     // ── Avisos de la red ───────────────────────────────────────────────────

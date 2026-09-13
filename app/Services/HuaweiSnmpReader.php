@@ -177,13 +177,20 @@ public function getOntInfo(string $fsp, int $ontId): array
     $volt   = $this->getInt(self::OID_OPT_VOLTAGE . '.' . $suffix);
     $bias   = $this->getInt(self::OID_OPT_BIAS    . '.' . $suffix);
 
+    // Con la ONT apagada la OLT contesta 2147483647 ("sin dato"). Sólo se
+    // filtraba -32768, así que la ficha mostraba 21.474.836 dBm y
+    // 2.147.483.647 °C como si fueran mediciones.
+    $dato = fn (?int $n) => ($n === null || in_array($n, [2147483647, -2147483648, -32768, 65535], true)) ? null : $n;
+
+    [$oltRx, $ontTx, $ontRx, $temp, $volt, $bias] = array_map($dato, [$oltRx, $ontTx, $ontRx, $temp, $volt, $bias]);
+
     // Conversión de unidades
-    if ($oltRx !== null && $oltRx !== -32768) $info['olt_rx_power']  = round($oltRx / 100, 2);
-    if ($ontTx !== null && $ontTx !== -32768) $info['tx_power']      = round($ontTx / 100, 2);
-    if ($ontRx !== null && $ontRx !== -32768) $info['rx_power']      = round($ontRx / 100, 2);
-    if ($temp   !== null)                     $info['temperature']   = $temp;
-    if ($volt   !== null && $volt > 0)        $info['voltage']       = round($volt / 1000, 3);
-    if ($bias   !== null && $bias > 0)        $info['laser_current'] = round($bias / 100, 2);
+    if ($oltRx !== null) $info['olt_rx_power']  = round($oltRx / 100, 2);
+    if ($ontTx !== null) $info['tx_power']      = round($ontTx / 100, 2);
+    if ($ontRx !== null) $info['rx_power']      = round($ontRx / 100, 2);
+    if ($temp  !== null) $info['temperature']   = $temp;
+    if ($volt  !== null && $volt > 0) $info['voltage']       = round($volt / 1000, 3);
+    if ($bias  !== null && $bias > 0) $info['laser_current'] = round($bias / 100, 2);
 
     return $info;
 }

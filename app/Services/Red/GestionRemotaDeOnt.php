@@ -122,6 +122,7 @@ class GestionRemotaDeOnt
                 'marca'    => $olt->brand,
                 'puertos'  => $puertos,
                 'sugerido' => $this->uplinkQueCoincide($puertos, $interfaces, $api),
+                'soporte'  => $this->soporte($olt),
             ];
         }
 
@@ -248,6 +249,418 @@ class GestionRemotaDeOnt
             'estado' => $this->estado(),
             'aviso'  => 'La VLAN sigue permitida en la OLT: sacarla de un puerto de subida es riesgoso y allí no molesta.',
         ];
+    }
+
+    // ── Qué soporta cada OLT ──────────────────────────────────────────────
+
+    /**
+     * Hasta dónde llega la plataforma con una OLT, dicho para el operador.
+     *
+     * No se le pregunta a la OLT: es algo que no cambia y consultarlo gasta
+     * una sesión. Sólo Huawei GPON está probado de punta a punta; en el resto
+     * se dice la verdad —qué queda listo y qué hay que hacer a mano— en vez de
+     * mandar comandos que nadie probó a la OLT de un cliente.
+     *
+     * @return array{nivel:string, titulo:string, detalle:string}
+     */
+    public function soporte(OltAdmin $olt): array
+    {
+        $vlan  = (int) ($this->config()->vlan ?: 0) ?: 'de gestión';
+        $marca = strtolower((string) $olt->brand);
+
+        if ($marca === 'huawei') {
+            return [
+                'nivel'   => 'completo',
+                'titulo'  => 'Se configura sola',
+                'detalle' => 'La plataforma deja pasar la VLAN por la OLT, prepara los perfiles de línea y le da el acceso a cada equipo.',
+            ];
+        }
+
+        if ($marca === 'cdata') {
+            $tecnologia = (Cache::get("olt:{$olt->id}:capacidades:v2") ?? [])['tecnologia'] ?? 'epon';
+
+            if ($tecnologia === 'epon') {
+                return [
+                    'nivel'   => 'manual',
+                    'titulo'  => 'La red queda lista; cada equipo se configura a mano',
+                    'detalle' => "En EPON la OLT no puede indicarle a la ONU que pida su IP de gestión. En cada equipo hay que crear una WAN "
+                        . "de tipo TR-069, IPoE por DHCP, en la VLAN {$vlan}, y que esa VLAN pase por el puerto PON. Con eso el equipo entra solo al sistema.",
+                ];
+            }
+        }
+
+        $nombre = ['zte' => 'ZTE', 'vsol' => 'V-SOL', 'cdata' => 'C-Data GPON'][$marca] ?? strtoupper($marca);
+
+        return [
+            'nivel'   => 'sin_probar',
+            'titulo'  => "Todavía no automatizado en {$nombre}",
+            'detalle' => "La red del MikroTik queda lista, pero no probamos los comandos de {$nombre} y no los mandamos a ciegas a una OLT en producción. "
+                . "A mano: dejar pasar la VLAN {$vlan} por el puerto de subida, habilitarla en el perfil de cada equipo y crear su WAN TR-069 por DHCP. "
+                . 'Si nos das una OLT de prueba de esta marca, lo sumamos.',
+        ];
+    }
+
+    // ── Perfiles de línea ─────────────────────────────────────────────────
+
+    /**
+     * Los perfiles de línea de la OLT y si ya dejan salir la gestión.
+     *
+     * Sin la VLAN de gestión en el perfil, la ONT descarta ese tráfico aunque
+     * todo lo demás esté bien: es el paso que faltaba y no se ve desde afuera.
+     *
+     * @return array<string,mixed>
+     */
+    public function perfiles(int $oltId, bool $releer = false): array
+    {
+        $g   = $this->config();
+        $olt = OltAdmin::where('id', $oltId)->where('company_id', $this->companyId)->first();
+
+        if (!$olt) {
+            return ['error' => 'Esa OLT no es de tu empresa.'];
+        }
+
+        if ($this->soporte($olt)['nivel'] !== 'completo') {
+            return ['error' => $this->soporte($olt)['detalle'], 'perfiles' => []];
+        }
+
+        if (!$g->vlan) {
+            return ['error' => 'Primero activá el acceso remoto: hace falta saber qué VLAN agregar.', 'perfiles' => []];
+        }
+
+        $clave = "gestion:perfiles:{$oltId}:{$g->vlan}";
+
+        if ($releer) {
+            Cache::forget($clave);
+        }
+
+        if ($guardado = Cache::get($clave)) {
+            return $guardado;
+        }
+
+        $dp = app(OltTelnetDispatcher::class);
+        $lista = [];
+
+        // Con el túnel cortándose de a ratos una lectura puede volver vacía: se
+        // intenta otra vez antes de dar el perfil por no leído.
+        $leer = function (string $metodo, array $datos = []) use ($dp, $oltId) {
+            for ($intento = 0; $intento < 2; $intento++) {
+                try {
+                    if ($r = $dp->dispatch($oltId, $metodo, $datos)) {
+                        return $r;
+                    }
+                } catch (\Throwable $e) {
+                    Log::warning('[Gestión] Lectura de perfiles fallida', ['metodo' => $metodo, 'error' => $e->getMessage()]);
+                }
+            }
+
+            return null;
+        };
+
+        $todos = $leer('perfilesDeLinea');
+
+        if (!$todos) {
+            return ['error' => 'La OLT no respondió al pedir la lista de perfiles. Suele ser el túnel: probá de nuevo en un momento.', 'perfiles' => []];
+        }
+
+        foreach ($todos as $p) {
+            // Los que no usa nadie no se leen ni se tocan: no suman nada.
+            if ((int) $p['equipos'] === 0) {
+                continue;
+            }
+
+            $lista[] = $p + $this->estadoDePerfil($leer('perfilDeLinea', ['perfil' => (int) $p['id']]), (int) $g->vlan);
+        }
+
+        usort($lista, fn ($a, $b) => $b['equipos'] <=> $a['equipos']);
+
+        $cuantos = fn (string $estado) => count(array_filter($lista, fn ($p) => $p['estado'] === $estado));
+
+        $r = [
+            'perfiles' => $lista,
+            'leido_en' => now()->toIso8601String(),
+            'resumen'  => [
+                'listos'       => $cuantos('listo'),
+                'pendientes'   => $cuantos('pendiente'),
+                'no_soportado' => $cuantos('no_soportado'),
+                'sin_leer'     => $cuantos('sin_leer'),
+                'equipos_pendientes' => array_sum(array_map(fn ($p) => $p['estado'] === 'listo' ? 0 : $p['equipos'], $lista)),
+            ],
+        ];
+
+        // Una lectura incompleta no se guarda: la próxima vez se vuelve a
+        // intentar en vez de mostrar media foto durante media hora.
+        if ($r['resumen']['sin_leer'] === 0) {
+            Cache::put($clave, $r, now()->addMinutes(30));
+        }
+
+        // Para el diagnóstico sí sirve la última, aunque esté incompleta.
+        Cache::put("gestion:perfiles-ultima:{$oltId}:{$g->vlan}", $r, now()->addHours(6));
+
+        return $r;
+    }
+
+    /**
+     * Agrega la gestión a un perfil de línea.
+     *
+     * De a un perfil: al guardarlo la OLT les reenvía la configuración a todos
+     * sus equipos, y el operador tiene que poder elegir cuándo le pasa eso a
+     * cada grupo de clientes.
+     *
+     * @return array{ok:bool, estado:string, detalle:string}
+     */
+    public function prepararPerfil(int $oltId, int $perfil): array
+    {
+        $g   = $this->config();
+        $olt = OltAdmin::where('id', $oltId)->where('company_id', $this->companyId)->first();
+
+        if (!$olt || $this->soporte($olt)['nivel'] !== 'completo') {
+            return ['ok' => false, 'estado' => 'no_soportado', 'detalle' => $olt ? $this->soporte($olt)['detalle'] : 'Esa OLT no es de tu empresa.'];
+        }
+
+        if (!$g->activa || !$g->vlan) {
+            return ['ok' => false, 'estado' => 'error', 'detalle' => 'El acceso remoto no está activado.'];
+        }
+
+        try {
+            $r = app(OltTelnetDispatcher::class)->dispatch($oltId, 'prepararPerfilDeLinea', [
+                'perfil' => $perfil, 'vlan' => (int) $g->vlan,
+            ]);
+        } catch (\Throwable $e) {
+            return ['ok' => false, 'estado' => 'error', 'detalle' => $e->getMessage()];
+        }
+
+        Cache::forget("gestion:perfiles:{$oltId}:{$g->vlan}");
+        Cache::forget("gestion:perfiles-ultima:{$oltId}:{$g->vlan}");
+
+        return is_array($r) ? $r : ['ok' => false, 'estado' => 'error', 'detalle' => 'La OLT no respondió.'];
+    }
+
+    /** @return array{estado:string, detalle:string} */
+    private function estadoDePerfil(?array $perfil, int $vlan): array
+    {
+        if (!$perfil) {
+            return ['estado' => 'sin_leer', 'detalle' => 'No se pudo leer el perfil.'];
+        }
+
+        if ($perfil['modo'] !== 'VLAN' || !$perfil['gems']) {
+            return ['estado' => 'no_soportado', 'detalle' => 'Reparte el tráfico por ' . ($perfil['modo'] ?: 'otro criterio') . ', no por VLAN: hay que revisarlo a mano.'];
+        }
+
+        $vlans = [];
+
+        foreach ($perfil['gems'] as $mapeos) {
+            $vlans = array_merge($vlans, array_column($mapeos, 'vlan'));
+        }
+
+        $tieneVlan = in_array($vlan, $vlans, true);
+
+        if ($tieneVlan && $perfil['tr069']) {
+            return ['estado' => 'listo', 'detalle' => 'Deja salir la gestión.'];
+        }
+
+        $falta = array_filter([
+            $tieneVlan ? null : "la VLAN {$vlan}",
+            $perfil['tr069'] ? null : 'la gestión TR-069',
+        ]);
+
+        return ['estado' => 'pendiente', 'detalle' => 'Le falta ' . implode(' y ', $falta) . '.'];
+    }
+
+    // ── Diagnóstico ───────────────────────────────────────────────────────
+
+    /**
+     * Todo lo que tiene que estar bien para que un equipo llegue al TR-069,
+     * revisado de verdad y contado en castellano.
+     *
+     * Del router y de la base se lee en el momento; de la OLT se usa lo último
+     * leído, porque consultarla entera tarda y el túnel no siempre acompaña.
+     *
+     * @return array<string,mixed>
+     */
+    public function diagnostico(): array
+    {
+        $g = $this->config();
+        $grupos = [];
+
+        if (!$g->activa || !$g->vlan) {
+            return [
+                'nivel'   => 'apagado',
+                'resumen' => 'El acceso remoto está apagado.',
+                'grupos'  => [],
+            ];
+        }
+
+        $grupos[] = ['titulo' => 'MikroTik', 'items' => $this->revisarRouter($g)];
+
+        foreach (OltAdmin::where('company_id', $this->companyId)->orderBy('id')->get() as $olt) {
+            $grupos[] = ['titulo' => $olt->name, 'olt_id' => (int) $olt->id, 'marca' => $olt->brand, 'items' => $this->revisarOlt($olt, $g)];
+        }
+
+        $grupos[] = ['titulo' => 'Equipos', 'items' => $this->revisarEquipos($g)];
+
+        $estados = [];
+
+        foreach ($grupos as $grupo) {
+            $estados = array_merge($estados, array_column($grupo['items'], 'estado'));
+        }
+
+        $nivel = in_array('error', $estados, true) ? 'error'
+            : (array_intersect(['pendiente', 'aviso'], $estados) ? 'aviso' : 'ok');
+
+        return [
+            'nivel'   => $nivel,
+            'resumen' => [
+                'ok'    => 'Todo configurado y funcionando.',
+                'aviso' => 'Funciona, pero quedan pasos por hacer.',
+                'error' => 'Hay algo que impide que los equipos lleguen al TR-069.',
+            ][$nivel],
+            'grupos'  => $grupos,
+        ];
+    }
+
+    /** @return list<array<string,mixed>> */
+    private function revisarRouter(GestionRemota $g): array
+    {
+        $router = $this->router($g->router_id);
+
+        if (!$router) {
+            return [$this->item('error', 'Sin MikroTik', 'La empresa no tiene un MikroTik configurado.')];
+        }
+
+        try {
+            $api = $this->conexion->conection($router->token);
+        } catch (\Throwable $e) {
+            return [$this->item('error', 'No se pudo entrar al MikroTik', $e->getMessage())];
+        }
+
+        $items = [];
+        $nombre = "vlan{$g->vlan}-gestion";
+        $leer = fn (string $cmd, string $campo, string $valor) => $api->query((new Query($cmd))->where($campo, $valor))->read();
+
+        $vlan = $leer('/interface/vlan/print', 'name', $nombre)[0] ?? null;
+        $items[] = !$vlan
+            ? $this->item('error', "VLAN {$g->vlan}", 'No está creada en el MikroTik.', 'activar')
+            : (($vlan['running'] ?? 'false') === 'true'
+                ? $this->item('ok', "VLAN {$g->vlan}", "Arriba sobre {$vlan['interface']}.")
+                : $this->item('error', "VLAN {$g->vlan}", "Creada sobre {$vlan['interface']}, pero esa interfaz no está en uso.", 'activar'));
+
+        $dhcp = $leer('/ip/dhcp-server/print', 'name', 'dhcp-gestion-ont')[0] ?? null;
+        $items[] = !$dhcp
+            ? $this->item('error', 'DHCP de los equipos', 'No está creado.', 'activar')
+            : (($dhcp['invalid'] ?? 'false') === 'true' || ($dhcp['disabled'] ?? 'false') === 'true'
+                ? $this->item('error', 'DHCP de los equipos', 'Está creado pero no funciona.', 'activar')
+                : $this->item('ok', 'DHCP de los equipos', "Reparte {$g->pool_desde} a {$g->pool_hasta}."));
+
+        $opcion = $leer('/ip/dhcp-server/option/print', 'name', 'netplay-acs')[0] ?? null;
+        $items[] = ($opcion['value'] ?? null) === $this->opcion43()
+            ? $this->item('ok', 'Dirección del servidor TR-069', 'Viaja con la IP: ' . config('services.genieacs.cwmp_url'))
+            : $this->item('error', 'Dirección del servidor TR-069', $opcion ? 'Apunta a otra dirección.' : 'No está cargada en el DHCP.', 'activar');
+
+        $reglas = $api->query(new Query('/ip/firewall/filter/print'))->read();
+        $posAcs = $posNada = null;
+
+        foreach ($reglas as $i => $r) {
+            $posAcs  ??= ($r['comment'] ?? '') === self::MARCA . ': al ACS' ? $i : null;
+            $posNada ??= ($r['comment'] ?? '') === self::MARCA . ': nada mas' ? $i : null;
+        }
+
+        $items[] = $posAcs === null || $posNada === null
+            ? $this->item('error', 'Aislamiento', 'Faltan las reglas que encierran la red de gestión.', 'activar')
+            : ($posAcs < $posNada
+                ? $this->item('ok', 'Aislamiento', 'La red de gestión sólo habla con el servidor TR-069.')
+                : $this->item('error', 'Aislamiento', 'Las reglas están al revés: el bloqueo va antes que el paso al servidor.', 'activar'));
+
+        return $items;
+    }
+
+    /** @return list<array<string,mixed>> */
+    private function revisarOlt(OltAdmin $olt, GestionRemota $g): array
+    {
+        $soporte = $this->soporte($olt);
+
+        if ($soporte['nivel'] !== 'completo') {
+            return [$this->item($soporte['nivel'] === 'manual' ? 'manual' : 'aviso', $soporte['titulo'], $soporte['detalle'])];
+        }
+
+        $items = [];
+        $uplink = ($g->uplinks ?? [])[(string) $olt->id] ?? ($g->uplinks ?? [])[$olt->id] ?? null;
+
+        $items[] = $uplink
+            ? $this->item('ok', 'VLAN en la OLT', "Pasa por el puerto de subida {$uplink}.")
+            : $this->item('error', 'VLAN en la OLT', 'No pasa por ningún puerto de subida: los equipos piden IP y nadie les contesta.', 'activar');
+
+        $perfiles = Cache::get("gestion:perfiles:{$olt->id}:{$g->vlan}") ?? Cache::get("gestion:perfiles-ultima:{$olt->id}:{$g->vlan}");
+
+        if (!$perfiles) {
+            $items[] = $this->item('pendiente', 'Perfiles de línea', 'Todavía no se revisaron.', 'perfiles');
+        } else {
+            $r = $perfiles['resumen'];
+            $total = count($perfiles['perfiles']);
+
+            $sinLeer = (int) ($r['sin_leer'] ?? 0);
+
+            $items[] = $r['pendientes'] === 0 && $r['no_soportado'] === 0 && $sinLeer === 0
+                ? $this->item('ok', 'Perfiles de línea', "Los {$total} perfiles en uso dejan salir la gestión.")
+                : $this->item(
+                    $r['listos'] === 0 ? 'error' : 'pendiente',
+                    'Perfiles de línea',
+                    "{$r['listos']} de {$total} listos."
+                        . ($r['pendientes'] ? " Faltan {$r['pendientes']}." : '')
+                        . ($r['no_soportado'] ? " {$r['no_soportado']} hay que revisarlos a mano." : '')
+                        . ($sinLeer ? " {$sinLeer} no se pudieron leer." : '')
+                        . " {$r['equipos_pendientes']} equipos todavía no pueden salir.",
+                    'perfiles'
+                );
+        }
+
+        return $items;
+    }
+
+    /** @return list<array<string,mixed>> */
+    private function revisarEquipos(GestionRemota $g): array
+    {
+        $estado = $this->estado()['equipos'];
+        $items = [];
+
+        $items[] = $estado['con_gestion'] >= $estado['total'] && $estado['total'] > 0
+            ? $this->item('ok', 'Acceso dado', "Los {$estado['total']} equipos lo tienen.")
+            : $this->item('pendiente', 'Acceso dado', "{$estado['con_gestion']} de {$estado['total']} equipos.", 'al_dia');
+
+        // Cuántos pidieron IP de verdad: es la prueba de que el camino anda.
+        try {
+            $router = $this->router($g->router_id);
+            $api = $this->conexion->conection($router->token);
+            $conIp = 0;
+
+            foreach ($api->query((new Query('/ip/dhcp-server/lease/print'))->where('server', 'dhcp-gestion-ont'))->read() as $l) {
+                $conIp += ($l['status'] ?? '') === 'bound' ? 1 : 0;
+            }
+
+            $items[] = $conIp > 0
+                ? $this->item('ok', 'Equipos con IP de gestión', $conIp === 1 ? 'Un equipo ya pidió y recibió su IP.' : "{$conIp} equipos ya pidieron y recibieron su IP.")
+                : $this->item($estado['con_gestion'] > 0 ? 'error' : 'pendiente', 'Equipos con IP de gestión',
+                    $estado['con_gestion'] > 0
+                        ? 'Hay equipos con acceso dado pero ninguno pidió IP: revisá los perfiles de línea.'
+                        : 'Todavía ninguno.');
+        } catch (\Throwable $e) {
+            $items[] = $this->item('aviso', 'Equipos con IP de gestión', 'No se pudo leer el DHCP del MikroTik.');
+        }
+
+        return $items;
+    }
+
+    /** @return array{estado:string, titulo:string, detalle:string, accion:?string} */
+    private function item(string $estado, string $titulo, string $detalle, ?string $accion = null): array
+    {
+        return compact('estado', 'titulo', 'detalle', 'accion');
+    }
+
+    /** La dirección del servidor TR-069 como opción 43 del DHCP (TLV 1). */
+    private function opcion43(): string
+    {
+        $url = (string) config('services.genieacs.cwmp_url');
+
+        return '0x01' . str_pad(dechex(strlen($url)), 2, '0', STR_PAD_LEFT) . bin2hex($url);
     }
 
     // ── Por ONT ───────────────────────────────────────────────────────────
@@ -412,7 +825,7 @@ class GestionRemotaDeOnt
 
         // 4. La opción 43: la dirección del ACS viaja con la IP.
         $url = (string) config('services.genieacs.cwmp_url');
-        $tlv = '0x01' . str_pad(dechex(strlen($url)), 2, '0', STR_PAD_LEFT) . bin2hex($url);
+        $tlv = $this->opcion43();
         $existeOpcion = $hay('/ip/dhcp-server/option/print', 'name', $opcion);
 
         $q = new Query($existeOpcion ? '/ip/dhcp-server/option/set' : '/ip/dhcp-server/option/add');

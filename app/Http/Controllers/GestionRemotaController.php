@@ -168,6 +168,50 @@ class GestionRemotaController extends Controller
         ], 0, JsonResponse::HTTP_OK);
     }
 
+    /** Todo lo que tiene que estar bien, revisado y dicho en castellano. */
+    public function diagnostico(): JsonResponse
+    {
+        if (!$companyId = (int) getSessionCompanyId()) {
+            return standardApiReponse('Sesión sin empresa asociada', null, 1, JsonResponse::HTTP_UNAUTHORIZED);
+        }
+
+        try {
+            $r = $this->servicio($companyId)->diagnostico();
+        } catch (\Throwable $e) {
+            return standardApiReponse('No se pudo revisar: ' . $e->getMessage(), null, 1, JsonResponse::HTTP_OK);
+        }
+
+        return standardApiReponse($r['resumen'], $r, 0, JsonResponse::HTTP_OK);
+    }
+
+    /** Los perfiles de línea de una OLT y si dejan salir la gestión. */
+    public function perfiles(Request $request, int $oltId): JsonResponse
+    {
+        if (!$companyId = (int) getSessionCompanyId()) {
+            return standardApiReponse('Sesión sin empresa asociada', null, 1, JsonResponse::HTTP_UNAUTHORIZED);
+        }
+
+        try {
+            $r = $this->servicio($companyId)->perfiles($oltId, $request->boolean('releer'));
+        } catch (\Throwable $e) {
+            return standardApiReponse('No se pudieron leer los perfiles: ' . $e->getMessage(), null, 1, JsonResponse::HTTP_OK);
+        }
+
+        return standardApiReponse($r['error'] ?? 'Perfiles de línea', $r, isset($r['error']) ? 1 : 0, JsonResponse::HTTP_OK);
+    }
+
+    /** Agrega la gestión a un perfil. De a uno, a pedido del operador. */
+    public function prepararPerfil(int $oltId, int $perfil): JsonResponse
+    {
+        if (!$companyId = (int) getSessionCompanyId()) {
+            return standardApiReponse('Sesión sin empresa asociada', null, 1, JsonResponse::HTTP_UNAUTHORIZED);
+        }
+
+        $r = $this->servicio($companyId)->prepararPerfil($oltId, $perfil);
+
+        return standardApiReponse($r['detalle'], $r, $r['ok'] ? 0 : 1, JsonResponse::HTTP_OK);
+    }
+
     private function servicio(int $companyId): GestionRemotaDeOnt
     {
         return new GestionRemotaDeOnt($companyId, app(ConectionRouterManagerInterface::class));

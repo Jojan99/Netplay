@@ -25,6 +25,9 @@ class EquipoDeOnt
 {
     private const VIGENCIA = 600;
 
+    /** Marcas cuya consola informa modelo y WiFi de la ONT. */
+    private const CON_CONSOLA = ['cdata'];
+
     /** Vendor-ID de CTC → nombre del fabricante. */
     private const FABRICANTES = [
         'CDT'  => 'C-Data',  'CDTC' => 'C-Data',
@@ -47,9 +50,19 @@ class EquipoDeOnt
     /** @return array<string,mixed> */
     public static function de(OltAdmin $olt, string $fsp, int $ontId, int $companyId, bool $refrescar = false): array
     {
-        $clave = "olt:{$olt->id}:ont:{$fsp}:{$ontId}:equipo";
+        // Sólo la C-Data sabe contar el modelo y el WiFi de sus ONT por consola.
+        // En el resto se abría una sesión Telnet que no podía traer nada y,
+        // con el túnel inestable, terminaba en un error de socket en la ficha.
+        // Ahí el WiFi sale de TR-069.
+        if (!in_array(strtolower((string) $olt->brand), self::CON_CONSOLA, true)) {
+            return ['error' => null, 'version' => null, 'wifi' => null, 'wifi_soportado' => false, 'foto' => null, 'leido_en' => null];
+        }
+
+        $clave  = "olt:{$olt->id}:ont:{$fsp}:{$ontId}:equipo";
+        $ultima = "{$clave}:ultima";
 
         $datos = $refrescar ? null : Cache::get($clave);
+        $aviso = null;
 
         if (!is_array($datos)) {
             try {
@@ -61,13 +74,21 @@ class EquipoDeOnt
 
                 if (!empty($datos['version'])) {
                     Cache::put($clave, $datos, now()->addSeconds(self::VIGENCIA));
+                    Cache::put($ultima, $datos, now()->addDays(7));
                 }
             } catch (\Throwable $e) {
                 Log::warning('[OLT] No se pudo leer el equipo de la ONT', [
                     'olt' => $olt->id, 'fsp' => $fsp, 'ont' => $ontId, 'error' => $e->getMessage(),
                 ]);
 
-                return ['error' => 'La OLT no respondió: ' . $e->getMessage()];
+                // Mejor lo último que se supo, dicho como tal, que un error.
+                $datos = Cache::get($ultima);
+
+                if (!is_array($datos)) {
+                    return ['error' => EstadoDeUnaOnt::explicar($e->getMessage())];
+                }
+
+                $aviso = 'No se pudo llegar a la OLT ahora: se muestra la última lectura.';
             }
         }
 
@@ -88,6 +109,7 @@ class EquipoDeOnt
             'wifi_soportado' => (bool) ($datos['wifi_soportado'] ?? !empty($datos['wifi'])),
             'foto'           => self::foto($companyId, $vendor, (string) ($v['modelo'] ?? '')),
             'leido_en'       => $datos['leido_en'] ?? null,
+            'aviso'          => $aviso,
         ];
     }
 

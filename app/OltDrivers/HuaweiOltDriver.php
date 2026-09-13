@@ -853,6 +853,142 @@ public function parseServicePorts(string $output): array
      * una de un puerto de subida deja sin servicio a esos clientes.
      */
     /**
+     * Los perfiles de línea y cuántos equipos usa cada uno.
+     *
+     * @return list<array{id:int, nombre:string, equipos:int}>
+     */
+    public function perfilesDeLinea(): array
+    {
+        $salida = $this->runCommand('display ont-lineprofile gpon all');
+        $perfiles = [];
+
+        foreach (preg_split('/\r?\n/', $salida) as $linea) {
+            if (preg_match('/^\s*(\d+)\s+(\S+)\s+(\d+)\s*$/', $linea, $m)) {
+                $perfiles[] = ['id' => (int) $m[1], 'nombre' => $m[2], 'equipos' => (int) $m[3]];
+            }
+        }
+
+        return $perfiles;
+    }
+
+    /**
+     * Cómo reparte el tráfico un perfil de línea: modo, gestión TR-069 y qué
+     * VLAN viaja por cada canal (GEM).
+     *
+     * @return array{id:int, modo:string, tr069:bool, gems:array<int,list<array{indice:int, vlan:?int}>>}|null
+     */
+    public function perfilDeLinea(int $id): ?array
+    {
+        $salida = $this->runCommand("display ont-lineprofile gpon profile-id {$id}");
+
+        if (!preg_match('/Profile-ID\s*:\s*' . $id . '\b/', $salida)) {
+            return null;
+        }
+
+        $gems = [];
+        $trozos = preg_split('/<Gem Index\s+(\d+)>/', $salida, -1, PREG_SPLIT_DELIM_CAPTURE);
+
+        for ($i = 1; $i + 1 < count($trozos); $i += 2) {
+            $gem = (int) $trozos[$i];
+            $gems[$gem] = [];
+
+            // Las filas de la tabla de mapeo: índice, VLAN y el resto en guiones.
+            preg_match_all('/^\s+(\d+)\s+(\d+|-)\s+\S+\s+\S+\s+\S+\s+\S+/m', $trozos[$i + 1], $filas, PREG_SET_ORDER);
+
+            foreach ($filas as $f) {
+                $gems[$gem][] = ['indice' => (int) $f[1], 'vlan' => $f[2] === '-' ? null : (int) $f[2]];
+            }
+        }
+
+        return [
+            'id'    => $id,
+            'modo'  => preg_match('/Mapping mode\s*:\s*(\S+)/i', $salida, $m) ? strtoupper($m[1]) : '',
+            'tr069' => (bool) preg_match('/TR069 management\s*:\s*Enable/i', $salida),
+            'gems'  => $gems,
+        ];
+    }
+
+    /**
+     * Deja un perfil de línea listo para la gestión remota: la VLAN de gestión
+     * con su propio lugar en el canal del servicio y la gestión TR-069
+     * encendida, así la ONT arma sola su WAN de gestión.
+     *
+     * Sólo agrega: no quita ni cambia ningún mapeo que ya esté.
+     *
+     * @return array{ok:bool, estado:string, detalle:string}
+     */
+    public function prepararPerfilDeLinea(int $id, int $vlan): array
+    {
+        $antes = $this->perfilDeLinea($id);
+
+        if (!$antes) {
+            return ['ok' => false, 'estado' => 'error', 'detalle' => "No se pudo leer el perfil {$id}."];
+        }
+
+        if ($antes['modo'] !== 'VLAN') {
+            return [
+                'ok' => false, 'estado' => 'no_soportado',
+                'detalle' => "El perfil reparte el tráfico por «{$antes['modo']}», no por VLAN: agregarle la gestión cambiaría cómo navegan sus clientes. Hay que revisarlo a mano.",
+            ];
+        }
+
+        if (!$antes['gems']) {
+            return ['ok' => false, 'estado' => 'no_soportado', 'detalle' => 'El perfil no tiene canales (GEM) configurados.'];
+        }
+
+        // El canal que ya lleva el servicio; si ninguno tiene mapeos, el primero.
+        $gem = array_key_first(array_filter($antes['gems'])) ?? array_key_first($antes['gems']);
+        $mapeos = $antes['gems'][$gem];
+        $tieneVlan = in_array($vlan, array_column($mapeos, 'vlan'), true);
+
+        if ($tieneVlan && $antes['tr069']) {
+            return ['ok' => true, 'estado' => 'ya_estaba', 'detalle' => 'Ya estaba listo.'];
+        }
+
+        $indice = $mapeos ? max(array_column($mapeos, 'indice')) + 1 : 0;
+
+        if (!$tieneVlan && $indice > 7) {
+            return ['ok' => false, 'estado' => 'no_soportado', 'detalle' => 'El canal del perfil ya tiene los 8 mapeos que admite la OLT.'];
+        }
+
+        $this->runCommand('config');
+        $this->runCommand("ont-lineprofile gpon profile-id {$id}");
+
+        $respuestas = '';
+
+        if (!$tieneVlan) {
+            $respuestas .= $this->runCommand("gem mapping {$gem} {$indice} vlan {$vlan}");
+        }
+
+        if (!$antes['tr069']) {
+            $respuestas .= $this->runCommand('tr069-management enable');
+        }
+
+        // Con equipos usando el perfil, la OLT pide confirmación antes de
+        // mandarles la configuración nueva.
+        $commit = $this->runCommand('commit');
+
+        if (preg_match('/\(y\/n\)/i', $commit)) {
+            $commit .= $this->runCommand('y');
+        }
+
+        $this->volverAlPrincipio();
+
+        $despues = $this->perfilDeLinea($id);
+        $listo = $despues
+            && $despues['tr069']
+            && in_array($vlan, array_column($despues['gems'][$gem] ?? [], 'vlan'), true);
+
+        return [
+            'ok'      => $listo,
+            'estado'  => $listo ? 'listo' : 'error',
+            'detalle' => $listo
+                ? "VLAN {$vlan} en el canal {$gem} y gestión TR-069 encendida."
+                : 'La OLT no dejó el perfil como se pidió: ' . (self::primeraLinea($respuestas . "\n" . $commit) ?: 'sin detalle'),
+        ];
+    }
+
+    /**
      * Vuelve a la vista principal de la OLT.
      *
      * Salir con un `quit` fijo no alcanza: si un comando dejó abierto un
@@ -1406,7 +1542,11 @@ public function parseServicePorts(string $output): array
     // sub-prompt ("{ <cr>|e2e<K>|gemport<K>") para cortar la lectura a la
     // mitad: se perdía la respuesta y quedaba para el comando siguiente.
     $finRe    = '/(?:^|\n)[^\s{}|<>]+(?:\([^)\n]*\))?[>#]\s*$/';
-    $promptRe = '/(?:(?:^|\n)[^\s{}|<>]+(?:\([^)\n]*\))?[>#]\s*$|----\s*More\s*----|\{\s*<cr>)/i';
+    // Esta versión muestra "---- More ( Press 'Q' to break ) ----": con un
+    // patrón que esperaba "---- More ----" pegado nunca se pedía la página
+    // siguiente y cada consulta larga esperaba 60 s a que la OLT cortara sola.
+    $masRe    = '/----\s*More\b[^\n]*?----/i';
+    $promptRe = '/(?:(?:^|\n)[^\s{}|<>]+(?:\([^)\n]*\))?[>#]\s*$|----\s*More\b[^\n]*?----|\{\s*<cr>|\(y\/n\)[^\n]*$)/i';
 
     // Cada página y cada sub-prompt es otra vuelta; si algo se traba, esperar
     // el tiempo completo en cada una hacía que un simple "display" tardara un
@@ -1429,7 +1569,13 @@ public function parseServicePorts(string $output): array
             }
 
             // 🔥 paginado
-            if (preg_match('/----\s*More\s*----/i', $chunk)) {
+            // Una confirmación (y/n) no se contesta acá: decide quien mandó el
+            // comando. Esperar un prompt que no llega colgaba la lectura.
+            if (preg_match('/\(y\/n\)[^\n]*$/i', $chunk)) {
+                break;
+            }
+
+            if (preg_match($masRe, $chunk)) {
                 $this->ssh->write(' ');
                 continue;
             }
@@ -1453,7 +1599,13 @@ public function parseServicePorts(string $output): array
         $this->desincronizada = true;
     }
 
-    $fullOutput = preg_replace('/\s*----\s*More\s*----\s*/i', "\n", $fullOutput);
+    $fullOutput = preg_replace('/[ \t]*----\s*More\b[^\n]*?----[ \t]*/i', "\n", $fullOutput);
+
+    // Al pasar de página la OLT borra el aviso moviendo el cursor
+    // ("\e[37D" + espacios + "\e[37D"). Esos códigos quedaban pegados al
+    // principio de la primera fila de la página siguiente y la fila no se
+    // reconocía: se perdía justo el renglón que venía después del corte.
+    $fullOutput = preg_replace('/\x1b\[[0-9;]*[A-Za-z]/', '', $fullOutput);
 
     return $fullOutput;
 }

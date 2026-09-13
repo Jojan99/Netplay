@@ -46,6 +46,7 @@ class OltTelnetWorker extends Command
         'transferONT', 'deactivateONT', 'activateONT',
         // Cambia la configuración: si no se guarda, vuelve atrás al reiniciar.
         'cambiarAutoAutorizacion', 'prepararVlanDeGestion', 'darGestionAOnt',
+        'prepararPerfilDeLinea',
     ];
 
     private ?object          $connection     = null;
@@ -337,6 +338,12 @@ class OltTelnetWorker extends Command
                                        ? $this->driver->prepararVlanDeGestion((int) $p['vlan'], (string) $p['uplink']) : null,
             'darGestionAOnt'    => method_exists($this->driver, 'darGestionAOnt')
                                        ? $this->driver->darGestionAOnt($p['fsp'], (int) $p['ont_id'], (int) $p['vlan'], (int) $p['service_port']) : null,
+            'perfilesDeLinea'   => method_exists($this->driver, 'perfilesDeLinea')
+                                       ? $this->driver->perfilesDeLinea() : null,
+            'perfilDeLinea'     => method_exists($this->driver, 'perfilDeLinea')
+                                       ? $this->driver->perfilDeLinea((int) $p['perfil']) : null,
+            'prepararPerfilDeLinea' => method_exists($this->driver, 'prepararPerfilDeLinea')
+                                       ? $this->driver->prepararPerfilDeLinea((int) $p['perfil'], (int) $p['vlan']) : null,
             'equipoDeOnt'       => method_exists($this->driver, 'equipoDeOnt')
                                        ? $this->driver->equipoDeOnt($p['fsp'], (int) $p['ont_id']) : [],
             'autoAutorizacion'  => method_exists($this->driver, 'autoAutorizacion')
