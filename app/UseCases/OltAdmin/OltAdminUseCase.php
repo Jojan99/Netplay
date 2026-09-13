@@ -819,6 +819,15 @@ class OltAdminUseCase
                 );
 
                 Cache::forget("olt:{$oltId}:all_service_ports");
+
+                // Acceso remoto: si la empresa lo tiene activado, el equipo
+                // nuevo entra solo al TR-069. Hacerlo acá evita que alguien
+                // tenga que acordarse de habilitarlo equipo por equipo.
+                $gestion = $this->darGestionRemota($oltId, $data['fsp'], $ontId);
+
+                if ($gestion) {
+                    $pasos[] = $gestion;
+                }
             }
 
             // Cuando falla se muestra lo que dijo la OLT: "Error al registrar
@@ -1342,6 +1351,46 @@ class OltAdminUseCase
             \Log::error('OLT autoAssignONT error', ['olt_id' => $oltId, 'error' => $e->getMessage()]);
             return ['status' => 1, 'message' => 'Error: ' . $e->getMessage(), 'data' => null];
         }
+    }
+
+    /**
+     * Le da acceso de gestión a la ONT recién autorizada, si la empresa
+     * activó el acceso remoto.
+     *
+     * Nunca hace fallar el alta: el cliente ya quedó con internet, y que la
+     * gestión no entre es algo que se reintenta después desde el panel.
+     *
+     * @return array{paso:string, ok:bool, detalle:?string}|null
+     */
+    private function darGestionRemota(int $oltId, string $fsp, int $ontId): ?array
+    {
+        $companyId = (int) (OltAdmin::find($oltId)?->company_id ?: 0);
+
+        if (!$companyId) {
+            return null;
+        }
+
+        try {
+            $servicio = new \App\Services\Red\GestionRemotaDeOnt(
+                $companyId,
+                app(\App\Managers\Interfaces\ConectionRouterManagerInterface::class),
+            );
+
+            $r = $servicio->darAcceso($oltId, $fsp, $ontId);
+        } catch (\Throwable $e) {
+            \Log::warning('[Gestión] No se pudo dar acceso remoto a la ONT nueva', [
+                'olt' => $oltId, 'fsp' => $fsp, 'ont' => $ontId, 'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+
+        // Apagado no es una falla que valga la pena mostrar en el alta.
+        if (!$r['ok'] && str_contains($r['detalle'], 'no está activado')) {
+            return null;
+        }
+
+        return ['paso' => 'Acceso remoto al equipo', 'ok' => $r['ok'], 'detalle' => $r['detalle']];
     }
 
     /**

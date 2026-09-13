@@ -790,6 +790,188 @@ public function parseServicePorts(string $output): array
             || stripos($output, 'Succeeded') !== false;
     }
 
+    /**
+     * Los puertos de subida de la OLT con las VLAN que llevan.
+     *
+     * Sirve para saber por dónde sale el tráfico hacia el router y, de paso,
+     * qué VLAN ya están en uso: son las que no se pueden proponer para la red
+     * de gestión.
+     *
+     * @return list<array{puerto:string, vlans:list<int>}>
+     */
+    public function puertosDeSubida(): array
+    {
+        $tablero = $this->runCommand('display board 0');
+        $slots = [];
+
+        // Las placas de control ("MCU") son las que llevan los puertos de
+        // subida; las GP/EP son las de fibra hacia los clientes.
+        foreach (preg_split('/\r?\n/', $tablero) as $linea) {
+            if (preg_match('/^\s*(\d+)\s+(\S*MCU\S*|\S*CTRL\S*)\s+/i', $linea, $m)) {
+                $slots[] = (int) $m[1];
+            }
+        }
+
+        $puertos = [];
+
+        foreach ($slots as $slot) {
+            foreach (range(0, 3) as $puerto) {
+                $salida = $this->runCommand("display port vlan 0/{$slot}/{$puerto}");
+
+                if (stripos($salida, 'Total:') === false) {
+                    continue;
+                }
+
+                // La lista de VLAN va entre las dos líneas de guiones; fuera de
+                // ahí están el eco del comando y el "Total", cuyos números no
+                // son VLAN.
+                $partes = preg_split('/^\s*-{5,}\s*$/m', $salida);
+                $vlans = [];
+
+                if (isset($partes[1])) {
+                    preg_match_all('/\d{1,4}/', $partes[1], $m);
+                    $vlans = array_values(array_filter(array_unique(array_map('intval', $m[0] ?? []))));
+                    sort($vlans);
+                }
+
+                $puertos[] = [
+                    'puerto' => "0/{$slot}/{$puerto}",
+                    'vlans'  => $vlans,
+                    'nativa' => preg_match('/Native VLAN:\s*(\d+)/i', $salida, $n) ? (int) $n[1] : null,
+                ];
+            }
+        }
+
+        return $puertos;
+    }
+
+    /**
+     * Deja lista la VLAN de gestión en la OLT: la crea y la deja pasar por el
+     * puerto de subida que va al router.
+     *
+     * Es aditivo: no quita ninguna VLAN de las que ya estaban, porque sacar
+     * una de un puerto de subida deja sin servicio a esos clientes.
+     */
+    /**
+     * Vuelve a la vista principal de la OLT.
+     *
+     * Salir con un `quit` fijo no alcanza: si un comando dejó abierto un
+     * sub-prompt, el `quit` se lo come y la sesión queda dentro de `config`,
+     * donde los comandos siguientes se comportan distinto.
+     */
+    private function volverAlPrincipio(): void
+    {
+        for ($i = 0; $i < 4; $i++) {
+            $salida = $this->runCommand('quit');
+
+            if (!preg_match('/\((?:config|config-if[^)]*)\)#\s*$/', $salida)) {
+                return;
+            }
+        }
+    }
+
+    public function prepararVlanDeGestion(int $vlan, string $puertoDeSubida): array
+    {
+        [$frame, $slot, $puerto] = array_map('intval', explode('/', $puertoDeSubida));
+
+        $this->runCommand('config');
+
+        $creada   = $this->runCommand("vlan {$vlan} smart");
+        $enPuerto = $this->runCommand("port vlan {$vlan} {$frame}/{$slot} {$puerto}");
+
+        // Se lee de vuelta: la OLT no dice nada cuando el comando sale bien, y
+        // "sin error" no alcanza para asegurar que la VLAN quedó en el puerto.
+        $comprobacion = $this->runCommand("display port vlan {$puertoDeSubida}");
+
+        $this->volverAlPrincipio();
+
+        $lista = preg_split('/^\s*-{5,}\s*$/m', $comprobacion)[1] ?? '';
+
+        return [
+            'ok'      => (bool) preg_match('/\b' . $vlan . '\b/', $lista),
+            'detalle' => trim(self::primeraLinea($creada) . ' ' . self::primeraLinea($enPuerto)),
+        ];
+    }
+
+    public function darGestionAOnt(string $fsp, int $ontId, int $vlan, int $servicePort): array
+    {
+        [$frame, $slot, $puerto] = $this->parseFsp($fsp);
+
+        $this->runCommand('config');
+
+        // Si el equipo ya tiene su carril en esta VLAN se reutiliza: la OLT no
+        // deja crear un segundo para el mismo equipo y la misma VLAN, y lo
+        // rechaza igual que si el número fuera de otro.
+        $listar = fn () => $this->runCommand("display service-port port {$frame}/{$slot}/{$puerto} ont {$ontId}");
+        $suyo   = fn (string $tabla) => preg_match('/^\s*(\d+)\s+' . $vlan . '\s+\w+\s+gpon\b/m', $tabla, $m) ? (int) $m[1] : null;
+
+        $sp = '';
+        $tiene = $suyo($listar());
+
+        if ($tiene === null) {
+            // El service-port lleva el tráfico de gestión del equipo hasta el
+            // router; la ONT lo ve como un servicio más, con su propia VLAN.
+            $sp = $this->runCommand(sprintf(
+                'service-port %d vlan %d gpon %d/%d/%d ont %d gemport 1 multi-service user-vlan %d tag-transform translate',
+                $servicePort, $vlan, $frame, $slot, $puerto, $ontId, $vlan
+            ));
+
+            // Vale sólo lo que aparece en la lista del equipo: si el número
+            // estaba tomado por otro, la OLT lo rechazó y acá no figura.
+            $tiene = $suyo($listar());
+        }
+
+        // Y esto le dice a la ONT que pida IP por DHCP en esa VLAN: con la IP
+        // le llega la dirección del servidor TR-069 (opción 43). Vive dentro
+        // de la vista de la placa, no en la general.
+        $this->runCommand("interface gpon {$frame}/{$slot}");
+        $ip = $this->runCommand(sprintf('ont ipconfig %d %d dhcp vlan %d', $puerto, $ontId, $vlan));
+
+        // Se lee de vuelta: la OLT contesta lo mismo para "hecho" que para
+        // "casi", así que lo único que cuenta es lo que quedó guardado.
+        $quedo = $this->runCommand(sprintf('display ont ipconfig %d %d', $puerto, $ontId));
+
+        $this->volverAlPrincipio();
+
+        $falla = fn (string $t) => (bool) preg_match('/failure|error|incomplete|unknown command/i', $t);
+
+        $spOk = $tiene !== null;
+        $servicePort = $tiene ?? $servicePort;
+
+        // Si la OLT sabe mostrar la configuración, manda lo que muestra; si no
+        // conoce el comando, queda lo que contestó al aplicarlo.
+        $confirmado = stripos($quedo, 'unknown command') === false
+            ? (bool) preg_match('/manage VLAN\s*:\s*' . $vlan . '\b/i', $quedo)
+            : !$falla($ip);
+
+        // Cuando sale bien se cuenta qué quedó, no lo que contestó la OLT: sus
+        // respuestas son sub-prompts que no le dicen nada a nadie.
+        return [
+            'ok'      => $confirmado && $spOk,
+            'sp_ok'   => $spOk,
+            'sp'      => $servicePort,
+            'detalle' => $confirmado && $spOk
+                ? "service-port {$servicePort} · pide IP de gestión en la VLAN {$vlan}"
+                : (!$spOk
+                    ? "La OLT no aceptó el service-port {$servicePort}: " . (self::primeraLinea($sp) ?: 'número ocupado')
+                    : 'La ONT no tomó la VLAN de gestión: ' . self::primeraLinea($ip)),
+        ];
+    }
+
+    /** Lo que contestó la OLT, sin el eco del comando. */
+    private static function primeraLinea(string $salida): string
+    {
+        foreach (preg_split('/\r?\n/', $salida) as $linea) {
+            $linea = trim($linea);
+
+            if ($linea !== '' && !preg_match('/^(service-port|ont ipconfig|vlan|port vlan)/i', $linea) && !str_contains($linea, '#')) {
+                return mb_substr($linea, 0, 120);
+            }
+        }
+
+        return 'sin detalle';
+    }
+
     public function runCommand(string $command): string
     {
         $this->resetToPrompt();
@@ -1173,6 +1355,16 @@ public function parseServicePorts(string $output): array
      */
     private function resetToPrompt(): void
     {
+        // Lo que haya quedado de antes se descarta: si no, la respuesta de un
+        // comando se lee como si fuera la del siguiente y todo llega corrido.
+        if (method_exists($this->ssh, 'drenar')) {
+            $sobrante = $this->ssh->drenar();
+
+            if (trim($sobrante) !== '') {
+                Log::debug('[OLT] Se descartó lo que quedó de un comando anterior', ['restos' => substr($sobrante, -200)]);
+            }
+        }
+
         try {
             $this->ssh->setTimeout(3);
             $this->ssh->write("\n");
@@ -1209,13 +1401,32 @@ public function parseServicePorts(string $output): array
 {
     $fullOutput = '';
 
-    $promptRe = '/(?:[>#]\s*$|----\s*More\s*----|\{\s*<cr>)/i';
+    // El prompt de verdad es una línea entera tipo "OLT-Huawei(config)#". Con
+    // un simple "termina en > o #" alcanzaba la lista de opciones de un
+    // sub-prompt ("{ <cr>|e2e<K>|gemport<K>") para cortar la lectura a la
+    // mitad: se perdía la respuesta y quedaba para el comando siguiente.
+    $finRe    = '/(?:^|\n)[^\s{}|<>]+(?:\([^)\n]*\))?[>#]\s*$/';
+    $promptRe = '/(?:(?:^|\n)[^\s{}|<>]+(?:\([^)\n]*\))?[>#]\s*$|----\s*More\s*----|\{\s*<cr>)/i';
+
+    // Cada página y cada sub-prompt es otra vuelta; si algo se traba, esperar
+    // el tiempo completo en cada una hacía que un simple "display" tardara un
+    // minuto. Después de la primera respuesta ya sabemos que la OLT contesta.
+    $vueltas = 0;
 
     try {
         while (true) {
 
             $chunk = $this->ssh->read($promptRe);
             $fullOutput .= $chunk;
+
+            if (++$vueltas === 1) {
+                $this->ssh->setTimeout(8);
+            }
+
+            if ($vueltas > 40) {
+                $this->desincronizada = true;
+                break;
+            }
 
             // 🔥 paginado
             if (preg_match('/----\s*More\s*----/i', $chunk)) {
@@ -1229,8 +1440,9 @@ public function parseServicePorts(string $output): array
                 continue;
             }
 
-            // 🔥 fin real
-            if (preg_match('/[>#]\s*$/', $chunk)) {
+            // 🔥 fin real: se mira todo lo leído, porque el prompt puede llegar
+            // partido entre dos lecturas.
+            if (preg_match($finRe, $fullOutput)) {
                 break;
             }
         }

@@ -83,6 +83,35 @@ class TelnetConnection
         }
     }
 
+    /**
+     * Tira lo que haya quedado sin leer.
+     *
+     * Si una respuesta anterior dejó restos, la lectura siguiente los toma
+     * como si fueran la respuesta del comando nuevo y a partir de ahí todo
+     * llega corrido una posición. Vaciar antes de escribir lo evita.
+     */
+    public function drenar(): string
+    {
+        $sobrante = $this->buffer;
+        $this->buffer = '';
+
+        // Una pasada corta por el socket: lo que ya llegó se descarta, sin
+        // quedarse esperando a que aparezca algo nuevo.
+        $limite = microtime(true) + 0.3;
+
+        while (microtime(true) < $limite) {
+            $chunk = @fread($this->stream, 4096);
+
+            if ($chunk === false || $chunk === '') {
+                break;
+            }
+
+            $sobrante .= $this->stripIac($chunk);
+        }
+
+        return $sobrante;
+    }
+
     /** Write raw bytes to the Telnet stream. */
     public function write(string $data): void
     {

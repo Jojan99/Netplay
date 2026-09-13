@@ -19,11 +19,15 @@ class OltOnt extends Model
         'status',
         'service_ports',
         'synced_at',
+        // Cuándo se le dio acceso remoto. Sin estar acá, update() lo
+        // descartaba en silencio y el equipo seguía figurando como pendiente.
+        'gestion_en',
     ];
 
     protected $casts = [
         'service_ports' => 'array',
         'synced_at'     => 'datetime',
+        'gestion_en'    => 'datetime',
     ];
 
     public function olt(): BelongsTo

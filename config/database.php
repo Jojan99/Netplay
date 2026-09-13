@@ -161,6 +161,10 @@ return [
             'password' => env('REDIS_PASSWORD'),
             'port' => env('REDIS_PORT', '6379'),
             'database' => env('REDIS_DB', '0'),
+            // Los workers de OLT esperan la respuesta acá, y una OLT puede
+            // tardar más de un minuto en contestar. Con los 60 s que trae
+            // Predis por defecto, la espera moría antes que el comando.
+            'read_write_timeout' => env('REDIS_READ_TIMEOUT', 180),
         ],
 
         'cache' => [

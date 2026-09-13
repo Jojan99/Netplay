@@ -189,6 +189,12 @@ class OltTelnetDispatcher
             'pasoVlan'          => method_exists($driver, 'pasoVlan')
                                        ? $driver->pasoVlan($p['fsp'], (int) $p['vlan']) : null,
             // Sólo algunos equipos la tienen (hoy, C-Data EPON).
+            'puertosDeSubida'   => method_exists($driver, 'puertosDeSubida')
+                                       ? $driver->puertosDeSubida() : [],
+            'prepararVlanDeGestion' => method_exists($driver, 'prepararVlanDeGestion')
+                                       ? $driver->prepararVlanDeGestion((int) $p['vlan'], (string) $p['uplink']) : null,
+            'darGestionAOnt'    => method_exists($driver, 'darGestionAOnt')
+                                       ? $driver->darGestionAOnt($p['fsp'], (int) $p['ont_id'], (int) $p['vlan'], (int) $p['service_port']) : null,
             'equipoDeOnt'       => method_exists($driver, 'equipoDeOnt')
                                        ? $driver->equipoDeOnt($p['fsp'], (int) $p['ont_id']) : [],
             'autoAutorizacion'  => method_exists($driver, 'autoAutorizacion')

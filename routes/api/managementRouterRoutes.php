@@ -127,6 +127,16 @@ Route::prefix('management')->group(function () {
         Route::put('/cliente/{userId}',    [\App\Http\Controllers\VelocidadController::class, 'cliente'])->whereNumber('userId');
     });
 
+    // ── Acceso remoto a los equipos de los clientes (VLAN de gestión) ──────
+    Route::prefix('gestion-remota')->middleware('role:admin')->group(function () {
+        Route::get('/',             [\App\Http\Controllers\GestionRemotaController::class, 'estado']);
+        Route::get('/sugerencias',  [\App\Http\Controllers\GestionRemotaController::class, 'sugerencias']);
+        Route::post('/activar',     [\App\Http\Controllers\GestionRemotaController::class, 'activar']);
+        Route::post('/desactivar',  [\App\Http\Controllers\GestionRemotaController::class, 'desactivar']);
+        Route::post('/al-dia',      [\App\Http\Controllers\GestionRemotaController::class, 'alDia']);
+        Route::post('/olt/{oltId}/ont', [\App\Http\Controllers\GestionRemotaController::class, 'darAcceso'])->whereNumber('oltId');
+    });
+
     // ── Avisos de la red ───────────────────────────────────────────────────
     Route::prefix('alertas')->group(function () {
         Route::get('/',          [\App\Http\Controllers\AlertaController::class, 'index']);

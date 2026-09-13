@@ -31,7 +31,10 @@ class OltTelnetWorker extends Command
 
     private const IDLE_TIMEOUT  = 300; // segundos — cierra la sesión tras 5 min sin comandos
     private const HEARTBEAT_TTL = 15;  // TTL del heartbeat en Redis
-    private const LOCK_TTL = 30;       // El lock se renueva en cada vuelta
+    // Más largo que el comando más lento: con 30 s, un comando de un minuto
+    // dejaba vencer el lock y arrancaba un segundo worker con su propia
+    // sesión, hasta agotar los cupos de la OLT.
+    private const LOCK_TTL = 300;      // El lock se renueva en cada vuelta
 
     /** Con esta llave este proceso reclama ser el único worker de la OLT. */
     private ?string $lockKey = null;
@@ -42,7 +45,7 @@ class OltTelnetWorker extends Command
         'registerONT', 'deleteONT', 'assignToClient',
         'transferONT', 'deactivateONT', 'activateONT',
         // Cambia la configuración: si no se guarda, vuelve atrás al reiniciar.
-        'cambiarAutoAutorizacion',
+        'cambiarAutoAutorizacion', 'prepararVlanDeGestion', 'darGestionAOnt',
     ];
 
     private ?object          $connection     = null;
@@ -328,6 +331,12 @@ class OltTelnetWorker extends Command
             'pasoVlan'          => method_exists($this->driver, 'pasoVlan')
                                        ? $this->driver->pasoVlan($p['fsp'], (int) $p['vlan']) : null,
             // Sólo algunos equipos la tienen (hoy, C-Data EPON).
+            'puertosDeSubida'   => method_exists($this->driver, 'puertosDeSubida')
+                                       ? $this->driver->puertosDeSubida() : [],
+            'prepararVlanDeGestion' => method_exists($this->driver, 'prepararVlanDeGestion')
+                                       ? $this->driver->prepararVlanDeGestion((int) $p['vlan'], (string) $p['uplink']) : null,
+            'darGestionAOnt'    => method_exists($this->driver, 'darGestionAOnt')
+                                       ? $this->driver->darGestionAOnt($p['fsp'], (int) $p['ont_id'], (int) $p['vlan'], (int) $p['service_port']) : null,
             'equipoDeOnt'       => method_exists($this->driver, 'equipoDeOnt')
                                        ? $this->driver->equipoDeOnt($p['fsp'], (int) $p['ont_id']) : [],
             'autoAutorizacion'  => method_exists($this->driver, 'autoAutorizacion')
