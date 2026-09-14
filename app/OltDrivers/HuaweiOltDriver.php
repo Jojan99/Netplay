@@ -1234,6 +1234,57 @@ public function parseServicePorts(string $output): array
 
         $this->runCommand('config');
 
+        // ── Antes de tocar nada: qué conexiones (WAN) tiene ya el equipo ────
+        //
+        // "ont ipconfig" crea la WAN de gestión en el lugar 2 de la ONT. Si ahí
+        // estaba la conexión de internet del cliente, la reemplaza y el cliente
+        // se queda sin servicio (pasó con DOUGLAS_MENDEZ, LILIANA_COROMOTO e
+        // IRIANIS_GUERRERO). Y si su internet ya lleva TR-069 ("Tr069,
+        // Internet"), no hace falta otra WAN: el servidor llega por esa.
+        $wanInfo = $this->runCommand("display ont wan-info {$frame}/{$slot} {$puerto} {$ontId}");
+        $wans = [];
+
+        foreach (preg_split('/(?=^\s*Index\s*:)/m', $wanInfo) as $bloque) {
+            if (!preg_match('/^\s*Index\s*:\s*(\d+)/m', $bloque, $mi)) {
+                continue;
+            }
+            $wans[] = [
+                'indice'   => (int) $mi[1],
+                'nombre'   => preg_match('/^\s*Name\s*:\s*(\S+)/m', $bloque, $mn) ? $mn[1] : '',
+                'servicio' => preg_match('/^\s*Service type\s*:\s*(.+)$/m', $bloque, $ms) ? trim($ms[1]) : '',
+                'vlan'     => preg_match('/^\s*Manage VLAN\s*:\s*(\d+)/m', $bloque, $mv) ? (int) $mv[1] : null,
+            ];
+        }
+
+        // Si la ONT no informa sus WAN (otras marcas, o apagada) se sigue como
+        // siempre: con C-Data el camino por la OLT está probado.
+        foreach ($wans as $w) {
+            if ($w['vlan'] === $vlan) {
+                continue; // la de gestión, de una vez anterior
+            }
+
+            if (stripos($w['servicio'], 'tr069') !== false) {
+                $this->volverAlPrincipio();
+
+                return [
+                    'ok' => true, 'sp_ok' => true, 'sp' => null, 'ip' => null,
+                    'omitido' => 'tr069_en_internet',
+                    'detalle' => "El equipo ya tiene TR-069 en su conexión {$w['nombre']}: no se crea la VLAN de gestión.",
+                ];
+            }
+
+            if ($w['indice'] === 2) {
+                $this->volverAlPrincipio();
+
+                return [
+                    'ok' => false, 'sp_ok' => true, 'sp' => null, 'ip' => null,
+                    'omitido' => 'lugar_ocupado',
+                    'detalle' => "No se tocó el equipo: su conexión {$w['nombre']} está en el lugar donde la OLT crea la de gestión y se borraría. "
+                        . 'Hay que configurar la gestión en el propio equipo.',
+                ];
+            }
+        }
+
         // Si el equipo ya tiene su carril en esta VLAN se reutiliza: la OLT no
         // deja crear un segundo para el mismo equipo y la misma VLAN, y lo
         // rechaza igual que si el número fuera de otro.

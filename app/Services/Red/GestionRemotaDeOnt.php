@@ -687,8 +687,12 @@ class GestionRemotaDeOnt
      *
      * @return array{ok:bool, detalle:string}
      */
-    public function darAcceso(int $oltId, string $fsp, int $ontId, bool $reiniciarSiHaceFalta = false): array
+    /**
+     * @param callable(string):void|null $avance cuenta en qué paso va (ventana de tareas)
+     */
+    public function darAcceso(int $oltId, string $fsp, int $ontId, bool $reiniciarSiHaceFalta = false, ?callable $avance = null): array
     {
+        $avance ??= fn (string $texto) => null;
         $g = $this->config();
 
         if (!$g->activa || !$g->vlan) {
@@ -704,6 +708,8 @@ class GestionRemotaDeOnt
         if (!self::admiteGestion((string) $olt->brand)) {
             return ['ok' => false, 'detalle' => 'Esta OLT no admite dar la gestión desde acá: hay que configurarla en la OLT.'];
         }
+
+        $avance('Configurando el acceso en la OLT…');
 
         // El número de service-port puede estar tomado por otro equipo sin que
         // la plataforma lo sepa (los pone también quien entra por consola). Se
@@ -745,6 +751,7 @@ class GestionRemotaDeOnt
         //    (probado con CARMEN: se registró a los 2 min del reinicio).
         //  - Otras: se configura en el propio equipo, y se dice.
         $marca = self::marcaDelEquipo((string) ($ont?->serial ?? ''));
+        $avance('Asignando el servidor TR-069…');
 
         $servidor = match ($marca) {
             'huawei' => $this->asignarServidorTr069($oltId, $fsp, $ontId),
@@ -752,9 +759,25 @@ class GestionRemotaDeOnt
             default  => ['ok' => false, 'detalle' => 'Equipo ' . strtoupper($marca ?: 'de otra marca') . ': el TR-069 se configura en el propio equipo.'],
         };
 
+        // El equipo ya tiene TR-069 en su conexión de internet: no se creó la
+        // VLAN de gestión (no hace falta) y basta con el servidor asignado.
+        if (($r['omitido'] ?? null) === 'tr069_en_internet') {
+            if ($ont && $servidor['ok']) {
+                $ont->update(['gestion_en' => now()]);
+            }
+
+            return [
+                'ok'      => $servidor['ok'],
+                'detalle' => $r['detalle'] . ' · ' . $servidor['detalle'],
+                'servidor_tr069' => $servidor['ok'],
+                'perfil'  => ['listo' => true, 'detalle' => 'No aplica: el TR-069 va por su conexión de internet.'],
+            ];
+        }
+
         // Sin la VLAN de gestión en su perfil de línea la ONT descarta ese
         // tráfico aunque todo lo demás esté bien. Antes no se miraba y el
         // proceso decía "listo" con el equipo sin poder salir.
+        $avance('Ajustando los últimos detalles…');
         $perfil = $this->perfilListoDe($oltId, $fsp, $ontId, (int) $g->vlan);
 
         $completo = $servidor['ok'] && $perfil['listo'];
@@ -879,6 +902,15 @@ class GestionRemotaDeOnt
     {
         $s = strtoupper(trim($serial));
         $vendor = ctype_xdigit(substr($s, 0, 8)) && strlen($s) >= 16 ? (string) @hex2bin(substr($s, 0, 8)) : substr($s, 0, 4);
+
+        // C-Data también vende GPON con otros vendor ID: "DF1D" reporta al
+        // TR-069 como fabricante CDTC / OUI 80F7A6 (FD512XW), y en la OLT hay
+        // DC80, DC90, DC91, DF18 y DF1E de la misma familia (ERICK_ZAPATA, DC90,
+        // es C-Data). Sin esto quedaban como "otra marca" y no se les mandaba el
+        // TR-069 por la OLT, que con los C-Data funciona.
+        if (preg_match('/^D[CF][0-9A-F]{2}$/', $vendor)) {
+            return 'cdata';
+        }
 
         return match ($vendor) {
             'HWTC', 'HUAW' => 'huawei',

@@ -38,9 +38,20 @@ class GestionTarea extends Command
         $servicio = new GestionRemotaDeOnt((int) $tarea['company_id'], app(ConectionRouterManagerInterface::class));
         $d = $tarea['datos'];
 
+        // Lo que se ve en la ventana de tareas mientras corre.
+        $paso = fn (string $texto) => TareasDeGestion::actualizar($id, ['detalle' => $texto]);
+
+        $paso(match ($tarea['tipo']) {
+            'dar_acceso'      => 'Revisando las conexiones del equipo…',
+            'preparar_perfil' => 'Agregando la gestión al perfil en la OLT…',
+            'reiniciar'       => 'Pidiéndole a la OLT que reinicie el equipo…',
+            'al_dia'          => 'Buscando los equipos que faltan…',
+            default           => 'Trabajando…',
+        });
+
         try {
             match ($tarea['tipo']) {
-                'dar_acceso'      => $this->terminar($id, $servicio->darAcceso((int) $d['olt_id'], (string) $d['fsp'], (int) $d['ont_id'], (bool) ($d['reiniciar'] ?? false))),
+                'dar_acceso'      => $this->terminar($id, $servicio->darAcceso((int) $d['olt_id'], (string) $d['fsp'], (int) $d['ont_id'], (bool) ($d['reiniciar'] ?? false), $paso)),
                 'preparar_perfil' => $this->terminar($id, $servicio->prepararPerfil((int) $d['olt_id'], (int) $d['perfil'])),
                 'reiniciar'       => $this->terminar($id, $servicio->reiniciarEquipo((int) $d['olt_id'], (string) $d['fsp'], (int) $d['ont_id'])),
                 'al_dia'          => $this->alDia($id, (int) $tarea['company_id'], $servicio, isset($d['olt_id']) ? (int) $d['olt_id'] : null),
