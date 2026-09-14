@@ -439,8 +439,15 @@ class ServicioPppoe
         }, $this->leer($api, '/ip/pool/print'));
     }
 
-    /** @param  array{nombre:string, nombre_anterior?:?string, rangos:string}  $datos */
-    public function guardarPool(array $datos): void
+    /**
+     * Guarda el rango en el router y agrega su red al túnel VPN si falta: sin
+     * eso sus clientes no reciben las órdenes del TR-069 al momento (pasó con
+     * 10.23.0.0/22 al crear el pool de la VLAN 100).
+     *
+     * @param  array{nombre:string, nombre_anterior?:?string, rangos:string}  $datos
+     * @return string  qué pasó con el túnel, para mostrarlo junto a "Guardado"
+     */
+    public function guardarPool(array $datos): string
     {
         $nombre = trim((string) ($datos['nombre'] ?? ''));
         $rangos = trim((string) ($datos['rangos'] ?? ''));
@@ -464,6 +471,10 @@ class ServicioPppoe
         $api->query($q)->read();
 
         Log::info('[PPPoE] Rango guardado', ['pool' => $nombre, 'rangos' => $rangos]);
+
+        $router = \App\Models\ConectionRouter::where('token', $this->token)->first();
+
+        return $router ? \App\Services\Vpn\RedesEnElTunel::asegurar($router, $rangos)['detalle'] : '';
     }
 
     /** @return array{ok:bool, motivo?:string} */

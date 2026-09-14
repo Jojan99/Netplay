@@ -370,14 +370,17 @@ class ManagementRouterController extends Controller
         try {
             $servicio = new \App\Services\Red\ServicioPppoe($conexion, $token);
 
-            match ($que) {
+            $extra = match ($que) {
                 'perfil'    => $servicio->guardarPerfil($request->all()),
                 'pool'      => $servicio->guardarPool($request->all()),
                 'servidor'  => $servicio->guardarServidor($request->all()),
                 default     => throw new \InvalidArgumentException('No sé qué guardar.'),
             };
 
-            return standardApiReponse('Guardado', null, 0, JsonResponse::HTTP_OK);
+            // Al guardar un rango se cuenta también qué pasó con el túnel VPN.
+            $mensaje = is_string($extra) && $extra !== '' ? "Guardado · {$extra}" : 'Guardado';
+
+            return standardApiReponse($mensaje, null, 0, JsonResponse::HTTP_OK);
         } catch (\InvalidArgumentException $e) {
             return standardApiReponse($e->getMessage(), null, 1, JsonResponse::HTTP_OK);
         } catch (\Throwable $e) {

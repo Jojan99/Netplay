@@ -165,6 +165,14 @@ class ConfigurarServidorPppoe
             $this->pool($pool, $rango);
             $pasos[] = "Rango de IP «{$pool}» listo ({$rango}).";
 
+            // Su red va al túnel VPN en el mismo momento: si no, el TR-069 no
+            // les llega de vuelta a los equipos de estos clientes.
+            $router = \App\Models\ConectionRouter::where('token', $this->token)->first();
+            $tunel = $router ? \App\Services\Vpn\RedesEnElTunel::asegurar($router, $rango) : null;
+            if ($tunel && $tunel['detalle'] !== '') {
+                $pasos[] = ($tunel['ok'] ? 'Túnel VPN: ' : 'Atención, túnel VPN: ') . $tunel['detalle'];
+            }
+
             $this->perfil($perfil, $gateway, $pool);
             $pasos[] = "Perfil «{$perfil}» listo, entregando IP de «{$pool}».";
 
