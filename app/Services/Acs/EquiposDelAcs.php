@@ -245,6 +245,70 @@ class EquiposDelAcs
     }
 
     /**
+     * Cambia el canal de una red WiFi. Con $canal null vuelve a automático.
+     *
+     * Sólo con los parámetros que el propio equipo publica: no todos dejan
+     * elegir canal por TR-069 y un valor fuera de su lista lo rechaza entero.
+     */
+    public function cambiarCanal(string $id, int $indice, ?int $canal): array
+    {
+        $this->exigirPropio($id);
+
+        $d = $this->acs->dispositivo($id);
+        $red = collect(self::wifi($d, $this->raiz($id, $d)))->firstWhere('indice', $indice);
+
+        if (!$red) {
+            throw new \InvalidArgumentException('El equipo no tiene esa red WiFi.');
+        }
+
+        $valores = [];
+
+        if ($canal === null) {
+            if (!$red['ruta_canal_auto']) {
+                throw new \InvalidArgumentException('Este equipo no permite elegir el canal automático desde aquí.');
+            }
+            $valores[] = [$red['ruta_canal_auto'], true, 'xsd:boolean'];
+        } else {
+            if (!$red['ruta_canal']) {
+                throw new \InvalidArgumentException('Este equipo no permite cambiar el canal desde aquí.');
+            }
+            if ($red['canales_posibles'] && !in_array($canal, $red['canales_posibles'], true)) {
+                throw new \InvalidArgumentException('Ese canal no está disponible en esta red.');
+            }
+            if ($red['ruta_canal_auto']) {
+                $valores[] = [$red['ruta_canal_auto'], false, 'xsd:boolean'];
+            }
+            $valores[] = [$red['ruta_canal'], $canal, 'xsd:unsignedInt'];
+        }
+
+        return $this->acs->tarea($id, ['name' => 'setParameterValues', 'parameterValues' => $valores]);
+    }
+
+    /** "1-13" o "36,40,44" → lista de canales; null si el equipo no la publica. */
+    private static function canales(mixed $crudo): ?array
+    {
+        if (!is_string($crudo) || trim($crudo) === '') {
+            return null;
+        }
+
+        $lista = [];
+
+        foreach (explode(',', $crudo) as $parte) {
+            $parte = trim($parte);
+
+            if (preg_match('/^(\d+)\s*-\s*(\d+)$/', $parte, $m)) {
+                $lista = array_merge($lista, range((int) $m[1], min((int) $m[2], 200)));
+            } elseif (ctype_digit($parte)) {
+                $lista[] = (int) $parte;
+            }
+        }
+
+        $lista = array_values(array_unique(array_filter($lista, fn ($c) => $c > 0)));
+
+        return $lista ?: null;
+    }
+
+    /**
      * Cambia el nombre y/o la clave de una red WiFi.
      *
      * La ruta de la clave depende del fabricante: Huawei la tiene en
@@ -530,12 +594,16 @@ class EquiposDelAcs
                     'banda'     => self::banda(self::v($d, "{$b}.OperatingFrequencyBand"), $estandar, (int) $i),
                     'estandar'  => $estandar,
                     'canal'     => self::v($d, "{$b}.Channel"),
+                    'canal_auto' => self::booleano(self::v($d, "{$b}.AutoChannelEnable")),
+                    'canales_posibles' => self::canales(self::v($d, "{$b}.PossibleChannels")),
                     'seguridad' => self::v($d, "{$b}.BeaconType"),
                     'conectados' => self::entero(self::v($d, "{$b}.TotalAssociations")),
                     'leido_en'  => self::marca($d, "{$b}.SSID"),
                     'ruta_ssid' => "{$b}.SSID",
                     'ruta_clave' => $conPsk ? "{$b}.PreSharedKey.1.KeyPassphrase"
                         : (self::existe($d, "{$b}.KeyPassphrase") ? "{$b}.KeyPassphrase" : null),
+                    'ruta_canal' => self::existe($d, "{$b}.Channel") ? "{$b}.Channel" : null,
+                    'ruta_canal_auto' => self::existe($d, "{$b}.AutoChannelEnable") ? "{$b}.AutoChannelEnable" : null,
                 ];
             }
         } else {

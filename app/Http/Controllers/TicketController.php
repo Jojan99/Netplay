@@ -40,6 +40,27 @@ class TicketController extends Controller
         return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }
 
+    /**
+     * POST ticket/{id}/diagnosticar
+     * Vuelve a revisar la conexión del cliente; el resultado llega como novedad.
+     */
+    public function diagnosticar(int $id): object
+    {
+        $propio = \Illuminate\Support\Facades\DB::table('tickets')
+            ->where('id', $id)
+            ->where('company_id', getSessionCompanyId())
+            ->whereNotNull('user_id')
+            ->exists();
+
+        if (!$propio) {
+            return standardApiReponse('Ticket no encontrado o sin cliente asociado', null, 1, JsonResponse::HTTP_NOT_FOUND);
+        }
+
+        \App\Services\Tickets\DiagnosticoDeTicket::lanzar($id);
+
+        return standardApiReponse('Diagnóstico en curso: aparece como novedad en unos segundos', null, 0, JsonResponse::HTTP_OK);
+    }
+
     public function getTechnicaAll(GetTechnicalUseCaseInterface $uc): object
     {
         try {

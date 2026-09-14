@@ -24,6 +24,16 @@ class ClientContractUseCase implements ClientContractUseCaseInterface
             if (!sessionUserHasProfile('ADMIN', 'CONTADOR')) {
                 return ['message' => 'Acción no permitida', 'status' => 1, 'data' => ApiResponseConstants::DATA_NULL];
             }
+
+            // Contrato y cliente, de la propia empresa: el PDF se arma con los
+            // datos del cliente y antes se podía generar con uno de otra empresa.
+            $empresa = getSessionCompanyId();
+            $contratoPropio = $empresa && DB::table('contracts')->where('id', (int) $request->input('contract_id'))->where('company_id', $empresa)->exists();
+            $clientePropio  = $empresa && DB::table('users')->where('id', (int) $request->input('user_id'))->where('company_id', $empresa)->exists();
+            if (!$contratoPropio || !$clientePropio) {
+                return ['message' => 'Contrato o cliente no encontrado', 'status' => 1, 'data' => ApiResponseConstants::DATA_NULL];
+            }
+
             $data = $this->contractRepository->assignToClient(
                 $request->input('contract_id'),
                 $request->input('user_id'),

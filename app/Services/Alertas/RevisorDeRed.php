@@ -64,7 +64,9 @@ class RevisorDeRed
         $claves = [];
 
         foreach (OltAdmin::where('company_id', $this->companyId)->get() as $olt) {
-            $medicion = SenalDeLaOlt::de($olt);
+            // En la revisión sí se espera el barrido: corre en segundo plano y
+            // de paso deja la medición lista para la pantalla.
+            $medicion = SenalDeLaOlt::medirSiHaceFalta($olt);
 
             $clientes = OltOnt::where('olt_id', $olt->id)
                 ->whereNotNull('user_data_id')
@@ -105,12 +107,16 @@ class RevisorDeRed
 
             // Muchas ONT apagadas en el mismo puerto es fibra cortada, no
             // clientes que apagaron el equipo.
+            $puertosCortados = [];
+
             foreach ($apagadasPorPuerto as $fsp => $apagadas) {
                 $total = $totalPorPuerto[$fsp] ?? 0;
 
                 if ($apagadas < self::ONTS_PARA_CORTE || $total === 0 || $apagadas / $total < self::PORCENTAJE_CORTE) {
                     continue;
                 }
+
+                $puertosCortados[$fsp] = true;
 
                 $claves[] = $this->anotar(
                     "pon:{$olt->id}:{$fsp}",
@@ -121,6 +127,60 @@ class RevisorDeRed
                     ['olt' => $olt->name, 'fsp' => $fsp, 'apagadas' => $apagadas, 'total' => $total],
                 );
             }
+
+            $claves = array_merge($claves, $this->caidasPorFibra($olt, $medicion['onts'] ?? [], $clientes, $puertosCortados));
+        }
+
+        return $claves;
+    }
+
+    /**
+     * Clientes caídos por la fibra, no por la luz.
+     *
+     * Un equipo que se queda sin energía avisa "dying-gasp" antes de apagarse;
+     * uno que pierde la señal óptica no alcanza: eso es fibra cortada, conector
+     * suelto o roseta, y pide técnico. Los apagados no se avisan (serían ruido)
+     * y si cayó el puerto entero ya está el aviso del corte.
+     *
+     * @return list<string>
+     */
+    private function caidasPorFibra(OltAdmin $olt, array $onts, $clientes, array $puertosCortados): array
+    {
+        // La causa de caída sale de la MIB de Huawei.
+        if (strtolower((string) $olt->brand) !== 'huawei') {
+            return [];
+        }
+
+        try {
+            $causas = (new \App\Services\HuaweiSnmpReader($olt))->causasDeCaida();
+        } catch (\Throwable $e) {
+            Log::warning('[Alertas] No se pudo leer la causa de caída', ['olt' => $olt->id, 'error' => $e->getMessage()]);
+            return [];
+        }
+
+        // 1 LOS, 2 LOSi/LOBi, 3 LOFi, 4 SFi, 5 LOAi, 6 LOAMi: todas ópticas.
+        $deFibra = [1, 2, 3, 4, 5, 6];
+        $claves = [];
+
+        foreach ($onts as $ont) {
+            $clave  = $ont['fsp'] . ':' . $ont['ont_id'];
+            $ligada = $clientes[$clave] ?? null;
+
+            if (!$ligada || ($ont['status'] ?? null) !== 'offline' || isset($puertosCortados[$ont['fsp']])
+                || !in_array($causas[$clave] ?? null, $deFibra, true)) {
+                continue;
+            }
+
+            // olt_onts.user_data_id guarda users.id, pese al nombre.
+            $claves[] = $this->anotar(
+                "caida:{$olt->id}:{$clave}",
+                'caida',
+                'critico',
+                'Cliente caído por fibra · ' . $this->nombreDelCliente((int) $ligada->user_data_id),
+                'La ONT perdió la señal óptica y no avisó corte de luz: fibra cortada, conector suelto o roseta dañada.',
+                ['olt' => $olt->name, 'fsp' => $ont['fsp'], 'ont_id' => $ont['ont_id'], 'causa' => $causas[$clave]],
+                (int) $ligada->user_data_id,
+            );
         }
 
         return $claves;
@@ -261,6 +321,14 @@ class RevisorDeRed
     private function anotar(string $clave, string $tipo, string $nivel, string $titulo, string $detalle, array $datos = [], ?int $userId = null): string
     {
         $alerta = Alerta::firstOrNew(['company_id' => $this->companyId, 'clave' => $clave]);
+
+        // Si estaba cerrada y vuelve, es un problema nuevo: fecha nueva y se
+        // vuelve a avisar al grupo (abrir y, después, el resuelto).
+        if ($alerta->exists && $alerta->cerrada_en !== null) {
+            $alerta->abierta_en = null;
+            $alerta->avisada_en = null;
+            $alerta->cierre_avisado_en = null;
+        }
 
         $alerta->fill([
             'tipo' => $tipo, 'nivel' => $nivel, 'titulo' => $titulo, 'detalle' => $detalle,

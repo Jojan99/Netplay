@@ -107,6 +107,13 @@ class EstadoDeUnaOnt
     {
         $senal = Cache::get("olt:{$olt->id}:senal");
 
+        // La medición de la OLT se guarda por horas; para el estado de una ONT
+        // sólo sirve si es de hace unos minutos.
+        if (!is_array($senal) || empty($senal['medido_en'])
+            || \Carbon\Carbon::parse($senal['medido_en'])->lt(now()->subSeconds(self::VIGENCIA * 5))) {
+            return null;
+        }
+
         foreach (($senal['onts'] ?? []) as $o) {
             if (($o['fsp'] ?? null) === $fsp && (int) ($o['ont_id'] ?? -1) === $ontId) {
                 return array_merge(self::normalizar($o), ['medido_en' => $senal['medido_en'] ?? null]);

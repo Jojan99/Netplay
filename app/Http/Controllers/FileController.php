@@ -29,6 +29,11 @@ class FileController extends Controller
 
     public function downloadFiles($name)
     {
+        // Mismo permiso que el listado: antes cualquier operador podía bajarlos.
+        if (!sessionUserHasProfile('CONTADOR', 'ADMIN')) {
+            return response()->json(['message' => 'No tienes permiso para esta acción', 'error' => 1], 403);
+        }
+
         $archivo = $name;
         $nombreArchivo = basename($archivo);
         $rutaArchivo = storage_path('archiveZip/' . $nombreArchivo);

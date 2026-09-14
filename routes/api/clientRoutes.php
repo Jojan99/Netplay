@@ -69,6 +69,8 @@ Route::prefix('client')->middleware(['jwt.client'])->group(function () {
     Route::post('router/bloquear',    [\App\Http\Controllers\Client\ClientRouterController::class, 'bloquear']);
     Route::post('router/desbloquear', [\App\Http\Controllers\Client\ClientRouterController::class, 'desbloquear']);
     Route::post('router/refrescar',   [\App\Http\Controllers\Client\ClientRouterController::class, 'refrescar']);
+    Route::post('router/canal',       [\App\Http\Controllers\Client\ClientRouterController::class, 'canal']);
+    Route::post('router/reiniciar',   [\App\Http\Controllers\Client\ClientRouterController::class, 'reiniciar']);
 
     Route::get('status',                       [\App\Http\Controllers\Client\ClientAccountController::class, 'status']);
     Route::get('payments',                     [\App\Http\Controllers\Client\ClientAccountController::class, 'payments']);

@@ -205,6 +205,8 @@ Route::prefix('management')->middleware('empresa.propia')->group(function () {
         Route::post('/{oltId}/profiles/default', [OltAdminController::class, 'fijarPerfiles']);
         Route::post('/{oltId}/cli',                  [OltAdminController::class, 'cliCommand']);
         Route::post('/{oltId}/ont/assign-client',    [OltAdminController::class, 'assignClientToOnt']);
+        // Cada puerto PON: ocupación, clientes en mora o suspendidos y alertas abiertas.
+        Route::get('/{oltId}/puertos',               [\App\Http\Controllers\PuertosDeOltController::class, 'resumen'])->whereNumber('oltId');
         // Vincular en tanda las ONT con sus clientes.
         Route::middleware('role:admin')->group(function () {
             Route::get('/vinculos/propuestas', [OltAdminController::class, 'propuestasDeVinculo']);

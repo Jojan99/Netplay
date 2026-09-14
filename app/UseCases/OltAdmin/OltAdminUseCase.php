@@ -114,13 +114,18 @@ class OltAdminUseCase
             return ['status' => 1, 'message' => 'OLT no encontrada', 'data' => null];
         }
 
+        // Nunca espera el barrido: devuelve la última medición y, si hace
+        // falta, mide en segundo plano (tarda más que el límite de la web).
         $r = \App\Services\Olt\SenalDeLaOlt::de($olt, $refrescar);
+        $sinDatos = $r['onts'] === [];
 
         return [
-            'status'  => $r['onts'] === [] ? 1 : 0,
-            'message' => $r['onts'] === []
-                ? ($r['error'] ?: 'La OLT no devolvió mediciones ópticas')
-                : 'OK',
+            'status'  => $sinDatos && !$r['midiendo'] ? 1 : 0,
+            'message' => match (true) {
+                !$sinDatos   => 'OK',
+                $r['midiendo'] => 'Midiendo la señal de todas las ONT en segundo plano: tarda cerca de un minuto.',
+                default      => $r['error'] ?: 'La OLT no devolvió mediciones ópticas',
+            },
             'data'    => $r,
         ];
     }
@@ -1714,7 +1719,8 @@ class OltAdminUseCase
         }
 
         // El cliente también tiene que ser de la empresa (la OLT ya la valida la ruta).
-        if ($userDataId && !\App\Models\UserData::where('id', $userDataId)->where('company_id', getSessionCompanyId())->exists()) {
+        // Ojo: pese al nombre, olt_onts.user_data_id guarda users.id.
+        if ($userDataId && !\App\Models\User::where('id', $userDataId)->where('company_id', getSessionCompanyId())->exists()) {
             return ['status' => 1, 'message' => 'Cliente no encontrado.', 'data' => null];
         }
 

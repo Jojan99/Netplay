@@ -250,7 +250,7 @@ class ClientInvoiceController extends Controller
             ->join('cab_facturations as cf', 'cf.id', '=', 'df.cab_id')
             ->where('cf.user_id', $user->id)
             ->where('cf.company_id', $user->company_id)
-            ->select('df.id');
+            ->select('df.id', 'df.number_facture');
 
         if (is_numeric($id)) {
             $query->where('df.id', (int) $id);
@@ -285,17 +285,16 @@ class ClientInvoiceController extends Controller
             }
         }
 
-        $internalRequest = Request::create(
-            '/api/generatePdf/sendInvoice/' . $numericId . '?channel=' . $channel,
-            'POST',
-            [],
-            [],
-            [],
-            ['HTTP_Authorization' => request()->header('Authorization')]
+        // Se llama directo al envío del panel. Antes se armaba una petición HTTP
+        // interna a /api/generatePdf/sendInvoice con el id: esa ruta busca por
+        // número de factura (nunca la encontraba) y además ya no admite tokens
+        // de cliente. La factura ya se validó arriba como del cliente.
+        $response = app(\App\Http\Controllers\GeneratePdfController::class)->sendInvoice(
+            app(\App\Repositories\Interfaces\GeneratePdfRepositoryInterface::class),
+            app(\App\Resources\Templates\TemplatesPdf::class),
+            $request,
+            (string) $invoice->number_facture
         );
-
-        $kernel = app(\Illuminate\Contracts\Http\Kernel::class);
-        $response = $kernel->handle($internalRequest);
 
         $body = json_decode($response->getContent(), true);
 
@@ -319,7 +318,7 @@ class ClientInvoiceController extends Controller
             ->join('cab_facturations as cf', 'cf.id', '=', 'df.cab_id')
             ->where('cf.user_id', $user->id)
             ->where('cf.company_id', $user->company_id)
-            ->select('df.id');
+            ->select('df.id', 'df.number_facture');
 
         if (is_numeric($id)) {
             $query->where('df.id', (int) $id);
@@ -362,7 +361,7 @@ class ClientInvoiceController extends Controller
             ->join('cab_facturations as cf', 'cf.id', '=', 'df.cab_id')
             ->where('cf.user_id', $user->id)
             ->where('cf.company_id', $user->company_id)
-            ->select('df.id');
+            ->select('df.id', 'df.number_facture');
 
         if (is_numeric($id)) {
             $query->where('df.id', (int) $id);
@@ -383,17 +382,13 @@ class ClientInvoiceController extends Controller
         // Usar el ID numérico real para la petición interna
         $numericId = $invoice->id;
 
-        $internalRequest = Request::create(
-            '/api/generatePdf/' . $action . '/' . $numericId,
-            'POST',
-            [],
-            [],
-            [],
-            ['HTTP_Authorization' => request()->header('Authorization')]
+        // Llamada directa (ver send()): la petición interna por id nunca
+        // encontraba la factura y la ruta del panel ya no acepta clientes.
+        $response = app(\App\Http\Controllers\GeneratePdfController::class)->{$action}(
+            app(\App\Repositories\Interfaces\GeneratePdfRepositoryInterface::class),
+            app(\App\Resources\Templates\TemplatesPdf::class),
+            (string) $invoice->number_facture
         );
-
-        $kernel = app(\Illuminate\Contracts\Http\Kernel::class);
-        $response = $kernel->handle($internalRequest);
 
         $body = json_decode($response->getContent(), true);
 

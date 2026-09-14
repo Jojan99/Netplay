@@ -26,6 +26,8 @@ Route::prefix('ticket')->group(function () {
         Route::post('{id}/close',             [TicketController::class, 'closeTicket']);
         Route::post('{id}/reopen',            [TicketController::class, 'reopenTicket']);
         Route::post('{id}/reassign',          [TicketController::class, 'reassignTicket']);
+        // Revisa de nuevo cuenta, ONT, MikroTik y TR-069 del cliente.
+        Route::post('{id}/diagnosticar',      [TicketController::class, 'diagnosticar']);
     });
 
     Route::middleware('role:admin')->group(function () {

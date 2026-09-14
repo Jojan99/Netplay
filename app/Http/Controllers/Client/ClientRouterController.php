@@ -26,15 +26,17 @@ class ClientRouterController extends Controller
 
     public function wifi(Request $request): JsonResponse
     {
+        // Desde el portal sólo se cambia la contraseña: el nombre de la red lo
+        // define la empresa (lo usa soporte para reconocer el equipo del cliente).
         $request->validate([
             'indice' => 'required|integer|min:1',
-            'nombre' => 'nullable|string|min:1|max:32',
-            'clave'  => 'nullable|string|min:8|max:63',
+            'nombre' => 'prohibited',
+            'clave'  => 'required|string|min:8|max:63',
             'todas'  => 'nullable|boolean',
-        ]);
+        ], ['nombre.prohibited' => 'El nombre de la red no se puede cambiar desde el portal.']);
 
         return $this->responder(function (RouterDelCliente $r) use ($request) {
-            $t = $r->cambiarWifi((int) $request->input('indice'), $request->input('nombre'), $request->input('clave'), $request->boolean('todas'));
+            $t = $r->cambiarWifi((int) $request->input('indice'), null, $request->input('clave'), $request->boolean('todas'));
 
             return [
                 'mensaje' => ($t['hecha'] ?? false)
@@ -67,6 +69,31 @@ class ClientRouterController extends Controller
     public function refrescar(): JsonResponse
     {
         return $this->responder(fn (RouterDelCliente $r) => $r->refrescar());
+    }
+
+    /** Cambia el canal de una red. Sin canal (null) vuelve a automático. */
+    public function canal(Request $request): JsonResponse
+    {
+        $request->validate([
+            'indice' => 'required|integer|min:1',
+            'canal'  => 'nullable|integer|min:1|max:196',
+        ]);
+
+        return $this->responder(function (RouterDelCliente $r) use ($request) {
+            $canal = $request->input('canal');
+            $t = $r->cambiarCanal((int) $request->input('indice'), $canal === null ? null : (int) $canal);
+
+            return [
+                'mensaje' => ($t['hecha'] ?? false)
+                    ? 'Listo. Tus equipos pueden desconectarse unos segundos mientras cambia el canal.'
+                    : 'Guardado. Se aplica en cuanto tu equipo se vuelva a conectar.',
+            ] + $t;
+        }, 'cambio de canal WiFi');
+    }
+
+    public function reiniciar(): JsonResponse
+    {
+        return $this->responder(fn (RouterDelCliente $r) => $r->reiniciar(), 'reinicio del equipo');
     }
 
     // ── Interno ───────────────────────────────────────────────────────────

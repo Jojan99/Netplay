@@ -291,6 +291,7 @@ class ReminderService
             }
 
             $this->marcarAvisado($company->id, $binding->event, (int) $caso['cliente']->user_id);
+            $this->registrar($company->id, $binding->event, (int) $caso['cliente']->user_id);
 
             return true;
         } catch (\Throwable $e) {
@@ -326,6 +327,33 @@ class ReminderService
             Cache::put($this->claveAviso($companyId, $evento, $userId), 1, now()->addHours(20));
         } catch (\Throwable $e) {
             // Sin caché el aviso ya salió; no vale la pena romper por esto.
+        }
+    }
+
+    /**
+     * Deja constancia del aviso con la deuda de ese momento, para que el
+     * tablero de cobranza pueda ver si después pagó.
+     */
+    private function registrar(int $companyId, string $evento, int $userId): void
+    {
+        try {
+            $deuda = DB::table('det_facturations as d')
+                ->join('cab_facturations as cab', 'cab.id', '=', 'd.cab_id')
+                ->where('cab.company_id', $companyId)
+                ->where('cab.user_id', $userId)
+                ->where('d.paid', 0)
+                ->sum(DB::raw('GREATEST(0, d.price_total - COALESCE(d.price_discount,0) - COALESCE(d.price_abone,0))'));
+
+            DB::table('wa_avisos_enviados')->insert([
+                'company_id' => $companyId,
+                'user_id'    => $userId,
+                'evento'     => $evento,
+                'deuda'      => $deuda,
+                'enviado_en' => now(),
+            ]);
+        } catch (\Throwable $e) {
+            // El aviso ya salió: que no quede registrado no puede frenar el resto.
+            Log::warning('[Avisos WhatsApp] No se pudo registrar el aviso', ['error' => $e->getMessage()]);
         }
     }
 

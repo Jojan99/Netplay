@@ -159,6 +159,44 @@ class RouterDelCliente
         return (new EquiposDelAcs($this->companyId))->cambiarWifi($equipo['id'], $indice, $ssid, $clave, $todas);
     }
 
+    /** Cambia el canal de una red; null vuelve a automático. */
+    public function cambiarCanal(int $indice, ?int $canal): array
+    {
+        $equipo = $this->exigirEquipo();
+
+        return (new EquiposDelAcs($this->companyId))->cambiarCanal($equipo['id'], $indice, $canal);
+    }
+
+    /** Minutos que tiene que esperar el cliente entre un reinicio y otro. */
+    public const ESPERA_REINICIO = 15;
+
+    /**
+     * Reinicia el equipo. Corta internet unos minutos, así que se limita: un
+     * portal abierto no puede dejar la casa sin servicio reiniciando en bucle.
+     */
+    public function reiniciar(): array
+    {
+        $equipo = $this->exigirEquipo();
+        $clave = "router-cliente:reinicio:{$this->userId}";
+
+        if (!\Illuminate\Support\Facades\Cache::add($clave, now()->toIso8601String(), now()->addMinutes(self::ESPERA_REINICIO))) {
+            throw new \InvalidArgumentException('Ya reiniciaste tu equipo hace poco. Espera unos minutos: tarda en volver a conectarse.');
+        }
+
+        try {
+            $t = (new EquiposDelAcs($this->companyId))->reiniciar($equipo['id']);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Cache::forget($clave);
+            throw $e;
+        }
+
+        return $t + [
+            'mensaje' => ($t['hecha'] ?? false)
+                ? 'Tu equipo se está reiniciando. En 2 o 3 minutos vuelve internet.'
+                : 'Le pedimos a tu equipo que se reinicie; lo hará en cuanto se comunique con nosotros.',
+        ];
+    }
+
     /** Le pide al equipo que mande sus datos al momento. */
     public function refrescar(): array
     {
@@ -212,18 +250,53 @@ class RouterDelCliente
      */
     private function redes(array $d): array
     {
-        return array_values(array_map(fn ($r) => [
+        // Sólo las redes que usa. Los equipos traen de fábrica redes secundarias
+        // (HGW-XXXX-1, -2, -3…) apagadas o sin estado informado, y mostrarlas
+        // confunde al cliente. Si el equipo confirma cuáles están encendidas, se
+        // muestran ésas; si no informa ninguna, la principal de cada banda.
+        $todas = $d['wifi'] ?? [];
+        $encendidas = array_values(array_filter($todas, fn ($r) => $r['activo'] === true));
+
+        if (!$encendidas) {
+            $porBanda = [];
+
+            foreach ($todas as $r) {
+                if ($r['activo'] === false) {
+                    continue;
+                }
+                $banda = $r['banda'] ?: 'wifi';
+                if (!isset($porBanda[$banda]) || $r['indice'] < $porBanda[$banda]['indice']) {
+                    $porBanda[$banda] = $r;
+                }
+            }
+
+            $encendidas = array_values($porBanda);
+        }
+
+        $redes = array_map(fn ($r) => [
             'indice'      => $r['indice'],
             'nombre'      => $r['ssid'],
             'banda'       => $r['banda'],
             'activa'      => $r['activo'] !== false,
+            // encendida / apagada / sin_dato: el equipo no siempre lo informa.
+            'estado'      => $r['activo'] === true ? 'encendida' : ($r['activo'] === false ? 'apagada' : 'sin_dato'),
             // Encendida según el propio equipo (no sólo "no se sabe"): son las
             // que reciben la contraseña cuando se elige usarla en todas.
             'confirmada'  => $r['activo'] === true,
             'clave'       => $r['clave'],
             'conectados'  => $r['conectados'],
+            // Canal 0 con automático encendido es "lo elige el equipo".
+            'canal'       => is_numeric($r['canal'] ?? null) && (int) $r['canal'] > 0 ? (int) $r['canal'] : null,
+            'canal_auto'  => $r['canal_auto'] ?? null,
+            'canales_posibles' => $r['canales_posibles'] ?? null,
             'puede_cambiar_clave' => (bool) $r['ruta_clave'],
-        ], array_filter($d['wifi'] ?? [], fn ($r) => $r['activo'] !== false)));
+            // El canal sólo en redes que el equipo confirma encendidas.
+            'puede_cambiar_canal' => $r['activo'] === true && (bool) ($r['ruta_canal'] ?? null),
+        ], $encendidas);
+
+        usort($redes, fn ($a, $b) => $a['indice'] <=> $b['indice']);
+
+        return array_values($redes);
     }
 
     /**

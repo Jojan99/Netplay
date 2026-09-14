@@ -22,7 +22,12 @@ class AlertasRevisar extends Command
         foreach ($empresas as $companyId) {
             $r = (new RevisorDeRed((int) $companyId))->revisar();
 
-            $this->line("Empresa {$companyId}: {$r['abiertas']} avisos abiertos, {$r['cerradas']} cerrados.");
+            // Lo crítico nuevo y lo resuelto, al grupo de los técnicos (si la
+            // empresa asoció uno).
+            $g = (new \App\Services\Alertas\AvisosAlGrupo((int) $companyId))->enviarPendientes();
+
+            $this->line("Empresa {$companyId}: {$r['abiertas']} avisos abiertos, {$r['cerradas']} cerrados."
+                . ($g['abiertas'] || $g['resueltas'] ? " Al grupo: {$g['abiertas']} nuevas, {$g['resueltas']} resueltas." : ''));
         }
 
         return self::SUCCESS;

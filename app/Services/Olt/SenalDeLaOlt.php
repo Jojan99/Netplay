@@ -27,31 +27,139 @@ class SenalDeLaOlt
     private const REGULAR  = -27.0;
     private const BAJA     = -29.0;
 
-    /** Cinco minutos: el barrido es lento y la potencia no cambia por segundo. */
-    private const VIGENCIA = 300;
+    /**
+     * Una medición se considera al día durante 20 minutos (la revisión de
+     * alertas mide cada 15), y se conserva unas horas para tener qué mostrar
+     * mientras se mide de nuevo.
+     */
+    private const AL_DIA = 1200;
+    private const CONSERVAR = 6 * 3600;
+
+    /** Lo máximo que puede tardar un barrido antes de darlo por colgado. */
+    private const MAXIMO_BARRIDO = 300;
 
     /**
+     * Para la pantalla: nunca espera el barrido.
+     *
+     * En una OLT con cientos de ONT la tabla óptica tarda más de un minuto (la
+     * OLT le pregunta a cada ONT) y la petición web se cortaba con 504. Se
+     * devuelve la última medición y, si está vieja o se pidió refrescar, se
+     * mide en otro proceso; 'midiendo' avisa que viene una nueva.
+     *
      * @return array<string,mixed>
      */
     public static function de(OltAdmin $olt, bool $refrescar = false): array
     {
-        $clave = "olt:{$olt->id}:senal";
+        $guardado = Cache::get(self::clave($olt));
+        $alDia = is_array($guardado) && !self::vieja($guardado);
 
-        if (!$refrescar) {
-            $guardado = Cache::get($clave);
+        $midiendo = self::midiendo($olt);
 
-            if (is_array($guardado)) {
-                return $guardado + ['desde_cache' => true];
+        if ($refrescar || !$alDia) {
+            $midiendo = self::lanzar($olt) || $midiendo;
+        }
+
+        if (is_array($guardado)) {
+            return $guardado + ['desde_cache' => true, 'midiendo' => $midiendo];
+        }
+
+        return self::vacio($olt) + ['desde_cache' => false, 'midiendo' => $midiendo];
+    }
+
+    /** Para procesos de fondo (revisión de alertas): la guardada si está al día, si no mide. */
+    public static function medirSiHaceFalta(OltAdmin $olt): array
+    {
+        $guardado = Cache::get(self::clave($olt));
+
+        if (is_array($guardado) && !self::vieja($guardado)) {
+            return $guardado;
+        }
+
+        return self::medirAhora($olt);
+    }
+
+    /** Mide ya y guarda. Si otro proceso está midiendo esta OLT, no repite el barrido. */
+    public static function medirAhora(OltAdmin $olt): array
+    {
+        $candado = Cache::lock("olt:{$olt->id}:senal:midiendo", self::MAXIMO_BARRIDO);
+
+        if (!$candado->get()) {
+            $guardado = Cache::get(self::clave($olt));
+
+            return is_array($guardado) ? $guardado : self::vacio($olt);
+        }
+
+        try {
+            $resultado = self::leer($olt);
+
+            if (($resultado['onts'] ?? []) !== []) {
+                Cache::put(self::clave($olt), $resultado, now()->addSeconds(self::CONSERVAR));
             }
+
+            return $resultado;
+        } finally {
+            $candado->release();
+            Cache::forget("olt:{$olt->id}:senal:lanzada");
+        }
+    }
+
+    /** Arranca la medición en otro proceso, salvo que ya haya una en curso. */
+    private static function lanzar(OltAdmin $olt): bool
+    {
+        // La marca evita lanzar un proceso por cada pantalla que se abre
+        // mientras el barrido está en curso.
+        if (!Cache::add("olt:{$olt->id}:senal:lanzada", now()->toIso8601String(), self::MAXIMO_BARRIDO)) {
+            return true;
         }
 
-        $resultado = self::leer($olt);
+        try {
+            $php = (new \Symfony\Component\Process\PhpExecutableFinder())->find() ?: 'php';
 
-        if (($resultado['onts'] ?? []) !== []) {
-            Cache::put($clave, $resultado, now()->addSeconds(self::VIGENCIA));
+            exec(sprintf(
+                'nohup %s %s olt:medir-senal %d >> %s 2>&1 &',
+                escapeshellarg($php),
+                escapeshellarg(base_path('artisan')),
+                (int) $olt->id,
+                escapeshellarg(storage_path('logs/senal-olt.log'))
+            ));
+
+            return true;
+        } catch (\Throwable $e) {
+            Cache::forget("olt:{$olt->id}:senal:lanzada");
+            Log::warning('[OLT] No se pudo lanzar la medición de señal', ['olt' => $olt->id, 'error' => $e->getMessage()]);
+
+            return false;
         }
+    }
 
-        return $resultado + ['desde_cache' => false];
+    private static function midiendo(OltAdmin $olt): bool
+    {
+        return Cache::has("olt:{$olt->id}:senal:lanzada");
+    }
+
+    private static function vieja(array $medicion): bool
+    {
+        return empty($medicion['medido_en'])
+            || \Carbon\Carbon::parse($medicion['medido_en'])->lt(now()->subSeconds(self::AL_DIA));
+    }
+
+    private static function clave(OltAdmin $olt): string
+    {
+        return "olt:{$olt->id}:senal";
+    }
+
+    /** @return array<string,mixed> */
+    private static function vacio(OltAdmin $olt): array
+    {
+        return [
+            'olt_id'    => (int) $olt->id,
+            'medido_en' => null,
+            'onts'      => [],
+            'resumen'   => self::resumen([]),
+            'por_pon'   => [],
+            'peores'    => [],
+            'error'     => null,
+        ];
     }
 
     /**

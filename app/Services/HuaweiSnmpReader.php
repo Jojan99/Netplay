@@ -90,6 +90,36 @@ private const OID_OPT_BIAS      = '1.3.6.1.4.1.2011.6.128.1.1.2.51.1.8'; // + .<
 
     // ── Public API ────────────────────────────────────────────────────────
 
+    /** hwGponDeviceOntControlLastDownCause: por qué se cayó la ONT la última vez. */
+    private const OID_ONT_LAST_DOWN_CAUSE = '1.3.6.1.4.1.2011.6.128.1.1.2.46.1.24';
+
+    /**
+     * Causa de la última caída de cada ONT, por "0/slot/puerto:ont".
+     *
+     * Códigos de Huawei: -1 nunca se cayó, 1 LOS, 2 LOSi/LOBi, 3 LOFi, 4 SFi,
+     * 5 LOAi, 6 LOAMi (todas de la parte óptica), 9 reinicio, 13 dying-gasp
+     * (se quedó sin energía). Se lee el número con signo: "-1" no es 1.
+     *
+     * @return array<string,int>
+     */
+    public function causasDeCaida(): array
+    {
+        $causas = [];
+
+        foreach ($this->walk(self::OID_ONT_LAST_DOWN_CAUSE) as $oidSuffix => $raw) {
+            $idx = $this->parseIndex($oidSuffix);
+
+            if ($idx === null || !preg_match('/-?\d+/', (string) $raw, $m)) {
+                continue;
+            }
+
+            [$slot, $port, $ontId] = $idx;
+            $causas["0/{$slot}/{$port}:{$ontId}"] = (int) $m[0];
+        }
+
+        return $causas;
+    }
+
     /**
      * Return all registered ONTs with run-state, serial, description.
      *
@@ -169,28 +199,57 @@ public function getOntInfo(string $fsp, int $ontId): array
         'status'      => $this->extractInt($this->get(self::OID_ONT_RUNSTATE . '.' . $suffix)) == 1 ? 'online' : 'offline',
     ];
 
-    // Datos ópticos
-    $oltRx  = $this->getInt(self::OID_OPT_OLT_RX  . '.' . $suffix);
-    $ontTx  = $this->getInt(self::OID_OPT_ONT_TX  . '.' . $suffix);
-    $ontRx  = $this->getInt(self::OID_OPT_ONT_RX  . '.' . $suffix);
-    $temp   = $this->getInt(self::OID_OPT_TEMP    . '.' . $suffix);
-    $volt   = $this->getInt(self::OID_OPT_VOLTAGE . '.' . $suffix);
-    $bias   = $this->getInt(self::OID_OPT_BIAS    . '.' . $suffix);
+    // Datos ópticos.
+    //
+    // Las columnas de la tabla óptica no están en el orden que dice la MIB: en
+    // este firmware la .4 es la potencia recibida, la .3 la corriente del láser
+    // y la .5 el voltaje. Con posiciones fijas la ficha mostraba "Rx OLT 2.32
+    // dBm" (era la corriente) y la potencia real quedaba "sin dato". Se usa el
+    // mapa que aprendió el barrido de toda la OLT y, si todavía no hay, se
+    // reconoce cada valor por su rango, igual que en el barrido.
+    $crudos = [];
 
-    // Con la ONT apagada la OLT contesta 2147483647 ("sin dato"). Sólo se
-    // filtraba -32768, así que la ficha mostraba 21.474.836 dBm y
-    // 2.147.483.647 °C como si fueran mediciones.
-    $dato = fn (?int $n) => ($n === null || in_array($n, [2147483647, -2147483648, -32768, 65535], true)) ? null : $n;
+    foreach (range(1, 8) as $col) {
+        $n = $this->getInt(self::OID_OPT_BASE . '.' . $col . '.' . $suffix);
 
-    [$oltRx, $ontTx, $ontRx, $temp, $volt, $bias] = array_map($dato, [$oltRx, $ontTx, $ontRx, $temp, $volt, $bias]);
+        // Con la ONT apagada la OLT contesta 2147483647 ("sin dato").
+        if ($n !== null && $n !== 0 && !in_array($n, [2147483647, -2147483648, -32768, 65535], true)) {
+            $crudos[$col] = $n;
+        }
+    }
 
-    // Conversión de unidades
-    if ($oltRx !== null) $info['olt_rx_power']  = round($oltRx / 100, 2);
-    if ($ontTx !== null) $info['tx_power']      = round($ontTx / 100, 2);
-    if ($ontRx !== null) $info['rx_power']      = round($ontRx / 100, 2);
-    if ($temp  !== null) $info['temperature']   = $temp;
-    if ($volt  !== null && $volt > 0) $info['voltage']       = round($volt / 1000, 3);
-    if ($bias  !== null && $bias > 0) $info['laser_current'] = round($bias / 100, 2);
+    $mapa = \Illuminate\Support\Facades\Cache::get("olt:{$this->oltId}:columnas-opticas");
+    $porMagnitud = [];
+
+    if (is_array($mapa) && $mapa !== []) {
+        foreach ($mapa as $col => $magnitud) {
+            if (isset($crudos[(int) $col])) {
+                $porMagnitud[$magnitud] = $crudos[(int) $col];
+            }
+        }
+    } else {
+        foreach ($crudos as $n) {
+            $magnitud = match (true) {
+                $n <= -400 && $n >= -4000 => 'dbm',
+                $n >= 2500 && $n <= 4000  => 'voltaje',
+                $n >= 1    && $n <= 100   => 'temperatura',
+                $n >= 101  && $n <= 400   => 'corriente',
+                default                   => null,
+            };
+
+            // La primera columna que cae en cada rango, como en el barrido.
+            if ($magnitud && !isset($porMagnitud[$magnitud])) {
+                $porMagnitud[$magnitud] = $n;
+            }
+        }
+    }
+
+    // No hay columna que se pueda reconocer con seguridad como potencia de
+    // subida o Rx en la OLT: mejor no mostrarlas que mostrar otro dato.
+    if (isset($porMagnitud['dbm']))         $info['rx_power']      = round($porMagnitud['dbm'] / 100, 2);
+    if (isset($porMagnitud['temperatura'])) $info['temperature']   = $porMagnitud['temperatura'];
+    if (isset($porMagnitud['voltaje']))     $info['voltage']       = round($porMagnitud['voltaje'] / 1000, 3);
+    if (isset($porMagnitud['corriente']))   $info['laser_current'] = round($porMagnitud['corriente'] / 100, 2);
 
     return $info;
 }
@@ -301,8 +360,16 @@ protected function getIfIndexByFsp(string $fsp): ?int
     {
         $columnas = [];
         $cobertura = [];
+        $columnaDe = [];
 
-        foreach (range(1, 8) as $col) {
+        // Qué columna mide qué se aprende en el primer barrido y se recuerda:
+        // en una OLT de 480 ONT cada columna tarda unos 15 s (la OLT le pregunta
+        // a cada ONT), y recorrer las ocho pasaba de minuto y medio.
+        $claveColumnas = "olt:{$this->oltId}:columnas-opticas";
+        $conocidas = \Illuminate\Support\Facades\Cache::get($claveColumnas);
+        $aRecorrer = is_array($conocidas) && $conocidas !== [] ? array_keys($conocidas) : range(1, 8);
+
+        foreach ($aRecorrer as $col) {
             $walk = $this->walk(self::OID_OPT_BASE . '.' . $col);
 
             if ($walk === []) {
@@ -321,7 +388,17 @@ protected function getIfIndexByFsp(string $fsp): ?int
             if ($medidos > ($cobertura[$magnitud] ?? 0)) {
                 $columnas[$magnitud]  = $walk;
                 $cobertura[$magnitud] = $medidos;
+                $columnaDe[$magnitud] = $col;
             }
+        }
+
+        if (isset($columnas['dbm'])) {
+            \Illuminate\Support\Facades\Cache::put($claveColumnas, array_flip($columnaDe), now()->addDay());
+        } elseif (is_array($conocidas) && $conocidas !== []) {
+            // Lo recordado ya no sirve (cambió el firmware): se vuelve a aprender.
+            \Illuminate\Support\Facades\Cache::forget($claveColumnas);
+
+            return $this->senalDeTodasLasOnts();
         }
 
         if (!isset($columnas['dbm'])) {

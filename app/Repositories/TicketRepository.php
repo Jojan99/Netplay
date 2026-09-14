@@ -56,6 +56,11 @@ class TicketRepository implements TicketRepositoryInterface
             'reopened_count'  => 0,
         ]);
 
+        // Diagnóstico de la conexión del cliente, en segundo plano.
+        if ($ticket->user_id) {
+            \App\Services\Tickets\DiagnosticoDeTicket::lanzar((int) $ticket->id);
+        }
+
         return $ticket->id;
     }
 

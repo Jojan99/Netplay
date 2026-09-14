@@ -28,6 +28,10 @@ class Kernel extends ConsoleKernel
         // puertos PON apagados, túneles sin saludo, OLT que no se dejan leer.
         $schedule->command('alertas:revisar')->everyFifteenMinutes()->user('www-data')->withoutOverlapping();
 
+        // Resumen de la mañana al grupo de WhatsApp de los técnicos: lo que
+        // sigue abierto, antes de que salgan a la calle.
+        $schedule->command('alertas:resumen')->dailyAt('07:30')->user('www-data');
+
         // Saca del servidor TR-069 los equipos falsos que dejan los escáneres:
         // el puerto tiene que estar abierto para las ONT y lo encuentran solos.
         $schedule->command('acs:limpiar')->dailyAt('05:30')->user('www-data');

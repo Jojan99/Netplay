@@ -845,6 +845,11 @@ public function createTicketFromConversation(int $conversationId, Request $reque
         'updated_at'      => now(),
     ]);
 
+    // Diagnóstico de la conexión del cliente, en segundo plano.
+    if ($userId) {
+        \App\Services\Tickets\DiagnosticoDeTicket::lanzar((int) $ticketId);
+    }
+
     // Aviso al grupo de WhatsApp: ahora lo decide el agente. Antes salía
     // siempre, sin que nadie lo pidiera ni pudiera evitarlo.
     if ($request->boolean('notify_group', true)) {

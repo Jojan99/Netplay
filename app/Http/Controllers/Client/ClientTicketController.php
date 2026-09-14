@@ -98,6 +98,9 @@ class ClientTicketController extends Controller
             'updated_at'  => now(),
         ]);
 
+        // Diagnóstico de su conexión, en segundo plano, como novedad del ticket.
+        \App\Services\Tickets\DiagnosticoDeTicket::lanzar($ticketId);
+
         $ticket = DB::table('tickets as t')
             ->leftJoin('ticket_status as ts', 'ts.id', '=', 't.status_id')
             ->where('t.id', $ticketId)
