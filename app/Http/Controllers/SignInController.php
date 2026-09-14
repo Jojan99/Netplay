@@ -92,21 +92,42 @@ class SignInController extends Controller
             ->where('id', $authenticatedUser->profile_id)
             ->value('name') ?? '';
 
+        // El panel es para operadores. Un cliente (perfil USER) entraba igual
+        // con su documento y contraseña; su lugar es el portal de clientes.
+        if (strtoupper($profileName) === 'USER') {
+            JWTAuth::setToken($token)->invalidate();
+
+            return standardApiReponse(
+                'Este acceso es para el equipo de la empresa. Si sos cliente, ingresá por el portal de clientes.',
+                ['portal' => true],
+                ApiResponseConstants::ERROR,
+                JsonResponse::HTTP_OK
+            );
+        }
+
         $modules = \DB::table('profile_modules')
             ->where('profile_id', $authenticatedUser->profile_id)
             ->where('active', 1)
             ->pluck('module')
             ->toArray();
 
-        $employeeId = \App\Models\Employee::where('user_id', $authenticatedUser->id)
+        $employee = \App\Models\Employee::where('user_id', $authenticatedUser->id)
             ->where('company_id', $authenticatedUser->company_id)
-            ->value('id');
+            ->first(['id', 'first_name', 'last_name']);
+        $employeeId = $employee?->id;
+
+        // El nombre para mostrar en el panel. El usuario es la cédula, y era lo
+        // que aparecía en el saludo y en la barra superior.
+        $datos  = DB::table('user_data')->where('user_id', $authenticatedUser->id)->first(['names', 'lastname']);
+        $nombre = trim(($datos->names ?? '') . ' ' . ($datos->lastname ?? ''))
+            ?: trim(($employee->first_name ?? '') . ' ' . ($employee->last_name ?? ''));
 
         return standardApiReponse(
             'The token has been created successfully',
             [
                 'access_token' => $token,
                 'userId'       => $authenticatedUser->id,
+                'nombre'       => $nombre,
                 'employee_id'  => $employeeId,
                 'company_id'   => $authenticatedUser->company_id,
                 'profile_id'   => $authenticatedUser->profile_id,

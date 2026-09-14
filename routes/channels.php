@@ -6,9 +6,10 @@ use Illuminate\Support\Facades\Broadcast;
 
 // Cambia de 'crm.inbox' a 'conversation.{conversationId}'
 Broadcast::channel('conversation.{conversationId}', function ($user, $conversationId) {
-    // Aquí puedes verificar si el usuario tiene acceso a esa conversación
-    // Por ejemplo, verificar si es participante de la conversación
-    
+    // Las conversaciones del CRM son del equipo: un cliente con su token del
+    // portal podía suscribirse y leer los mensajes en vivo.
+    if (\App\Http\Middleware\JwtMiddleware::esCliente($user)) return false;
+
     return ['id' => $user->id, 'name' => $user->name];
     
     // O si quieres verificar permisos:
@@ -16,12 +17,15 @@ Broadcast::channel('conversation.{conversationId}', function ($user, $conversati
 });
 
 Broadcast::channel('crm.inbox', function ($user) {
-    return true;
+    // Sólo el equipo: antes aceptaba a cualquier usuario autenticado.
+    return !\App\Http\Middleware\JwtMiddleware::esCliente($user);
 });
 
 // Presencia por empresa: quién del equipo está en línea (chat interno y llamadas)
 Broadcast::channel('company.{companyId}', function ($user, $companyId) {
     if ((int) $user->company_id !== (int) $companyId) return false;
+    // La presencia del equipo no es para los clientes de la empresa.
+    if (\App\Http\Middleware\JwtMiddleware::esCliente($user)) return false;
     $ud = \Illuminate\Support\Facades\DB::table('user_data')->where('user_id', $user->id)->first(['names', 'lastname']);
     return ['id' => $user->id, 'name' => trim(($ud->names ?? '') . ' ' . ($ud->lastname ?? '')) ?: ($user->email ?? 'Usuario')];
 });

@@ -6,8 +6,8 @@ use Illuminate\Support\Facades\Route;
 
 Route::prefix('facturation')->group(function () {
     // Rutas públicas (sin JWT) usadas por portal de clientes
-    Route::post('getDateFacturePending', [FacturationController::class, 'getDateFacturePending'])->withoutMiddleware('jwt.verify');
-    Route::post('getDatePayFacture', [FacturationController::class, 'getDatePayFacture'])->withoutMiddleware('jwt.verify');
+    Route::post('getDateFacturePending', [FacturationController::class, 'getDateFacturePending']);
+    Route::post('getDatePayFacture', [FacturationController::class, 'getDatePayFacture']);
 
     // Ejecutar proceso de facturación manualmente — solo admin
     // Uso: GET /api/facturation/ejecutar-comando?periodo=1

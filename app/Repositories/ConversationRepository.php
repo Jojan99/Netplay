@@ -1037,17 +1037,24 @@ DB::table('crm_conversations')
     /* =====================================================================
      * ESTADO DE SERVICIO DEL CLIENTE
      * =================================================================== */
-    public function getServiceStatusByPhone(string $phone): ?array
+    public function getServiceStatusByPhone(string $phone, ?int $companyId = null): ?array
     {
         // limpiar teléfono (últimos 10 dígitos para buscar en user_data)
         $clean = preg_replace('/[^0-9]/', '', $phone);
         $last10 = substr($clean, -10);
+
+        // Sin empresa no se busca: el mismo teléfono puede ser cliente de otra
+        // empresa y se mostraban su nombre, dirección e IP.
+        if (!$companyId) {
+            return null;
+        }
 
         // user_data guarda plan, estado e IP directamente (internet_plans_id, status_internet_id, ip_assignment_id → tabla_ips)
         $user = DB::table('user_data as ud')
             ->leftJoin('internet_plans as ip', 'ip.id', '=', 'ud.internet_plans_id')
             ->leftJoin('internet_status as ist', 'ist.id', '=', 'ud.status_internet_id')
             ->leftJoin('tabla_ips as tip', 'tip.id', '=', 'ud.ip_assignment_id')
+            ->where('ud.company_id', $companyId)
             ->where(function ($q) use ($clean, $last10) {
                 $q->where('ud.phone', 'like', '%' . $last10)
                   ->orWhere('ud.phone', $clean);

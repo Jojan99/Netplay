@@ -6,8 +6,8 @@ use Illuminate\Support\Facades\Route;
 
 Route::prefix('user')->group(function () {
     // Rutas públicas (sin JWT) usadas por portal de clientes
-    Route::get('getUserById/{id}', [UserController::class, 'getUserById'])->withoutMiddleware('jwt.verify');
-    Route::get('getUserByIdBost/{id}', [UserController::class, 'getUserByIdBost'])->withoutMiddleware('jwt.verify');
+    Route::get('getUserById/{id}', [UserController::class, 'getUserById']);
+    Route::get('getUserByIdBost/{id}', [UserController::class, 'getUserByIdBost']);
 
     // Solo admin: crear, modificar y eliminar clientes
     Route::middleware('role:admin')->group(function () {

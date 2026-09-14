@@ -68,16 +68,35 @@ class GeneratePdfController extends Controller
     }
 
     /**
+     * Empresa del operador conectado. Las facturas se buscan por número y los
+     * números se repiten entre empresas: sin este filtro un operador podía bajar
+     * o reenviar la factura de otra empresa con el mismo número.
+     */
+    private function empresaDelOperador(): ?int
+    {
+        $empresa = getSessionCompanyId() ?: (\Tymon\JWTAuth\Facades\JWTAuth::user()->company_id ?? null);
+
+        return $empresa ? (int) $empresa : null;
+    }
+
+    /**
      * GET /api/generatePdf/generatePdfbyId/{userid}
+     * Sólo panel. Clientes y WhatsApp usan el enlace firmado (InvoiceLinkController).
      */
     public function generatePdfbyId(
         GeneratePdfByIdFacturesUseCaseInterface $generatePdfByIdFacturesUseCaseInterface,
         $user_id
     ): object {
         try {
-            $response = $generatePdfByIdFacturesUseCaseInterface->generatePdfByIdFacture($user_id);
+            $empresa = $this->empresaDelOperador();
+            if (!$empresa) {
+                return response()->json(['message' => 'Factura no encontrada', 'status' => 1], 404);
+            }
 
-            if ($response instanceof \Illuminate\Http\Response) {
+            $response = $generatePdfByIdFacturesUseCaseInterface->generatePdfByIdFacture($user_id, $empresa);
+
+            // El PDF y también el 404 JSON de "no encontrada" (antes salía como 500).
+            if ($response instanceof \Symfony\Component\HttpFoundation\Response) {
                 return $response;
             }
 
@@ -170,7 +189,7 @@ class GeneratePdfController extends Controller
         string $invoiceId
     ): JsonResponse {
         try {
-            $data = $pdfRepo->generatePdfById($invoiceId);
+            $data = $pdfRepo->generatePdfById($invoiceId, $this->empresaDelOperador());
 
             if (!$data) {
                 return response()->json(['status' => 'error', 'message' => 'Factura no encontrada'], 404);
@@ -293,7 +312,7 @@ class GeneratePdfController extends Controller
         string $invoiceId
     ): JsonResponse {
         try {
-            $data = $pdfRepo->generatePdfById($invoiceId);
+            $data = $pdfRepo->generatePdfById($invoiceId, $this->empresaDelOperador());
 
             if (!$data) {
                 return response()->json(['status' => 'error', 'message' => 'Factura no encontrada'], 404);
@@ -364,7 +383,7 @@ class GeneratePdfController extends Controller
         }
 
         $results = [];
-        $data = $pdfRepo->generatePdfById($invoiceId);
+        $data = $pdfRepo->generatePdfById($invoiceId, $this->empresaDelOperador());
         if (!$data) {
             return response()->json(['status' => 'error', 'message' => 'Factura no encontrada'], 404);
         }

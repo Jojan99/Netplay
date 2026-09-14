@@ -6,7 +6,9 @@ use Illuminate\Support\Facades\Route;
 
 Route::prefix('generatePdf')->group(function () {
     Route::post('generatePdf', [GeneratePdfController::class, 'generatePdf']);
-    Route::get('generatePdfbyId/{userid}', [GeneratePdfController::class, 'generatePdfbyId'])->withoutMiddleware('jwt.verify');
+    // Sólo con sesión del panel. Los clientes y WhatsApp usan /api/factura/{token}
+    // (enlace firmado): los números de factura son correlativos y se adivinan.
+    Route::get('generatePdfbyId/{userid}', [GeneratePdfController::class, 'generatePdfbyId']);
     Route::get('generatePdfTicketbyId/{id}', [GeneratePdfController::class, 'generatePdfTicketbyId']);
     Route::get('generatePaidPdfbyId/{idFacture}', [GeneratePdfController::class, 'generatePaidPdfbyId']);
 

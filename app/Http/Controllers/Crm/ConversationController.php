@@ -503,7 +503,7 @@ public function serviceStatus(int $conversationId, ConversationRepositoryInterfa
         return response()->json(['ok' => false, 'data' => null], 404);
     }
 
-    $status = $repo->getServiceStatusByPhone($phone);
+    $status = $repo->getServiceStatusByPhone($phone, (int) getSessionCompanyId());
 
     return response()->json(['ok' => true, 'data' => $status]);
 }
@@ -519,9 +519,18 @@ public function forwardMessage(Request $request, ConversationRepositoryInterface
     ]);
 
     $agentId = getSessionUserId();
-    $source  = DB::table('crm_messages')->where('id', $request->source_message_id)->first();
+    $empresa = (int) getSessionCompanyId();
 
-    if (!$source) {
+    // El mensaje de origen y las conversaciones destino, sólo de la propia
+    // empresa: si no, se podían reenviar chats ajenos o escribir a sus clientes.
+    $source  = DB::table('crm_messages as m')
+        ->join('crm_conversations as c', 'c.id', '=', 'm.conversation_id')
+        ->where('m.id', $request->source_message_id)
+        ->where('c.company_id', $empresa)
+        ->select('m.*')
+        ->first();
+
+    if (!$empresa || !$source) {
         return response()->json(['ok' => false, 'message' => 'Mensaje no encontrado'], 404);
     }
 
@@ -540,6 +549,7 @@ public function forwardMessage(Request $request, ConversationRepositoryInterface
         $target = DB::table('crm_conversations as c')
             ->join('crm_customers as cu', 'cu.id', '=', 'c.customer_id')
             ->where('c.id', (int)$targetConvId)
+            ->where('c.company_id', $empresa)
             ->select('cu.phone', 'c.company_id', 'c.provider')
             ->first();
 

@@ -72,6 +72,8 @@ class Kernel extends HttpKernel
         'jwt.broadcast' => \App\Http\Middleware\JwtBroadcastAuth::class,
         'jwt.client'   => \App\Http\Middleware\ClientJwtMiddleware::class,
         'role'         => \App\Http\Middleware\RoleMiddleware::class,
+        'solo.servidor' => \App\Http\Middleware\SoloDesdeElServidorMiddleware::class,
+        'empresa.propia' => \App\Http\Middleware\EmpresaPropiaMiddleware::class,
         'module'       => \App\Http\Middleware\ModuleMiddleware::class,
         'clave.maestra'=> \App\Http\Middleware\ClaveMaestraMiddleware::class,
     ];

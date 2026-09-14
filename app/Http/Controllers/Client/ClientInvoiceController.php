@@ -197,9 +197,9 @@ class ClientInvoiceController extends Controller
             ], JsonResponse::HTTP_NOT_FOUND);
         }
 
-        // generatePdfbyId acepta number_facture (ej: NT9607) y es público (sin JWT).
-        // Funciona para facturas pagadas y pendientes por igual.
-        $pdfEndpoint = url('/api/generatePdf/generatePdfbyId/' . $invoice->number_facture);
+        // Enlace firmado: abre sin sesión pero no se puede adivinar. La ruta por
+        // número de factura quedó sólo para el panel.
+        $pdfEndpoint = \App\Http\Controllers\InvoiceLinkController::urlFor((int) $invoice->id);
 
         return response()->json([
             'message' => 'URL generada',

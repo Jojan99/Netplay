@@ -168,7 +168,12 @@ class GeneratePdfRepository implements GeneratePdfRepositoryInterface
     
     }
 
-    public function generatePdfById($id): mixed{
+    /**
+     * Factura por número. Los números se repiten entre empresas (GL11275 existe
+     * en dos), así que quien conoce la empresa debe pasarla: sin ella se toma la
+     * primera que aparezca, que puede ser de otra empresa.
+     */
+    public function generatePdfById($id, ?int $companyId = null): mixed{
         return User::select('user_data.names', 'user_data.lastname',
         'user_data.dni','internet_plans.plan_name','internet_plans.monthly_price',
         'user_data.address','user_data.phone','user_data.email','cab_facturations.date_init_facturation'
@@ -185,6 +190,7 @@ class GeneratePdfRepository implements GeneratePdfRepositoryInterface
         ->join('cab_facturations', 'cab_facturations.user_id', '=', 'user_data.user_id')
         ->join('det_facturations', 'det_facturations.cab_id', '=', 'cab_facturations.id')
         ->where('det_facturations.number_facture', $id)
+        ->when($companyId, fn ($q) => $q->where('cab_facturations.company_id', $companyId))
         ->first();
     }
 
@@ -215,6 +221,8 @@ class GeneratePdfRepository implements GeneratePdfRepositoryInterface
         ->join('ticket_type_prioritys', 'ticket_type_prioritys.id', '=', 'tickets.priority_id')
         ->join('ticket_type_services', 'ticket_type_services.id', '=', 'tickets.service_id')
         ->where('tickets.id', $id)
+        // Sólo tickets de la empresa: el PDF lleva nombre, cédula, teléfono y dirección.
+        ->where('tickets.company_id', getSessionCompanyId())
         ->get();
     
     }

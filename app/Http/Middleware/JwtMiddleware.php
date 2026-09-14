@@ -23,6 +23,15 @@ class JwtMiddleware
     {
         try {
             $user = JWTAuth::parseToken()->authenticate();
+
+            // El panel y su API son para operadores. Portal y panel emiten el
+            // mismo tipo de token, así que con el suyo un cliente podía llamar
+            // cualquier ruta del panel. El portal vive en /api/client con su
+            // propio middleware y no pasa por acá.
+            if ($user && self::esCliente($user)) {
+                return $this->soloOperadores();
+            }
+
             session(['user' => $user]);
         } catch (Exception $e) {
             if ($e instanceof \Tymon\JWTAuth\Exceptions\TokenInvalidException) {
@@ -43,6 +52,10 @@ class JwtMiddleware
                     session()->flush();
                     return $this->responseJwt('Session has expired');
                 }
+
+                if (self::esCliente(session('user'))) {
+                    return $this->soloOperadores();
+                }
             } else {
                 return $this->responseJwt('The token is not authorized' . $e->getMessage());
             }
@@ -56,6 +69,30 @@ class JwtMiddleware
      * Devuelve false si ya no existe, si fue desactivado o si le cambiaron la
      * empresa; en ese caso la sesión se descarta.
      */
+    /** Perfil de cliente (USER): tiene su portal, no entra al panel. */
+    public static function esCliente(mixed $user): bool
+    {
+        $perfilId = is_object($user) ? ($user->profile_id ?? null) : ($user['profile_id'] ?? null);
+
+        if (!$perfilId) {
+            return false;
+        }
+
+        static $nombres = [];
+        $nombres[$perfilId] ??= strtoupper((string) \Illuminate\Support\Facades\DB::table('profiles')->where('id', $perfilId)->value('name'));
+
+        return $nombres[$perfilId] === 'USER';
+    }
+
+    private function soloOperadores()
+    {
+        return response()->json([
+            'message' => 'Este acceso es para el equipo de la empresa. Los clientes ingresan por el portal.',
+            'data'    => null,
+            'error'   => 1,
+        ], 403);
+    }
+
     private function sesionSigueValida(): bool
     {
         $enSesion = session('user');

@@ -25,10 +25,11 @@ interface GeneratePdfRepositoryInterface{
     public function generatePdfRemember($id): mixed;
 
        /**
-     * @param int $user_id
+     * @param string $user_id número de factura
+     * @param int|null $companyId empresa dueña (los números se repiten entre empresas)
      * @return mixed
      */
-    public function generatePdfById($user_id): mixed;
+    public function generatePdfById($user_id, ?int $companyId = null): mixed;
 
 
        /**

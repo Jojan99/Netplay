@@ -39,7 +39,11 @@ class InvoiceLinkController extends Controller
         }
 
         try {
-            return $generador->generatePdfByIdFacture($factura->number_facture);
+            // Con la empresa: el mismo número puede existir en otra.
+            $empresa = \Illuminate\Support\Facades\DB::table('cab_facturations')
+                ->where('id', $factura->cab_id)->value('company_id');
+
+            return $generador->generatePdfByIdFacture($factura->number_facture, $empresa ? (int) $empresa : null);
         } catch (\Throwable $e) {
             Log::error('Factura por enlace: no se pudo generar el PDF', [
                 'invoice_id' => $factura->id,

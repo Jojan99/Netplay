@@ -74,10 +74,25 @@ class FacturationRepository implements FacturationRepositoryInterface
             DB::raw('price_total - price_abone as balance')
         )->where('cab_id', $data['cab_id']);
 
+        if (!self::cabeceraDeLaEmpresa((int) $data['cab_id'])) {
+            return collect();
+        }
+
         if ($data['value'] == 2) $query->where('paid', 1);
         elseif ($data['value'] == 3) $query->where('paid', 0);
 
         return $query->get();
+    }
+
+    /**
+     * La cabecera de facturación es de la empresa del operador. Los cab_id son
+     * correlativos: sin esto se veían facturas y pagos de otras empresas.
+     */
+    private static function cabeceraDeLaEmpresa(int $cabId): bool
+    {
+        $empresa = getSessionCompanyId();
+
+        return $empresa && DB::table('cab_facturations')->where('id', $cabId)->where('company_id', $empresa)->exists();
     }
 
     public function getDateFacturePending(GetDateFacturePendingnRequest $data): mixed
@@ -86,6 +101,10 @@ class FacturationRepository implements FacturationRepositoryInterface
         // hoy lo deja en entero, pero concatenar aquí deja la puerta abierta a
         // inyección si mañana se reutiliza este método desde otro origen.
         $cabId = (int) $data['cab_id'];
+
+        if (!self::cabeceraDeLaEmpresa($cabId)) {
+            return collect();
+        }
 
         return DetFacturation::select(
             'id','cab_id','date_facturation','number_facture','date_create_facturation',

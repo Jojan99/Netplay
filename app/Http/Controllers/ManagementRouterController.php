@@ -740,7 +740,8 @@ class ManagementRouterController extends Controller
     public function obtenerInformacionSNMP(Request $request): JsonResponse
     {
         $oltId = $request->input('olt_id', 5);
-        $olt   = OltAdmin::findOrFail($oltId);
+        // Sólo OLT de la propia empresa (el id va en la consulta, no en la ruta).
+        $olt   = OltAdmin::where('company_id', getSessionCompanyId())->findOrFail($oltId);
 
         $onts = (new HuaweiSnmpReader($olt))->getAuthorizedONTs();
 

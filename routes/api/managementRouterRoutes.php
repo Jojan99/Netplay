@@ -9,7 +9,9 @@ use App\Http\Controllers\SnmpController;
 use Illuminate\Support\Facades\Route;
 
 
-Route::prefix('management')->group(function () {
+// empresa.propia: {oltId}, {conversationId}, {userId}, etc. tienen que ser de la
+// empresa del operador (antes bastaba cambiar el número para tocar otra empresa).
+Route::prefix('management')->middleware('empresa.propia')->group(function () {
     // Errores del navegador de quien usa el panel, para poder ver fallas que
     // sólo pasan en su teléfono o con sus datos.
     Route::post('errores-navegador', [\App\Http\Controllers\ErrorNavegadorController::class, 'guardar']);
@@ -33,19 +35,20 @@ Route::prefix('management')->group(function () {
 
     Route::post('UpdateStatus', [ManagementRouterController::class, 'UpdateStatus']);
     Route::post('disableUser', [ManagementRouterController::class, 'disableUser']);
-    Route::get('getCpuStatus', [ManagementRouterController::class, 'getCpuStatus'])->withoutMiddleware('jwt.verify');
-    Route::get('getCpuStatus1', [ManagementRouterController::class, 'getCpuStatus1'])->withoutMiddleware('jwt.verify');
-    Route::get('getOntPort', [ManagementRouterController::class, 'getOntPort'])->withoutMiddleware('jwt.verify');
-    Route::get('getOntStatusAll', [ManagementRouterController::class, 'getOntStatusAll'])->withoutMiddleware('jwt.verify');
-    Route::post('registerOnt', [ManagementRouterController::class, 'registerOnt'])->withoutMiddleware('jwt.verify');
-    Route::post('deleteontOnt', [ManagementRouterController::class, 'deleteontOnt'])->withoutMiddleware('jwt.verify');
-    Route::get('getCpuStatusSnmpnew', [SnmpController::class, 'getCpuStatusSnmpnew'])->withoutMiddleware('jwt.verify');
-    Route::get('getCpuStatusSnmp', [ManagementRouterController::class, 'getCpuStatusSnmp'])->withoutMiddleware('jwt.verify');
-    Route::get('getOntAutoFind', [SnmpController::class, 'getOntAutoFind'])->withoutMiddleware('jwt.verify');
-    Route::get('prueba', [SnmpController::class, 'prueba'])->withoutMiddleware('jwt.verify');
-    Route::get('getOntInfo/{id}', [ManagementRouterController::class, 'getOntInfo'])->withoutMiddleware('jwt.verify');
-    Route::post('getIpAvalibles', [ManagementRouterController::class, 'getIpAvalibles'])->withoutMiddleware('jwt.verify');
-    Route::get('getLanSegments', [ManagementRouterController::class, 'getLanSegments'])->withoutMiddleware('jwt.verify');
+    Route::get('getCpuStatus', [ManagementRouterController::class, 'getCpuStatus']);
+    Route::get('getCpuStatus1', [ManagementRouterController::class, 'getCpuStatus1']);
+    Route::get('getOntPort', [ManagementRouterController::class, 'getOntPort']);
+    Route::get('getOntStatusAll', [ManagementRouterController::class, 'getOntStatusAll']);
+    // registerOnt y deleteontOnt quitadas: nadie las usaba, tenían IP y root/admin
+    // fijos y metían datos del cuerpo sin limpiar en comandos de la OLT. El alta y
+    // la baja de ONT van por olt/{oltId}/register y olt/{oltId}/ont.
+    Route::get('getCpuStatusSnmpnew', [SnmpController::class, 'getCpuStatusSnmpnew']);
+    Route::get('getCpuStatusSnmp', [ManagementRouterController::class, 'getCpuStatusSnmp']);
+    Route::get('getOntAutoFind', [SnmpController::class, 'getOntAutoFind']);
+    Route::get('prueba', [SnmpController::class, 'prueba']);
+    Route::get('getOntInfo/{id}', [ManagementRouterController::class, 'getOntInfo']);
+    Route::post('getIpAvalibles', [ManagementRouterController::class, 'getIpAvalibles']);
+    Route::get('getLanSegments', [ManagementRouterController::class, 'getLanSegments']);
 
     // Clientes que comparten una misma IP. Sólo lee lo que la plataforma tiene
     // registrado, así que exige sesión como cualquier pantalla del panel.
@@ -80,8 +83,8 @@ Route::prefix('management')->group(function () {
     // Separa los registros de IP que varios clientes comparten. No toca el
     // router, pero reescribe la asignación de esos clientes: va con admin.
     Route::post('separar-fichas', [ManagementRouterController::class, 'separarFichas'])->middleware('role:admin');
-    Route::post('autorizarServicio', [ManagementRouterController::class, 'autorizarServicio'])->withoutMiddleware('jwt.verify');
-    Route::post('migrarIp', [ManagementRouterController::class, 'migrarIp'])->withoutMiddleware('jwt.verify');
+    Route::post('autorizarServicio', [ManagementRouterController::class, 'autorizarServicio']);
+    Route::post('migrarIp', [ManagementRouterController::class, 'migrarIp']);
 
     // ── VPN de gestión ─────────────────────────────────────────────────────
     // El túnel por el que se llega a equipos que están en redes privadas, sin
@@ -188,7 +191,7 @@ Route::prefix('management')->group(function () {
         Route::post('/{oltId}/auto-assign', [OltAdminController::class, 'autoAssignONT']);
 
         // Read operations
-        Route::get('/snmp-onts',              [ManagementRouterController::class, 'obtenerInformacionSNMP'])->withoutMiddleware('jwt.verify');
+        Route::get('/snmp-onts',              [ManagementRouterController::class, 'obtenerInformacionSNMP']);
         Route::get('/{oltId}/onts',           [OltAdminController::class, 'authorizedONTs']);
         Route::get('/{oltId}/ont/info',       [OltAdminController::class, 'ontInfo']);        // ?fsp=0/1/0&ont_id=0
         Route::get('/{oltId}/service-ports',  [OltAdminController::class, 'servicePorts']);  // ?fsp=&ont_id=
@@ -225,7 +228,7 @@ Route::prefix('management')->group(function () {
     Route::get(
         'conversations/{conversationId}/messages',
         [ConversationController::class, 'getMessages']
-    )->withoutMiddleware('jwt.verify');
+    );
 
     // 📤 Enviar mensaje (ESTA ES LA CLAVE)
     Route::post(
@@ -247,7 +250,7 @@ Route::prefix('management')->group(function () {
     Route::post(
         'receiveMessage',
         [ConversationController::class, 'receiveMessage']
-    )->withoutMiddleware('jwt.verify');
+    )->withoutMiddleware('jwt.verify')->middleware('solo.servidor');
 
     // 🧾 Comprobante de pago recibido por WhatsApp Web.
     // Lo manda el servicio Node máquina a máquina, firmado con la clave
@@ -261,20 +264,20 @@ Route::prefix('management')->group(function () {
     Route::post(
         'conversations/{conversationId}/transfer',
         [ConversationController::class, 'transfer']
-    )->withoutMiddleware('jwt.verify');
+    );
 
     // 🔒 Cerrar conversación
      Route::post(
     'conversations/{conversationId}/close',
     [ConversationController::class, 'close']
-    )->withoutMiddleware('jwt.verify');
+    );
 
     Route::post(
     'conversations/{conversationId}/transfer',
     [ConversationController::class, 'transfer']
 );
 
-Route::get('agents', [ConversationController::class, 'agents'])->withoutMiddleware('jwt.verify');
+Route::get('agents', [ConversationController::class, 'agents']);
 
 // 📤 Enviar MEDIA (imagen / video / audio / documento)
 Route::post(
@@ -310,8 +313,7 @@ Route::post('crm/broadcast', [ConversationController::class, 'sendBroadcast']);
 Route::post('conversations', [ConversationController::class, 'createConversation']);
 
 // ── ESTADO DE SERVICIO ────────────────────────────────────────────────────────
-Route::get('conversations/{conversationId}/service-status', [ConversationController::class, 'serviceStatus'])
-    ->withoutMiddleware('jwt.verify');
+Route::get('conversations/{conversationId}/service-status', [ConversationController::class, 'serviceStatus']);
 
 // ── REENVIAR MENSAJE ──────────────────────────────────────────────────────────
 Route::post('messages/forward', [ConversationController::class, 'forwardMessage']);

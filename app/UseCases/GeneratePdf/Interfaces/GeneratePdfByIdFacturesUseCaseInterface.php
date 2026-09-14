@@ -13,5 +13,5 @@ interface GeneratePdfByIdFacturesUseCaseInterface
      * Método encargado de generar pdf masivo .zip
      * @return mixed
      */
-    public function generatePdfByIdFacture($user_id): mixed;
+    public function generatePdfByIdFacture($user_id, ?int $companyId = null): mixed;
 }

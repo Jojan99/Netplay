@@ -38,8 +38,10 @@ class GeneratePayPdfByIdFacturesUseCase implements GeneratePayPdfByIdFacturesUse
       try {
         
         // Obtener los datos del usuario y generar el PDF
-        $generatePdf = $this->generatePdfRepository->generatePdfById($userFacture);
-        
+        // Con la empresa del operador: los números de factura se repiten entre empresas.
+        $empresa = getSessionCompanyId() ?: (\Tymon\JWTAuth\Facades\JWTAuth::user()->company_id ?? null);
+        $generatePdf = $this->generatePdfRepository->generatePdfById($userFacture, $empresa ? (int) $empresa : null);
+
         $Cab = $this->generatePdfRepository->getPaySaldoAnt($generatePdf['id'],$generatePdf['number_facture']);
        
         error_log("dddddddddddddddddddddddddd".json_encode($Cab));

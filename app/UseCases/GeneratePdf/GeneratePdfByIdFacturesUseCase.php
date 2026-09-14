@@ -32,13 +32,13 @@ class GeneratePdfByIdFacturesUseCase implements GeneratePdfByIdFacturesUseCaseIn
   ) {
   }
 
-  public function generatePdfByIdFacture($userFacture): mixed
+  public function generatePdfByIdFacture($userFacture, ?int $companyId = null): mixed
   {
-    
+
     if(true){
       try {
         // Obtener los datos del usuario y generar el PDF
-        $generatePdf = $this->generatePdfRepository->generatePdfById($userFacture);
+        $generatePdf = $this->generatePdfRepository->generatePdfById($userFacture, $companyId);
 
         if (!$generatePdf) {
             return response()->json(['message' => 'Factura no encontrada', 'status' => 1], 404);

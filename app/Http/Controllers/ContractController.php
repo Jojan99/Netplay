@@ -536,8 +536,21 @@ class ContractController extends Controller
      * GET /api/contracts/{id}/pdf-fields
      * Devuelve las coordenadas guardadas de variables sobre el PDF.
      */
+    /** La plantilla de contrato es de la empresa del operador. */
+    private function contratoDeLaEmpresa(int $id): bool
+    {
+        $empresa = getSessionCompanyId();
+
+        return $empresa && \Illuminate\Support\Facades\DB::table('contracts')
+            ->where('id', $id)->where('company_id', $empresa)->exists();
+    }
+
     public function getPdfFields(int $id): JsonResponse
     {
+        if (!$this->contratoDeLaEmpresa($id)) {
+            return response()->json(['status' => 1, 'message' => 'Contrato no encontrado'], 404);
+        }
+
         try {
             $fields = \App\Models\ContractPdfField::where('contract_id', $id)
                 ->orderBy('page')->orderBy('id')
@@ -571,6 +584,10 @@ class ContractController extends Controller
             'fields.*.color'     => 'nullable|string|size:6',
             'fields.*.max_width' => 'nullable|integer|min:10',
         ]);
+
+        if (!$this->contratoDeLaEmpresa($id)) {
+            return response()->json(['status' => 1, 'message' => 'Contrato no encontrado'], 404);
+        }
 
         try {
             // Borrar campos anteriores y guardar los nuevos

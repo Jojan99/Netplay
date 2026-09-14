@@ -513,7 +513,7 @@ class CompanyController extends Controller
      */
     public function toggleUserWhatsApp(int $userId, Request $request): object
     {
-        UserData::where('user_id', $userId)->update([
+        UserData::where('user_id', $userId)->where('company_id', getSessionCompanyId())->update([
             'whatsapp_enabled' => (bool) $request->input('whatsapp_enabled', true),
         ]);
 

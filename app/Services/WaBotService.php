@@ -1907,7 +1907,8 @@ class WaBotService
         if ($number === '') return;
 
         $filename = 'factura_' . preg_replace('/[^A-Za-z0-9_-]/', '_', $number) . '.pdf';
-        $pdfUrl = url('/api/generatePdf/generatePdfbyId/' . rawurlencode($number));
+        // Enlace firmado: la ruta por número de factura ya no es pública.
+        $pdfUrl = \App\Http\Controllers\InvoiceLinkController::urlFor((int) $invoice->id);
         $result = (new WhatsAppService($company->id, false, 'meta'))->sendDocument(
             $to,
             $pdfUrl,

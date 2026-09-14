@@ -1713,6 +1713,11 @@ class OltAdminUseCase
             return ['status' => 1, 'message' => 'ONT no encontrada en la base de datos.', 'data' => null];
         }
 
+        // El cliente también tiene que ser de la empresa (la OLT ya la valida la ruta).
+        if ($userDataId && !\App\Models\UserData::where('id', $userDataId)->where('company_id', getSessionCompanyId())->exists()) {
+            return ['status' => 1, 'message' => 'Cliente no encontrado.', 'data' => null];
+        }
+
         $ont->update(['user_data_id' => $userDataId]);
 
         return ['status' => 0, 'message' => $userDataId ? 'Cliente asignado correctamente.' : 'Cliente desasignado.', 'data' => $ont->fresh()];

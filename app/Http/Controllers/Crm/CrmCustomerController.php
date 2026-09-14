@@ -177,7 +177,7 @@ class CrmCustomerController extends Controller
 
         // El repositorio de PDF busca por número de factura, no por id
         $number = DB::table('det_facturations')->where('id', $request->invoice_id)->value('number_facture');
-        $data = $number ? $pdfRepo->generatePdfById($number) : null;
+        $data = $number ? $pdfRepo->generatePdfById($number, (int)$conv->company_id) : null;
         if (!$data) return response()->json(['ok' => false, 'error' => 'Factura no encontrada'], 404);
 
         try {

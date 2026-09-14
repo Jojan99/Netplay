@@ -71,7 +71,7 @@ public function isFirstMessage(int $conversationId): bool;
     public function createConversationFromPhone(string $phone, string $name, int $companyId): int;
 
     // ── Estado de servicio del cliente ────────────────────────────────────
-    public function getServiceStatusByPhone(string $phone): ?array;
+    public function getServiceStatusByPhone(string $phone, ?int $companyId = null): ?array;
 
     // ── Stickers ──────────────────────────────────────────────────────────
     public function getStickers(int $companyId): array;
