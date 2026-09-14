@@ -709,6 +709,27 @@ class GestionRemotaDeOnt
             return ['ok' => false, 'detalle' => 'Esta OLT no admite dar la gestión desde acá: hay que configurarla en la OLT.'];
         }
 
+        // Si el equipo ya reporta al TR-069 por su propia conexión (lo trae
+        // configurado o se lo cargaron a mano), la VLAN de gestión no hace
+        // falta, y crearla sólo arriesga pisarle internet: los HG8145V5 la
+        // ponen en el lugar 2 (JENNYFER_MARGARET, 0/0/3:16, ya estaba en el ACS
+        // y se bloqueaba con "hay que configurar la gestión en el equipo").
+        $avance('Buscando el equipo en el servidor TR-069…');
+        $registrada = OltOnt::where('olt_id', $oltId)->where('fsp', $fsp)->where('ont_id', $ontId)->first();
+        $enElAcs = $registrada ? $this->yaEnElAcs((string) $registrada->serial) : null;
+
+        if ($enElAcs) {
+            $registrada->update(['gestion_en' => now()]);
+
+            return [
+                'ok'             => true,
+                'detalle'        => $enElAcs,
+                'servidor_tr069' => true,
+                'perfil'         => ['listo' => true, 'detalle' => 'No aplica: el equipo reporta por su propia conexión.'],
+                'ya_en_acs'      => true,
+            ];
+        }
+
         $avance('Configurando el acceso en la OLT…');
 
         // El número de service-port puede estar tomado por otro equipo sin que
@@ -898,6 +919,40 @@ class GestionRemotaDeOnt
         return ($r['ok'] ?? false)
             ? ['ok' => true, 'detalle' => $asignado['detalle'] . " Equipo {$nombre} reiniciado para que lo aplique." . $comprobar]
             : ['ok' => true, 'detalle' => $asignado['detalle'] . ' ' . ($r['detalle'] ?? 'No se pudo reiniciar.'), 'requiere_reinicio' => true];
+    }
+
+    /** Sin reportar en este tiempo, un equipo del ACS ya no cuenta como gestionado. */
+    private const REPORTE_VIGENTE_DIAS = 7;
+
+    /**
+     * Si la ONT ya está en el servidor TR-069 y reportó hace poco, lo dice en
+     * palabras; si no, null y se sigue por la OLT.
+     */
+    private function yaEnElAcs(string $serial): ?string
+    {
+        if (trim($serial) === '') {
+            return null;
+        }
+
+        try {
+            $buscado = \App\Services\Acs\EquiposDelAcs::serial($serial);
+            $equipo = collect((new \App\Services\Acs\EquiposDelAcs($this->companyId))->lista())
+                ->first(fn ($e) => \App\Services\Acs\EquiposDelAcs::serial((string) ($e['serial'] ?? '')) === $buscado);
+        } catch (\Throwable $e) {
+            // Sin ACS para consultar se sigue como siempre.
+            return null;
+        }
+
+        $ultimo = $equipo['ultimo_reporte'] ?? null;
+
+        if (!$ultimo || \Carbon\Carbon::parse($ultimo)->lt(now()->subDays(self::REPORTE_VIGENTE_DIAS))) {
+            return null;
+        }
+
+        $hace = \Carbon\Carbon::parse($ultimo)->locale('es')->diffForHumans();
+
+        return "El equipo ya está en el servidor TR-069 (último reporte {$hace}) por su propia conexión: no se tocó la OLT. "
+            . 'Si un cambio tarda en aplicarse es porque el servidor no llega a su IP y espera a que el equipo vuelva a reportar.';
     }
 
     /** Cómo se le dice a la marca en pantalla. */
