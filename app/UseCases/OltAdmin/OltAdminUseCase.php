@@ -1370,27 +1370,30 @@ class OltAdminUseCase
             return null;
         }
 
-        try {
-            $servicio = new \App\Services\Red\GestionRemotaDeOnt(
-                $companyId,
-                app(\App\Managers\Interfaces\ConectionRouterManagerInterface::class),
-            );
+        // Si la empresa no lo activó, no hay nada que hacer ni que mostrar.
+        $gestion = \App\Models\GestionRemota::where('company_id', $companyId)->first();
 
-            $r = $servicio->darAcceso($oltId, $fsp, $ontId);
+        if (!$gestion?->activa || !$gestion->vlan) {
+            return null;
+        }
+
+        // En segundo plano: son una veintena de comandos contra la OLT y el
+        // alta no puede quedar esperándolos (terminaba en 504 con el túnel
+        // lento, aunque la ONT ya estuviera autorizada).
+        try {
+            // Recién autorizada todavía no le da servicio a nadie: si hace falta
+            // reiniciarla para que tome el servidor TR-069 (C-Data), se reinicia.
+            $id = \App\Services\Red\TareasDeGestion::crear($companyId, 'dar_acceso', ['olt_id' => $oltId, 'fsp' => $fsp, 'ont_id' => $ontId, 'reiniciar' => true]);
+            \App\Services\Red\TareasDeGestion::lanzar($id);
         } catch (\Throwable $e) {
-            \Log::warning('[Gestión] No se pudo dar acceso remoto a la ONT nueva', [
+            \Log::warning('[Gestión] No se pudo lanzar el acceso remoto de la ONT nueva', [
                 'olt' => $oltId, 'fsp' => $fsp, 'ont' => $ontId, 'error' => $e->getMessage(),
             ]);
 
-            return null;
+            return ['paso' => 'Acceso remoto al equipo', 'ok' => false, 'detalle' => 'No se pudo iniciar: se puede dar desde Autorizadas.'];
         }
 
-        // Apagado no es una falla que valga la pena mostrar en el alta.
-        if (!$r['ok'] && str_contains($r['detalle'], 'no está activado')) {
-            return null;
-        }
-
-        return ['paso' => 'Acceso remoto al equipo', 'ok' => $r['ok'], 'detalle' => $r['detalle']];
+        return ['paso' => 'Acceso remoto al equipo', 'ok' => true, 'detalle' => 'Se está configurando en segundo plano (uno o dos minutos).', 'tarea' => $id];
     }
 
     /**

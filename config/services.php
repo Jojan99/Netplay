@@ -19,6 +19,9 @@ return [
     'genieacs' => [
         'nbi' => env('GENIEACS_NBI_URL', 'http://127.0.0.1:7557'),
         'cwmp_url' => env('GENIEACS_CWMP_URL', 'http://181.48.150.43:7547'),
+        // La dirección que se les manda a los equipos desde la OLT. Con el
+        // dominio, si el servidor cambia de IP basta con actualizar el DNS.
+        'url_equipos' => env('GENIEACS_URL_EQUIPOS', 'http://netplay.com.co:7547'),
     ],
 
     'mailgun' => [

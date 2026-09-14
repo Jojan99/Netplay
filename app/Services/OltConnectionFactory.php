@@ -105,38 +105,59 @@ class OltConnectionFactory
         return $telnet;
     }
 
+    /** Intentos de abrir la conexión antes de darla por perdida. */
+    private const INTENTOS_TCP = 3;
+
+    /** Segundos de espera por intento. */
+    private const ESPERA_TCP = 8;
+
+    /**
+     * Abre la conexión TCP con la OLT.
+     *
+     * Por el túnel los paquetes se pierden de a ráfagas: un intento que no
+     * obtiene respuesta suele entrar si se repite a los pocos segundos. Antes
+     * había un único intento de 30 s y, cuando fallaba, el operador veía el
+     * texto crudo del socket. Reintentar acá es seguro: todavía no se mandó
+     * ningún comando.
+     */
     private function openDirectTcpStream(OltAdmin $olt)
     {
-        \Illuminate\Support\Facades\Log::info('OPENING TCP STREAM', [
-            'host' => $olt->host,
-            'port' => $olt->port,
-        ]);
+        $ultimoError = '';
 
-        $stream = stream_socket_client(
-            "tcp://{$olt->host}:{$olt->port}",
-            $errno,
-            $errstr,
-            30
-        );
-
-        if (!is_resource($stream)) {
-            \Illuminate\Support\Facades\Log::error('TCP STREAM FAILED', [
-                'host' => $olt->host,
-                'port' => $olt->port,
-                'error' => $errstr,
-                'errno' => $errno,
-            ]);
-            throw new RuntimeException(
-                "Cannot connect to {$olt->host}:{$olt->port}: {$errstr} ({$errno})"
+        for ($intento = 1; $intento <= self::INTENTOS_TCP; $intento++) {
+            $stream = @stream_socket_client(
+                "tcp://{$olt->host}:{$olt->port}",
+                $errno,
+                $errstr,
+                self::ESPERA_TCP
             );
+
+            if (is_resource($stream)) {
+                if ($intento > 1) {
+                    \Illuminate\Support\Facades\Log::info('TCP STREAM OPENED AFTER RETRY', [
+                        'host' => $olt->host, 'intento' => $intento,
+                    ]);
+                }
+
+                return $stream;
+            }
+
+            $ultimoError = trim("{$errstr} ({$errno})");
+
+            \Illuminate\Support\Facades\Log::warning('TCP STREAM FAILED', [
+                'host' => $olt->host, 'port' => $olt->port, 'intento' => $intento, 'error' => $ultimoError,
+            ]);
+
+            if ($intento < self::INTENTOS_TCP) {
+                usleep(1_500_000 * $intento);
+            }
         }
 
-        \Illuminate\Support\Facades\Log::info('TCP STREAM OPENED', [
-            'host' => $olt->host,
-            'port' => $olt->port,
-        ]);
-
-        return $stream;
+        throw new RuntimeException(
+            "No se pudo llegar a la OLT ({$olt->host}) después de " . self::INTENTOS_TCP . ' intentos: '
+            . 'la conexión con el nodo se está cortando. Probá de nuevo en un momento. '
+            . "[{$ultimoError}]"
+        );
     }
 
     // ── SSH ───────────────────────────────────────────────────────────────

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Managers\Interfaces\ConectionRouterManagerInterface;
 use App\Models\OltOnt;
 use App\Services\Red\GestionRemotaDeOnt;
+use App\Services\Red\TareasDeGestion;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -96,7 +97,12 @@ class GestionRemotaController extends Controller
         return standardApiReponse('Acceso remoto desactivado', $r, 0, JsonResponse::HTTP_OK);
     }
 
-    /** Le da acceso a una ONT ya autorizada. */
+    /**
+     * Le da acceso a una ONT ya autorizada.
+     *
+     * Contesta enseguida con la tarea: el trabajo contra la OLT sigue en
+     * segundo plano y la pantalla consulta cómo va.
+     */
     public function darAcceso(Request $request, int $oltId): JsonResponse
     {
         if (!$companyId = (int) getSessionCompanyId()) {
@@ -108,16 +114,17 @@ class GestionRemotaController extends Controller
             'ont_id' => 'required|integer',
         ]);
 
-        $r = $this->servicio($companyId)->darAcceso($oltId, $datos['fsp'], (int) $datos['ont_id']);
+        $id = TareasDeGestion::crear($companyId, 'dar_acceso', ['olt_id' => $oltId, 'fsp' => $datos['fsp'], 'ont_id' => (int) $datos['ont_id']]);
+        TareasDeGestion::lanzar($id);
 
-        return standardApiReponse($r['detalle'], $r, $r['ok'] ? 0 : 1, JsonResponse::HTTP_OK);
+        return standardApiReponse('Dando acceso remoto al equipo…', ['tarea' => $id, 'estado' => 'en_curso'], 0, JsonResponse::HTTP_OK);
     }
 
     /**
-     * Se lo da a los equipos que ya estaban autorizados de antes.
+     * Le da el acceso a todos los equipos que ya estaban autorizados.
      *
-     * De a tandas: cada ONT son dos comandos en la OLT y son cientos, así que
-     * el front va pidiendo hasta que no queden.
+     * Son cientos: corre en segundo plano hasta terminar o hasta que el
+     * operador lo pare. Si ya hay una en curso, se devuelve esa.
      */
     public function alDia(Request $request): JsonResponse
     {
@@ -125,47 +132,45 @@ class GestionRemotaController extends Controller
             return standardApiReponse('Sesión sin empresa asociada', null, 1, JsonResponse::HTTP_UNAUTHORIZED);
         }
 
-        $servicio = $this->servicio($companyId);
-        // De a poco: cada equipo son ocho comandos contra la OLT y la respuesta
-        // tiene que llegar antes de que el navegador se canse de esperar.
-        $cuantas  = min(5, max(1, (int) $request->input('cuantas', 3)));
-
-        // Las OLT que no saben recibir la gestión se saltean: si no, la tanda
-        // se llena de equipos que siempre van a fallar.
-        $marcas = \App\Models\OltAdmin::where('company_id', $companyId)->get(['id', 'brand'])
-            ->filter(fn ($o) => GestionRemotaDeOnt::admiteGestion((string) $o->brand))
-            ->pluck('id')->all();
-
-        $pendientes = OltOnt::whereIn('olt_id', $marcas)
-            ->whereNull('gestion_en')
-            ->when($request->filled('olt_id'), fn ($q) => $q->where('olt_id', (int) $request->input('olt_id')))
-            ->orderBy('id');
-
-        $quedan = (clone $pendientes)->count();
-        $hechas = [];
-
-        foreach ($pendientes->limit($cuantas)->get() as $ont) {
-            $r = $servicio->darAcceso((int) $ont->olt_id, (string) $ont->fsp, (int) $ont->ont_id);
-
-            $hechas[] = [
-                'ont'     => "{$ont->fsp}:{$ont->ont_id}",
-                'nombre'  => $ont->description,
-                'ok'      => $r['ok'],
-                'detalle' => $r['detalle'],
-            ];
-
-            // Si el acceso remoto no está activo no tiene sentido seguir
-            // castigando a la OLT con cientos de intentos iguales.
-            if (!$r['ok'] && str_contains($r['detalle'], 'no está activado')) {
-                break;
-            }
+        if ($enCurso = TareasDeGestion::enCurso($companyId, 'al_dia')) {
+            return standardApiReponse('Ya hay una puesta al día en curso', ['tarea' => $enCurso, 'estado' => 'en_curso'], 0, JsonResponse::HTTP_OK);
         }
 
-        return standardApiReponse('Equipos procesados', [
-            'hechas'     => $hechas,
-            'quedaban'   => $quedan,
-            'pendientes' => max(0, $quedan - count(array_filter($hechas, fn ($h) => $h['ok']))),
-        ], 0, JsonResponse::HTTP_OK);
+        $id = TareasDeGestion::crear($companyId, 'al_dia', array_filter(['olt_id' => $request->input('olt_id')]));
+        TareasDeGestion::marcarActiva($companyId, 'al_dia', $id);
+        TareasDeGestion::lanzar($id);
+
+        return standardApiReponse('Puesta al día en curso', ['tarea' => $id, 'estado' => 'en_curso'], 0, JsonResponse::HTTP_OK);
+    }
+
+    /** Cómo va una tarea. Sólo las de la empresa en sesión. */
+    public function tarea(string $id): JsonResponse
+    {
+        $companyId = (int) getSessionCompanyId();
+        $t = TareasDeGestion::ver($id);
+
+        if (!$t || (int) $t['company_id'] !== $companyId) {
+            return standardApiReponse('No existe esa tarea', null, 1, JsonResponse::HTTP_OK);
+        }
+
+        unset($t['company_id']);
+
+        return standardApiReponse($t['detalle'] ?? '', $t, 0, JsonResponse::HTTP_OK);
+    }
+
+    /** Pide parar una tarea: termina el equipo que está haciendo y se detiene. */
+    public function pararTarea(string $id): JsonResponse
+    {
+        $companyId = (int) getSessionCompanyId();
+        $t = TareasDeGestion::ver($id);
+
+        if (!$t || (int) $t['company_id'] !== $companyId) {
+            return standardApiReponse('No existe esa tarea', null, 1, JsonResponse::HTTP_OK);
+        }
+
+        TareasDeGestion::pedirParar($id);
+
+        return standardApiReponse('Se detiene después del equipo en curso', ['tarea' => $id], 0, JsonResponse::HTTP_OK);
     }
 
     /** Todo lo que tiene que estar bien, revisado y dicho en castellano. */
@@ -207,9 +212,31 @@ class GestionRemotaController extends Controller
             return standardApiReponse('Sesión sin empresa asociada', null, 1, JsonResponse::HTTP_UNAUTHORIZED);
         }
 
-        $r = $this->servicio($companyId)->prepararPerfil($oltId, $perfil);
+        $id = TareasDeGestion::crear($companyId, 'preparar_perfil', ['olt_id' => $oltId, 'perfil' => $perfil]);
+        TareasDeGestion::lanzar($id);
 
-        return standardApiReponse($r['detalle'], $r, $r['ok'] ? 0 : 1, JsonResponse::HTTP_OK);
+        return standardApiReponse('Preparando el perfil…', ['tarea' => $id, 'estado' => 'en_curso'], 0, JsonResponse::HTTP_OK);
+    }
+
+    /**
+     * Reinicia un equipo desde la OLT, en segundo plano. Le corta internet un
+     * minuto al cliente: la pantalla lo avisa antes de pedirlo.
+     */
+    public function reiniciar(Request $request, int $oltId): JsonResponse
+    {
+        if (!$companyId = (int) getSessionCompanyId()) {
+            return standardApiReponse('Sesión sin empresa asociada', null, 1, JsonResponse::HTTP_UNAUTHORIZED);
+        }
+
+        $datos = $request->validate([
+            'fsp'    => 'required|string',
+            'ont_id' => 'required|integer',
+        ]);
+
+        $id = TareasDeGestion::crear($companyId, 'reiniciar', ['olt_id' => $oltId, 'fsp' => $datos['fsp'], 'ont_id' => (int) $datos['ont_id']]);
+        TareasDeGestion::lanzar($id);
+
+        return standardApiReponse('Reiniciando el equipo…', ['tarea' => $id, 'estado' => 'en_curso'], 0, JsonResponse::HTTP_OK);
     }
 
     private function servicio(int $companyId): GestionRemotaDeOnt

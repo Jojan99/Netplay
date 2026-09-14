@@ -46,7 +46,7 @@ class OltTelnetWorker extends Command
         'transferONT', 'deactivateONT', 'activateONT',
         // Cambia la configuración: si no se guarda, vuelve atrás al reiniciar.
         'cambiarAutoAutorizacion', 'prepararVlanDeGestion', 'darGestionAOnt',
-        'prepararPerfilDeLinea',
+        'prepararPerfilDeLinea', 'crearServidorTr069', 'asignarServidorTr069',
     ];
 
     private ?object          $connection     = null;
@@ -112,7 +112,15 @@ class OltTelnetWorker extends Command
 
         while (true) {
             $this->publishHeartbeat($oltId);
-            $this->renovarLock();
+
+            if (!$this->renovarLock()) {
+                Log::warning("OLT Worker #{$oltId}: otro worker tomó la OLT, este termina para no ocupar otra sesión");
+                $this->disconnect($oltId);
+                // El lock es del otro: al salir no hay que soltarlo.
+                $this->lockKey = null;
+
+                return self::SUCCESS;
+            }
 
             // El worker vive indefinidamente, así que se queda con el código
             // que tenía al arrancar: después de un despliegue sigue corriendo
@@ -230,11 +238,31 @@ class OltTelnetWorker extends Command
     }
 
     /** Mantiene el lock mientras este worker sigue vivo. */
-    private function renovarLock(): void
+    /**
+     * Mantiene el lock mientras este worker sigue siendo el dueño.
+     *
+     * Si otro proceso lo tomó (este tardó más que el vencimiento y arrancó
+     * otro worker), devuelve false: renovarlo igual dejaba a los dos creyéndose
+     * dueños, cada uno con su sesión, hasta agotar los cupos de la OLT.
+     */
+    private function renovarLock(): bool
     {
-        if ($this->lockKey) {
-            try { Redis::setex($this->lockKey, self::LOCK_TTL, getmypid()); } catch (\Throwable) {}
+        if (!$this->lockKey) {
+            return true;
         }
+
+        try {
+            $duenio = Redis::get($this->lockKey);
+
+            if ($duenio !== null && (int) $duenio !== getmypid()) {
+                return false;
+            }
+
+            Redis::setex($this->lockKey, self::LOCK_TTL, getmypid());
+        } catch (\Throwable) {
+        }
+
+        return true;
     }
 
     /**
@@ -246,7 +274,15 @@ class OltTelnetWorker extends Command
     private function soltarLock(): void
     {
         if ($this->lockKey) {
-            try { Redis::del($this->lockKey); } catch (\Throwable) {}
+            // Sólo si sigue siendo nuestro: borrar el de otro worker lo dejaba
+            // sin candado y abría la puerta a un tercero.
+            try {
+                if ((int) Redis::get($this->lockKey) === getmypid()) {
+                    Redis::del($this->lockKey);
+                }
+            } catch (\Throwable) {
+            }
+
             $this->lockKey = null;
         }
     }
@@ -338,12 +374,20 @@ class OltTelnetWorker extends Command
                                        ? $this->driver->prepararVlanDeGestion((int) $p['vlan'], (string) $p['uplink']) : null,
             'darGestionAOnt'    => method_exists($this->driver, 'darGestionAOnt')
                                        ? $this->driver->darGestionAOnt($p['fsp'], (int) $p['ont_id'], (int) $p['vlan'], (int) $p['service_port']) : null,
+            'perfilDeOnt'       => method_exists($this->driver, 'perfilDeOnt')
+                                       ? $this->driver->perfilDeOnt((string) $p['fsp'], (int) $p['ont_id']) : null,
             'perfilesDeLinea'   => method_exists($this->driver, 'perfilesDeLinea')
                                        ? $this->driver->perfilesDeLinea() : null,
             'perfilDeLinea'     => method_exists($this->driver, 'perfilDeLinea')
                                        ? $this->driver->perfilDeLinea((int) $p['perfil']) : null,
             'prepararPerfilDeLinea' => method_exists($this->driver, 'prepararPerfilDeLinea')
                                        ? $this->driver->prepararPerfilDeLinea((int) $p['perfil'], (int) $p['vlan']) : null,
+            'crearServidorTr069' => method_exists($this->driver, 'crearServidorTr069')
+                                       ? $this->driver->crearServidorTr069((int) $p['perfil'], (string) $p['nombre'], (string) $p['url'], (string) $p['usuario'], (string) $p['clave']) : null,
+            'asignarServidorTr069' => method_exists($this->driver, 'asignarServidorTr069')
+                                       ? $this->driver->asignarServidorTr069((string) $p['fsp'], (int) $p['ont_id'], (int) $p['perfil']) : null,
+            'reiniciarOnt'      => method_exists($this->driver, 'reiniciarOnt')
+                                       ? $this->driver->reiniciarOnt((string) $p['fsp'], (int) $p['ont_id']) : null,
             'equipoDeOnt'       => method_exists($this->driver, 'equipoDeOnt')
                                        ? $this->driver->equipoDeOnt($p['fsp'], (int) $p['ont_id']) : [],
             'autoAutorizacion'  => method_exists($this->driver, 'autoAutorizacion')

@@ -211,8 +211,12 @@ class GestionRemotaDeOnt
 
                 $uplinks[(int) $oltId] = $puerto;
             } catch (\Throwable $e) {
-                $pasos[] = ['paso' => "VLAN en la OLT {$oltId}", 'ok' => false, 'detalle' => $e->getMessage()];
+                $pasos[] = ['paso' => "VLAN en la OLT {$oltId}", 'ok' => false, 'detalle' => \App\Services\Olt\EstadoDeUnaOnt::explicar($e->getMessage())];
             }
+        }
+
+        foreach (array_keys($uplinks) as $oltId) {
+            $pasos[] = $this->asegurarServidorTr069((int) $oltId);
         }
 
         $pasos[] = $this->enElTunel($router, $red);
@@ -426,7 +430,7 @@ class GestionRemotaDeOnt
                 'perfil' => $perfil, 'vlan' => (int) $g->vlan,
             ]);
         } catch (\Throwable $e) {
-            return ['ok' => false, 'estado' => 'error', 'detalle' => $e->getMessage()];
+            return ['ok' => false, 'estado' => 'error', 'detalle' => \App\Services\Olt\EstadoDeUnaOnt::explicar($e->getMessage())];
         }
 
         Cache::forget("gestion:perfiles:{$oltId}:{$g->vlan}");
@@ -557,18 +561,24 @@ class GestionRemotaDeOnt
             : $this->item('error', 'Dirección del servidor TR-069', $opcion ? 'Apunta a otra dirección.' : 'No está cargada en el DHCP.', 'activar');
 
         $reglas = $api->query(new Query('/ip/firewall/filter/print'))->read();
-        $posAcs = $posNada = null;
+        $posResp = $posAcs = $posNada = null;
 
         foreach ($reglas as $i => $r) {
+            $posResp ??= ($r['comment'] ?? '') === self::MARCA . ': respuestas' ? $i : null;
             $posAcs  ??= ($r['comment'] ?? '') === self::MARCA . ': al ACS' ? $i : null;
             $posNada ??= ($r['comment'] ?? '') === self::MARCA . ': nada mas' ? $i : null;
         }
 
-        $items[] = $posAcs === null || $posNada === null
-            ? $this->item('error', 'Aislamiento', 'Faltan las reglas que encierran la red de gestión.', 'activar')
-            : ($posAcs < $posNada
-                ? $this->item('ok', 'Aislamiento', 'La red de gestión sólo habla con el servidor TR-069.')
-                : $this->item('error', 'Aislamiento', 'Las reglas están al revés: el bloqueo va antes que el paso al servidor.', 'activar'));
+        $items[] = match (true) {
+            $posAcs === null || $posNada === null
+                => $this->item('error', 'Aislamiento', 'Faltan las reglas que encierran la red de gestión.', 'activar'),
+            $posAcs > $posNada
+                => $this->item('error', 'Aislamiento', 'Las reglas están al revés: el bloqueo va antes que el paso al servidor.', 'activar'),
+            $posResp === null || $posResp > $posNada
+                => $this->item('error', 'Cambios al instante', 'Los equipos no pueden contestarle al servidor: los cambios esperan a que el equipo se reporte solo.', 'activar'),
+            default
+                => $this->item('ok', 'Aislamiento', 'La red de gestión sólo habla con el servidor TR-069 y le contesta cuando la llama.'),
+        };
 
         return $items;
     }
@@ -588,6 +598,12 @@ class GestionRemotaDeOnt
         $items[] = $uplink
             ? $this->item('ok', 'VLAN en la OLT', "Pasa por el puerto de subida {$uplink}.")
             : $this->item('error', 'VLAN en la OLT', 'No pasa por ningún puerto de subida: los equipos piden IP y nadie les contesta.', 'activar');
+
+        $perfilAcs = ($g->perfiles_acs ?? [])[(string) $olt->id] ?? null;
+
+        $items[] = $perfilAcs
+            ? $this->item('ok', 'Servidor TR-069 en la OLT', 'La OLT les manda a los equipos la dirección ' . config('services.genieacs.url_equipos') . ' y las credenciales.')
+            : $this->item('pendiente', 'Servidor TR-069 en la OLT', 'Todavía no está creado: los equipos que no toman la dirección por DHCP no van a encender su TR-069.', 'activar');
 
         $perfiles = Cache::get("gestion:perfiles:{$olt->id}:{$g->vlan}") ?? Cache::get("gestion:perfiles-ultima:{$olt->id}:{$g->vlan}");
 
@@ -671,7 +687,7 @@ class GestionRemotaDeOnt
      *
      * @return array{ok:bool, detalle:string}
      */
-    public function darAcceso(int $oltId, string $fsp, int $ontId): array
+    public function darAcceso(int $oltId, string $fsp, int $ontId, bool $reiniciarSiHaceFalta = false): array
     {
         $g = $this->config();
 
@@ -707,7 +723,7 @@ class GestionRemotaDeOnt
                     'service_port' => $numero,
                 ]);
             } catch (\Throwable $e) {
-                return ['ok' => false, 'detalle' => $e->getMessage()];
+                return ['ok' => false, 'detalle' => \App\Services\Olt\EstadoDeUnaOnt::explicar($e->getMessage())];
             }
 
             if ($r['sp_ok'] ?? false) {
@@ -723,6 +739,26 @@ class GestionRemotaDeOnt
 
         $ont = OltOnt::where('olt_id', $oltId)->where('fsp', $fsp)->where('ont_id', $ontId)->first();
 
+        // Cómo le llega al equipo el servidor TR-069 depende de su marca:
+        //  - Huawei: la OLT le manda dirección y credenciales y lo enciende solo.
+        //  - C-Data: también por la OLT, pero lo toma recién al reiniciarse
+        //    (probado con CARMEN: se registró a los 2 min del reinicio).
+        //  - Otras: se configura en el propio equipo, y se dice.
+        $marca = self::marcaDelEquipo((string) ($ont?->serial ?? ''));
+
+        $servidor = match ($marca) {
+            'huawei' => $this->asignarServidorTr069($oltId, $fsp, $ontId),
+            'cdata'  => $this->servidorTr069ParaCdata($oltId, $fsp, $ontId, $reiniciarSiHaceFalta),
+            default  => ['ok' => false, 'detalle' => 'Equipo ' . strtoupper($marca ?: 'de otra marca') . ': el TR-069 se configura en el propio equipo.'],
+        };
+
+        // Sin la VLAN de gestión en su perfil de línea la ONT descarta ese
+        // tráfico aunque todo lo demás esté bien. Antes no se miraba y el
+        // proceso decía "listo" con el equipo sin poder salir.
+        $perfil = $this->perfilListoDe($oltId, $fsp, $ontId, (int) $g->vlan);
+
+        $completo = $servidor['ok'] && $perfil['listo'];
+
         if ($ont) {
             // Queda anotado para no volver a repartir el mismo número, que es
             // justamente lo que hace que la OLT rechace el comando.
@@ -733,10 +769,24 @@ class GestionRemotaDeOnt
                 ->values()->all();
             $puertos[] = ['index' => (int) $r['sp'], 'vlan' => (int) $g->vlan];
 
-            $ont->update(['gestion_en' => now(), 'service_ports' => $puertos]);
+            // "Con acceso" sólo si quedó completo: si no, la puesta al día lo
+            // saltearía para siempre creyendo que ya estaba.
+            $ont->update(['service_ports' => $puertos, 'gestion_en' => $completo ? now() : null]);
         }
 
-        return ['ok' => true, 'detalle' => $r['detalle'] ?? 'Listo'];
+        $falta = array_values(array_filter([
+            $perfil['listo'] ? null : $perfil['detalle'],
+            $servidor['ok'] ? null : $servidor['detalle'],
+        ]));
+
+        return [
+            'ok'      => $completo,
+            'detalle' => $completo
+                ? ($r['detalle'] ?? 'Listo') . ' · ' . $servidor['detalle']
+                : 'Quedó a medias: ' . implode(' · ', $falta),
+            'servidor_tr069' => $servidor['ok'],
+            'perfil'  => $perfil,
+        ];
     }
 
     /**
@@ -783,6 +833,205 @@ class GestionRemotaDeOnt
                 ? "{$red} por «{$tunel->nombre}»"
                 : 'Quedó anotada, pero falta aplicarla: ' . ($r['motivo'] ?? 'sin detalle'),
         ];
+    }
+
+    /**
+     * El servidor TR-069 para un C-Data.
+     *
+     * Se le asigna por la OLT igual que a un Huawei, pero el equipo no lo
+     * aplica hasta reiniciarse. Un equipo recién autorizado todavía no le da
+     * servicio a nadie, así que se reinicia solo; a un cliente que ya navega no
+     * se le corta internet sin avisar: queda dicho que falta el reinicio.
+     *
+     * @return array{ok:bool, detalle:string, requiere_reinicio?:bool}
+     */
+    private function servidorTr069ParaCdata(int $oltId, string $fsp, int $ontId, bool $reiniciar): array
+    {
+        $asignado = $this->asignarServidorTr069($oltId, $fsp, $ontId);
+
+        if (!$asignado['ok']) {
+            return $asignado;
+        }
+
+        if (!$reiniciar) {
+            return [
+                'ok'      => true,
+                'detalle' => $asignado['detalle'] . ' Equipo C-Data: lo aplica al reiniciarse; reinicialo cuando no moleste al cliente.',
+                'requiere_reinicio' => true,
+            ];
+        }
+
+        try {
+            $r = app(OltTelnetDispatcher::class)->dispatch($oltId, 'reiniciarOnt', ['fsp' => $fsp, 'ont_id' => $ontId]);
+        } catch (\Throwable $e) {
+            return ['ok' => true, 'detalle' => $asignado['detalle'] . ' No se pudo reiniciar: ' . \App\Services\Olt\EstadoDeUnaOnt::explicar($e->getMessage()), 'requiere_reinicio' => true];
+        }
+
+        return ($r['ok'] ?? false)
+            ? ['ok' => true, 'detalle' => $asignado['detalle'] . ' Equipo C-Data reiniciado para que lo aplique.']
+            : ['ok' => true, 'detalle' => $asignado['detalle'] . ' ' . ($r['detalle'] ?? 'No se pudo reiniciar.'), 'requiere_reinicio' => true];
+    }
+
+    // ── Marca del equipo ──────────────────────────────────────────────────
+
+    /** La marca del equipo por el prefijo de su serial GPON (HWTC, CDTC…). */
+    public static function marcaDelEquipo(string $serial): string
+    {
+        $s = strtoupper(trim($serial));
+        $vendor = ctype_xdigit(substr($s, 0, 8)) && strlen($s) >= 16 ? (string) @hex2bin(substr($s, 0, 8)) : substr($s, 0, 4);
+
+        return match ($vendor) {
+            'HWTC', 'HUAW' => 'huawei',
+            'CDTC', 'CDT'  => 'cdata',
+            'ZTEG', 'ZXIC' => 'zte',
+            'VSOL'         => 'vsol',
+            default        => strtolower($vendor),
+        };
+    }
+
+    /**
+     * Reinicia un equipo desde la OLT. Le corta internet un minuto al cliente:
+     * se hace a pedido del operador, nunca solo sobre alguien que ya navega.
+     *
+     * @return array{ok:bool, detalle:string}
+     */
+    public function reiniciarEquipo(int $oltId, string $fsp, int $ontId): array
+    {
+        $olt = OltAdmin::where('id', $oltId)->where('company_id', $this->companyId)->first();
+
+        if (!$olt || !self::admiteGestion((string) $olt->brand)) {
+            return ['ok' => false, 'detalle' => $olt ? 'Esta OLT no permite reiniciar equipos desde acá.' : 'Esa OLT no es de tu empresa.'];
+        }
+
+        try {
+            $r = app(OltTelnetDispatcher::class)->dispatch($oltId, 'reiniciarOnt', ['fsp' => $fsp, 'ont_id' => $ontId]);
+        } catch (\Throwable $e) {
+            return ['ok' => false, 'detalle' => \App\Services\Olt\EstadoDeUnaOnt::explicar($e->getMessage())];
+        }
+
+        return ['ok' => (bool) ($r['ok'] ?? false), 'detalle' => $r['detalle'] ?? 'La OLT no respondió.'];
+    }
+
+    // ── Servidor TR-069 en la OLT ─────────────────────────────────────────
+
+    /**
+     * Deja creado en la OLT el perfil de servidor TR-069: dirección y
+     * credenciales del ACS. Uno por OLT, compartido por todos sus equipos.
+     *
+     * La OLT no deja modificar un perfil con equipos asignados, así que nace
+     * completo. Si el número ya está ocupado se prueba el siguiente; si ya es
+     * nuestro (misma dirección y usuario) se reutiliza.
+     *
+     * @return array{paso:string, ok:bool, detalle:string}
+     */
+    public function asegurarServidorTr069(int $oltId): array
+    {
+        $g   = $this->config();
+        $olt = OltAdmin::where('id', $oltId)->where('company_id', $this->companyId)->first();
+
+        if (!$olt || $this->soporte($olt)['nivel'] !== 'completo') {
+            return ['paso' => 'Servidor TR-069 en la OLT', 'ok' => true, 'detalle' => 'Esta OLT no lo permite: se configura en cada equipo.'];
+        }
+
+        if (!empty(($g->perfiles_acs ?? [])[(string) $oltId])) {
+            return ['paso' => 'Servidor TR-069 en la OLT', 'ok' => true, 'detalle' => 'Ya estaba creado (perfil ' . $g->perfiles_acs[(string) $oltId] . ').'];
+        }
+
+        if (!$g->acs_usuario || !$g->acs_clave) {
+            $g->fill(['acs_usuario' => 'netplay-acs', 'acs_clave' => \Illuminate\Support\Str::random(24)])->save();
+        }
+
+        $url = (string) config('services.genieacs.url_equipos');
+        $ultimo = '';
+
+        for ($perfil = 2; $perfil <= 16; $perfil++) {
+            try {
+                $r = app(OltTelnetDispatcher::class)->dispatch($oltId, 'crearServidorTr069', [
+                    'perfil' => $perfil, 'nombre' => "netplay-acs-{$perfil}", 'url' => $url,
+                    'usuario' => $g->acs_usuario, 'clave' => $g->acs_clave,
+                ]);
+            } catch (\Throwable $e) {
+                return ['paso' => 'Servidor TR-069 en la OLT', 'ok' => false, 'detalle' => \App\Services\Olt\EstadoDeUnaOnt::explicar($e->getMessage())];
+            }
+
+            if ($r['ok'] ?? false) {
+                $g->perfiles_acs = array_merge($g->perfiles_acs ?? [], [(string) $oltId => $perfil]);
+                $g->save();
+
+                return ['paso' => 'Servidor TR-069 en la OLT', 'ok' => true, 'detalle' => "Perfil {$perfil}: {$url}, usuario {$g->acs_usuario}."];
+            }
+
+            $ultimo = $r['detalle'] ?? '';
+        }
+
+        return ['paso' => 'Servidor TR-069 en la OLT', 'ok' => false, 'detalle' => $ultimo ?: 'No se pudo crear el perfil de servidor.'];
+    }
+
+    /**
+     * Si el perfil de línea de la ONT deja salir la VLAN de gestión.
+     *
+     * Se usa la última lectura de perfiles si la hay; si no, se le pregunta a
+     * la OLT por ese perfil solo.
+     *
+     * @return array{listo:bool, id:?int, nombre:?string, detalle:string}
+     */
+    private function perfilListoDe(int $oltId, string $fsp, int $ontId, int $vlan): array
+    {
+        $dp = app(OltTelnetDispatcher::class);
+
+        try {
+            $deOnt = $dp->dispatch($oltId, 'perfilDeOnt', ['fsp' => $fsp, 'ont_id' => $ontId]);
+        } catch (\Throwable $e) {
+            return ['listo' => false, 'id' => null, 'nombre' => null, 'detalle' => 'No se pudo leer su perfil de línea: ' . \App\Services\Olt\EstadoDeUnaOnt::explicar($e->getMessage())];
+        }
+
+        if (!$deOnt) {
+            return ['listo' => false, 'id' => null, 'nombre' => null, 'detalle' => 'No se pudo leer su perfil de línea.'];
+        }
+
+        $guardado = Cache::get("gestion:perfiles:{$oltId}:{$vlan}") ?? Cache::get("gestion:perfiles-ultima:{$oltId}:{$vlan}");
+        $fila = collect($guardado['perfiles'] ?? [])->firstWhere('id', $deOnt['id']);
+
+        if (!$fila || ($fila['estado'] ?? '') !== 'listo') {
+            // Lo guardado puede estar viejo (o no incluirlo): se confirma en la OLT.
+            try {
+                $fila = $this->estadoDePerfil($dp->dispatch($oltId, 'perfilDeLinea', ['perfil' => $deOnt['id']]), $vlan);
+            } catch (\Throwable $e) {
+                $fila = ['estado' => 'sin_leer'];
+            }
+        }
+
+        $listo = ($fila['estado'] ?? '') === 'listo';
+
+        return [
+            'listo'   => $listo,
+            'id'      => $deOnt['id'],
+            'nombre'  => $deOnt['nombre'],
+            'detalle' => $listo
+                ? "Su perfil {$deOnt['nombre']} deja salir la gestión."
+                : "falta preparar su perfil de línea «{$deOnt['nombre']}» en Acceso remoto → Perfiles de línea: sin eso el equipo no puede salir por la VLAN {$vlan}",
+        ];
+    }
+
+    /** @return array{ok:bool, detalle:string} */
+    private function asignarServidorTr069(int $oltId, string $fsp, int $ontId): array
+    {
+        $asegurado = $this->asegurarServidorTr069($oltId);
+        $perfil = ($this->config()->perfiles_acs ?? [])[(string) $oltId] ?? null;
+
+        if (!$asegurado['ok'] || !$perfil) {
+            return ['ok' => false, 'detalle' => 'Sin servidor TR-069 en la OLT: ' . $asegurado['detalle']];
+        }
+
+        try {
+            $r = app(OltTelnetDispatcher::class)->dispatch($oltId, 'asignarServidorTr069', [
+                'fsp' => $fsp, 'ont_id' => $ontId, 'perfil' => (int) $perfil,
+            ]);
+        } catch (\Throwable $e) {
+            return ['ok' => false, 'detalle' => 'No se asignó el servidor TR-069: ' . \App\Services\Olt\EstadoDeUnaOnt::explicar($e->getMessage())];
+        }
+
+        return ['ok' => (bool) ($r['ok'] ?? false), 'detalle' => $r['detalle'] ?? 'No se asignó el servidor TR-069.'];
     }
 
     // ── El router ─────────────────────────────────────────────────────────
@@ -868,38 +1117,48 @@ class GestionRemotaDeOnt
         return $pasos;
     }
 
-    /** Las dos reglas que encierran la red de gestión, arriba de todo. */
+    /**
+     * Las reglas que encierran la red de gestión, arriba de todo y en orden:
+     *
+     *   1. las respuestas a lo que abrió el servidor (el ACS llamando al equipo
+     *      para aplicar un cambio al momento, o la plataforma entrando a su
+     *      página): sin esta, el equipo contestaba y la respuesta se descartaba;
+     *   2. el equipo hablando con el servidor TR-069;
+     *   3. todo lo demás, descartado.
+     *
+     * El equipo sigue sin poder iniciar nada hacia otro lado que no sea el ACS.
+     */
     private function aislar($api, string $red, string $acs): void
     {
-        $marcas = [self::MARCA . ': al ACS', self::MARCA . ': nada mas'];
+        $reglas = [
+            self::MARCA . ': respuestas' => ['action' => 'accept', 'connection-state' => 'established,related'],
+            self::MARCA . ': al ACS'     => ['action' => 'accept'] + ($acs ? ['dst-address' => $acs] : []),
+            self::MARCA . ': nada mas'   => ['action' => 'drop'],
+        ];
 
-        foreach ($marcas as $i => $marca) {
+        foreach ($reglas as $marca => $campos) {
             if ($api->query((new Query('/ip/firewall/filter/print'))->where('comment', $marca))->read()) {
                 continue;
             }
 
             $q = (new Query('/ip/firewall/filter/add'))
-                ->equal('chain', 'forward')->equal('src-address', $red)
-                ->equal('action', $i === 0 ? 'accept' : 'drop')
-                ->equal('comment', $marca);
+                ->equal('chain', 'forward')->equal('src-address', $red)->equal('comment', $marca);
 
-            if ($i === 0 && $acs) {
-                $q->equal('dst-address', $acs);
+            foreach ($campos as $campo => $valor) {
+                $q->equal($campo, $valor);
             }
 
             $api->query($q)->read();
         }
 
-        // Tienen que ir primero: una regla que acepte todo antes las anularía.
-        // Y al revés entre ellas: cada una se mueve arriba de la anterior, así
-        // que va última la que tiene que quedar primera (si el "descartar"
-        // quedara arriba del "al ACS", no pasaría nada hacia el servidor).
-        $todas = $api->query(new Query('/ip/firewall/filter/print'))->read();
-        $primera = $todas[0]['.id'] ?? null;
+        // Arriba de todo y en este orden. Cada una se mueve al primer lugar,
+        // así que se recorren al revés: la que tiene que quedar primera va última.
+        foreach (array_reverse(array_keys($reglas)) as $marca) {
+            $todas = $api->query(new Query('/ip/firewall/filter/print'))->read();
+            $primera = $todas[0]['.id'] ?? null;
 
-        foreach (array_reverse($marcas) as $marca) {
             foreach ($todas as $f) {
-                if (($f['comment'] ?? '') === $marca && $primera) {
+                if (($f['comment'] ?? '') === $marca && $primera && $f['.id'] !== $primera) {
                     $api->query((new Query('/ip/firewall/filter/move'))
                         ->equal('numbers', $f['.id'])->equal('destination', $primera))->read();
                 }
@@ -916,6 +1175,7 @@ class GestionRemotaDeOnt
             ['/ip/pool/print', '/ip/pool/remove', 'name', 'pool-gestion-ont'],
             ['/ip/address/print', '/ip/address/remove', 'comment', self::MARCA],
             ['/interface/vlan/print', '/interface/vlan/remove', 'name', "vlan{$vlan}-gestion"],
+            ['/ip/firewall/filter/print', '/ip/firewall/filter/remove', 'comment', self::MARCA . ': respuestas'],
             ['/ip/firewall/filter/print', '/ip/firewall/filter/remove', 'comment', self::MARCA . ': al ACS'],
             ['/ip/firewall/filter/print', '/ip/firewall/filter/remove', 'comment', self::MARCA . ': nada mas'],
         ];

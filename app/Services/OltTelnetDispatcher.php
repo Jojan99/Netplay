@@ -195,12 +195,20 @@ class OltTelnetDispatcher
                                        ? $driver->prepararVlanDeGestion((int) $p['vlan'], (string) $p['uplink']) : null,
             'darGestionAOnt'    => method_exists($driver, 'darGestionAOnt')
                                        ? $driver->darGestionAOnt($p['fsp'], (int) $p['ont_id'], (int) $p['vlan'], (int) $p['service_port']) : null,
+            'perfilDeOnt'       => method_exists($driver, 'perfilDeOnt')
+                                       ? $driver->perfilDeOnt((string) $p['fsp'], (int) $p['ont_id']) : null,
             'perfilesDeLinea'   => method_exists($driver, 'perfilesDeLinea')
                                        ? $driver->perfilesDeLinea() : null,
             'perfilDeLinea'     => method_exists($driver, 'perfilDeLinea')
                                        ? $driver->perfilDeLinea((int) $p['perfil']) : null,
             'prepararPerfilDeLinea' => method_exists($driver, 'prepararPerfilDeLinea')
                                        ? $driver->prepararPerfilDeLinea((int) $p['perfil'], (int) $p['vlan']) : null,
+            'crearServidorTr069' => method_exists($driver, 'crearServidorTr069')
+                                       ? $driver->crearServidorTr069((int) $p['perfil'], (string) $p['nombre'], (string) $p['url'], (string) $p['usuario'], (string) $p['clave']) : null,
+            'asignarServidorTr069' => method_exists($driver, 'asignarServidorTr069')
+                                       ? $driver->asignarServidorTr069((string) $p['fsp'], (int) $p['ont_id'], (int) $p['perfil']) : null,
+            'reiniciarOnt'      => method_exists($driver, 'reiniciarOnt')
+                                       ? $driver->reiniciarOnt((string) $p['fsp'], (int) $p['ont_id']) : null,
             'equipoDeOnt'       => method_exists($driver, 'equipoDeOnt')
                                        ? $driver->equipoDeOnt($p['fsp'], (int) $p['ont_id']) : [],
             'autoAutorizacion'  => method_exists($driver, 'autoAutorizacion')

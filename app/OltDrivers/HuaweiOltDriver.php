@@ -853,6 +853,28 @@ public function parseServicePorts(string $output): array
      * una de un puerto de subida deja sin servicio a esos clientes.
      */
     /**
+     * Qué perfil de línea usa una ONT. Es lo que decide si el equipo puede
+     * sacar tráfico por la VLAN de gestión.
+     *
+     * @return array{id:int, nombre:string}|null
+     */
+    public function perfilDeOnt(string $fsp, int $ontId): ?array
+    {
+        [$frame, $slot, $puerto] = $this->parseFsp($fsp);
+
+        $salida = $this->runCommand("display ont info {$frame} {$slot} {$puerto} {$ontId}");
+
+        if (!preg_match('/Line profile ID\s*:\s*(\d+)/i', $salida, $id)) {
+            return null;
+        }
+
+        return [
+            'id'     => (int) $id[1],
+            'nombre' => preg_match('/Line profile name\s*:\s*(\S+)/i', $salida, $n) ? $n[1] : "perfil {$id[1]}",
+        ];
+    }
+
+    /**
      * Los perfiles de línea y cuántos equipos usa cada uno.
      *
      * @return list<array{id:int, nombre:string, equipos:int}>
@@ -969,7 +991,7 @@ public function parseServicePorts(string $output): array
         $commit = $this->runCommand('commit');
 
         if (preg_match('/\(y\/n\)/i', $commit)) {
-            $commit .= $this->runCommand('y');
+            $commit .= $this->confirmar();
         }
 
         $this->volverAlPrincipio();
@@ -989,6 +1011,168 @@ public function parseServicePorts(string $output): array
     }
 
     /**
+     * Crea un perfil de servidor TR-069 completo: dirección, usuario y clave.
+     *
+     * Tiene que nacer con las credenciales: la OLT no deja modificar un perfil
+     * que ya tiene equipos asignados ("has been bound"). Si hay que cambiarlas
+     * se crea otro perfil y se pasan los equipos.
+     *
+     * @return array{ok:bool, detalle:string}
+     */
+    public function crearServidorTr069(int $perfil, string $nombre, string $url, string $usuario, string $clave): array
+    {
+        $this->runCommand('config');
+
+        $respuesta = $this->comandoConClave(
+            "ont tr069-server-profile add profile-id {$perfil} profile-name {$nombre} url {$url} user {$usuario}",
+            $clave
+        );
+
+        $this->volverAlPrincipio();
+
+        $leido = $this->runCommand("display ont tr069-server-profile profile-id {$perfil}");
+        $ok = (bool) preg_match('/User Name\s*:\s*' . preg_quote($usuario, '/') . '\s*$/m', $leido)
+            && str_contains($leido, $url);
+
+        return [
+            'ok'      => $ok,
+            'detalle' => $ok
+                ? "Perfil de servidor {$perfil} con {$url} y usuario {$usuario}."
+                : 'La OLT no creó el perfil de servidor: ' . self::errorDeOlt($respuesta),
+        ];
+    }
+
+    /**
+     * Le asigna a un equipo el perfil de servidor TR-069: la OLT le manda la
+     * dirección y las credenciales del ACS.
+     *
+     * @return array{ok:bool, detalle:string}
+     */
+    public function asignarServidorTr069(string $fsp, int $ontId, int $perfil): array
+    {
+        [$frame, $slot, $puerto] = $this->parseFsp($fsp);
+
+        $antes = $this->vinculosDeServidorTr069($perfil);
+
+        $this->runCommand('config');
+        $this->runCommand("interface gpon {$frame}/{$slot}");
+        $respuesta = $this->runCommand("ont tr069-server-config {$puerto} {$ontId} profile-id {$perfil}");
+        $this->volverAlPrincipio();
+
+        $despues = $this->vinculosDeServidorTr069($perfil);
+        $error   = preg_match('/(Failure[^\n]*|Unknown command|Parameter error|Too many parameters|Incomplete command)/i', $respuesta, $m) ? trim($m[1]) : null;
+
+        // Sin error y con el perfil ya asignado (o uno más que antes) quedó.
+        $ok = $error === null && $despues !== null && ($antes === null || $despues >= $antes);
+
+        return [
+            'ok'      => $ok,
+            'detalle' => $ok ? "Servidor TR-069 asignado (perfil {$perfil})." : 'La OLT no asignó el servidor TR-069: ' . ($error ?? 'sin detalle'),
+        ];
+    }
+
+    /** Cuántos equipos usan un perfil de servidor TR-069, o null si no existe. */
+    private function vinculosDeServidorTr069(int $perfil): ?int
+    {
+        $leido = $this->runCommand("display ont tr069-server-profile profile-id {$perfil}");
+
+        return preg_match('/Binding times\s*:\s*(\d+)/i', $leido, $m) ? (int) $m[1] : null;
+    }
+
+    /**
+     * Manda un comando que termina pidiendo una clave y la contesta.
+     *
+     * La OLT la pide aparte, sin mostrarla, y a veces la hace confirmar.
+     * Escribirla en la misma línea dejaba la consola esperando esa pregunta.
+     * Devuelve lo que contestó la OLT, que no incluye la clave.
+     */
+    private function comandoConClave(string $comando, string $clave): string
+    {
+        $this->resetToPrompt();
+        $this->ssh->setTimeout(12);
+
+        $espera = '/(pass(?:word)?[^\n]*:\s*$|\{\s*<cr>[^\n]*$|\(y\/n\)[^\n]*$|(?:^|\n)[^\s{}|<>]+(?:\([^)\n]*\))?[>#]\s*$)/i';
+
+        $this->ssh->write($comando . "\n");
+        $salida = $this->ssh->read($espera);
+        $respuesta = $salida;
+
+        for ($i = 0; $i < 4; $i++) {
+            if (preg_match('/\{\s*<cr>[^\n]*$/i', $salida)) {
+                $this->ssh->write("\r\n");
+            } elseif (preg_match('/pass(?:word)?[^\n]*:\s*$/i', $salida)) {
+                $this->ssh->write($clave . "\n");
+            } elseif (preg_match('/\(y\/n\)[^\n]*$/i', $salida)) {
+                $this->ssh->write("y\n");
+            } else {
+                break;
+            }
+
+            $salida = $this->ssh->read($espera);
+            $respuesta .= $salida;
+        }
+
+        $this->ssh->setTimeout(30);
+
+        return str_replace($clave, '***', $respuesta);
+    }
+
+    private static function errorDeOlt(string $respuesta): string
+    {
+        return preg_match('/(Failure[^\n]*|Unknown command|Parameter error|Too many parameters|Incomplete command)/i', $respuesta, $m)
+            ? trim($m[1])
+            : 'sin detalle';
+    }
+
+    /**
+     * Reinicia una ONT desde la OLT.
+     *
+     * La OLT pide confirmación. Se contesta escribiendo directo: runCommand()
+     * manda antes un Enter para limpiar la consola, y ese Enter respondía la
+     * pregunta con la opción por defecto (n), cancelando el reinicio.
+     *
+     * @return array{ok:bool, detalle:string}
+     */
+    public function reiniciarOnt(string $fsp, int $ontId): array
+    {
+        [$frame, $slot, $puerto] = $this->parseFsp($fsp);
+
+        $this->runCommand('config');
+        $this->runCommand("interface gpon {$frame}/{$slot}");
+
+        $salida = $this->runCommand("ont reset {$puerto} {$ontId}");
+
+        if (preg_match('/\(y\/n\)/i', $salida)) {
+            $salida .= $this->confirmar();
+        }
+
+        $this->volverAlPrincipio();
+
+        $error = preg_match('/(Failure[^\n]*|Unknown command|Parameter error|Incomplete command|Too many parameters)/i', $salida, $m) ? trim($m[1]) : null;
+
+        return [
+            'ok'      => $error === null,
+            'detalle' => $error === null ? 'El equipo se está reiniciando.' : "La OLT no reinició el equipo: {$error}",
+        ];
+    }
+
+    /**
+     * Contesta "y" a una pregunta (y/n) que ya está en pantalla, sin mandar
+     * nada antes que la responda por su cuenta.
+     */
+    private function confirmar(): string
+    {
+        $this->ssh->setTimeout(15);
+        $this->ssh->write("y\n");
+
+        $respuesta = $this->ssh->read('/(?:^|\n)[^\s{}|<>]+(?:\([^)\n]*\))?[>#]\s*$/');
+
+        $this->ssh->setTimeout(30);
+
+        return $respuesta;
+    }
+
+    /**
      * Vuelve a la vista principal de la OLT.
      *
      * Salir con un `quit` fijo no alcanza: si un comando dejó abierto un
@@ -998,9 +1182,24 @@ public function parseServicePorts(string $output): array
     private function volverAlPrincipio(): void
     {
         for ($i = 0; $i < 4; $i++) {
+            // Primero se mira dónde está: un "quit" en la vista principal no
+            // sale de ningún lado, pregunta si se quiere cerrar la sesión.
+            $prompt = $this->runCommand('');
+
+            if (preg_match('/\(y\/n\)/i', $prompt)) {
+                $this->runCommand('n');
+                continue;
+            }
+
+            if (!preg_match('/\((?:config|config-[^)]*)\)#\s*$/', $prompt)) {
+                return;
+            }
+
             $salida = $this->runCommand('quit');
 
-            if (!preg_match('/\((?:config|config-if[^)]*)\)#\s*$/', $salida)) {
+            // Por si igual pregunta: nunca se cierra la sesión desde acá.
+            if (preg_match('/\(y\/n\)/i', $salida)) {
+                $this->runCommand('n');
                 return;
             }
         }
@@ -1086,6 +1285,9 @@ public function parseServicePorts(string $output): array
             'ok'      => $confirmado && $spOk,
             'sp_ok'   => $spOk,
             'sp'      => $servicePort,
+            // La IP que ya tomó el equipo, si la tiene: hace falta para entrar
+            // a su página cuando la OLT sola no alcanza (C-Data).
+            'ip'      => preg_match('/ONT IP\s*:\s*(\d{1,3}(?:\.\d{1,3}){3})/', $quedo, $mIp) ? $mIp[1] : null,
             'detalle' => $confirmado && $spOk
                 ? "service-port {$servicePort} · pide IP de gestión en la VLAN {$vlan}"
                 : (!$spOk
