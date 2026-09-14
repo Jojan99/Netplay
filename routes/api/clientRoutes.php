@@ -72,6 +72,10 @@ Route::prefix('client')->middleware(['jwt.client'])->group(function () {
     Route::post('router/canal',       [\App\Http\Controllers\Client\ClientRouterController::class, 'canal']);
     Route::post('router/reiniciar',   [\App\Http\Controllers\Client\ClientRouterController::class, 'reiniciar']);
 
+    // ── Consumo de datos y velocidad ──
+    Route::get('consumo',     [\App\Http\Controllers\Client\ClientConsumoController::class, 'historial']);
+    Route::post('velocidad',  [\App\Http\Controllers\Client\ClientConsumoController::class, 'velocidad']);
+
     Route::get('status',                       [\App\Http\Controllers\Client\ClientAccountController::class, 'status']);
     Route::get('payments',                     [\App\Http\Controllers\Client\ClientAccountController::class, 'payments']);
     Route::get('payments/{invoiceId}/receipt', [\App\Http\Controllers\Client\ClientAccountController::class, 'receipt']);

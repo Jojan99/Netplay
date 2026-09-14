@@ -36,6 +36,10 @@ class Kernel extends ConsoleKernel
         // el puerto tiene que estar abierto para las ONT y lo encuentran solos.
         $schedule->command('acs:limpiar')->dailyAt('05:30')->user('www-data');
 
+        // Consumo de datos de cada cliente: lee los contadores que las ONT le
+        // reportan al TR-069 (cada hora) y suma lo nuevo al día.
+        $schedule->command('consumo:registrar')->hourlyAt(7)->user('www-data')->withoutOverlapping();
+
         // Sincroniza ARP MikroTik con STATUS de plataforma — corrige desyncs diariamente
         $schedule->command('arp:sync')->dailyAt('06:00')->user('www-data');
 

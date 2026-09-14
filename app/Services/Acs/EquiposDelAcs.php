@@ -26,6 +26,7 @@ class EquiposDelAcs
     private const FABRICANTES = [
         'huawei' => 'Huawei', 'cdt' => 'C-Data', 'cdtc' => 'C-Data', 'zte' => 'ZTE',
         'fiberhome' => 'FiberHome', 'tp-link' => 'TP-Link', 'nokia' => 'Nokia', 'vsol' => 'V-SOL',
+        'sagemcom' => 'Sagemcom', 'sdmc' => 'SDMC',
     ];
 
     public function __construct(private int $companyId, private ?GenieAcs $acs = null)

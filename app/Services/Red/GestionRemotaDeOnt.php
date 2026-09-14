@@ -747,17 +747,16 @@ class GestionRemotaDeOnt
 
         // Cómo le llega al equipo el servidor TR-069 depende de su marca:
         //  - Huawei: la OLT le manda dirección y credenciales y lo enciende solo.
-        //  - C-Data: también por la OLT, pero lo toma recién al reiniciarse
-        //    (probado con CARMEN: se registró a los 2 min del reinicio).
-        //  - Otras: se configura en el propio equipo, y se dice.
+        //  - El resto (C-Data, SDMC, OEMT…): también por la OLT, por OMCI, pero
+        //    lo toman recién al reiniciarse (probado con C-Data: CARMEN se
+        //    registró a los 2 min del reinicio). Si el equipo no entiende esa
+        //    orden de la OLT no se rompe nada: simplemente no aparece en el ACS.
         $marca = self::marcaDelEquipo((string) ($ont?->serial ?? ''));
         $avance('Asignando el servidor TR-069…');
 
-        $servidor = match ($marca) {
-            'huawei' => $this->asignarServidorTr069($oltId, $fsp, $ontId),
-            'cdata'  => $this->servidorTr069ParaCdata($oltId, $fsp, $ontId, $reiniciarSiHaceFalta),
-            default  => ['ok' => false, 'detalle' => 'Equipo ' . strtoupper($marca ?: 'de otra marca') . ': el TR-069 se configura en el propio equipo.'],
-        };
+        $servidor = $marca === 'huawei'
+            ? $this->asignarServidorTr069($oltId, $fsp, $ontId)
+            : $this->servidorTr069PorOmci($oltId, $fsp, $ontId, $reiniciarSiHaceFalta, self::nombreDeMarca($marca));
 
         // El equipo ya tiene TR-069 en su conexión de internet: no se creó la
         // VLAN de gestión (no hace falta) y basta con el servidor asignado.
@@ -859,16 +858,19 @@ class GestionRemotaDeOnt
     }
 
     /**
-     * El servidor TR-069 para un C-Data.
+     * El servidor TR-069 para un equipo que no es Huawei (C-Data, SDMC, OEMT…).
      *
      * Se le asigna por la OLT igual que a un Huawei, pero el equipo no lo
      * aplica hasta reiniciarse. Un equipo recién autorizado todavía no le da
      * servicio a nadie, así que se reinicia solo; a un cliente que ya navega no
      * se le corta internet sin avisar: queda dicho que falta el reinicio.
      *
+     * Con C-Data está probado; con las demás marcas depende de que el equipo
+     * acepte la orden de la OLT, y se dice cómo comprobarlo.
+     *
      * @return array{ok:bool, detalle:string, requiere_reinicio?:bool}
      */
-    private function servidorTr069ParaCdata(int $oltId, string $fsp, int $ontId, bool $reiniciar): array
+    private function servidorTr069PorOmci(int $oltId, string $fsp, int $ontId, bool $reiniciar, string $nombre): array
     {
         $asignado = $this->asignarServidorTr069($oltId, $fsp, $ontId);
 
@@ -876,10 +878,13 @@ class GestionRemotaDeOnt
             return $asignado;
         }
 
+        $probado = $nombre === 'C-Data';
+        $comprobar = $probado ? '' : ' Si a los 5 minutos no aparece en Router TR-069, ese modelo no toma la configuración por la OLT y hay que cargarla en el equipo.';
+
         if (!$reiniciar) {
             return [
                 'ok'      => true,
-                'detalle' => $asignado['detalle'] . ' Equipo C-Data: lo aplica al reiniciarse; reinicialo cuando no moleste al cliente.',
+                'detalle' => $asignado['detalle'] . " Equipo {$nombre}: lo aplica al reiniciarse; reinicialo cuando no moleste al cliente." . $comprobar,
                 'requiere_reinicio' => true,
             ];
         }
@@ -891,8 +896,17 @@ class GestionRemotaDeOnt
         }
 
         return ($r['ok'] ?? false)
-            ? ['ok' => true, 'detalle' => $asignado['detalle'] . ' Equipo C-Data reiniciado para que lo aplique.']
+            ? ['ok' => true, 'detalle' => $asignado['detalle'] . " Equipo {$nombre} reiniciado para que lo aplique." . $comprobar]
             : ['ok' => true, 'detalle' => $asignado['detalle'] . ' ' . ($r['detalle'] ?? 'No se pudo reiniciar.'), 'requiere_reinicio' => true];
+    }
+
+    /** Cómo se le dice a la marca en pantalla. */
+    public static function nombreDeMarca(string $marca): string
+    {
+        return [
+            'huawei' => 'Huawei', 'cdata' => 'C-Data', 'zte' => 'ZTE', 'vsol' => 'V-SOL',
+            'sdmc' => 'SDMC', 'oemt' => 'OEM genérico', 'sagemcom' => 'Sagemcom', 'fiberhome' => 'FiberHome',
+        ][$marca] ?? (strtoupper($marca) ?: 'de otra marca');
     }
 
     // ── Marca del equipo ──────────────────────────────────────────────────
@@ -917,6 +931,13 @@ class GestionRemotaDeOnt
             'CDTC', 'CDT'  => 'cdata',
             'ZTEG', 'ZXIC' => 'zte',
             'VSOL'         => 'vsol',
+            // En la OLT Huawei de Netplay: SDMC (YEILER_CARRILLO_GARCIA) y
+            // OEMT (ONU genérica de varios revendedores). SMBS es Sagemcom:
+            // el Fast5670 ya reporta solo al ACS como SagemCom / OUI CC00F1.
+            'SDMC'         => 'sdmc',
+            'OEMT'         => 'oemt',
+            'SMBS'         => 'sagemcom',
+            'FHTT'         => 'fiberhome',
             default        => strtolower($vendor),
         };
     }
