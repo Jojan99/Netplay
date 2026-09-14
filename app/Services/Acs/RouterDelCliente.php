@@ -148,12 +148,15 @@ class RouterDelCliente
         return false;
     }
 
-    /** Cambia el nombre o la contraseña de una de sus redes WiFi. */
-    public function cambiarWifi(int $indice, ?string $ssid, ?string $clave): array
+    /**
+     * Cambia el nombre o la contraseña de una de sus redes WiFi. Con $todas,
+     * la contraseña queda igual en todas sus redes (2.4 y 5 GHz).
+     */
+    public function cambiarWifi(int $indice, ?string $ssid, ?string $clave, bool $todas = false): array
     {
         $equipo = $this->exigirEquipo();
 
-        return (new EquiposDelAcs($this->companyId))->cambiarWifi($equipo['id'], $indice, $ssid, $clave);
+        return (new EquiposDelAcs($this->companyId))->cambiarWifi($equipo['id'], $indice, $ssid, $clave, $todas);
     }
 
     /** Le pide al equipo que mande sus datos al momento. */
@@ -214,6 +217,9 @@ class RouterDelCliente
             'nombre'      => $r['ssid'],
             'banda'       => $r['banda'],
             'activa'      => $r['activo'] !== false,
+            // Encendida según el propio equipo (no sólo "no se sabe"): son las
+            // que reciben la contraseña cuando se elige usarla en todas.
+            'confirmada'  => $r['activo'] === true,
             'clave'       => $r['clave'],
             'conectados'  => $r['conectados'],
             'puede_cambiar_clave' => (bool) $r['ruta_clave'],

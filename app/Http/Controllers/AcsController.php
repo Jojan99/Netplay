@@ -73,6 +73,7 @@ class AcsController extends Controller
             'indice' => 'required|integer|min:1',
             'ssid'   => 'nullable|string|max:32',
             'clave'  => 'nullable|string|min:8|max:63',
+            'todas'  => 'nullable|boolean',
         ]);
 
         return $this->accion($request, 'cambiar el WiFi', fn (EquiposDelAcs $acs, string $id) => $acs->cambiarWifi(
@@ -80,6 +81,7 @@ class AcsController extends Controller
             (int) $request->input('indice'),
             $request->input('ssid'),
             $request->input('clave'),
+            $request->boolean('todas'),
         ));
     }
 

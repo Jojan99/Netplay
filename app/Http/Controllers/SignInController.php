@@ -23,6 +23,9 @@ use Illuminate\Support\Facades\DB;
  */
 class SignInController extends Controller
 {
+    /** Lo que dura la sesión cuando se marca "Mantener la sesión abierta": 30 días. */
+    private const MINUTOS_RECORDAR = 60 * 24 * 30;
+
     /**
      * Método encargado de validar las credenciales de un usuario activo
      * y de retornar un token para la sesión de este
@@ -41,6 +44,11 @@ class SignInController extends Controller
             'active' => 1,
             'password' => $request->password
         ];
+
+        // "Mantener la sesión abierta": el token dura 30 días en vez del día
+        // normal. Sin eso, al volver al panel al otro día pedía login otra vez.
+        $minutos = $request->boolean('recordar') ? self::MINUTOS_RECORDAR : (int) config('jwt.ttl');
+        JWTAuth::factory()->setTTL($minutos);
 
         try {
             // Se valida si no se pudo crear el token
@@ -103,7 +111,7 @@ class SignInController extends Controller
                 'company_id'   => $authenticatedUser->company_id,
                 'profile_id'   => $authenticatedUser->profile_id,
                 'profile_name' => $profileName,
-                'expires_in'   => config("jwt.ttl") * 60,
+                'expires_in'   => $minutos * 60,
                 'modules'      => $modules,
                 'user' => [
                     'user'  => $request->user,

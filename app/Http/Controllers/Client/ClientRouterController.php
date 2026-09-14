@@ -30,10 +30,11 @@ class ClientRouterController extends Controller
             'indice' => 'required|integer|min:1',
             'nombre' => 'nullable|string|min:1|max:32',
             'clave'  => 'nullable|string|min:8|max:63',
+            'todas'  => 'nullable|boolean',
         ]);
 
         return $this->responder(function (RouterDelCliente $r) use ($request) {
-            $t = $r->cambiarWifi((int) $request->input('indice'), $request->input('nombre'), $request->input('clave'));
+            $t = $r->cambiarWifi((int) $request->input('indice'), $request->input('nombre'), $request->input('clave'), $request->boolean('todas'));
 
             return [
                 'mensaje' => ($t['hecha'] ?? false)

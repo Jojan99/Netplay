@@ -45,6 +45,10 @@ class ClientAuthController extends Controller
             'active'   => 1,
         ];
 
+        // "Mantener la sesión abierta": 30 días en vez del día normal.
+        $minutos = $request->boolean('recordar') ? 60 * 24 * 30 : (int) config('jwt.ttl');
+        JWTAuth::factory()->setTTL($minutos);
+
         try {
             $token = JWTAuth::attempt($credentials);
 
@@ -71,7 +75,10 @@ class ClientAuthController extends Controller
             ->value('name');
 
         if (strtoupper($profileName ?? '') !== 'USER') {
-            JWTAuth::invalidate($token);
+            // En esta versión invalidate() no recibe el token: hay que fijarlo
+            // antes. Pasándolo como argumento tiraba "A token is required" y el
+            // operador que probaba el portal veía un error 500.
+            JWTAuth::setToken($token)->invalidate();
             return response()->json([
                 'message' => 'Este portal es exclusivo para clientes',
                 'data'    => null,
@@ -93,7 +100,7 @@ class ClientAuthController extends Controller
             'message' => 'Sesión iniciada correctamente',
             'data'    => [
                 'access_token' => $token,
-                'expires_in'   => config('jwt.ttl') * 60,
+                'expires_in'   => $minutos * 60,
                 'user_id'      => $user->id,
                 'company_id'   => $user->company_id,
                 'profile_id'   => $user->profile_id,

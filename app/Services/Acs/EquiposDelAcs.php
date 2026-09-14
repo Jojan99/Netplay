@@ -251,12 +251,21 @@ class EquiposDelAcs
      * PreSharedKey.1.KeyPassphrase y C-Data directamente en KeyPassphrase. Se
      * usa la que el equipo publica.
      */
-    public function cambiarWifi(string $id, int $indice, ?string $ssid, ?string $clave): array
+    /**
+     * Cambia el nombre o la contraseña de una red WiFi.
+     *
+     * Con $todas, la contraseña se aplica a todas las redes activas del equipo
+     * que la dejan cambiar (2.4 y 5 GHz): el cliente usa la misma y no tiene
+     * que cambiarla dos veces. Va en un solo envío, así el equipo no queda con
+     * una red cambiada y la otra no. El nombre es siempre sólo de la elegida.
+     */
+    public function cambiarWifi(string $id, int $indice, ?string $ssid, ?string $clave, bool $todas = false): array
     {
         $this->exigirPropio($id);
 
         $d = $this->acs->dispositivo($id);
-        $red = collect(self::wifi($d, $this->raiz($id, $d)))->firstWhere('indice', $indice);
+        $redes = collect(self::wifi($d, $this->raiz($id, $d)));
+        $red = $redes->firstWhere('indice', $indice);
 
         if (!$red) {
             throw new \InvalidArgumentException('El equipo no tiene esa red WiFi.');
@@ -278,7 +287,17 @@ class EquiposDelAcs
             if (!$red['ruta_clave']) {
                 throw new \InvalidArgumentException('Este equipo no permite cambiar la contraseña por TR-069.');
             }
-            $valores[] = [$red['ruta_clave'], $clave, 'xsd:string'];
+
+            // Sólo redes que el equipo confirmó encendidas. Hay equipos con redes
+            // secundarias o de invitados cuyo estado todavía no se leyó: tocarlas
+            // les cambiaría la contraseña a redes que el cliente ni usa.
+            $destinos = $todas
+                ? $redes->filter(fn ($r) => $r['ruta_clave'] && $r['activo'] === true)->pluck('ruta_clave')->push($red['ruta_clave'])->unique()->values()->all()
+                : [$red['ruta_clave']];
+
+            foreach ($destinos as $ruta) {
+                $valores[] = [$ruta, $clave, 'xsd:string'];
+            }
         }
 
         if (!$valores) {

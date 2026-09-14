@@ -10,6 +10,10 @@ use Illuminate\Support\Facades\Route;
 
 
 Route::prefix('management')->group(function () {
+    // Errores del navegador de quien usa el panel, para poder ver fallas que
+    // sólo pasan en su teléfono o con sus datos.
+    Route::post('errores-navegador', [\App\Http\Controllers\ErrorNavegadorController::class, 'guardar']);
+
     // ── Multi-Mikrotik router CRUD ──────────────────────────────────────────
     Route::get('routers',            [ManagementRouterController::class, 'listRouters']);
     Route::post('routers',           [ManagementRouterController::class, 'storeRouter']);

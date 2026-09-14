@@ -31,6 +31,15 @@ class OnboardingController extends Controller
             return response()->json(['message' => 'Sin empresa en sesión.', 'data' => null, 'error' => 1], 403);
         }
 
+        // La guía arma la empresa (planes, facturación, pasarela, WhatsApp): es
+        // para administradores. A técnicos y contadores no les corresponde y les
+        // aparecía igual en el inicio.
+        $perfil = strtoupper((string) DB::table('profiles')->where('id', $usuario->profile_id)->value('name'));
+
+        if ($perfil !== 'ADMIN') {
+            return response()->json(['message' => 'La guía es sólo para administradores.', 'error' => 0, 'data' => null]);
+        }
+
         $empresa = DB::table('companies')->where('id', $companyId)->first();
         $pasos   = $this->pasos((int) $companyId, $empresa);
 
