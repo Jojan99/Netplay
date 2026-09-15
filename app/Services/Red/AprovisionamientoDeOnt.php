@@ -110,6 +110,34 @@ class AprovisionamientoDeOnt
             ])->all();
     }
 
+    /**
+     * Vuelve a aplicar uno que terminó con fallas. Si el equipo ya estaba en el
+     * TR-069 se aplica directo (sin esperar otro reporte); lo toma la tarea de
+     * cada minuto.
+     */
+    public function reintentar(int $id): array
+    {
+        $a = Aprovisionamiento::where('company_id', $this->companyId)->findOrFail($id);
+
+        if (!in_array($a->estado, ['con_errores', 'error', 'vencido'], true)) {
+            throw new \InvalidArgumentException('Sólo se reintenta uno que terminó con fallas.');
+        }
+
+        if ($a->acs_id) {
+            $a->fill(['estado' => 'aplicando', 'intentos' => 0, 'listo_en' => null, 'detalle' => 'Reintentando…',
+                'pasos' => [['paso' => 'Reintento pedido desde el panel', 'ok' => true, 'detalle' => $a->acs_id]]]);
+        } else {
+            $a->fill(['estado' => 'esperando', 'intentos' => 0, 'listo_en' => null, 'pasos' => [],
+                'detalle' => 'Esperando que el equipo aparezca en el TR-069…']);
+            // La espera y el "reportó después de autorizarse" cuentan desde ahora.
+            $a->created_at = now();
+        }
+
+        $a->save();
+
+        return $this->ultimos();
+    }
+
     // ── Al autorizar ──────────────────────────────────────────────────────
 
     /**
@@ -476,6 +504,14 @@ class AprovisionamientoDeOnt
         $vlanGestion = (int) (GestionRemota::where('company_id', $this->companyId)->value('vlan') ?: 0);
         $objeto = $wan['tipo'] === 'pppoe' ? 'WANPPPConnection' : 'WANIPConnection';
 
+        // Las conexiones de adentro de cada grupo muchas veces no están leídas
+        // (se ven los grupos 1 y 2 pero no lo que tienen): se piden de nuevo.
+        try {
+            $acs->tarea((string) $a->acs_id, ['name' => 'refreshObject', 'objectName' => self::WAN]);
+            $d = $acs->dispositivo((string) $a->acs_id) ?? $d;
+        } catch (\Throwable) {
+        }
+
         // La conexión de gestión no se toca nunca: por ahí llega el TR-069.
         $todas = collect($this->conexiones($d));
         $conexiones = $todas
@@ -522,12 +558,18 @@ class AprovisionamientoDeOnt
                     'detalle' => "El equipo ya tiene la conexión {$choca['nombre']} de otro tipo para internet: no se creó otra encima. Borrala en el equipo o revisá el tipo de conexión del cliente."];
             }
 
-            $nueva = $this->crearObjeto($acs, (string) $a->acs_id, self::WAN);
+            // Un grupo vacío (de un intento anterior o de una conexión borrada) se
+            // reutiliza en vez de crear otro.
+            $vacio = collect(self::hijos($d, self::WAN))
+                ->reject(fn ($g) => $todas->contains('dispositivo', (string) $g) || in_array((string) $g, $quitados, true))
+                ->first();
+
+            $nueva = $vacio !== null ? (string) $vacio : $this->crearObjeto($acs, (string) $a->acs_id, self::WAN);
             $conexion = $nueva ? $this->crearObjeto($acs, (string) $a->acs_id, self::WAN . ".{$nueva}.{$objeto}") : null;
 
             if (!$conexion) {
                 return ['paso' => $titulo, 'ok' => false,
-                    'detalle' => 'El equipo no respondió al crear la conexión. Si está en línea, volvé a autorizarlo o configurala a mano (' . self::resumenWan($wan) . ').'];
+                    'detalle' => 'No se pudo crear la conexión' . ($this->motivo ? " ({$this->motivo})" : '') . '. Reintentalo desde Acceso remoto o configurala a mano (' . self::resumenWan($wan) . ').' . $nota];
             }
 
             $ruta = self::WAN . ".{$nueva}.{$objeto}.{$conexion}";
@@ -622,8 +664,13 @@ class AprovisionamientoDeOnt
             return ['paso' => $titulo, 'ok' => false, 'omitido' => true, 'detalle' => 'El equipo no informó sus cuentas de acceso web: no se cambió.'];
         }
 
-        // La de nivel 0 es la de administración.
-        $cuenta = collect($cuentas)->first(fn ($i) => (string) self::v($d, self::CUENTAS . ".{$i}.UserLevel") === '0');
+        // La de nivel 0 es la de administración. Hay modelos que no informan el
+        // nivel (HG8145X6-10: sólo la cuenta 2, "admin"): entonces la que tiene
+        // el usuario de la empresa o uno de administración, o la única.
+        $cuenta = collect($cuentas)->first(fn ($i) => (string) self::v($d, self::CUENTAS . ".{$i}.UserLevel") === '0')
+            ?? collect($cuentas)->first(fn ($i) => in_array(strtolower((string) self::v($d, self::CUENTAS . ".{$i}.UserName")),
+                array_filter([strtolower((string) $g->onu_admin_usuario), 'admin', 'telecomadmin', 'root']), true))
+            ?? (count($cuentas) === 1 ? $cuentas[0] : null);
 
         if ($cuenta === null) {
             return ['paso' => $titulo, 'ok' => false, 'omitido' => true, 'detalle' => 'No se encontró la cuenta de administración del equipo: no se cambió.'];
@@ -637,16 +684,42 @@ class AprovisionamientoDeOnt
         return $this->resultado($acs, (string) $a->acs_id, $r, $titulo, "Usuario {$g->onu_admin_usuario} con la clave de la empresa");
     }
 
-    /** Crea un objeto y devuelve su número; si quedó en cola se cancela, para que no aparezca vacío después. */
+    /** Por qué no se pudo crear el último objeto, para contarlo en el paso. */
+    private string $motivo = '';
+
+    /**
+     * Crea un objeto y devuelve su número.
+     *
+     * La API de GenieACS no devuelve el número que le dio el equipo: se saca
+     * comparando las instancias antes y después (con YINETH_DE_LA_CRUZ el
+     * equipo lo creó, se dio por fallido y quedó un grupo vacío). Si quedó en
+     * cola se cancela, para que no aparezca vacío después.
+     */
     private function crearObjeto(GenieAcs $acs, string $id, string $objeto): ?string
     {
+        $this->motivo = '';
+        $antes = self::hijos($acs->dispositivo($id) ?? [], $objeto);
+
         $r = $acs->tarea($id, ['name' => 'addObject', 'objectName' => $objeto]);
 
         if ($r['instancia'] ?? null) {
             return (string) $r['instancia'];
         }
 
+        if ($r['hecha'] ?? false) {
+            $nuevas = array_diff(self::hijos($acs->dispositivo($id) ?? [], $objeto), $antes);
+
+            if ($nuevas) {
+                return (string) max(array_map('intval', $nuevas));
+            }
+
+            $this->motivo = 'el equipo dijo que lo creó pero no aparece';
+
+            return null;
+        }
+
         if ($r['id'] ?? null) {
+            $this->motivo = $acs->fallaDeTarea($id, (string) $r['id']) ?? 'no respondió al momento';
             $acs->borrarTarea((string) $r['id']);
         }
 

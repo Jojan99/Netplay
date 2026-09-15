@@ -1137,7 +1137,11 @@ class GestionRemotaDeOnt
             'nombre'  => $deOnt['nombre'],
             'detalle' => $listo
                 ? "Su perfil {$deOnt['nombre']} deja salir la gestión."
-                : "falta preparar su perfil de línea «{$deOnt['nombre']}» en Acceso remoto → Perfiles de línea: sin eso el equipo no puede salir por la VLAN {$vlan}",
+                : (($fila['estado'] ?? '') === 'sin_leer'
+                    // No es lo mismo que le falte a que no se haya podido leer:
+                    // con YINETH decía "falta preparar" y el perfil estaba bien.
+                    ? "no se pudo leer en la OLT su perfil de línea «{$deOnt['nombre']}» para confirmarlo; si el equipo aparece en el TR-069 está bien"
+                    : "falta preparar su perfil de línea «{$deOnt['nombre']}» en Acceso remoto → Perfiles de línea: sin eso el equipo no puede salir por la VLAN {$vlan}"),
         ];
     }
 

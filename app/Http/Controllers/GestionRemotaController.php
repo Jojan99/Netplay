@@ -35,6 +35,19 @@ class GestionRemotaController extends Controller
         return standardApiReponse('Aprovisionamiento', ['ajustes' => $s->ajustes(), 'ultimos' => $s->ultimos()], 0, JsonResponse::HTTP_OK);
     }
 
+    public function reintentarAprovisionamiento(int $id): JsonResponse
+    {
+        try {
+            $ultimos = (new \App\Services\Red\AprovisionamientoDeOnt((int) getSessionCompanyId()))->reintentar($id);
+        } catch (\InvalidArgumentException $e) {
+            return standardApiReponse($e->getMessage(), null, 1, JsonResponse::HTTP_UNPROCESSABLE_ENTITY);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
+            return standardApiReponse('No existe ese aprovisionamiento', null, 1, JsonResponse::HTTP_NOT_FOUND);
+        }
+
+        return standardApiReponse('Se reintenta en menos de un minuto', $ultimos, 0, JsonResponse::HTTP_OK);
+    }
+
     public function guardarAprovisionamiento(Request $request): JsonResponse
     {
         $datos = $request->validate([
