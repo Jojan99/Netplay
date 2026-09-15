@@ -623,13 +623,14 @@ class AprovisionamientoDeOnt
             return ['paso' => $titulo, 'ok' => false, 'detalle' => 'El equipo no informó redes WiFi encendidas: no se cambió.'];
         }
 
-        $varias = count($redes) > 1;
         $valores = [];
         $nombres = [];
 
+        // Las dos bandas con el mismo nombre y la misma clave: así el equipo
+        // publica una sola red y manda a cada aparato a 2.4 o 5 GHz solo. Estas
+        // Huawei no tienen un interruptor para unirlas; se hace así.
         foreach ($redes as $red) {
-            $cinco = str_contains((string) ($red['banda'] ?? ''), '5') || (int) $red['indice'] >= 5;
-            $nombre = $varias && $cinco ? mb_substr($ssid, 0, 29) . '-5G' : $ssid;
+            $nombre = $ssid;
 
             $valores[] = [$red['ruta_ssid'], $nombre, 'xsd:string'];
 
