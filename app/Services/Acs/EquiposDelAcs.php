@@ -369,8 +369,8 @@ class EquiposDelAcs
             // secundarias o de invitados cuyo estado todavía no se leyó: tocarlas
             // les cambiaría la contraseña a redes que el cliente ni usa.
             $destinos = $todas
-                ? $redes->filter(fn ($r) => $r['ruta_clave'] && $r['activo'] === true)->pluck('ruta_clave')->push($red['ruta_clave'])->unique()->values()->all()
-                : [$red['ruta_clave']];
+                ? $redes->filter(fn ($r) => $r['ruta_clave'] && $r['activo'] === true)->pluck('rutas_clave')->flatten()->merge($red['rutas_clave'])->unique()->values()->all()
+                : $red['rutas_clave'];
 
             foreach ($destinos as $ruta) {
                 $valores[] = [$ruta, $clave, 'xsd:string'];
@@ -612,6 +612,17 @@ class EquiposDelAcs
                 $conPsk = self::existe($d, "{$b}.PreSharedKey.1.KeyPassphrase");
                 $estandar = self::v($d, "{$b}.Standard");
 
+                // Dónde va la clave WPA:
+                //  - Huawei: PreSharedKey.1.PreSharedKey (texto, no hexadecimal).
+                //  - El resto: PreSharedKey.1.KeyPassphrase (TR-098). Si la rama
+                //    todavía no está leída (sin BSSID) se va igual ahí.
+                //  - Con la rama leída y sin PreSharedKey.1 (FD512XW), todas las
+                //    que el equipo tenga: KeyPassphrase y la propia del fabricante
+                //    X_CMS_KeyPassphrase. Existen todas, así que no se rechaza.
+                $rutasClave = $huawei ? ["{$b}.PreSharedKey.1.PreSharedKey"]
+                    : ($conPsk || !self::existe($d, "{$b}.BSSID") ? ["{$b}.PreSharedKey.1.KeyPassphrase"]
+                    : array_values(array_filter(["{$b}.KeyPassphrase", "{$b}.X_CMS_KeyPassphrase"], fn ($r) => self::existe($d, $r))));
+
                 $redes[] = [
                     'indice'    => (int) $i,
                     'ssid'      => self::v($d, "{$b}.SSID"),
@@ -627,14 +638,8 @@ class EquiposDelAcs
                     'conectados' => self::entero(self::v($d, "{$b}.TotalAssociations")),
                     'leido_en'  => self::marca($d, "{$b}.SSID"),
                     'ruta_ssid' => "{$b}.SSID",
-                    // Fuera de Huawei, la clave WPA es PreSharedKey.1.KeyPassphrase
-                    // (TR-098; la KeyPassphrase de la red es para WEP). Sólo si el
-                    // equipo ya mandó su rama completa (trae BSSID) y no tiene
-                    // PreSharedKey se usa la otra: antes dependía de qué hubiera
-                    // leído el ACS, y el mismo C-Data iba a una o a otra.
-                    'ruta_clave' => $huawei ? "{$b}.PreSharedKey.1.PreSharedKey"
-                        : ($conPsk || !self::existe($d, "{$b}.BSSID") ? "{$b}.PreSharedKey.1.KeyPassphrase"
-                        : (self::existe($d, "{$b}.KeyPassphrase") ? "{$b}.KeyPassphrase" : null)),
+                    'ruta_clave'  => $rutasClave[0] ?? null,
+                    'rutas_clave' => $rutasClave,
                     'ruta_canal' => self::existe($d, "{$b}.Channel") ? "{$b}.Channel" : null,
                     'ruta_canal_auto' => self::existe($d, "{$b}.AutoChannelEnable") ? "{$b}.AutoChannelEnable" : null,
                 ];
@@ -654,6 +659,7 @@ class EquiposDelAcs
                     'leido_en'  => self::marca($d, "Device.WiFi.SSID.{$i}.SSID"),
                     'ruta_ssid' => "Device.WiFi.SSID.{$i}.SSID",
                     'ruta_clave' => "Device.WiFi.AccessPoint.{$i}.Security.KeyPassphrase",
+                    'rutas_clave' => ["Device.WiFi.AccessPoint.{$i}.Security.KeyPassphrase"],
                 ];
             }
         }

@@ -563,8 +563,8 @@ class AprovisionamientoDeOnt
 
             $valores[] = [$red['ruta_ssid'], $nombre, 'xsd:string'];
 
-            if ($red['ruta_clave']) {
-                $valores[] = [$red['ruta_clave'], $clave, 'xsd:string'];
+            foreach ($red['rutas_clave'] ?? [] as $ruta) {
+                $valores[] = [$ruta, $clave, 'xsd:string'];
             }
 
             $nombres[] = "«{$nombre}»";
