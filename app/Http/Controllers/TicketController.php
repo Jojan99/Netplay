@@ -115,7 +115,7 @@ class TicketController extends Controller
 
     public function getAllTickets(Request $request, TicketRepositoryInterface $repo): object
     {
-        $tickets = $repo->getAllTickets($request->only(['status_id', 'technical_id', 'search']));
+        $tickets = $repo->getAllTickets($request->only(['status_id', 'technical_id', 'search', 'page', 'per_page']));
         return standardApiReponse('ok', $tickets, 0, JsonResponse::HTTP_OK);
     }
 

@@ -141,23 +141,65 @@ class TicketRepository implements TicketRepositoryInterface
             $query->where('tickets.technical_id', getSessionUserId());
         }
 
-        if (!empty($filters['status_id'])) {
-            $query->where('tickets.status_id', $filters['status_id']);
-        }
         if (!empty($filters['technical_id'])) {
             $query->where('tickets.technical_id', $filters['technical_id']);
         }
         if (!empty($filters['search'])) {
-            $s = $filters['search'];
+            $s = trim($filters['search']);
             $query->where(function ($q) use ($s) {
                 $q->where('user_data_user.names', 'like', "%{$s}%")
                   ->orWhere('user_data_user.lastname', 'like', "%{$s}%")
+                  ->orWhereRaw("CONCAT_WS(' ', user_data_user.names, user_data_user.lastname) LIKE ?", ["%{$s}%"])
                   ->orWhere('tickets.cedula', 'like', "%{$s}%")
+                  ->orWhere('tickets.phone', 'like', "%{$s}%")
                   ->orWhere('tickets.address', 'like', "%{$s}%");
+                if (ctype_digit($s)) {
+                    $q->orWhere('tickets.id', (int) $s);
+                }
             });
         }
 
-        return $query->orderBy('tickets.created_at', 'desc')->get();
+        $estado = (int) ($filters['status_id'] ?? 0);
+
+        // Sin página: la lista completa, como antes.
+        if (empty($filters['page'])) {
+            if ($estado) {
+                $query->where('tickets.status_id', $estado);
+            }
+            return $query->orderBy('tickets.created_at', 'desc')->get();
+        }
+
+        // Conteo por estado con los demás filtros (técnico, búsqueda) pero sin el
+        // de estado: las pestañas muestran lo mismo elijas la que elijas.
+        $porEstado = (clone $query)
+            ->select('tickets.status_id', DB::raw('COUNT(*) as n'))
+            ->groupBy('tickets.status_id')
+            ->pluck('n', 'status_id');
+
+        if ($estado) {
+            $query->where('tickets.status_id', $estado);
+        }
+
+        $total     = $estado ? (int) ($porEstado[$estado] ?? 0) : (int) $porEstado->sum();
+        $porPagina = min(100, max(5, (int) ($filters['per_page'] ?? 25)));
+        $ultima    = max(1, (int) ceil($total / $porPagina));
+        // Si se cerraron tickets y la página pedida ya no existe, la última que queda.
+        $pagina    = min($ultima, max(1, (int) $filters['page']));
+
+        return [
+            'items'     => $query->orderBy('tickets.created_at', 'desc')->orderBy('tickets.id', 'desc')
+                                 ->forPage($pagina, $porPagina)->get(),
+            'total'     => $total,
+            'page'      => $pagina,
+            'per_page'  => $porPagina,
+            'last_page' => $ultima,
+            'conteos'   => [
+                'todos'      => (int) $porEstado->sum(),
+                'pendientes' => (int) ($porEstado[1] ?? 0),
+                'en_proceso' => (int) ($porEstado[2] ?? 0),
+                'cerrados'   => (int) ($porEstado[3] ?? 0),
+            ],
+        ];
     }
 
     public function getTicketById(int $id): mixed
