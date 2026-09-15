@@ -460,6 +460,9 @@ class ConfigurarServidorPppoe
         $q->equal('remote-address', $pool);
         $q->equal('only-one', 'yes');
 
+        // Sin unidad, el MikroTik entiende bits por segundo: se completan las megas.
+        $rate = ServicioPppoe::velocidadParaElRouter($rate);
+
         if ($rate !== '') {
             $q->equal('rate-limit', $rate);
         }

@@ -334,6 +334,29 @@ class ServicioPppoe
     /* ── Perfiles ─────────────────────────────────────────────────────────── */
 
     /**
+     * La velocidad como la entiende el MikroTik.
+     *
+     * Un número sin unidad son BITS por segundo: «200/200» es 200 bps, no 200
+     * megas. Con eso la sesión levanta y el cliente no navega (le pasó a
+     * YINETH_DE_LA_CRUZ en la VLAN 106). Se completan las megas y se copia la
+     * única velocidad a las dos direcciones. Lo que no tiene esa forma —las
+     * ráfagas, «200M/200M 250M/250M 190M/190M 8/8 8»— se deja tal cual.
+     */
+    public static function velocidadParaElRouter(string $velocidad): string
+    {
+        $v = trim($velocidad);
+
+        if ($v === '' || !preg_match('#^(\d+)\s*([kmg]?)\s*(?:/\s*(\d+)\s*([kmg]?)\s*)?$#i', $v, $m)) {
+            return $v;
+        }
+
+        $sube = $m[1] . strtoupper($m[2] ?: 'M');
+        $baja = ($m[3] ?? '') !== '' ? $m[3] . strtoupper($m[4] ?: 'M') : $sube;
+
+        return "{$sube}/{$baja}";
+    }
+
+    /**
      * Crea o edita un perfil.
      *
      * El perfil es lo que define la velocidad y de qué rango sale la IP, así
@@ -368,7 +391,7 @@ class ServicioPppoe
         foreach ([
             'local-address'  => $datos['gateway'] ?? null,
             'remote-address' => $datos['pool'] ?? null,
-            'rate-limit'     => $datos['velocidad'] ?? null,
+            'rate-limit'     => self::velocidadParaElRouter((string) ($datos['velocidad'] ?? '')),
             'dns-server'     => $datos['dns'] ?? null,
         ] as $campo => $valor) {
             $valor = trim((string) $valor);
