@@ -18,10 +18,11 @@ return [
     // escuchar sólo en localhost y la plataforma la consume desde el backend.
     'genieacs' => [
         'nbi' => env('GENIEACS_NBI_URL', 'http://127.0.0.1:7557'),
-        'cwmp_url' => env('GENIEACS_CWMP_URL', 'http://181.48.150.43:7547'),
+        // acs.netvula.com va en Cloudflare como "Solo DNS": el proxy no pasa el 7547.
+        'cwmp_url' => env('GENIEACS_CWMP_URL', 'http://acs.netvula.com:7547'),
         // La dirección que se les manda a los equipos desde la OLT. Con el
         // dominio, si el servidor cambia de IP basta con actualizar el DNS.
-        'url_equipos' => env('GENIEACS_URL_EQUIPOS', 'http://netplay.com.co:7547'),
+        'url_equipos' => env('GENIEACS_URL_EQUIPOS', 'http://acs.netvula.com:7547'),
     ],
 
     'mailgun' => [
