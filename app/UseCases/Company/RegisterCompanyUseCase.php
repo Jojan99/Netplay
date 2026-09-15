@@ -33,6 +33,12 @@ class RegisterCompanyUseCase implements RegisterCompanyUseCaseInterface
                 $company = $this->companyRepository->createCompany($data, $token);
                 $now = now();
 
+                // La dirección de la empresa (empresa.netvula.com): la que eligió o una a partir del nombre.
+                $company->subdomain = !empty($data['subdomain'])
+                    ? strtolower(trim((string) $data['subdomain']))
+                    : app(\App\Services\Plataforma\EmpresaDelDominio::class)->libreDesde((string) $data['name']);
+                $company->save();
+
                 $adminProfileId = null;
                 foreach (['ADMIN', 'TECNICO', 'CONTADOR'] as $roleName) {
                     $profileId = DB::table('profiles')->insertGetId([
@@ -125,7 +131,7 @@ class RegisterCompanyUseCase implements RegisterCompanyUseCaseInterface
         return [
             'message' => 'Empresa registrada. Revisá tu correo para confirmar la cuenta.',
             'status'  => 0,
-            'data'    => ['company_id' => $company->id, 'email_sent' => true],
+            'data'    => ['company_id' => $company->id, 'email_sent' => true, 'subdominio' => $company->subdomain],
         ];
     }
 
@@ -135,6 +141,7 @@ class RegisterCompanyUseCase implements RegisterCompanyUseCaseInterface
         $msg = $e->getMessage();
         if (str_contains($msg, 'companies_nit_unique') || str_contains($msg, "for key 'nit'")) return 'Ya existe una empresa registrada con ese NIT.';
         if (str_contains($msg, 'companies_email_unique') || str_contains($msg, "for key 'email'")) return 'Ya existe una empresa registrada con ese correo.';
+        if (str_contains($msg, 'companies_subdomain_unique')) return 'Esa dirección de empresa ya está tomada. Elegí otra.';
         if (str_contains($msg, 'companies_slug_unique')) return 'Ya existe una empresa con un nombre muy parecido. Probá con otro nombre.';
         if (str_contains($msg, 'Duplicate entry')) return 'Alguno de los datos ya está registrado. Revisá NIT, correo y usuario.';
         return 'No pudimos registrar la empresa. Revisá los datos e intentá de nuevo.';

@@ -43,6 +43,13 @@ class RegisterCompanyRequest extends FormRequest
             'admin_username'  => 'nullable|string|max:60|regex:/^[A-Za-z0-9._-]+$/|unique:users,username',
             'admin_dni'       => 'nullable|string|max:30',
             'admin_phone'     => 'nullable|string|max:20',
+            // La dirección de la empresa (empresa.netvula.com). Vacía: se arma con el nombre.
+            'subdomain'       => ['nullable', 'string', 'max:40', function ($campo, $valor, $falla) {
+                $problema = app(\App\Services\Plataforma\EmpresaDelDominio::class)->problemaCon(strtolower(trim((string) $valor)));
+                if ($problema) {
+                    $falla($problema);
+                }
+            }],
         ];
     }
 

@@ -61,6 +61,9 @@ class CompanyController extends Controller
         ConfirmCompanyEmailUseCaseInterface $confirmCompanyEmailUseCase,
         Request $request
     ) {
+        // Se busca antes de confirmar: al confirmarse el token se borra.
+        $companyId = Company::where('verification_token', $token)->value('id');
+
         $result = $confirmCompanyEmailUseCase->confirm($token);
         $datos  = $result['data'] ?? [];
 
@@ -78,9 +81,11 @@ class CompanyController extends Controller
             $parametros['empresa'] = $datos['company'];
         }
 
-        return redirect()->away(
-            rtrim(config('app.url'), '/') . '/confirm-email?' . http_build_query($parametros)
-        );
+        // Con subdominios activos se entra ya en la dirección de la empresa: la
+        // sesión queda guardada ahí y no en la raíz.
+        $base = app(\App\Services\Plataforma\EmpresaDelDominio::class)->urlDe($companyId ? (int) $companyId : null);
+
+        return redirect()->away($base . '/confirm-email?' . http_build_query($parametros));
     }
 
     /**

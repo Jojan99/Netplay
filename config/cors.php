@@ -19,6 +19,11 @@ return [
         'https://www.netvula.com',
     ],
 
+    // El subdominio de cada empresa (netplay.netvula.com).
+    'allowed_origins_patterns' => [
+        '#^https://[a-z0-9-]+\.' . preg_quote(env('PLATAFORMA_DOMINIO', 'netvula.com'), '#') . '$#',
+    ],
+
     'allowed_headers' => [
         'Content-Type',
         'X-Requested-With',

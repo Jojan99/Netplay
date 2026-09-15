@@ -58,6 +58,23 @@ class AccesoDirectoService
     }
 
     /**
+     * Vale para abrir en el subdominio de la empresa la sesión que se inició
+     * en la raíz. El navegador lo canjea apenas llega, así que vive 2 minutos.
+     */
+    public function emitirParaUsuario(User $usuario, ?int $minutosDeSesion = null): string
+    {
+        $vale = Str::random(48);
+
+        Cache::put(
+            self::PREFIJO . hash('sha256', $vale),
+            ['usuario' => $usuario->id, 'minutos' => $minutosDeSesion],
+            now()->addMinutes(2)
+        );
+
+        return $vale;
+    }
+
+    /**
      * Canjea el vale por una sesión. Devuelve null si no existe, ya se usó o
      * venció; el vale se consume siempre en el primer intento válido.
      *
@@ -65,8 +82,12 @@ class AccesoDirectoService
      */
     public function canjear(string $vale): ?array
     {
-        $clave   = self::PREFIJO . hash('sha256', $vale);
-        $usuarioId = Cache::pull($clave); // pull = leer y borrar: un solo uso
+        $clave    = self::PREFIJO . hash('sha256', $vale);
+        $guardado = Cache::pull($clave); // pull = leer y borrar: un solo uso
+
+        // Los de la confirmación guardan sólo el id; los del login, también la duración.
+        $usuarioId = is_array($guardado) ? ($guardado['usuario'] ?? null) : $guardado;
+        $minutos   = is_array($guardado) ? ($guardado['minutos'] ?? null) : null;
 
         if (!$usuarioId) {
             return null;
@@ -78,17 +99,22 @@ class AccesoDirectoService
             return null;
         }
 
-        return $this->sesionPara($usuario);
+        return $this->sesionPara($usuario, $minutos ? (int) $minutos : null);
     }
 
     /**
      * Arma la misma carga útil que devuelve el login, para que el frontend
      * pueda guardarla con el mismo AuthService sin ningún caso especial.
      *
+     * @param int|null $minutos duración de la sesión; null usa la normal.
      * @return array<string,mixed>
      */
-    public function sesionPara(User $usuario): array
+    public function sesionPara(User $usuario, ?int $minutos = null): array
     {
+        if ($minutos) {
+            JWTAuth::factory()->setTTL($minutos);
+        }
+
         $token = JWTAuth::fromUser($usuario);
 
         $perfil = DB::table('profiles')->where('id', $usuario->profile_id)->value('name') ?? '';
@@ -99,8 +125,10 @@ class AccesoDirectoService
             ->pluck('module')
             ->toArray();
 
-        $empresa = DB::table('companies')->where('id', $usuario->company_id)
-            ->first(['name', 'logo']);
+        $empresa = \App\Models\Company::find($usuario->company_id, ['id', 'name', 'slug', 'logo', 'invoice_logo_url', 'invoice_logo_base64', 'updated_at']);
+        if ($empresa) {
+            $empresa->logo = app(\App\Services\Plataforma\EmpresaDelDominio::class)->logoDe($empresa);
+        }
 
         $empleadoId = Employee::where('user_id', $usuario->id)
             ->where('company_id', $usuario->company_id)
@@ -115,7 +143,7 @@ class AccesoDirectoService
             'profile_name' => $perfil,
             'company_name' => $empresa->name ?? '',
             'company_logo' => $empresa->logo ?? '',
-            'expires_in'   => (int) config('jwt.ttl') * 60,
+            'expires_in'   => ($minutos ?: (int) config('jwt.ttl')) * 60,
             'modules'      => $modulos,
             'user' => [
                 'user'  => $usuario->username,

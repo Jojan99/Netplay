@@ -38,46 +38,114 @@ class SignInController extends Controller
         AuthenticateUserActiveRequest $request,
         // SignInUseCaseInterface       $SignInUseCaseInterface
     ): object {
-        // Se arma el array de las credenciales con las que se va a validar
-        $credentials = [
-            'username' => $request->user,
-            'active' => 1,
-            'password' => $request->password
-        ];
-
         // "Mantener la sesión abierta": el token dura 30 días en vez del día
         // normal. Sin eso, al volver al panel al otro día pedía login otra vez.
         $minutos = $request->boolean('recordar') ? self::MINUTOS_RECORDAR : (int) config('jwt.ttl');
         JWTAuth::factory()->setTTL($minutos);
 
-        try {
-            // Se valida si no se pudo crear el token
-            if (!$token = JWTAuth::attempt($credentials)) {
-                // Distinguir "cuenta sin confirmar" de "clave incorrecta": antes las dos
-                // daban el mismo mensaje y parecía que la contraseña estaba mal.
-                $pendiente = \App\Models\User::where('username', $request->user)
-                    ->where('active', 0)
-                    ->first(['id', 'email', 'company_id']);
+        $dominio         = app(\App\Services\Plataforma\EmpresaDelDominio::class);
+        $enSubdominio    = $dominio->subdominioPedido($request) !== null;
+        $empresaDelSitio = $dominio->empresa($request);
 
-                if ($pendiente && \Illuminate\Support\Facades\Hash::check($request->password, $pendiente->password ?? '')) {
-                    $empresa = \DB::table('companies')->where('id', $pendiente->company_id)->first(['name', 'active', 'email']);
-                    return standardApiReponse(
-                        'Tu cuenta todavía no está confirmada. Te enviamos un correo a ' . ($empresa->email ?? $pendiente->email) . ' para activarla; revisá también la carpeta de spam.',
-                        ['needs_confirmation' => true, 'email' => $empresa->email ?? $pendiente->email, 'username' => $request->user],
-                        ApiResponseConstants::ERROR,
-                        JsonResponse::HTTP_OK
-                    );
-                }
+        if ($enSubdominio && !$empresaDelSitio) {
+            return standardApiReponse(
+                'Esta dirección no corresponde a ninguna empresa registrada. Revisá el enlace.',
+                ApiResponseConstants::DATA_NULL,
+                ApiResponseConstants::ERROR,
+                JsonResponse::HTTP_OK
+            );
+        }
 
+        // Fuera del subdominio se puede indicar la empresa: es la elección que
+        // se ofrece cuando el mismo usuario está en varias.
+        if (!$empresaDelSitio && $request->filled('empresa')) {
+            $empresaDelSitio = \App\Models\Company::where('subdomain', strtolower((string) $request->input('empresa')))->first();
+        }
+
+        /*
+         * El usuario (la cédula) no es único: la misma persona puede estar en
+         * dos empresas. JWTAuth::attempt tomaba el primero que encontraba y, si
+         * la clave era la de la otra empresa, respondía "contraseña incorrecta".
+         * Se revisan todos los que coinciden; en un subdominio, sólo los de esa
+         * empresa.
+         */
+        $coinciden = \App\Models\User::where('username', $request->user)
+            ->when($empresaDelSitio, fn ($q) => $q->where('company_id', $empresaDelSitio->id))
+            ->get()
+            ->filter(fn ($u) => \Illuminate\Support\Facades\Hash::check((string) $request->password, (string) $u->password));
+
+        $perfiles = DB::table('profiles')->whereIn('id', $coinciden->pluck('profile_id')->filter())->pluck('name', 'id');
+
+        // El panel es para operadores. Un cliente (perfil USER) entraba igual
+        // con su documento y contraseña; su lugar es el portal de clientes.
+        $equipo  = $coinciden->filter(fn ($u) => strtoupper((string) ($perfiles[$u->profile_id] ?? '')) !== 'USER');
+        $activos = $equipo->where('active', 1)->values();
+
+        if ($activos->isEmpty()) {
+            // Distinguir "cuenta sin confirmar" de "clave incorrecta": antes las dos
+            // daban el mismo mensaje y parecía que la contraseña estaba mal.
+            $pendiente = $equipo->firstWhere('active', 0);
+
+            if ($pendiente) {
+                $empresa = DB::table('companies')->where('id', $pendiente->company_id)->first(['name', 'active', 'email']);
                 return standardApiReponse(
-                    'Usuario o contraseña incorrectos.',
-                    ApiResponseConstants::DATA_NULL,
+                    'Tu cuenta todavía no está confirmada. Te enviamos un correo a ' . ($empresa->email ?? $pendiente->email) . ' para activarla; revisá también la carpeta de spam.',
+                    ['needs_confirmation' => true, 'email' => $empresa->email ?? $pendiente->email, 'username' => $request->user],
                     ApiResponseConstants::ERROR,
                     JsonResponse::HTTP_OK
                 );
             }
+
+            if ($coinciden->isNotEmpty()) {
+                return standardApiReponse(
+                    'Este acceso es para el equipo de la empresa. Si sos cliente, ingresá por el portal de clientes.',
+                    ['portal' => true],
+                    ApiResponseConstants::ERROR,
+                    JsonResponse::HTTP_OK
+                );
+            }
+
+            return standardApiReponse(
+                'Usuario o contraseña incorrectos.',
+                ApiResponseConstants::DATA_NULL,
+                ApiResponseConstants::ERROR,
+                JsonResponse::HTTP_OK
+            );
+        }
+
+        if ($activos->count() > 1) {
+            $empresas = \App\Models\Company::whereIn('id', $activos->pluck('company_id'))->orderBy('name')->get(['name', 'subdomain']);
+
+            return standardApiReponse(
+                'Tu usuario está en más de una empresa. Elegí a cuál querés entrar.',
+                ['elegir_empresa' => $empresas->map(fn ($e) => ['nombre' => $e->name, 'subdominio' => $e->subdomain])->values()],
+                ApiResponseConstants::ERROR,
+                JsonResponse::HTTP_OK
+            );
+        }
+
+        $authenticatedUser = $activos->first();
+
+        // Entrando desde la raíz, la sesión se abre en el subdominio de la
+        // empresa: el navegador guarda la sesión por dominio, así que se pasa
+        // con un vale de un solo uso y no con el token en la URL.
+        if ($dominio->activos() && !$enSubdominio && $authenticatedUser->company_id) {
+            $destino = $dominio->urlDe((int) $authenticatedUser->company_id);
+
+            if ($destino !== rtrim((string) config('app.url'), '/')) {
+                $vale = app(\App\Services\AccesoDirectoService::class)->emitirParaUsuario($authenticatedUser, $minutos);
+
+                return standardApiReponse(
+                    'Entrando a tu empresa…',
+                    ['ir_a' => $destino . '/entrar?vale=' . urlencode($vale)],
+                    ApiResponseConstants::SUCCESS
+                );
+            }
+        }
+
+        try {
+            $token = JWTAuth::fromUser($authenticatedUser);
         } catch (JWTException $e) {
-            // Respuesta en caso de excepción
             return standardApiReponse(
                 'Failed to create token: '.$e->getMessage(),
                 ApiResponseConstants::DATA_NULL,
@@ -86,24 +154,10 @@ class SignInController extends Controller
             );
         }
 
-        $authenticatedUser = JWTAuth::user();
+        $profileName = (string) ($perfiles[$authenticatedUser->profile_id] ?? '');
 
-        $profileName = DB::table('profiles')
-            ->where('id', $authenticatedUser->profile_id)
-            ->value('name') ?? '';
-
-        // El panel es para operadores. Un cliente (perfil USER) entraba igual
-        // con su documento y contraseña; su lugar es el portal de clientes.
-        if (strtoupper($profileName) === 'USER') {
-            JWTAuth::setToken($token)->invalidate();
-
-            return standardApiReponse(
-                'Este acceso es para el equipo de la empresa. Si sos cliente, ingresá por el portal de clientes.',
-                ['portal' => true],
-                ApiResponseConstants::ERROR,
-                JsonResponse::HTTP_OK
-            );
-        }
+        // Nombre y logo de la empresa para la barra del panel.
+        $empresaDelUsuario = \App\Models\Company::find($authenticatedUser->company_id);
 
         $modules = \DB::table('profile_modules')
             ->where('profile_id', $authenticatedUser->profile_id)
@@ -132,6 +186,8 @@ class SignInController extends Controller
                 'company_id'   => $authenticatedUser->company_id,
                 'profile_id'   => $authenticatedUser->profile_id,
                 'profile_name' => $profileName,
+                'company_name' => $empresaDelUsuario->name ?? '',
+                'company_logo' => $empresaDelUsuario ? ($dominio->logoDe($empresaDelUsuario) ?? '') : '',
                 'expires_in'   => $minutos * 60,
                 'modules'      => $modules,
                 'user' => [

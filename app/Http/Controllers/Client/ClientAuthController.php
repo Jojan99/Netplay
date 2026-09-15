@@ -39,51 +39,73 @@ class ClientAuthController extends Controller
             ], JsonResponse::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        $credentials = [
-            'username' => $request->username,
-            'password' => $request->password,
-            'active'   => 1,
-        ];
-
         // "Mantener la sesión abierta": 30 días en vez del día normal.
         $minutos = $request->boolean('recordar') ? 60 * 24 * 30 : (int) config('jwt.ttl');
         JWTAuth::factory()->setTTL($minutos);
 
-        try {
-            $token = JWTAuth::attempt($credentials);
+        $dominio         = app(\App\Services\Plataforma\EmpresaDelDominio::class);
+        $empresaDelSitio = $dominio->empresa($request);
 
-            if (!$token) {
+        if ($dominio->subdominioPedido($request) !== null && !$empresaDelSitio) {
+            return response()->json([
+                'message' => 'Esta dirección no corresponde a ninguna empresa registrada.',
+                'data'    => null,
+                'status'  => ApiResponseConstants::ERROR,
+            ], JsonResponse::HTTP_OK);
+        }
+
+        if (!$empresaDelSitio && $request->filled('empresa')) {
+            $empresaDelSitio = \App\Models\Company::where('subdomain', strtolower((string) $request->input('empresa')))->first();
+        }
+
+        // El documento se repite entre empresas: el mismo cliente puede estar
+        // en dos ISP. En el subdominio sólo cuentan los de esa empresa.
+        $coinciden = \App\Models\User::where('username', $request->username)
+            ->where('active', 1)
+            ->when($empresaDelSitio, fn ($q) => $q->where('company_id', $empresaDelSitio->id))
+            ->get()
+            ->filter(fn ($u) => \Illuminate\Support\Facades\Hash::check((string) $request->password, (string) $u->password));
+
+        // Validar por nombre del perfil (cada empresa tiene su propio profile_id para 'USER')
+        $perfiles = DB::table('profiles')->whereIn('id', $coinciden->pluck('profile_id')->filter())->pluck('name', 'id');
+        $clientes = $coinciden->filter(fn ($u) => strtoupper((string) ($perfiles[$u->profile_id] ?? '')) === 'USER')->values();
+
+        if ($clientes->isEmpty()) {
+            if ($coinciden->isNotEmpty()) {
                 return response()->json([
-                    'message' => 'Credenciales incorrectas',
+                    'message' => 'Este portal es exclusivo para clientes',
                     'data'    => null,
                     'status'  => ApiResponseConstants::ERROR,
-                ], JsonResponse::HTTP_OK);
+                ], JsonResponse::HTTP_FORBIDDEN);
             }
+
+            return response()->json([
+                'message' => 'Credenciales incorrectas',
+                'data'    => null,
+                'status'  => ApiResponseConstants::ERROR,
+            ], JsonResponse::HTTP_OK);
+        }
+
+        if ($clientes->count() > 1) {
+            $empresas = \App\Models\Company::whereIn('id', $clientes->pluck('company_id'))->orderBy('name')->get(['name', 'subdomain']);
+
+            return response()->json([
+                'message' => 'Tenés servicio con más de una empresa. Elegí cuál querés consultar.',
+                'data'    => ['elegir_empresa' => $empresas->map(fn ($e) => ['nombre' => $e->name, 'subdominio' => $e->subdomain])->values()],
+                'status'  => ApiResponseConstants::ERROR,
+            ], JsonResponse::HTTP_OK);
+        }
+
+        $user = $clientes->first();
+
+        try {
+            $token = JWTAuth::fromUser($user);
         } catch (JWTException $e) {
             return response()->json([
                 'message' => 'Error al crear la sesión: ' . $e->getMessage(),
                 'data'    => null,
                 'status'  => ApiResponseConstants::ERROR,
             ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
-        }
-
-        $user = JWTAuth::user();
-
-        // Validar por nombre del perfil (cada empresa tiene su propio profile_id para 'USER')
-        $profileName = DB::table('profiles')
-            ->where('id', $user->profile_id)
-            ->value('name');
-
-        if (strtoupper($profileName ?? '') !== 'USER') {
-            // En esta versión invalidate() no recibe el token: hay que fijarlo
-            // antes. Pasándolo como argumento tiraba "A token is required" y el
-            // operador que probaba el portal veía un error 500.
-            JWTAuth::setToken($token)->invalidate();
-            return response()->json([
-                'message' => 'Este portal es exclusivo para clientes',
-                'data'    => null,
-                'status'  => ApiResponseConstants::ERROR,
-            ], JsonResponse::HTTP_FORBIDDEN);
         }
 
         // Cargar datos del cliente y empresa
@@ -95,6 +117,12 @@ class ClientAuthController extends Controller
             ->where('id', $user->company_id)
             ->select('id', 'name', 'slug', 'logo', 'phone', 'email', 'address')
             ->first();
+
+        // El portal muestra el logo de la empresa: el de la factura si no hay otro.
+        if ($company) {
+            $modelo = \App\Models\Company::find($company->id);
+            $company->logo = $modelo ? $dominio->logoDe($modelo) : $company->logo;
+        }
 
         return response()->json([
             'message' => 'Sesión iniciada correctamente',
