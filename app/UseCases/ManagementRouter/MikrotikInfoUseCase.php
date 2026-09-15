@@ -103,6 +103,11 @@ class MikrotikInfoUseCase implements MikrotikInfoUseCaseInterface
             $identity  = $api->query(new Query('/system/identity/print'))->read();
             $name      = $identity[0]['name'] ?? 'Desconocido';
 
+            // La serie identifica al equipo. Dos conexiones con la misma serie
+            // son el mismo MikroTik por dos IP: el panel "conectaba" y mostraba
+            // datos, aunque el router que se quería ver no estuviera respondiendo.
+            [$serie, $mismoEquipo] = $this->serieYMismoEquipo($api, $routerId);
+
             $ifQuery = new Query('/interface/print');
             // El comment es lo que el operador escribió para saber qué hay
             // conectado ahí ("WAN", "TRONCAL 1 UTP"): sin eso el panel de
@@ -147,11 +152,63 @@ class MikrotikInfoUseCase implements MikrotikInfoUseCaseInterface
                     'addresses'      => $addresses,
                     'arp_count'      => count($arpList),
                     'active_clients' => count(array_filter($arpList, fn($r) => ($r['disabled'] ?? 'false') === 'false')),
+                    'serie'          => $serie,
+                    'mismo_equipo'   => $mismoEquipo,
                 ],
             ];
         } catch (\Throwable $e) {
-            return ['status' => 1, 'message' => 'Error al obtener info del router: ' . $e->getMessage(), 'data' => null];
+            return ['status' => 1, 'message' => $this->motivoSinRespuesta($e), 'data' => null];
         }
+    }
+
+    /**
+     * Guarda la serie del equipo en la conexión y devuelve los nombres de las
+     * otras conexiones de la empresa que ya leyeron la misma serie.
+     *
+     * @return array{0: ?string, 1: string[]}
+     */
+    private function serieYMismoEquipo($api, ?int $routerId): array
+    {
+        try {
+            // Un CHR (virtual) no tiene routerboard: queda sin serie y no se compara.
+            $serie = $api->query((new Query('/system/routerboard/print'))->add('=.proplist=serial-number'))
+                ->read()[0]['serial-number'] ?? null;
+        } catch (\Throwable $e) {
+            return [null, []];
+        }
+
+        if (!$serie || !$routerId) {
+            return [$serie, []];
+        }
+
+        $routers = \Illuminate\Support\Facades\DB::table('conection_routers');
+        (clone $routers)->where('id', $routerId)->update(['serie' => $serie, 'serie_leida_en' => now()]);
+
+        $otros = (clone $routers)
+            ->where('company_id', getSessionCompanyId())
+            ->where('id', '!=', $routerId)
+            ->where('serie', $serie)
+            ->pluck('name')
+            ->map(fn ($n) => $n ?: 'otra conexión')
+            ->all();
+
+        return [$serie, $otros];
+    }
+
+    /** Lo que ve el operador cuando el router no contesta, en vez del error crudo de la librería. */
+    private function motivoSinRespuesta(\Throwable $e): string
+    {
+        $m = $e->getMessage();
+
+        if (stripos($m, 'invalid user name or password') !== false || stripos($m, 'cannot log in') !== false) {
+            return 'El router contestó, pero rechazó el usuario o la contraseña de la API.';
+        }
+
+        if (preg_match('/timed out|unable to establish socket|refused|no route to host|network is unreachable/i', $m)) {
+            return 'No contesta en su dirección y puerto de API: puede estar apagado, sin internet o con la API deshabilitada.';
+        }
+
+        return 'No se pudo consultar el router: ' . $m;
     }
 
     /**

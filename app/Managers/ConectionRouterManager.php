@@ -34,7 +34,13 @@ class ConectionRouterManager implements ConectionRouterManagerInterface
         'user' => $data[0]['user'],
         'pass' => $data[0]['pass'],
         'port' => $parsed['port'],
-        'timeout' => 30,
+        // Conectar: 2 intentos de 5 s. Con los valores de la librería (10
+        // intentos) y 30 s por intento, un router apagado dejaba la pantalla
+        // varios minutos en "Consultando router…". Leer sigue teniendo 30 s.
+        'timeout'        => 5,
+        'attempts'       => 2,
+        'delay'          => 1,
+        'socket_timeout' => 30,
     ];
 
     \Log::info('Intentando conectar a MikroTik', [
