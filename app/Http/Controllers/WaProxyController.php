@@ -32,6 +32,19 @@ class WaProxyController extends Controller
 
         $url    = $this->waBase . '/' . ltrim($path, '/');
         $method = strtoupper($request->method());
+
+        // El proxy deja pasar a cualquiera con módulo de CRM o WhatsApp; activar o
+        // desactivar la recepción de mensajes en el CRM es sólo de administradores.
+        if ($method !== 'GET' && str_starts_with(ltrim($path, '/'), 'crm/recepcion')) {
+            $perfil = strtoupper((string) \DB::table('profiles')->where('id', getSessionUserProfileId())->value('name'));
+
+            if ($perfil !== 'ADMIN') {
+                return response()->json([
+                    'status'  => 'error',
+                    'message' => 'Sólo un administrador puede activar o desactivar la recepción de mensajes.',
+                ], 403);
+            }
+        }
         $body   = $request->getContent();
 
         // Agregar query string si existe
