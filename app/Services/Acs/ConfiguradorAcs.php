@@ -47,6 +47,10 @@ class ConfiguradorAcs
             'host'          => $s->host,
             'puerto_cwmp'   => $s->puerto_cwmp,
             'url_nbi'       => $s->url_nbi,
+            // La que se usa de verdad (si url_nbi está vacía, http://host:7557).
+            'url_nbi_efectiva' => $s->esPropio() ? $s->urlNbi() : null,
+            // Para el firewall del servidor propio: sólo esta IP debe poder usar su API.
+            'ip_plataforma' => self::ipDeLaPlataforma(),
             'alcance'       => $s->alcance,
             'url_para_onts' => $s->urlCwmp(),
             'redes'         => $s->redes ?? [],
@@ -106,16 +110,91 @@ class ConfiguradorAcs
             throw new \InvalidArgumentException('Falta la dirección del servidor TR-069.');
         }
 
+        // Lo que más se equivoca al cargarlo a mano: la dirección con http:// o
+        // con puerto (quedaba "http://http://…:7547") y la API apuntando al
+        // puerto de los equipos, que responde 405 porque no es la API.
+        [$host, $puertoDelHost] = $modo === 'propio' ? self::limpiarHost((string) $datos['host']) : [null, null];
+        $puerto = (int) ($datos['puerto_cwmp'] ?? 0) ?: ($puertoDelHost ?: 7547);
+        $nbi = $modo === 'propio' ? self::limpiarUrlApi((string) ($datos['url_nbi'] ?? '')) : null;
+
+        if ($nbi && (int) (parse_url($nbi, PHP_URL_PORT) ?: 0) === $puerto) {
+            throw new \InvalidArgumentException(
+                "La dirección de la API usa el puerto de los equipos ({$puerto}). En GenieACS la API (NBI) va en el 7557: "
+                . 'http://' . parse_url($nbi, PHP_URL_HOST) . ':7557. Si la dejás vacía se usa esa.'
+            );
+        }
+
         $s->fill([
             'modo'        => $modo,
-            'host'        => $modo === 'propio' ? trim((string) $datos['host']) : null,
-            'puerto_cwmp' => (int) ($datos['puerto_cwmp'] ?? 7547) ?: 7547,
-            'url_nbi'     => $modo === 'propio' ? ($datos['url_nbi'] ?? null) : null,
+            'host'        => $host,
+            'puerto_cwmp' => $puerto,
+            'url_nbi'     => $nbi,
             'alcance'     => in_array($datos['alcance'] ?? '', ['publica', 'tunel'], true) ? $datos['alcance'] : 'tunel',
             'router_id'   => $datos['router_id'] ?? $s->router_id,
         ])->save();
 
         return $this->estado();
+    }
+
+    /**
+     * "http://181.48.150.43:7547/" → ["181.48.150.43", 7547]. Sólo queda la IP
+     * o el dominio; el puerto, si venía, se usa como puerto de los equipos.
+     *
+     * @return array{0:string, 1:?int}
+     */
+    public static function limpiarHost(string $valor): array
+    {
+        $v = trim($valor);
+        $v = preg_replace('#^[a-z][a-z0-9+.-]*://#i', '', $v);
+        $v = preg_replace('#[/?\#].*$#', '', $v);
+        $puerto = null;
+
+        if (preg_match('/^(.+):(\d{1,5})$/', $v, $m)) {
+            [$v, $puerto] = [$m[1], (int) $m[2]];
+        }
+
+        return [mb_strtolower($v), $puerto];
+    }
+
+    /** "181.48.150.43:7557/" → "http://181.48.150.43:7557"; vacío queda null. */
+    public static function limpiarUrlApi(string $valor): ?string
+    {
+        $v = rtrim(trim($valor), '/');
+
+        if ($v === '') {
+            return null;
+        }
+
+        return preg_match('#^https?://#i', $v) ? $v : 'http://' . $v;
+    }
+
+    /** La IP con la que la plataforma llega a los servidores de las empresas (para su firewall). */
+    public static function ipDeLaPlataforma(): ?string
+    {
+        $ips = array_filter(array_map('trim', explode(',', (string) config('services.servidor.ips', ''))));
+
+        return $ips ? (string) reset($ips) : null;
+    }
+
+    /** Lo que falló al hablar con la API, en palabras de operador y con qué revisar. */
+    private function explicarErrorDelServidor(\Throwable $e, AcsServidor $s): string
+    {
+        $mensaje = $e->getMessage();
+        $api = $s->urlNbi();
+        $ip = self::ipDeLaPlataforma();
+
+        if (preg_match('/respondió (404|405)/', $mensaje)) {
+            return "{$api} contesta, pero no es la API de GenieACS. La API (NBI) va en el puerto 7557, no en el de los equipos: "
+                . 'http://' . $s->host . ':7557.';
+        }
+
+        if (preg_match('/cURL error (7|28)|Connection refused|timed out|Could not connect/i', $mensaje)) {
+            return "No se llega a {$api}. En tu servidor la API de GenieACS tiene que escuchar hacia afuera "
+                . '(GENIEACS_NBI_INTERFACE=0.0.0.0 y reiniciar genieacs-nbi) y el firewall dejar entrar al 7557'
+                . ($ip ? " sólo desde {$ip}" : '') . '.';
+        }
+
+        return $mensaje;
     }
 
     /** Lee del router qué redes hay, sin pedirle nada al operador. */
@@ -278,7 +357,7 @@ class ConfiguradorAcs
             GenieAcs::deEmpresa($this->companyId)->dispositivos([], ['_id']);
             $servidorOk = true;
         } catch (\Throwable $e) {
-            $detalleServidor = $e->getMessage();
+            $detalleServidor = $this->explicarErrorDelServidor($e, $s);
         }
 
         $checks[] = [
