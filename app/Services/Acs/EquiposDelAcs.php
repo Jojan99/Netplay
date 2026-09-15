@@ -623,6 +623,10 @@ class EquiposDelAcs
                     : ($conPsk || !self::existe($d, "{$b}.BSSID") ? ["{$b}.PreSharedKey.1.KeyPassphrase"]
                     : array_values(array_filter(["{$b}.KeyPassphrase", "{$b}.X_CMS_KeyPassphrase"], fn ($r) => self::existe($d, $r))));
 
+                // Sin ninguna a la vista (ZTE F680: la rama de la clave sin leer),
+                // la estándar; si el equipo no la tiene, el ACS lo dice.
+                $rutasClave = $rutasClave ?: ["{$b}.PreSharedKey.1.KeyPassphrase"];
+
                 $redes[] = [
                     'indice'    => (int) $i,
                     'ssid'      => self::v($d, "{$b}.SSID"),
