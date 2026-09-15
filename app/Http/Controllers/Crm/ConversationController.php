@@ -630,7 +630,10 @@ public function transcodeAudio(Request $request)
     $publicRoot = realpath(storage_path('app/public'));
     $prefix = rtrim(config('app.url'), '/') . '/storage/';
 
-    if (!str_starts_with($url, $prefix) && !str_starts_with($url, 'https://netplay.com.co/storage/')) {
+    // Los medios guardados antes del cambio de dominio siguen con netplay.com.co.
+    $propios = [$prefix, 'https://netplay.com.co/storage/', 'https://netvula.com/storage/', 'https://www.netvula.com/storage/'];
+
+    if (!collect($propios)->contains(fn ($p) => str_starts_with($url, $p))) {
         return response()->json(['ok' => false, 'error' => 'URL no permitida'], 422);
     }
 

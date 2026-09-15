@@ -14,6 +14,9 @@ return [
         'http://localhost:4200',
         'https://netplay.com.co',
         'https://www.netplay.com.co',
+        // Dominio nuevo (migración): los dos conviven mientras el viejo redirige.
+        'https://netvula.com',
+        'https://www.netvula.com',
     ],
 
     'allowed_headers' => [
