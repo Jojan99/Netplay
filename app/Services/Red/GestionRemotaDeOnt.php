@@ -1063,7 +1063,11 @@ class GestionRemotaDeOnt
             }
 
             if ($r['ok'] ?? false) {
-                $g->perfiles_acs = array_merge($g->perfiles_acs ?? [], [(string) $oltId => $perfil]);
+                // Por clave y no con array_merge: con claves numéricas ("5")
+                // renumera y el perfil quedaba guardado sin su OLT.
+                $perfiles = $g->perfiles_acs ?? [];
+                $perfiles[(string) $oltId] = $perfil;
+                $g->perfiles_acs = $perfiles;
                 $g->save();
 
                 return ['paso' => 'Servidor TR-069 en la OLT', 'ok' => true, 'detalle' => "Perfil {$perfil}: {$url}, usuario {$g->acs_usuario}."];
