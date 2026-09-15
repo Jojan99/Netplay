@@ -98,58 +98,96 @@ public function GetIpAvalibles(GestionUserRequest $gestionUserRequest, ?int $rou
             ];
         }
 
-        [$gateway] = explode('/', $address[0]['address']);
-        $networkBase = substr($gateway, 0, strrpos($gateway, '.') + 1);
+        // Se recorre el segmento con su máscara real. Antes se asumía /24 y se
+        // cortaba en las primeras 20 libres: para usar una IP puntual había que
+        // ir a buscarla al router.
+        [$gateway, $bits] = array_pad(explode('/', $address[0]['address']), 2, '24');
+        $bits = (int) $bits;
+        if ($bits < 20 || $bits > 30) {
+            $bits = 24;
+        }
+        $mascara  = -1 << (32 - $bits);
+        $red      = ip2long($gateway) & $mascara;
+        $difusion = $red | (~$mascara & 0xFFFFFFFF);
 
-        /** 2️⃣ ARP LIVIANO */
+        /** 2️⃣ LO QUE HAY EN EL ROUTER */
         $query = new Query('/ip/arp/print');
-        $query->add('=.proplist=address');
+        $query->add('=.proplist=address,mac-address,comment');
         $query->where('interface', $vlan);
 
-        $arpRows = $api->query($query)->read();
-        $usedIps = array_column($arpRows, 'address');
+        $enArp = [];
+        foreach ($api->query($query)->read() as $fila) {
+            if (!empty($fila['address'])) {
+                $enArp[$fila['address']] = $fila;
+            }
+        }
 
         // El ARP solo ve lo que está prendido: la IP de un cliente apagado
         // desaparece de ahí y volvía a ofrecerse como libre. Así se entregó la
         // misma IP a varios clientes. Se descuentan también las que la
         // plataforma ya tiene registradas para esta empresa.
+        $enPlataforma = [];
         $companyId = getSessionCompanyId();
 
         if ($companyId) {
-            $enPlataforma = \Illuminate\Support\Facades\DB::table('tabla_ips as t')
+            $filas = \Illuminate\Support\Facades\DB::table('tabla_ips as t')
                 ->join('user_data as ud', 'ud.ip_assignment_id', '=', 't.id')
                 ->where('t.company_id', $companyId)
                 ->whereNotNull('t.ip')
-                ->pluck('t.ip')
-                ->all();
+                ->orderByDesc('ud.active')
+                ->get(['t.ip', 'ud.names', 'ud.lastname', 'ud.active', 'ud.user_id']);
 
-            $usedIps = array_unique(array_merge($usedIps, $enPlataforma));
+            foreach ($filas as $f) {
+                $enPlataforma[trim($f->ip)] ??= $f; // si hay dos, manda el activo
+            }
         }
 
-        /** 3️⃣ IPs DISPONIBLES LIMITADAS */
-        $availableIps = [];
-        $maxIps = 20;
+        /** 3️⃣ LIBRES Y OCUPADAS (con quién las tiene) */
+        $libres   = [];
+        $ocupadas = [];
 
-        for ($i = 2; $i <= 254; $i++) {
+        for ($n = $red + 1; $n < $difusion; $n++) {
+            $ip = long2ip($n);
 
-            $ip = $networkBase . $i;
-
-            if ($ip !== $gateway && !in_array($ip, $usedIps, true)) {
-                $availableIps[] = ['ip' => $ip];
-
-                if (count($availableIps) >= $maxIps) {
-                    break;
-                }
+            if ($ip === $gateway) {
+                $ocupadas[] = ['ip' => $ip, 'estado' => 'gateway', 'detalle' => 'Puerta de enlace del router'];
+                continue;
             }
+
+            if (isset($enPlataforma[$ip])) {
+                $c = $enPlataforma[$ip];
+                $nombre = trim(($c->names ?? '') . ' ' . ($c->lastname ?? '')) ?: 'Cliente #' . $c->user_id;
+                $ocupadas[] = [
+                    'ip'      => $ip,
+                    'estado'  => 'cliente',
+                    'detalle' => $nombre . ((int) $c->active === 1 ? '' : ' (retirado)'),
+                    'user_id' => (int) $c->user_id,
+                ];
+                continue;
+            }
+
+            if (isset($enArp[$ip])) {
+                $a = $enArp[$ip];
+                $ocupadas[] = [
+                    'ip'      => $ip,
+                    'estado'  => 'arp',
+                    'detalle' => 'En el router sin cliente' . (!empty($a['comment']) ? ' · ' . $a['comment'] : (!empty($a['mac-address']) ? ' · ' . $a['mac-address'] : '')),
+                ];
+                continue;
+            }
+
+            $libres[] = ['ip' => $ip];
         }
 
         return [
             'message' => 'IPs disponibles encontradas',
             'status'  => 0,
             'data'    => [
-                'vlan'    => $vlan,
-                'gateway' => $gateway,
-                'ips'     => $availableIps
+                'vlan'     => $vlan,
+                'gateway'  => $gateway,
+                'network'  => long2ip($red) . '/' . $bits,
+                'ips'      => $libres,
+                'ocupadas' => $ocupadas,
             ]
         ];
 
