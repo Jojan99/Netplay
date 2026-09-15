@@ -72,6 +72,13 @@ class MikrotikInfoUseCase implements MikrotikInfoUseCaseInterface
             if (!$router) {
                 return ['status' => 1, 'message' => 'Router no encontrado', 'data' => null];
             }
+
+            // Con otra IP puede ser otro equipo: la serie guardada ya no vale y
+            // seguiría avisando "mismo equipo" en la otra conexión. Se vuelve a
+            // leer la próxima vez que el router responda.
+            \Illuminate\Support\Facades\DB::table('conection_routers')
+                ->where('id', $id)->where('company_id', $companyId)
+                ->update(['serie' => null, 'serie_leida_en' => null]);
             return ['status' => 0, 'message' => 'Router actualizado', 'data' => $router];
         } catch (\Throwable $e) {
             return ['status' => 1, 'message' => $e->getMessage(), 'data' => null];
