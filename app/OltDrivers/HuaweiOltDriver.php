@@ -1228,7 +1228,13 @@ public function parseServicePorts(string $output): array
         ];
     }
 
-    public function darGestionAOnt(string $fsp, int $ontId, int $vlan, int $servicePort): array
+    /**
+     * @param list<int> $vlansCliente VLAN de servicio de la ONT (sus service-ports)
+     * @param bool      $pisarAjenas  equipo recién autorizado: las conexiones de
+     *                                otra VLAN (un equipo reutilizado) no le dan
+     *                                servicio y se pueden reemplazar
+     */
+    public function darGestionAOnt(string $fsp, int $ontId, int $vlan, int $servicePort, array $vlansCliente = [], bool $pisarAjenas = false): array
     {
         [$frame, $slot, $puerto] = $this->parseFsp($fsp);
 
@@ -1261,6 +1267,14 @@ public function parseServicePorts(string $output): array
         foreach ($wans as $w) {
             if ($w['vlan'] === $vlan) {
                 continue; // la de gestión, de una vez anterior
+            }
+
+            // Una conexión de otra VLAN en un equipo recién autorizado viene de
+            // su dueño anterior (YINETH_DE_LA_CRUZ traía 2_INTERNET_R_VID_200 con
+            // service-port en la 106): no da servicio, así que ni protege el
+            // lugar 2 ni sirve para el TR-069. La de su VLAN sí se respeta.
+            if ($pisarAjenas && $vlansCliente && $w['vlan'] !== null && !in_array($w['vlan'], $vlansCliente, true)) {
+                continue;
             }
 
             if (stripos($w['servicio'], 'tr069') !== false) {

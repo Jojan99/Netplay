@@ -1405,7 +1405,7 @@ class OltAdminUseCase
         try {
             // Recién autorizada todavía no le da servicio a nadie: si hace falta
             // reiniciarla para que tome el servidor TR-069 (C-Data), se reinicia.
-            $id = \App\Services\Red\TareasDeGestion::crear($companyId, 'dar_acceso', ['olt_id' => $oltId, 'fsp' => $fsp, 'ont_id' => $ontId, 'reiniciar' => true]);
+            $id = \App\Services\Red\TareasDeGestion::crear($companyId, 'dar_acceso', ['olt_id' => $oltId, 'fsp' => $fsp, 'ont_id' => $ontId, 'reiniciar' => true, 'limpiar' => true]);
             \App\Services\Red\TareasDeGestion::lanzar($id);
         } catch (\Throwable $e) {
             \Log::warning('[Gestión] No se pudo lanzar el acceso remoto de la ONT nueva', [

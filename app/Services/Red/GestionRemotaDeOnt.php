@@ -690,7 +690,20 @@ class GestionRemotaDeOnt
     /**
      * @param callable(string):void|null $avance cuenta en qué paso va (ventana de tareas)
      */
-    public function darAcceso(int $oltId, string $fsp, int $ontId, bool $reiniciarSiHaceFalta = false, ?callable $avance = null): array
+    /** Las VLAN de servicio de la ONT según sus service-ports, sin la de gestión. @return list<int> */
+    private static function vlansDeServicio(?OltOnt $ont, int $vlanGestion): array
+    {
+        $puertos = $ont?->service_ports;
+        $puertos = is_string($puertos) ? (json_decode($puertos, true) ?: []) : (array) $puertos;
+
+        return array_values(array_unique(array_filter(
+            array_map(fn ($p) => (int) ($p['vlan'] ?? 0), $puertos),
+            fn ($v) => $v > 0 && $v !== $vlanGestion
+        )));
+    }
+
+    /** @param bool $limpiarAjenas equipo recién autorizado: se reemplazan las conexiones de otra VLAN */
+    public function darAcceso(int $oltId, string $fsp, int $ontId, bool $reiniciarSiHaceFalta = false, ?callable $avance = null, bool $limpiarAjenas = false): array
     {
         $avance ??= fn (string $texto) => null;
         $g = $this->config();
@@ -748,6 +761,9 @@ class GestionRemotaDeOnt
                 $r = app(OltTelnetDispatcher::class)->dispatch($oltId, 'darGestionAOnt', [
                     'fsp' => $fsp, 'ont_id' => $ontId, 'vlan' => (int) $g->vlan,
                     'service_port' => $numero,
+                    // Recién autorizada: las conexiones de otra VLAN se reemplazan.
+                    'vlans_cliente' => $limpiarAjenas ? self::vlansDeServicio($registrada, (int) $g->vlan) : [],
+                    'pisar_ajenas'  => $limpiarAjenas,
                 ]);
             } catch (\Throwable $e) {
                 return ['ok' => false, 'detalle' => \App\Services\Olt\EstadoDeUnaOnt::explicar($e->getMessage())];

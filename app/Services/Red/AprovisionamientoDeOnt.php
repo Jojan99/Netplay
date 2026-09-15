@@ -120,12 +120,13 @@ class AprovisionamientoDeOnt
      *
      * @param array<string,mixed> $pedido gateway y máscara de la red elegida, y el WiFi escrito en el alta
      */
-    public static function programar(int $oltId, string $fsp, int $ontId, string $serial, ?int $userId, ?int $vlan, array $pedido): ?array
+    public static function programar(int $oltId, string $fsp, int $ontId, string $serial, ?int $userId, ?int $vlan, array $pedido, bool $forzar = false): ?array
     {
         $companyId = (int) (OltAdmin::find($oltId)?->company_id ?: 0);
         $g = $companyId ? GestionRemota::where('company_id', $companyId)->first() : null;
 
-        if (!$g?->aprovisionar || trim($serial) === '') {
+        // $forzar: un equipo puntual, aunque la empresa lo tenga apagado.
+        if (!$g || (!$g->aprovisionar && !$forzar) || trim($serial) === '') {
             return null;
         }
 
@@ -476,8 +477,35 @@ class AprovisionamientoDeOnt
         $objeto = $wan['tipo'] === 'pppoe' ? 'WANPPPConnection' : 'WANIPConnection';
 
         // La conexión de gestión no se toca nunca: por ahí llega el TR-069.
-        $conexiones = collect($this->conexiones($d))
+        $todas = collect($this->conexiones($d));
+        $conexiones = $todas
             ->reject(fn ($c) => ($vlanGestion && $c['vlan'] === $vlanGestion) || $c['servicios'] === 'TR069');
+
+        // Las de otra VLAN vienen del dueño anterior del equipo: no dan servicio
+        // y chocan con la del cliente. Se borra cada grupo que sea sólo ajeno.
+        $ajenas = $conexiones->filter(fn ($c) => $c['vlan'] !== null && $c['vlan'] !== (int) $wan['vlan']);
+        $borradas = [];
+        $quitados = [];
+
+        foreach ($ajenas->groupBy('dispositivo') as $grupo => $delGrupo) {
+            if ($todas->where('dispositivo', $grupo)->count() !== $delGrupo->count()) {
+                continue; // comparte grupo con la de gestión o con la del cliente
+            }
+
+            try {
+                $r = $acs->tarea((string) $a->acs_id, ['name' => 'deleteObject', 'objectName' => self::WAN . ".{$grupo}"]);
+            } catch (\Throwable $e) {
+                $r = ['hecha' => false];
+            }
+
+            if ($r['hecha'] ?? false) {
+                $quitados[] = (string) $grupo;
+                $borradas = array_merge($borradas, $delGrupo->pluck('nombre')->all());
+            }
+        }
+
+        $conexiones = $conexiones->reject(fn ($c) => in_array((string) $c['dispositivo'], $quitados, true));
+        $nota = $borradas ? ' Se borraron las conexiones ajenas: ' . implode(', ', $borradas) . '.' : '';
 
         $existente = $conexiones->first(fn ($c) => $c['objeto'] === $objeto && $c['vlan'] === (int) $wan['vlan'])
             ?? $conexiones->first(fn ($c) => $c['objeto'] === $objeto && str_contains($c['servicios'], 'INTERNET'));
@@ -538,7 +566,7 @@ class AprovisionamientoDeOnt
 
         $r = $acs->tarea((string) $a->acs_id, ['name' => 'setParameterValues', 'parameterValues' => $valores]);
 
-        return $this->resultado($acs, (string) $a->acs_id, $r, $titulo, "{$como}: " . self::resumenWan($wan));
+        return $this->resultado($acs, (string) $a->acs_id, $r, $titulo, "{$como}: " . self::resumenWan($wan) . ($nota ? ".{$nota}" : ''));
     }
 
     private function aplicarWifi(GenieAcs $acs, Aprovisionamiento $a, array $d): array
@@ -660,6 +688,7 @@ class AprovisionamientoDeOnt
                         'vlan'      => $vlan !== null && $vlan !== '' ? (int) $vlan : null,
                         'servicios' => strtoupper((string) self::v($d, "{$b}.X_HW_SERVICELIST")),
                         'nombre'    => (string) (self::v($d, "{$b}.Name") ?: $b),
+                        'dispositivo' => (string) $i,
                     ];
                 }
             }

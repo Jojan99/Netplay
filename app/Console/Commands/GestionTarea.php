@@ -51,7 +51,7 @@ class GestionTarea extends Command
 
         try {
             match ($tarea['tipo']) {
-                'dar_acceso'      => $this->terminar($id, $servicio->darAcceso((int) $d['olt_id'], (string) $d['fsp'], (int) $d['ont_id'], (bool) ($d['reiniciar'] ?? false), $paso)),
+                'dar_acceso'      => $this->terminar($id, $servicio->darAcceso((int) $d['olt_id'], (string) $d['fsp'], (int) $d['ont_id'], (bool) ($d['reiniciar'] ?? false), $paso, (bool) ($d['limpiar'] ?? false))),
                 'preparar_perfil' => $this->terminar($id, $servicio->prepararPerfil((int) $d['olt_id'], (int) $d['perfil'])),
                 'reiniciar'       => $this->terminar($id, $servicio->reiniciarEquipo((int) $d['olt_id'], (string) $d['fsp'], (int) $d['ont_id'])),
                 'al_dia'          => $this->alDia($id, (int) $tarea['company_id'], $servicio, isset($d['olt_id']) ? (int) $d['olt_id'] : null),

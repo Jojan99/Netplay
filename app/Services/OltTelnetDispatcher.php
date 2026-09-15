@@ -194,7 +194,8 @@ class OltTelnetDispatcher
             'prepararVlanDeGestion' => method_exists($driver, 'prepararVlanDeGestion')
                                        ? $driver->prepararVlanDeGestion((int) $p['vlan'], (string) $p['uplink']) : null,
             'darGestionAOnt'    => method_exists($driver, 'darGestionAOnt')
-                                       ? $driver->darGestionAOnt($p['fsp'], (int) $p['ont_id'], (int) $p['vlan'], (int) $p['service_port']) : null,
+                                       ? $driver->darGestionAOnt($p['fsp'], (int) $p['ont_id'], (int) $p['vlan'], (int) $p['service_port'],
+                                           array_map('intval', (array) ($p['vlans_cliente'] ?? [])), (bool) ($p['pisar_ajenas'] ?? false)) : null,
             'perfilDeOnt'       => method_exists($driver, 'perfilDeOnt')
                                        ? $driver->perfilDeOnt((string) $p['fsp'], (int) $p['ont_id']) : null,
             'perfilesDeLinea'   => method_exists($driver, 'perfilesDeLinea')
