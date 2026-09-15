@@ -76,7 +76,7 @@ class ManagementRouterController extends Controller
         Request $request
     ): object {
         try {
-            $result = $getIpAvaliblesUseCaseInterface->getLanSegments($this->routerId($request));
+            $result = $getIpAvaliblesUseCaseInterface->getLanSegments($this->routerId($request), $request->boolean('todas'));
         } catch (JWTException $e) {
             return standardApiReponse('Error: ' . $e->getMessage(), ApiResponseConstants::DATA_NULL, ApiResponseConstants::ERROR, JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
         }

@@ -174,7 +174,7 @@ public function GetIpAvalibles(GestionUserRequest $gestionUserRequest, ?int $rou
 
 
 
-public function getLanSegments(?int $routerId = null): mixed
+public function getLanSegments(?int $routerId = null, bool $todas = false): mixed
 {
     try {
 
@@ -188,14 +188,15 @@ public function getLanSegments(?int $routerId = null): mixed
         }
 
         $maxAttempts = 3;
-        $rows = null;
+        $segments = null;
 
         for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
             try {
                 $api = $this->connection->conection($this->resolveToken($routerId));
-                $query = new Query('/ip/address/print');
-                $query->add('=.proplist=address,interface');
-                $rows = $api->query($query)->read();
+                // Sólo las redes que dan internet a los clientes; con $todas,
+                // también la WAN, el servidor, las OLT y la gestión.
+                $segments = (new \App\Services\Red\RedesParaClientes((int) getSessionCompanyId(), $routerId))
+                    ->listar($api, $todas);
                 break;
             } catch (\Throwable $e) {
                 if ($attempt === $maxAttempts) throw $e;
@@ -203,36 +204,13 @@ public function getLanSegments(?int $routerId = null): mixed
             }
         }
 
-        if (empty($rows)) {
+        if (empty($segments)) {
             return [
-                'message' => 'No se encontraron direcciones IP',
+                'message' => $todas
+                    ? 'No se encontraron direcciones IP'
+                    : 'No se encontraron redes de clientes en el router. Probá con "Ver todas".',
                 'status'  => 1,
                 'data'    => []
-            ];
-        }
-
-        /**
-         * 2️⃣ FILTRAR EN PHP (FORMA SEGURA)
-         */
-        $segments = [];
-
-        foreach ($rows as $row) {
-
-            if (!isset($row['address'], $row['interface'])) {
-                continue;
-            }
-            // solo /24 /23 /22
-            if (!preg_match('/\/(24|23|22)$/', $row['address'])) continue;
-            // Ej: 192.168.107.1/24
-            [$gateway, $mask] = explode('/', $row['address']);
-
-            $networkBase = substr($gateway, 0, strrpos($gateway, '.')) . '.0';
-
-            $segments[] = [
-                'names'    => $row['interface'],
-                'network' => $networkBase . '/' . $mask,
-                'gateway' => $gateway,
-                'mask'    => '/' . $mask
             ];
         }
 
