@@ -329,6 +329,18 @@ class EquiposDelAcs
         $this->exigirPropio($id);
 
         $d = $this->acs->dispositivo($id);
+
+        // Para elegir dónde va la clave hace falta la rama WiFi completa: si el
+        // equipo todavía no la mandó, se le pide antes (es sólo una lectura).
+        if ($clave !== null && $clave !== '' && isset($d['InternetGatewayDevice'])
+            && !self::existe($d, "InternetGatewayDevice.LANDevice.1.WLANConfiguration.{$indice}.BSSID")) {
+            try {
+                $this->acs->tarea($id, ['name' => 'refreshObject', 'objectName' => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration']);
+                $d = $this->acs->dispositivo($id) ?? $d;
+            } catch (\Throwable $e) {
+                Log::info('[ACS] No se pudo leer el WiFi antes de cambiar la clave', ['equipo' => $id, 'error' => $e->getMessage()]);
+            }
+        }
         $redes = collect(self::wifi($d, $this->raiz($id, $d)));
         $red = $redes->firstWhere('indice', $indice);
 
@@ -615,8 +627,13 @@ class EquiposDelAcs
                     'conectados' => self::entero(self::v($d, "{$b}.TotalAssociations")),
                     'leido_en'  => self::marca($d, "{$b}.SSID"),
                     'ruta_ssid' => "{$b}.SSID",
+                    // Fuera de Huawei, la clave WPA es PreSharedKey.1.KeyPassphrase
+                    // (TR-098; la KeyPassphrase de la red es para WEP). Sólo si el
+                    // equipo ya mandó su rama completa (trae BSSID) y no tiene
+                    // PreSharedKey se usa la otra: antes dependía de qué hubiera
+                    // leído el ACS, y el mismo C-Data iba a una o a otra.
                     'ruta_clave' => $huawei ? "{$b}.PreSharedKey.1.PreSharedKey"
-                        : ($conPsk ? "{$b}.PreSharedKey.1.KeyPassphrase"
+                        : ($conPsk || !self::existe($d, "{$b}.BSSID") ? "{$b}.PreSharedKey.1.KeyPassphrase"
                         : (self::existe($d, "{$b}.KeyPassphrase") ? "{$b}.KeyPassphrase" : null)),
                     'ruta_canal' => self::existe($d, "{$b}.Channel") ? "{$b}.Channel" : null,
                     'ruta_canal_auto' => self::existe($d, "{$b}.AutoChannelEnable") ? "{$b}.AutoChannelEnable" : null,
