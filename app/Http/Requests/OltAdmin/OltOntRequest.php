@@ -29,6 +29,13 @@ class OltOntRequest extends FormRequest
             'user_data_id'    => 'nullable|integer|exists:users,id',
             'line_profile_id' => 'nullable|integer',
             'srv_profile_id'  => 'nullable|integer',
+            // Aprovisionamiento al autorizar: la red elegida y el WiFi escrito
+            // en el alta (vacío = se genera uno).
+            'aprovisionar'            => 'nullable|array',
+            'aprovisionar.gateway'    => 'nullable|ipv4',
+            'aprovisionar.mascara'    => 'nullable|string|max:3',
+            'aprovisionar.wifi_ssid'  => 'nullable|string|max:32',
+            'aprovisionar.wifi_clave' => 'nullable|string|min:8|max:63',
         ];
     }
 }

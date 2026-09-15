@@ -27,6 +27,35 @@ class GestionRemotaController extends Controller
         return standardApiReponse('Acceso remoto', $this->servicio($companyId)->estado(), 0, JsonResponse::HTTP_OK);
     }
 
+    /** Ajustes del aprovisionamiento automático y los últimos equipos programados. */
+    public function aprovisionamiento(): JsonResponse
+    {
+        $s = new \App\Services\Red\AprovisionamientoDeOnt((int) getSessionCompanyId());
+
+        return standardApiReponse('Aprovisionamiento', ['ajustes' => $s->ajustes(), 'ultimos' => $s->ultimos()], 0, JsonResponse::HTTP_OK);
+    }
+
+    public function guardarAprovisionamiento(Request $request): JsonResponse
+    {
+        $datos = $request->validate([
+            'aprovisionar'  => 'required|boolean',
+            'wan'           => 'boolean',
+            'wifi'          => 'boolean',
+            'admin'         => 'boolean',
+            'wifi_prefijo'  => 'nullable|string|max:20',
+            'admin_usuario' => 'nullable|string|max:32',
+            'admin_clave'   => 'nullable|string|max:64',
+        ]);
+
+        try {
+            $ajustes = (new \App\Services\Red\AprovisionamientoDeOnt((int) getSessionCompanyId()))->guardarAjustes($datos);
+        } catch (\InvalidArgumentException $e) {
+            return standardApiReponse($e->getMessage(), null, 1, JsonResponse::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        return standardApiReponse('Ajustes guardados', $ajustes, 0, JsonResponse::HTTP_OK);
+    }
+
     /**
      * Qué está libre para usar. Consulta el router y las OLT de verdad, así
      * que tarda: el front la pide sólo cuando se abre el asistente.

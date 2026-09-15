@@ -40,6 +40,10 @@ class Kernel extends ConsoleKernel
         // reportan al TR-069 (cada hora) y suma lo nuevo al día.
         $schedule->command('consumo:registrar')->hourlyAt(7)->user('www-data')->withoutOverlapping();
 
+        // Aprovisionamiento de ONT recién autorizadas: les aplica WAN, WiFi y
+        // cuenta de administración en cuanto aparecen en el TR-069.
+        $schedule->command('aprovisionamiento:trabajar')->everyMinute()->user('www-data')->withoutOverlapping();
+
         // Sincroniza ARP MikroTik con STATUS de plataforma — corrige desyncs diariamente
         $schedule->command('arp:sync')->dailyAt('06:00')->user('www-data');
 

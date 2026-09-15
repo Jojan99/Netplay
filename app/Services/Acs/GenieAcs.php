@@ -113,6 +113,27 @@ class GenieAcs
             // Al crear un objeto, GenieACS devuelve el número de instancia que
             // le asignó el equipo: hace falta para escribir dentro de ella.
             'instancia' => is_array($cuerpo) ? ($cuerpo['instance'] ?? null) : null,
+            'id'        => is_array($cuerpo) ? ($cuerpo['_id'] ?? null) : null,
         ];
+    }
+
+    /**
+     * Por qué el equipo rechazó una tarea, o null si no hay falla anotada.
+     * GenieACS la guarda como "<equipo>:task_<tarea>".
+     */
+    public function fallaDeTarea(string $id, string $tareaId): ?string
+    {
+        $r = Http::timeout(10)->get("{$this->base}/faults", ['query' => json_encode(['_id' => "{$id}:task_{$tareaId}"])]);
+        $falla = $r->successful() ? ($r->json()[0] ?? null) : null;
+
+        if (!$falla) {
+            return null;
+        }
+
+        $detalle = $falla['detail'] ?? [];
+        $texto = $detalle['faultString'] ?? ($detalle['message'] ?? ($falla['message'] ?? ''));
+        $codigo = $detalle['detail']['Fault']['FaultCode'] ?? ($falla['code'] ?? '');
+
+        return trim("{$codigo} {$texto}") ?: 'sin detalle';
     }
 }

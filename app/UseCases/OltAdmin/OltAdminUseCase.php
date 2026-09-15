@@ -833,6 +833,23 @@ class OltAdminUseCase
                 if ($gestion) {
                     $pasos[] = $gestion;
                 }
+
+                // Aprovisionamiento: WAN, WiFi y cuenta del equipo cuando
+                // aparezca en el TR-069, si la empresa lo tiene encendido.
+                try {
+                    $aprovisionamiento = \App\Services\Red\AprovisionamientoDeOnt::programar(
+                        $oltId, $data['fsp'], $ontId, (string) ($data['serial'] ?? ''),
+                        isset($data['user_data_id']) ? (int) $data['user_data_id'] : null,
+                        $vlan, (array) ($data['aprovisionar'] ?? [])
+                    );
+
+                    if ($aprovisionamiento) {
+                        $pasos[] = $aprovisionamiento;
+                    }
+                } catch (\Throwable $e) {
+                    \Log::warning('[Aprovisionamiento] No se pudo programar', ['olt' => $oltId, 'fsp' => $data['fsp'], 'ont' => $ontId, 'error' => $e->getMessage()]);
+                    $pasos[] = ['paso' => 'Aprovisionamiento del equipo', 'ok' => false, 'detalle' => 'No se pudo programar: ' . $e->getMessage()];
+                }
             }
 
             // Cuando falla se muestra lo que dijo la OLT: "Error al registrar

@@ -576,6 +576,12 @@ class EquiposDelAcs
         return array_values(array_filter($conexiones, fn ($c) => $c['ip'] || $c['estado'] || $c['usuario']));
     }
 
+    /** Las redes WiFi de un documento del ACS, con sus rutas (lo usa el aprovisionamiento). @return list<array<string,mixed>> */
+    public static function redesWifi(array $d): array
+    {
+        return self::wifi($d, isset($d['InternetGatewayDevice']) ? 'InternetGatewayDevice' : 'Device');
+    }
+
     /** @return list<array<string,mixed>> */
     private static function wifi(array $d, string $raiz): array
     {
