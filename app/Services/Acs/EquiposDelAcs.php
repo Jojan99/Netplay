@@ -587,6 +587,13 @@ class EquiposDelAcs
     {
         $redes = [];
 
+        // Huawei guarda la clave WPA en PreSharedKey.1.PreSharedKey (en texto,
+        // no en hexadecimal): KeyPassphrase existe pero el equipo no la usa, y
+        // escribir ahí respondía bien sin cambiar nada (YONATHAN_GALAO). La rama
+        // PreSharedKey muchas veces no está leída, así que se va por la marca.
+        $huawei = ($d['_deviceId']['_OUI'] ?? '') === '00259E'
+            || str_contains(strtoupper((string) ($d['_deviceId']['_Manufacturer'] ?? '')), 'HUAWEI');
+
         if ($raiz === 'InternetGatewayDevice') {
             foreach (self::hijos($d, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration') as $i) {
                 $b = "InternetGatewayDevice.LANDevice.1.WLANConfiguration.{$i}";
@@ -597,7 +604,8 @@ class EquiposDelAcs
                     'indice'    => (int) $i,
                     'ssid'      => self::v($d, "{$b}.SSID"),
                     'activo'    => self::booleano(self::v($d, "{$b}.Enable")),
-                    'clave'     => (self::v($d, "{$b}.KeyPassphrase") ?: self::v($d, "{$b}.PreSharedKey.1.KeyPassphrase")) ?: null,
+                    'clave'     => (self::v($d, "{$b}.KeyPassphrase") ?: self::v($d, "{$b}.PreSharedKey.1.KeyPassphrase")
+                        ?: ($huawei ? self::v($d, "{$b}.PreSharedKey.1.PreSharedKey") : null)) ?: null,
                     'banda'     => self::banda(self::v($d, "{$b}.OperatingFrequencyBand"), $estandar, (int) $i),
                     'estandar'  => $estandar,
                     'canal'     => self::v($d, "{$b}.Channel"),
@@ -607,8 +615,9 @@ class EquiposDelAcs
                     'conectados' => self::entero(self::v($d, "{$b}.TotalAssociations")),
                     'leido_en'  => self::marca($d, "{$b}.SSID"),
                     'ruta_ssid' => "{$b}.SSID",
-                    'ruta_clave' => $conPsk ? "{$b}.PreSharedKey.1.KeyPassphrase"
-                        : (self::existe($d, "{$b}.KeyPassphrase") ? "{$b}.KeyPassphrase" : null),
+                    'ruta_clave' => $huawei ? "{$b}.PreSharedKey.1.PreSharedKey"
+                        : ($conPsk ? "{$b}.PreSharedKey.1.KeyPassphrase"
+                        : (self::existe($d, "{$b}.KeyPassphrase") ? "{$b}.KeyPassphrase" : null)),
                     'ruta_canal' => self::existe($d, "{$b}.Channel") ? "{$b}.Channel" : null,
                     'ruta_canal_auto' => self::existe($d, "{$b}.AutoChannelEnable") ? "{$b}.AutoChannelEnable" : null,
                 ];
