@@ -67,8 +67,11 @@ class PlataformaController extends Controller
             'message' => 'OK',
             'error'   => 0,
             'data'    => [
-                'moneda'  => config('plataforma.moneda', 'COP'),
-                'planes'  => config('plataforma.planes', []),
+                'moneda'        => config('plataforma.moneda', 'COP'),
+                'prueba_dias'   => (int) config('plataforma.prueba_dias', 0),
+                'nota_precios'  => config('plataforma.nota_precios', ''),
+                'incluye_todos' => config('plataforma.incluye_todos', []),
+                'planes'        => config('plataforma.planes', []),
                 'modulos' => $modulos,
             ],
         ]);

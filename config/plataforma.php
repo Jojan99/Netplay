@@ -33,55 +33,70 @@ return [
     /**
      * Planes que se muestran en netvula.com.
      *
-     * precio_mensual en pesos colombianos; null muestra "Consultanos". Los
-     * límites son informativos: todavía no se aplican en el panel.
+     * Todos los planes traen todas las funciones: sólo cambia cuántos clientes
+     * activos caben. Precios en pesos colombianos, más IVA; null muestra
+     * "Consultanos". El tope de clientes y la prueba todavía no se aplican en
+     * el panel: son lo que ofrece la página.
      */
     'moneda' => 'COP',
+
+    'prueba_dias' => 15,
+
+    'nota_precios' => 'Precios mensuales en pesos colombianos, más IVA. Con pago anual, 2 meses gratis.',
+
+    /** Lo que trae cualquier plan. */
+    'incluye_todos' => [
+        'Clientes, planes, contratos, instalaciones y traslados',
+        'Facturación, cartera, abonos y cortes automáticos por mora',
+        'Pasarela de pago en línea',
+        'OLT Huawei y C-Data: autorizar ONT, señal, perfiles y VLAN',
+        'MikroTik: PPPoE, colas y control de ancho de banda',
+        'TR-069: WiFi, reinicio y consumo del equipo del cliente',
+        'CRM de WhatsApp: bandeja del equipo, avisos y campañas',
+        'Portal de clientes con tu nombre y tu logo',
+        'Tickets, mapa de técnicos, inventario y empleados',
+        'Alertas de caída de red al grupo de WhatsApp',
+    ],
 
     'planes' => [
         [
             'clave'          => 'arranque',
             'nombre'         => 'Arranque',
             'para'           => 'ISP que empieza o se pasa de hojas de cálculo',
-            'precio_mensual' => null,
+            'precio_mensual' => 79000,
+            'precio_anual'   => 790000,
             'clientes'       => 300,
             'destacado'      => false,
             'incluye'        => [
-                'Clientes, planes, contratos e instalaciones',
-                'Facturación, cartera y reporte de pagos',
-                'Portal de clientes con tu nombre y logo',
-                'Tickets de soporte y mapa de técnicos',
-                '1 línea de WhatsApp para avisos y cobros',
+                'Todas las funciones de la plataforma',
+                'Soporte por WhatsApp y correo',
             ],
         ],
         [
             'clave'          => 'operador',
             'nombre'         => 'Operador',
-            'para'           => 'Red FTTH con OLT y MikroTik en producción',
-            'precio_mensual' => null,
+            'para'           => 'Red FTTH con OLT y MikroTik en crecimiento',
+            'precio_mensual' => 249000,
+            'precio_anual'   => 2490000,
             'clientes'       => 1500,
             'destacado'      => true,
             'incluye'        => [
-                'Todo lo de Arranque',
-                'OLT Huawei y C-Data: autorizar, señal y perfiles',
-                'MikroTik: PPPoE, colas y cortes por mora',
-                'TR-069: WiFi, reinicio y consumo del equipo del cliente',
-                'CRM de WhatsApp con varias líneas y campañas',
-                'Pasarela de pago en línea',
+                'Todas las funciones de la plataforma',
+                'Migración de tus clientes incluida',
+                'Soporte prioritario por WhatsApp',
             ],
         ],
         [
             'clave'          => 'red',
             'nombre'         => 'Red completa',
             'para'           => 'Varias OLT, sedes y equipos de trabajo',
-            'precio_mensual' => null,
+            'precio_mensual' => 499000,
+            'precio_anual'   => 4990000,
             'clientes'       => null,
             'destacado'      => false,
             'incluye'        => [
-                'Todo lo de Operador',
-                'Clientes y OLT sin tope',
-                'Servidor TR-069 propio o el de la plataforma',
-                'Alertas de caída de red al grupo de WhatsApp',
+                'Todas las funciones de la plataforma',
+                'Migración de tus clientes incluida',
                 'Acompañamiento en la puesta en marcha',
             ],
         ],
