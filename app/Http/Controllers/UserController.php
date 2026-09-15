@@ -22,6 +22,12 @@ use App\UseCases\User\Interfaces\GetTrazaFactureUseCaseInterface;
 
 class UserController extends Controller
 {
+    /** Registro de clientes paginado en la base, con conteo por estado. */
+    public function lista(Request $request, \App\Services\Clientes\ListaDeClientes $lista): object
+    {
+        $pagina = $lista->pagina($request->only(['page', 'per_page', 'estado', 'q', 'cliente_id']));
+        return standardApiReponse('ok', $pagina, ApiResponseConstants::SUCCESS);
+    }
 
 
     /**
