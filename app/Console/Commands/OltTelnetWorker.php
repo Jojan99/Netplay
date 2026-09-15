@@ -373,7 +373,10 @@ class OltTelnetWorker extends Command
             'prepararVlanDeGestion' => method_exists($this->driver, 'prepararVlanDeGestion')
                                        ? $this->driver->prepararVlanDeGestion((int) $p['vlan'], (string) $p['uplink']) : null,
             'darGestionAOnt'    => method_exists($this->driver, 'darGestionAOnt')
-                                       ? $this->driver->darGestionAOnt($p['fsp'], (int) $p['ont_id'], (int) $p['vlan'], (int) $p['service_port']) : null,
+                                       ? $this->driver->darGestionAOnt($p['fsp'], (int) $p['ont_id'], (int) $p['vlan'], (int) $p['service_port'],
+                                           // Igual que en OltTelnetDispatcher (conexión directa): sin esto
+                                           // la opción de pisar conexiones ajenas no llegaba al driver.
+                                           array_map('intval', (array) ($p['vlans_cliente'] ?? [])), (bool) ($p['pisar_ajenas'] ?? false)) : null,
             'perfilDeOnt'       => method_exists($this->driver, 'perfilDeOnt')
                                        ? $this->driver->perfilDeOnt((string) $p['fsp'], (int) $p['ont_id']) : null,
             'perfilesDeLinea'   => method_exists($this->driver, 'perfilesDeLinea')
