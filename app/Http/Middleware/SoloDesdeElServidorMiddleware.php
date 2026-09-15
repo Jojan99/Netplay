@@ -21,7 +21,8 @@ class SoloDesdeElServidorMiddleware
 
         $permitidas = array_filter(array_map('trim', array_merge(
             ['127.0.0.1', '::1'],
-            explode(',', (string) env('IPS_DEL_SERVIDOR', '181.48.150.43'))
+            // De config y no de env(): con la configuración cacheada env() da null.
+            explode(',', (string) config('services.servidor.ips', '181.48.150.43'))
         )));
 
         if (!in_array($origen, $permitidas, true)) {

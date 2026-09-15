@@ -13,7 +13,7 @@ class WhatsAppApiService
 
     public function __construct()
     {
-        $this->baseUrl   = rtrim(config('services.netplay_whatsapp.base_url', 'http://181.48.150.43:3001/crm'), '/');
+        $this->baseUrl   = rtrim(config('services.netplay_whatsapp.base_url', 'http://127.0.0.1:3001/crm'), '/');
         // Quitar el sufijo /crm para tener la raíz del servicio
         $this->baseUrl   = preg_replace('#/crm$#', '', $this->baseUrl);
         // Sin valor por defecto: la clave maestra vive en el .env, no en el código.

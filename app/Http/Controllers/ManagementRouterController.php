@@ -567,7 +567,7 @@ class ManagementRouterController extends Controller
 
     public function getCpuStatus()
     {
-        $host = '181.48.150.43';     // Reemplazar con la IP correcta
+        $host = (string) config('services.servidor.ssh_host', '181.48.150.43'); // SERVIDOR_SSH_HOST en el .env
         $port = 22;                // Puerto SSH, por defecto 22
         $username = 'root';        // Reemplazar con el usuario SSH
         $password = 'admin';       // Reemplazar con la contraseña SSH
@@ -758,7 +758,7 @@ class ManagementRouterController extends Controller
 
     public function getOntPort()
     {
-        $host = '181.48.150.43';     // Reemplazar con la IP correcta
+        $host = (string) config('services.servidor.ssh_host', '181.48.150.43'); // SERVIDOR_SSH_HOST en el .env
         $port = 22;                // Puerto SSH, por defecto 22
         $username = 'root';        // Reemplazar con el usuario SSH
         $password = 'admin';    // Reemplazar con la contraseña SSH
@@ -918,7 +918,7 @@ class ManagementRouterController extends Controller
         OltDataRequest $oltDataRequest
     ) {
       
-        $host = '181.48.150.43';     // Reemplazar con la IP correcta
+        $host = (string) config('services.servidor.ssh_host', '181.48.150.43'); // SERVIDOR_SSH_HOST en el .env
         $port = 22;                // Puerto SSH, por defecto 22
         $username = 'root';        // Reemplazar con el usuario SSH
         $password = 'admin';    // Reemplazar con la contraseña SSH

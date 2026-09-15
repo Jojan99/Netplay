@@ -49,11 +49,21 @@ return [
     
 ],
 
+// El propio servidor: su IP pública y a dónde se entra por SSH para las
+// consultas viejas de la OLT. Van en el .env para que cambiar de servidor no
+// obligue a tocar el código. Los valores por defecto son los del servidor
+// original (181.48.150.43), para que nada cambie donde el .env no los define.
+'servidor' => [
+    'ips'      => env('IPS_DEL_SERVIDOR', '181.48.150.43'),
+    'ssh_host' => env('SERVIDOR_SSH_HOST', '181.48.150.43'),
+],
+
 'netplay_whatsapp' => [
     'enabled'     => env('NETPLAY_WS_ENABLED', true),
     'api_key'     => env('NETPLAY_WS_API_KEY'),
     'instance_id' => env('NETPLAY_WS_INSTANCE_ID'),
-    'base_url'    => env('NETPLAY_WS_URL', 'http://181.48.150.43:3001/crm'),
+    // Corre en la misma máquina que Laravel.
+    'base_url'    => env('NETPLAY_WS_URL', 'http://127.0.0.1:3001/crm'),
     // Sin valor por defecto a propósito: la clave sale del .env y no del código.
     'master_key'  => env('NETPLAY_WS_MASTER_KEY'),
 ],

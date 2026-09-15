@@ -277,7 +277,7 @@ public function execute(array $payload): array
         if ($instanceId && $fromJid) {
             $jid = explode('@', $fromJid)[0] ?? null;
             if ($jid && $jid !== $phone) {
-                $waBaseUrl = rtrim(config('services.netplay_whatsapp.base_url', 'http://181.48.150.43:3001/crm'), '/');
+                $waBaseUrl = rtrim(config('services.netplay_whatsapp.base_url', 'http://127.0.0.1:3001/crm'), '/');
                 $registerUrl = str_replace('/crm', '', $waBaseUrl) . "/instances/{$instanceId}/register-phone";
                 // Este endpoint dejó de estar abierto: va firmado con la clave
                 // maestra, igual que el resto del aprovisionamiento.

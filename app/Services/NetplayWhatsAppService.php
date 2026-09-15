@@ -7,7 +7,7 @@ use App\Models\UserData;
 
 /**
  * Servicio de WhatsApp vía el servicio interno de Netplay (WhatsApp Web con QR).
- * URL base: http://181.48.150.43:3001/crm
+ * URL base: NETPLAY_WS_URL del .env (el servicio corre en la misma máquina, puerto 3001, ruta /crm)
  */
 class NetplayWhatsAppService
 {
@@ -35,7 +35,7 @@ class NetplayWhatsAppService
             $this->instanceId = config('services.netplay_whatsapp.instance_id', '');
         }
 
-        $this->baseUrl = rtrim(config('services.netplay_whatsapp.base_url', 'http://181.48.150.43:3001/crm'), '/');
+        $this->baseUrl = rtrim(config('services.netplay_whatsapp.base_url', 'http://127.0.0.1:3001/crm'), '/');
     }
 
     // ── TEXTO ────────────────────────────────────────
