@@ -729,7 +729,7 @@ class GestionRemotaDeOnt
         // y se bloqueaba con "hay que configurar la gestión en el equipo").
         $avance('Buscando el equipo en el servidor TR-069…');
         $registrada = OltOnt::where('olt_id', $oltId)->where('fsp', $fsp)->where('ont_id', $ontId)->first();
-        $enElAcs = $registrada ? $this->yaEnElAcs((string) $registrada->serial) : null;
+        $enElAcs = $registrada ? $this->yaEnElAcs((string) $registrada->serial, $registrada) : null;
 
         if ($enElAcs) {
             $registrada->update(['gestion_en' => now()]);
@@ -943,8 +943,13 @@ class GestionRemotaDeOnt
     /**
      * Si la ONT ya está en el servidor TR-069 y reportó hace poco, lo dice en
      * palabras; si no, null y se sigue por la OLT.
+     *
+     * El reporte tiene que ser posterior al alta: al reautorizar una ONT queda
+     * de cero y pierde su WAN de gestión, pero su último reporte sigue en el
+     * ACS. Con PRUEBA_TR (0/0/9:0) se dio por gestionada con un reporte de seis
+     * minutos antes y quedó sin ninguna conexión.
      */
-    private function yaEnElAcs(string $serial): ?string
+    private function yaEnElAcs(string $serial, ?OltOnt $ont = null): ?string
     {
         if (trim($serial) === '') {
             return null;
@@ -962,6 +967,14 @@ class GestionRemotaDeOnt
         $ultimo = $equipo['ultimo_reporte'] ?? null;
 
         if (!$ultimo || \Carbon\Carbon::parse($ultimo)->lt(now()->subDays(self::REPORTE_VIGENTE_DIAS))) {
+            return null;
+        }
+
+        // Dos minutos de margen: el alta y el reporte pueden cruzarse.
+        $alta = collect([$ont?->created_at, $ont?->synced_at, $ont?->updated_at])
+            ->filter()->max();
+
+        if ($alta && \Carbon\Carbon::parse($ultimo)->lt(\Carbon\Carbon::parse($alta)->subMinutes(2))) {
             return null;
         }
 

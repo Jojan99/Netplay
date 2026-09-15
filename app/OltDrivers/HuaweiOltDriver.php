@@ -155,7 +155,10 @@ class HuaweiOltDriver implements OltDriverInterface
                 Log::info('[OLT] La OLT estaba ocupada, reintentando el alta', [
                     'fsp' => $fsp, 'intento' => $intentos + 1,
                 ]);
-                sleep(4);
+                // Espera creciente: guardar en flash le lleva más que unos
+                // segundos, y con 4 fijos el alta se rechazaba igual. Que falle
+                // deja al operador reautorizando, y ahí la ONT pierde su WAN.
+                sleep(4 * $intentos);
                 $this->resetToPrompt();
             }
 
@@ -175,7 +178,7 @@ class HuaweiOltDriver implements OltDriverInterface
 
             $ocupada = stripos($output, 'System is busy') !== false;
             $intentos++;
-        } while ($ocupada && $intentos < 3);
+        } while ($ocupada && $intentos < 5);
 
         Log::debug('HuaweiOLT registerONT: response', [
             'fsp'    => $fsp,
