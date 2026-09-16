@@ -98,7 +98,21 @@ class AprovisionamientoDeOnt
     {
         return Aprovisionamiento::where('company_id', $this->companyId)
             ->latest('id')->limit($cuantos)->get()
-            ->map(fn (Aprovisionamiento $a) => [
+            ->map(fn (Aprovisionamiento $a) => $this->fila($a))->all();
+    }
+
+    /** Uno solo, para seguirlo desde la ventana de tareas. */
+    public function uno(int $id): ?array
+    {
+        $a = Aprovisionamiento::where('company_id', $this->companyId)->find($id);
+
+        return $a ? $this->fila($a) : null;
+    }
+
+    /** @return array<string,mixed> */
+    private function fila(Aprovisionamiento $a): array
+    {
+        return [
                 'id'         => $a->id,
                 'olt_id'     => $a->olt_id,
                 'ont'        => "{$a->fsp}:{$a->ont_id}",
@@ -112,7 +126,7 @@ class AprovisionamientoDeOnt
                 'pasos'      => $a->pasos ?? [],
                 'creado'     => $a->created_at,
                 'listo_en'   => $a->listo_en,
-            ])->all();
+        ];
     }
 
     /**
@@ -243,9 +257,10 @@ class AprovisionamientoDeOnt
      * IP fija, la MAC en el MikroTik: su WiFi y su cuenta no se tocan. Si la ONT
      * ya está en el TR-069 se aplica sin esperar otro reporte.
      *
-     * @return string|null lo que se le dice al operador, o null si no aplica
+     * @return array{texto:string, id:?int}|null lo que se le dice al operador y el
+     *         aprovisionamiento creado, o null si no aplica
      */
-    public static function reaplicarConexion(int $companyId, int $userId): ?string
+    public static function reaplicarConexion(int $companyId, int $userId): ?array
     {
         $g = GestionRemota::where('company_id', $companyId)->first();
 
@@ -278,7 +293,7 @@ class AprovisionamientoDeOnt
         [$wan, $aviso] = $yo->wanDelCliente($cliente, $vlan ?: null, $pedido);
 
         if (!$wan) {
-            return $aviso ? "La ONT no se reconfiguró sola: {$aviso}" : null;
+            return $aviso ? ['texto' => "La ONT no se reconfiguró sola: {$aviso}", 'id' => null] : null;
         }
 
         Aprovisionamiento::where('company_id', $companyId)->where('serial', $ont->serial)
@@ -294,7 +309,7 @@ class AprovisionamientoDeOnt
             $enAcs = null;
         }
 
-        Aprovisionamiento::create([
+        $nuevo = Aprovisionamiento::create([
             'company_id' => $companyId,
             'olt_id'     => $ont->olt_id,
             'fsp'        => $ont->fsp,
@@ -308,7 +323,7 @@ class AprovisionamientoDeOnt
             'detalle'    => $enAcs ? 'Aplicando la conexión nueva…' : 'Esperando que el equipo aparezca en el TR-069…',
         ]);
 
-        return 'La ONT se reconfigura sola en uno o dos minutos: ' . self::resumenWan($wan) . '.';
+        return ['texto' => 'La ONT se reconfigura sola en uno o dos minutos: ' . self::resumenWan($wan) . '.', 'id' => $nuevo->id];
     }
 
     /** @return array{id:int, nombre:string, nombres:string, apellidos:string, tipo:string, pppoe_usuario:?string, ip:?string}|null */

@@ -268,18 +268,21 @@ class ManagementRouterController extends Controller
 
         // Con la ONT en el TR-069, el equipo se reconfigura solo: sin esto había
         // que ir al equipo o reautorizarlo para que tomara la conexión nueva.
+        $aprovisionamiento = null;
+
         if ($r['ok']) {
             try {
                 $extra = \App\Services\Red\AprovisionamientoDeOnt::reaplicarConexion((int) $companyId, $userId);
                 if ($extra) {
-                    $r['mensaje'] = preg_replace('/ Tiene que (reconectar|reiniciar)[^.]*\./', '', $r['mensaje']) . ' ' . $extra;
+                    $r['mensaje'] = preg_replace('/ Tiene que (reconectar|reiniciar)[^.]*\./', '', $r['mensaje']) . ' ' . $extra['texto'];
+                    $aprovisionamiento = $extra['id'];
                 }
             } catch (\Throwable $e) {
                 \Log::warning('[Aprovisionamiento] No se pudo programar tras cambiar la conexión', ['user' => $userId, 'error' => $e->getMessage()]);
             }
         }
 
-        return standardApiReponse($r['mensaje'], null, $r['ok'] ? 0 : 1, JsonResponse::HTTP_OK);
+        return standardApiReponse($r['mensaje'], ['aprovisionamiento' => $aprovisionamiento], $r['ok'] ? 0 : 1, JsonResponse::HTTP_OK);
     }
 
     /** Qué hace falta decidir para montar el servidor PPPoE. */
@@ -494,7 +497,8 @@ class ManagementRouterController extends Controller
                 try {
                     $extra = \App\Services\Red\AprovisionamientoDeOnt::reaplicarConexion((int) getSessionCompanyId(), (int) $gestionUserRequest['service_id']);
                     if ($extra) {
-                        $result['message'] .= '. ' . $extra;
+                        $result['message'] .= '. ' . $extra['texto'];
+                        $result['data'] = (array) ($result['data'] ?? []) + ['aprovisionamiento' => $extra['id']];
                     }
                 } catch (\Throwable $e) {
                     \Log::warning('[Aprovisionamiento] No se pudo programar tras migrar la IP', ['error' => $e->getMessage()]);

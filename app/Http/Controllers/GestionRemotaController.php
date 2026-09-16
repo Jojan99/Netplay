@@ -35,6 +35,15 @@ class GestionRemotaController extends Controller
         return standardApiReponse('Aprovisionamiento', ['ajustes' => $s->ajustes(), 'ultimos' => $s->ultimos()], 0, JsonResponse::HTTP_OK);
     }
 
+    public function verAprovisionamiento(int $id): JsonResponse
+    {
+        $fila = (new \App\Services\Red\AprovisionamientoDeOnt((int) getSessionCompanyId()))->uno($id);
+
+        return $fila
+            ? standardApiReponse('Aprovisionamiento', $fila, 0, JsonResponse::HTTP_OK)
+            : standardApiReponse('No existe ese aprovisionamiento', null, 1, JsonResponse::HTTP_NOT_FOUND);
+    }
+
     public function reintentarAprovisionamiento(int $id): JsonResponse
     {
         try {

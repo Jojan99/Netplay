@@ -722,6 +722,13 @@ class OltAdminUseCase
             'detalle' => $alta['message'],
         ];
 
+        // Los pasos del alta (acceso remoto, aprovisionamiento) también: antes
+        // se perdían y la pantalla no podía seguirlos.
+        $pasos = array_merge($pasos, array_values(array_filter(
+            (array) ($alta['data']['pasos'] ?? []),
+            fn ($p) => !str_starts_with((string) ($p['paso'] ?? ''), 'Autorizar la ONT')
+        )));
+
         return [
             'status'  => $alta['status'],
             'message' => $alta['message'],
@@ -847,8 +854,8 @@ class OltAdminUseCase
                     // (y la MAC con IP fija); su WiFi y su cuenta quedan como están.
                     $companyDeLaOlt = (int) (OltAdmin::find($oltId)?->company_id ?: 0);
                     $aprovisionamiento = !empty($data['_trasladada']) && !empty($data['user_data_id'])
-                        ? (($texto = \App\Services\Red\AprovisionamientoDeOnt::reaplicarConexion($companyDeLaOlt, (int) $data['user_data_id']))
-                            ? ['paso' => 'Conexión del cliente', 'ok' => true, 'detalle' => $texto] : null)
+                        ? (($re = \App\Services\Red\AprovisionamientoDeOnt::reaplicarConexion($companyDeLaOlt, (int) $data['user_data_id']))
+                            ? ['paso' => 'Conexión del cliente', 'ok' => (bool) $re['id'], 'omitido' => !$re['id'], 'detalle' => $re['texto'], 'aprovisionamiento' => $re['id']] : null)
                         : \App\Services\Red\AprovisionamientoDeOnt::programar(
                             $oltId, $data['fsp'], $ontId, (string) ($data['serial'] ?? ''),
                             isset($data['user_data_id']) ? (int) $data['user_data_id'] : null,

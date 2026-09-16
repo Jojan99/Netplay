@@ -146,6 +146,7 @@ Route::prefix('management')->middleware('empresa.propia')->group(function () {
         Route::get('/diagnostico',  [\App\Http\Controllers\GestionRemotaController::class, 'diagnostico']);
         Route::get('/aprovisionamiento', [\App\Http\Controllers\GestionRemotaController::class, 'aprovisionamiento']);
         Route::put('/aprovisionamiento', [\App\Http\Controllers\GestionRemotaController::class, 'guardarAprovisionamiento']);
+        Route::get('/aprovisionamiento/{id}', [\App\Http\Controllers\GestionRemotaController::class, 'verAprovisionamiento'])->whereNumber('id');
         Route::post('/aprovisionamiento/{id}/reintentar', [\App\Http\Controllers\GestionRemotaController::class, 'reintentarAprovisionamiento'])->whereNumber('id');
         Route::get('/tareas/{id}',        [\App\Http\Controllers\GestionRemotaController::class, 'tarea']);
         Route::post('/tareas/{id}/parar', [\App\Http\Controllers\GestionRemotaController::class, 'pararTarea']);
