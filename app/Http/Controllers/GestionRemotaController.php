@@ -44,6 +44,26 @@ class GestionRemotaController extends Controller
             : standardApiReponse('No existe ese aprovisionamiento', null, 1, JsonResponse::HTTP_NOT_FOUND);
     }
 
+    /** La conexión del cliente vista desde su ficha: aprovisionamiento y MAC en el router. */
+    public function aprovisionamientoDeCliente(int $userId): JsonResponse
+    {
+        $datos = (new \App\Services\Red\AprovisionamientoDeOnt((int) getSessionCompanyId()))->deCliente($userId);
+
+        return standardApiReponse('Conexión del cliente', $datos, 0, JsonResponse::HTTP_OK);
+    }
+
+    /** Vuelve a cargarle a la ONT la conexión que dice la ficha del cliente. */
+    public function reaplicarDeCliente(int $userId): JsonResponse
+    {
+        $r = \App\Services\Red\AprovisionamientoDeOnt::reaplicarConexion((int) getSessionCompanyId(), $userId);
+
+        if (!$r) {
+            return standardApiReponse('No se puede: el aprovisionamiento está apagado o el cliente no tiene ONT.', null, 1, JsonResponse::HTTP_OK);
+        }
+
+        return standardApiReponse($r['texto'], ['aprovisionamiento' => $r['id']], $r['id'] ? 0 : 1, JsonResponse::HTTP_OK);
+    }
+
     public function reintentarAprovisionamiento(int $id): JsonResponse
     {
         try {

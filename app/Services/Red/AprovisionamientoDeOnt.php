@@ -101,6 +101,51 @@ class AprovisionamientoDeOnt
             ->map(fn (Aprovisionamiento $a) => $this->fila($a))->all();
     }
 
+    /**
+     * Lo que la ficha del cliente muestra de su conexión: si el aprovisionamiento
+     * está encendido, el último que se le aplicó a su ONT y, con IP fija, qué
+     * MAC tiene cargada en el ARP del MikroTik.
+     *
+     * @return array{habilitado:bool, tiene_ont:bool, ultimo:?array, arp:?array}
+     */
+    public function deCliente(int $userId): array
+    {
+        $g = GestionRemota::where('company_id', $this->companyId)->first();
+
+        $tieneOnt = DB::table('olt_onts as o')->join('olt_admins as a', 'a.id', '=', 'o.olt_id')
+            ->where('a.company_id', $this->companyId)->where('o.user_data_id', $userId)->exists();
+
+        $ultimo = Aprovisionamiento::where('company_id', $this->companyId)->where('user_id', $userId)
+            ->where('estado', '<>', 'reemplazado')->latest('id')->first();
+
+        $arp = null;
+        $cliente = $this->cliente($userId);
+
+        if ($cliente && $cliente['tipo'] === 'static' && $cliente['ip']) {
+            try {
+                $api = $this->routerDelCliente($userId);
+                $fila = $api ? ($api->query((new \RouterOS\Query('/ip/arp/print'))->where('address', $cliente['ip']))->read()[0] ?? null) : null;
+                $mac = strtoupper((string) ($fila['mac-address'] ?? ''));
+                $arp = [
+                    'ip'       => $cliente['ip'],
+                    'mac'      => $mac ?: null,
+                    'interfaz' => $fila['interface'] ?? null,
+                    // Con el ARP en reply-only, sin MAC real el router no le contesta.
+                    'sin_mac'  => !$fila || $mac === '' || $mac === '00:00:00:00:00:00',
+                ];
+            } catch (\Throwable $e) {
+                $arp = ['ip' => $cliente['ip'], 'mac' => null, 'interfaz' => null, 'sin_mac' => null, 'error' => 'No se pudo leer el router'];
+            }
+        }
+
+        return [
+            'habilitado' => (bool) ($g?->aprovisionar && $g->aprov_wan),
+            'tiene_ont'  => $tieneOnt,
+            'ultimo'     => $ultimo ? $this->fila($ultimo) : null,
+            'arp'        => $arp,
+        ];
+    }
+
     /** Uno solo, para seguirlo desde la ventana de tareas. */
     public function uno(int $id): ?array
     {
