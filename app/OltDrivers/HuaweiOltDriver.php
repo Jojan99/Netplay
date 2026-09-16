@@ -254,23 +254,38 @@ class HuaweiOltDriver implements OltDriverInterface
 
     public function getLineProfiles(): array
     {
-        $this->ssh->write("display ont-lineprofile gpon all\n");
-        $output = $this->collectPaged();
-        return $this->parseProfileList($output);
+        return $this->parseProfileList($this->runCommand('display ont-lineprofile gpon all'), 'ont-lineprofile');
     }
 
     public function getSrvProfiles(): array
     {
-        $this->ssh->write("display ont-srvprofile gpon all\n");
-        $output = $this->collectPaged();
-        return $this->parseProfileList($output);
+        return $this->parseProfileList($this->runCommand('display ont-srvprofile gpon all'), 'ont-srvprofile');
     }
 
-    private function parseProfileList(string $raw): array
+    /**
+     * La lista de perfiles de una salida de la OLT.
+     *
+     * Las dos lecturas escribían el comando sin limpiar el prompt: la sesión
+     * quedaba corrida y la segunda leía la salida de la primera, así que los
+     * perfiles de servicio se guardaban con los nombres de los de línea (el
+     * panel llegó a mostrar el 901, que es de línea). Ahora van por runCommand,
+     * que resetea el prompt, y además se exige que la salida sea la del comando
+     * pedido: si no, se falla en vez de guardar la lista equivocada.
+     */
+    private function parseProfileList(string $raw, string $esperado = ''): array
     {
+        $limpio = preg_replace('/\x1B\[[0-9;]*[A-Za-z]/', '', $raw);
+
+        if ($esperado !== '' && !str_contains($limpio, $esperado)) {
+            throw new \RuntimeException(
+                "La OLT no devolvió la lista de {$esperado}: respondió otra cosa. Probá de nuevo en unos segundos."
+            );
+        }
+
         $profiles = [];
-        foreach (explode("\n", $raw) as $line) {
-            $line = trim(preg_replace('/\x1B\[[0-9;]*[A-Za-z]/', '', $line));
+
+        foreach (explode("\n", $limpio) as $line) {
+            $line = trim($line);
             // Match lines that start with a number: "  10  line-profile_10  ..."
             if (preg_match('/^\s*(\d+)\s+(\S+)/', $line, $m)) {
                 $profiles[] = [
@@ -279,6 +294,7 @@ class HuaweiOltDriver implements OltDriverInterface
                 ];
             }
         }
+
         return $profiles;
     }
 

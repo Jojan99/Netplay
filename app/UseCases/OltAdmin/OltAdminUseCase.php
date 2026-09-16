@@ -590,17 +590,22 @@ class OltAdminUseCase
             $srvProfiles  = $this->dispatcher->dispatch($oltId, 'getSrvProfiles');
             $now = now();
 
-            foreach ($lineProfiles as $p) {
-                OltProfile::updateOrCreate(
-                    ['olt_id' => $oltId, 'type' => 'line', 'profile_id' => $p['id']],
-                    ['profile_name' => $p['name'], 'synced_at' => $now]
-                );
-            }
-            foreach ($srvProfiles as $p) {
-                OltProfile::updateOrCreate(
-                    ['olt_id' => $oltId, 'type' => 'srv', 'profile_id' => $p['id']],
-                    ['profile_name' => $p['name'], 'synced_at' => $now]
-                );
+            foreach (['line' => $lineProfiles, 'srv' => $srvProfiles] as $tipo => $lista) {
+                foreach ($lista as $p) {
+                    OltProfile::updateOrCreate(
+                        ['olt_id' => $oltId, 'type' => $tipo, 'profile_id' => $p['id']],
+                        ['profile_name' => $p['name'], 'synced_at' => $now]
+                    );
+                }
+
+                // Los que ya no están en la OLT se borran: si no, una lectura
+                // equivocada dejaba perfiles inventados para siempre (la lista
+                // de servicio quedó con los de línea).
+                if ($lista) {
+                    OltProfile::where('olt_id', $oltId)->where('type', $tipo)
+                        ->whereNotIn('profile_id', array_column($lista, 'id'))
+                        ->delete();
+                }
             }
 
             return ['status' => 0, 'message' => 'Perfiles sincronizados', 'data' => [
