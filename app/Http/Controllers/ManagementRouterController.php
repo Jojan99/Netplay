@@ -313,7 +313,7 @@ class ManagementRouterController extends Controller
         }
 
         $r = (new \App\Services\Red\ConfigurarServidorPppoe($conexion, $token))->montar(
-            $request->only(['interfaz', 'pool', 'rango', 'gateway', 'perfil', 'servicio'])
+            $request->only(['interfaz', 'pool', 'rango', 'gateway', 'perfil', 'servicio', 'perfiles', 'salida'])
         );
 
         return standardApiReponse(
@@ -322,6 +322,50 @@ class ManagementRouterController extends Controller
             $r['ok'] ? 0 : 1,
             JsonResponse::HTTP_OK
         );
+    }
+
+    /** Qué VLAN ya atienden PPPoE y qué se crearía en las que faltan. */
+    public function pppoePropuesta(Request $request, \App\Managers\Interfaces\ConectionRouterManagerInterface $conexion): object
+    {
+        $token = $this->tokenDelRouter($request);
+
+        if (!$token) {
+            return standardApiReponse('No hay router configurado', null, 1, JsonResponse::HTTP_OK);
+        }
+
+        try {
+            $datos = (new \App\Services\Red\ConfigurarServidorPppoe($conexion, $token))->propuestaPorVlan();
+
+            return standardApiReponse('Propuesta de PPPoE por VLAN', $datos, 0, JsonResponse::HTTP_OK);
+        } catch (\Throwable $e) {
+            return standardApiReponse('No se pudo leer el router: ' . $e->getMessage(), null, 1, JsonResponse::HTTP_OK);
+        }
+    }
+
+    /** Crea el PPPoE de las VLAN elegidas, cada una con su rango. */
+    public function pppoeAutomatico(Request $request, \App\Managers\Interfaces\ConectionRouterManagerInterface $conexion): object
+    {
+        $request->validate([
+            'interfaces'   => 'array',
+            'interfaces.*' => 'string|max:64',
+            'corregir'     => 'array',
+            'corregir.*'   => 'string|max:64',
+        ]);
+
+        $token = $this->tokenDelRouter($request);
+
+        if (!$token) {
+            return standardApiReponse('No hay router configurado', null, 1, JsonResponse::HTTP_OK);
+        }
+
+        try {
+            $r = (new \App\Services\Red\ConfigurarServidorPppoe($conexion, $token))
+                ->montarPorVlan((array) $request->input('interfaces', []), (array) $request->input('corregir', []));
+
+            return standardApiReponse($r['ok'] ? 'PPPoE listo' : 'Quedaron cosas sin hacer', $r, $r['ok'] ? 0 : 1, JsonResponse::HTTP_OK);
+        } catch (\Throwable $e) {
+            return standardApiReponse('No se pudo leer el router: ' . $e->getMessage(), null, 1, JsonResponse::HTTP_OK);
+        }
     }
 
     /** Qué se llevaría por delante desmontar PPPoE. */

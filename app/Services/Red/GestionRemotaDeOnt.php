@@ -89,11 +89,13 @@ class GestionRemotaDeOnt
         // VLAN y redes que ya usa el router.
         $vlans = [];
         $interfaces = [];
+        $porInterfaz = [];
 
         foreach ($api->query(new Query('/interface/vlan/print'))->read() as $v) {
             $vlans[] = (int) $v['vlan-id'];
             $padre = $v['interface'] ?? '';
             $interfaces[$padre] = ($interfaces[$padre] ?? 0) + 1;
+            $porInterfaz[$padre][] = (int) $v['vlan-id'];
         }
 
         $redesUsadas = array_map(
@@ -138,6 +140,8 @@ class GestionRemotaDeOnt
             'redes_libres'   => $this->redesLibres($redesUsadas),
             'interfaz'       => array_key_first($interfaces),
             'interfaces'     => $interfaces,
+            // Qué VLAN lleva cada una, para reconocerla sin entrar al router.
+            'vlans_por_interfaz' => array_map(function ($l) { sort($l); return $l; }, $porInterfaz),
             'router_id'      => (int) $router->id,
             'olts'           => $porOlt,
             'url_acs'        => (string) config('services.genieacs.cwmp_url'),

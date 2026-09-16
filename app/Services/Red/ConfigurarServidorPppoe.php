@@ -225,6 +225,270 @@ class ConfigurarServidorPppoe
         }
     }
 
+    /* ── Automático: un servidor por VLAN ─────────────────────────────────── */
+
+    /**
+     * Lo que haría falta para que cada VLAN de clientes atienda PPPoE.
+     *
+     * Es el mismo armado que ya tienen las VLAN montadas a mano: un rango
+     * 10.X.0.0/22 propio, un perfil que reparte de ahí y un servidor sobre la
+     * VLAN. Se proponen segundos octetos que no usa nadie en el router, así
+     * dos VLAN nunca reparten las mismas IP.
+     *
+     * @return array<string,mixed>
+     */
+    public function propuestaPorVlan(): array
+    {
+        $api = $this->api();
+
+        $vlans      = $this->leer($api, '/interface/vlan/print');
+        $direcciones = $this->leer($api, '/ip/address/print');
+        $pools      = $this->leer($api, '/ip/pool/print');
+        $perfiles   = $this->leer($api, '/ppp/profile/print');
+        $servidores = $this->leer($api, '/interface/pppoe-server/server/print');
+        $secrets    = $this->leer($api, '/ppp/secret/print');
+
+        $gestion = (int) \App\Models\GestionRemota::where('company_id', getSessionCompanyId())->value('vlan');
+        $ocupados = $this->octetosUsados($pools, $direcciones);
+
+        $porNombre = fn (array $lista, string $nombre) => collect($lista)->first(fn ($x) => ($x['name'] ?? '') === $nombre);
+        $usan = fn (string $perfil) => count(array_filter($secrets, fn ($x) => ($x['profile'] ?? '') === $perfil));
+
+        $filas = [];
+
+        foreach ($vlans as $v) {
+            $nombre = $v['name'] ?? '';
+            $id     = (int) ($v['vlan-id'] ?? 0);
+
+            // La de gestión es sólo para hablar con las ONT: ahí no va PPPoE.
+            if ($nombre === '' || ($v['disabled'] ?? 'false') === 'true' || ($gestion && $id === $gestion)) {
+                continue;
+            }
+
+            $red = collect($direcciones)->first(fn ($a) => ($a['interface'] ?? '') === $nombre)['address'] ?? null;
+            $srv = collect($servidores)->first(fn ($x) => ($x['interface'] ?? '') === $nombre);
+
+            $fila = [
+                'interfaz' => $nombre,
+                'vlan'     => $id,
+                'sobre'    => $v['interface'] ?? '',
+                'red'      => $red,
+            ];
+
+            if ($srv) {
+                $perfil = $srv['default-profile'] ?? '';
+                $pool   = $porNombre($perfiles, $perfil)['remote-address'] ?? '';
+
+                $filas[] = $fila + [
+                    'tiene' => true,
+                    'servicio' => $srv['service-name'] ?? '',
+                    'perfil'   => $perfil,
+                    'rango'    => $porNombre($pools, $pool)['ranges'] ?? $pool,
+                    'activo'   => ($srv['disabled'] ?? 'false') !== 'true',
+                ];
+                continue;
+            }
+
+            // Si ya quedó armado su perfil de otra vez (sin el servidor), se
+            // reusa con su rango: otro rango dejaría dos para la misma VLAN.
+            $previo = $porNombre($perfiles, "perfil-pppoe-{$id}");
+            $poolPrevio = $previo ? $porNombre($pools, (string) ($previo['remote-address'] ?? '')) : null;
+
+            if ($previo && $poolPrevio && !empty($previo['local-address'])) {
+                $filas[] = $fila + [
+                    'tiene'    => false,
+                    'reusa'    => true,
+                    'servicio' => "pppoe-netplay-{$id}",
+                    'perfil'   => $previo['name'],
+                    'pool'     => $poolPrevio['name'],
+                    'rango'    => $poolPrevio['ranges'] ?? '',
+                    'gateway'  => $previo['local-address'],
+                ];
+                continue;
+            }
+
+            $octeto = $this->octetoLibre($ocupados);
+            $ocupados[] = $octeto;
+
+            $filas[] = $fila + [
+                'reusa'    => false,
+                'tiene'    => false,
+                'servicio' => "pppoe-netplay-{$id}",
+                'perfil'   => "perfil-pppoe-{$id}",
+                'pool'     => "pool-pppoe-vlan-{$id}",
+                'rango'    => "10.{$octeto}.0.2-10.{$octeto}.3.254",
+                'gateway'  => "10.{$octeto}.0.1",
+            ];
+        }
+
+        usort($filas, fn ($a, $b) => $a['vlan'] <=> $b['vlan']);
+
+        // Una velocidad sin unidad el MikroTik la toma en bits por segundo:
+        // «200/200» deja al cliente conectado pero sin poder navegar.
+        $sinUnidad = [];
+
+        foreach ($perfiles as $p) {
+            $rate = trim((string) ($p['rate-limit'] ?? ''));
+
+            if ($rate !== '' && preg_match('#^\d+(/\d+)?$#', $rate)) {
+                $sinUnidad[] = [
+                    'perfil'    => $p['name'] ?? '',
+                    'actual'    => $rate,
+                    'corregida' => ServicioPppoe::velocidadParaElRouter($rate),
+                    'usan'      => $usan($p['name'] ?? ''),
+                ];
+            }
+        }
+
+        $wan = $this->interfacesDeInternet($api);
+
+        return [
+            'vlans'      => $filas,
+            'sin_unidad' => $sinUnidad,
+            'nat'        => [
+                'general' => $this->hayNatGeneral($api, $wan),
+                'wan'     => $wan,
+            ],
+        ];
+    }
+
+    /**
+     * Crea el PPPoE de las VLAN elegidas con lo que propone
+     * {@see propuestaPorVlan()}. Lo recalcula acá: los rangos no se toman de
+     * lo que manda el navegador.
+     *
+     * @param  list<string>  $interfaces
+     * @param  list<string>  $corregir  perfiles con la velocidad sin unidad
+     * @return array{ok:bool, pasos:list<array{paso:string, ok:bool, detalle:string}>}
+     */
+    public function montarPorVlan(array $interfaces, array $corregir = []): array
+    {
+        $propuesta = $this->propuestaPorVlan();
+        $router    = \App\Models\ConectionRouter::where('token', $this->token)->first();
+        $pasos     = [];
+
+        foreach ($propuesta['vlans'] as $v) {
+            if ($v['tiene'] || !in_array($v['interfaz'], $interfaces, true)) {
+                continue;
+            }
+
+            try {
+                // Lo que ya estaba se deja como está: sólo falta el servidor.
+                if (!$v['reusa']) {
+                    $this->pool($v['pool'], $v['rango']);
+                    $this->perfil($v['perfil'], $v['gateway'], $v['pool']);
+                }
+                $this->servidor($v['servicio'], $v['interfaz'], $v['perfil']);
+
+                $detalle = "Reparte {$v['rango']} con el perfil {$v['perfil']}.";
+
+                // Su red va al túnel: si no, el TR-069 no les llega a esas ONT.
+                $tunel = $router ? \App\Services\Vpn\RedesEnElTunel::asegurar($router, $v['rango']) : null;
+
+                if ($tunel && !$tunel['ok'] && $tunel['detalle'] !== '') {
+                    $detalle .= ' Atención, túnel VPN: ' . $tunel['detalle'];
+                }
+
+                // Sin una salida general a internet, cada rango necesita la suya.
+                if (!$propuesta['nat']['general'] && $propuesta['nat']['wan']) {
+                    $this->nat($v['pool'], $propuesta['nat']['wan'][0]);
+                    $detalle .= " Sale a internet por {$propuesta['nat']['wan'][0]}.";
+                }
+
+                $pasos[] = ['paso' => "PPPoE en la VLAN {$v['vlan']}", 'ok' => true, 'detalle' => $detalle];
+            } catch (\Throwable $e) {
+                $pasos[] = ['paso' => "PPPoE en la VLAN {$v['vlan']}", 'ok' => false, 'detalle' => 'El router lo rechazó: ' . $e->getMessage()];
+            }
+        }
+
+        foreach ($propuesta['sin_unidad'] as $p) {
+            if (!in_array($p['perfil'], $corregir, true)) {
+                continue;
+            }
+
+            try {
+                $api = $this->api();
+                $q = new Query('/ppp/profile/set');
+                $q->equal('.id', $this->buscar($api, '/ppp/profile/print', 'name', $p['perfil']) ?? '');
+                $q->equal('rate-limit', $p['corregida']);
+                $api->query($q)->read();
+
+                $pasos[] = ['paso' => "Velocidad de {$p['perfil']}", 'ok' => true, 'detalle' => "De {$p['actual']} a {$p['corregida']}. Los conectados la toman al reconectarse."];
+            } catch (\Throwable $e) {
+                $pasos[] = ['paso' => "Velocidad de {$p['perfil']}", 'ok' => false, 'detalle' => 'El router lo rechazó: ' . $e->getMessage()];
+            }
+        }
+
+        Log::info('[PPPoE] Automático por VLAN', ['interfaces' => $interfaces, 'corregir' => $corregir]);
+
+        return ['ok' => !collect($pasos)->contains('ok', false), 'pasos' => $pasos];
+    }
+
+    /** Segundos octetos de 10.X que ya usa algún rango o dirección. */
+    private function octetosUsados(array $pools, array $direcciones): array
+    {
+        $texto = implode(' ', array_merge(
+            array_map(fn ($p) => $p['ranges'] ?? '', $pools),
+            array_map(fn ($a) => $a['address'] ?? '', $direcciones),
+        ));
+
+        preg_match_all('#\b10\.(\d{1,3})\.#', $texto, $m);
+
+        return array_map('intval', $m[1]);
+    }
+
+    private function octetoLibre(array $ocupados): int
+    {
+        for ($x = 20; $x < 250; $x++) {
+            if (!in_array($x, $ocupados, true)) {
+                return $x;
+            }
+        }
+
+        throw new \RuntimeException('No quedan redes 10.X libres en el router.');
+    }
+
+    /** Las interfaces por donde salen las rutas por defecto. */
+    private function interfacesDeInternet($api): array
+    {
+        $wan = [];
+
+        foreach ($this->leer($api, '/ip/route/print') as $r) {
+            if (($r['dst-address'] ?? '') !== '0.0.0.0/0') {
+                continue;
+            }
+
+            // «181.48.150.41%ether1»: la interfaz va después del %.
+            $gw = (string) ($r['immediate-gw'] ?? $r['gateway'] ?? '');
+
+            if (str_contains($gw, '%')) {
+                $wan[] = substr($gw, strrpos($gw, '%') + 1);
+            }
+        }
+
+        return array_values(array_unique($wan));
+    }
+
+    /** Si ya hay un NAT que saca a internet a cualquier red, sin mirar el origen. */
+    private function hayNatGeneral($api, array $wan): bool
+    {
+        foreach ($this->leer($api, '/ip/firewall/nat/print') as $n) {
+            if (($n['chain'] ?? '') !== 'srcnat' || ($n['disabled'] ?? 'false') === 'true') {
+                continue;
+            }
+
+            if (!in_array($n['action'] ?? '', ['masquerade', 'src-nat'], true) || !empty($n['src-address'])) {
+                continue;
+            }
+
+            if (!empty($n['out-interface-list']) || in_array($n['out-interface'] ?? '', $wan, true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /* ── Piezas ───────────────────────────────────────────────────────────── */
 
     /** El rango de direcciones que se les reparte a los clientes. */
