@@ -37,6 +37,11 @@ class AprovisionamientoDeOnt
     private const WLAN = 'InternetGatewayDevice.LANDevice.1.WLANConfiguration';
     private const CUENTAS = 'InternetGatewayDevice.UserInterface.X_HW_WebUserInfo';
 
+    /** Veces que se vuelve a intentar solo un paso que falló porque el equipo tardó. */
+    private const REINTENTOS = 6;
+    private const SIN_RESPUESTA = 'no respondió al momento';
+    private const NO_APARECE = 'el equipo dijo que lo creó pero no aparece';
+
     public function __construct(private int $companyId) {}
 
     // ── Ajustes ───────────────────────────────────────────────────────────
@@ -124,6 +129,7 @@ class AprovisionamientoDeOnt
         }
 
         if ($a->acs_id) {
+            $a->datos = array_merge($a->datos, ['reintentos' => 0]);
             $a->fill(['estado' => 'aplicando', 'intentos' => 0, 'listo_en' => null, 'detalle' => 'Reintentando…',
                 'pasos' => [['paso' => 'Reintento pedido desde el panel', 'ok' => true, 'detalle' => $a->acs_id]]]);
         } else {
@@ -437,22 +443,56 @@ class AprovisionamientoDeOnt
         $huawei = ($d['_deviceId']['_OUI'] ?? '') === '00259E'
             || str_contains(strtoupper((string) ($d['_deviceId']['_Manufacturer'] ?? '')), 'HUAWEI');
 
-        $pasos = $a->pasos ?? [];
+        // Lo que ya quedó hecho en una vuelta anterior no se repite; lo que
+        // falló porque el equipo tardó (no mandó su WiFi o sus cuentas, no
+        // respondió a tiempo) se pide y se vuelve a intentar solo al minuto
+        // siguiente. Antes quedaba "Con fallas" y había que tocar Reintentar.
+        $datos = $a->datos;
+        $resultados = $datos['resultados'] ?? [];
+        $base = array_values(array_filter($a->pasos ?? [], fn ($p) => !isset($p['clave'])));
 
-        if (!empty($a->datos['wan'])) {
-            $pasos[] = $this->aplicarWan($acs, $a, $d, $huawei && $igd);
-        }
-        if (!empty($a->datos['wifi'])) {
-            $pasos[] = $this->aplicarWifi($acs, $a, $d);
-        }
-        if (!empty($a->datos['admin'])) {
-            $pasos[] = $this->aplicarCuenta($acs, $a, $d, $huawei && $igd);
+        $pasos = [
+            'wan'    => fn () => $this->aplicarWan($acs, $a, $d, $huawei && $igd),
+            'wifi'   => fn () => $this->aplicarWifi($acs, $a, $d),
+            'cuenta' => fn () => $this->aplicarCuenta($acs, $a, $d, $huawei && $igd),
+        ];
+        $pedidos = ['wan' => !empty($datos['wan']), 'wifi' => !empty($datos['wifi']), 'cuenta' => !empty($datos['admin'])];
+        $pendienteDe = null;
+
+        foreach ($pasos as $clave => $aplicar) {
+            if (!$pedidos[$clave] || (($resultados[$clave]['ok'] ?? false) && empty($resultados[$clave]['reintentar']))) {
+                continue;
+            }
+
+            $r = $aplicar();
+            $resultados[$clave] = $r + ['clave' => $clave];
+            $pendienteDe ??= $r['reintentar'] ?? null;
         }
 
-        $mal = collect($pasos)->filter(fn ($p) => !$p['ok'] && empty($p['omitido']));
+        $datos['resultados'] = $resultados;
+        $lista = array_merge($base, array_values($resultados));
+
+        // Contador propio: el de "esperando su configuración" es otro.
+        $vuelta = (int) ($datos['reintentos'] ?? 0);
+
+        if ($pendienteDe && $vuelta < self::REINTENTOS) {
+            $datos['reintentos'] = ++$vuelta;
+            $this->refrescar($acs, (string) $a->acs_id, $igd, $pendienteDe);
+
+            $a->fill([
+                'datos'   => $datos,
+                'pasos'   => $lista,
+                'detalle' => "Esperando al equipo para terminar (intento {$vuelta} de " . self::REINTENTOS . ')…',
+            ])->save();
+
+            return;
+        }
+
+        $mal = collect($lista)->filter(fn ($p) => !$p['ok'] && empty($p['omitido']));
 
         $a->fill([
-            'pasos'    => $pasos,
+            'datos'    => $datos,
+            'pasos'    => $lista,
             'estado'   => $mal->isEmpty() ? 'listo' : 'con_errores',
             'detalle'  => $mal->isEmpty() ? 'Equipo aprovisionado.' : ($mal->count() === 1 ? 'Un paso no se aplicó.' : "{$mal->count()} pasos no se aplicaron."),
             'listo_en' => now(),
@@ -585,7 +625,7 @@ class AprovisionamientoDeOnt
 
                 if (!($r['hecha'] ?? false)) {
                     return ['paso' => $titulo, 'ok' => false,
-                        'detalle' => "No se pudo borrar la conexión anterior {$choca['nombre']} para crear la nueva. Reintentalo cuando el equipo esté en línea."];
+                        'detalle' => "No se pudo borrar la conexión anterior {$choca['nombre']} para crear la nueva.", 'reintentar' => self::WAN];
                 }
 
                 if ($soloEsa) {
@@ -607,7 +647,9 @@ class AprovisionamientoDeOnt
 
             if (!$conexion) {
                 return ['paso' => $titulo, 'ok' => false,
-                    'detalle' => 'No se pudo crear la conexión' . ($this->motivo ? " ({$this->motivo})" : '') . '. Reintentalo desde Acceso remoto o configurala a mano (' . self::resumenWan($wan) . ').' . $nota];
+                    'detalle' => 'No se pudo crear la conexión' . ($this->motivo ? " ({$this->motivo})" : '') . '. Si no se resuelve, configurala a mano (' . self::resumenWan($wan) . ').' . $nota,
+                    // Si el equipo sólo tardó se vuelve a intentar solo; si la rechazó, no.
+                    'reintentar' => in_array($this->motivo, ['', self::SIN_RESPUESTA, self::NO_APARECE], true) ? self::WAN : null];
             }
 
             $ruta = self::WAN . ".{$nueva}.{$objeto}.{$conexion}";
@@ -658,7 +700,7 @@ class AprovisionamientoDeOnt
         $redes = array_values(array_filter(EquiposDelAcs::redesWifi($d), fn ($r) => $r['activo'] !== false));
 
         if (!$redes) {
-            return ['paso' => $titulo, 'ok' => false, 'detalle' => 'El equipo no informó redes WiFi encendidas: no se cambió.'];
+            return ['paso' => $titulo, 'ok' => false, 'detalle' => 'El equipo no informó redes WiFi encendidas: no se cambió.', 'reintentar' => self::WLAN];
         }
 
         $valores = [];
@@ -700,7 +742,7 @@ class AprovisionamientoDeOnt
         $cuentas = self::hijos($d, self::CUENTAS);
 
         if (!$cuentas || !$g?->onu_admin_usuario || !$g->onu_admin_clave) {
-            return ['paso' => $titulo, 'ok' => false, 'omitido' => true, 'detalle' => 'El equipo no informó sus cuentas de acceso web: no se cambió.'];
+            return ['paso' => $titulo, 'ok' => false, 'omitido' => true, 'detalle' => 'El equipo no informó sus cuentas de acceso web: no se cambió.', 'reintentar' => 'InternetGatewayDevice.UserInterface'];
         }
 
         // La de nivel 0 es la de administración. Hay modelos que no informan el
@@ -752,13 +794,13 @@ class AprovisionamientoDeOnt
                 return (string) max(array_map('intval', $nuevas));
             }
 
-            $this->motivo = 'el equipo dijo que lo creó pero no aparece';
+            $this->motivo = self::NO_APARECE;
 
             return null;
         }
 
         if ($r['id'] ?? null) {
-            $this->motivo = $acs->fallaDeTarea($id, (string) $r['id']) ?? 'no respondió al momento';
+            $this->motivo = $acs->fallaDeTarea($id, (string) $r['id']) ?? self::SIN_RESPUESTA;
             $acs->borrarTarea((string) $r['id']);
         }
 
