@@ -447,8 +447,14 @@ class GestionRemotaDeOnt
             return ['estado' => 'sin_leer', 'detalle' => 'No se pudo leer el perfil.'];
         }
 
-        if ($perfil['modo'] !== 'VLAN' || !$perfil['gems']) {
+        if ($perfil['modo'] !== 'VLAN') {
             return ['estado' => 'no_soportado', 'detalle' => 'Reparte el tráfico por ' . ($perfil['modo'] ?: 'otro criterio') . ', no por VLAN: hay que revisarlo a mano.'];
+        }
+
+        // Antes los dos casos daban el mismo texto y salía «por VLAN, no por
+        // VLAN» en el perfil por defecto, que reparte por VLAN pero está vacío.
+        if (!$perfil['gems']) {
+            return ['estado' => 'no_soportado', 'detalle' => 'No tiene canales (GEM) configurados: hay que armarlo en la OLT antes de usarlo.'];
         }
 
         $vlans = [];
