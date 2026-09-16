@@ -237,6 +237,80 @@ class AprovisionamientoDeOnt
         ];
     }
 
+    /**
+     * Reaplica la conexión de un cliente que ya tiene ONT, después de cambiarle
+     * el tipo (PPPoE ↔ IP fija) o la IP desde su ficha. Sólo la conexión y, con
+     * IP fija, la MAC en el MikroTik: su WiFi y su cuenta no se tocan. Si la ONT
+     * ya está en el TR-069 se aplica sin esperar otro reporte.
+     *
+     * @return string|null lo que se le dice al operador, o null si no aplica
+     */
+    public static function reaplicarConexion(int $companyId, int $userId): ?string
+    {
+        $g = GestionRemota::where('company_id', $companyId)->first();
+
+        if (!$g?->aprovisionar || !$g->aprov_wan) {
+            return null;
+        }
+
+        $ont = DB::table('olt_onts as o')->join('olt_admins as a', 'a.id', '=', 'o.olt_id')
+            ->where('a.company_id', $companyId)->where('o.user_data_id', $userId)
+            ->orderByDesc('o.updated_at')->first(['o.olt_id', 'o.fsp', 'o.ont_id', 'o.serial', 'o.service_ports']);
+
+        if (!$ont || !$ont->serial) {
+            return null;
+        }
+
+        $yo = new self($companyId);
+        $cliente = $yo->cliente($userId);
+        $vlanGestion = (int) ($g->vlan ?: 0);
+        $vlan = collect(json_decode((string) $ont->service_ports, true) ?: [])
+            ->pluck('vlan')->map(fn ($v) => (int) $v)->first(fn ($v) => $v && $v !== $vlanGestion);
+
+        $pedido = [];
+
+        if ($cliente && $cliente['tipo'] === 'static' && $cliente['ip']) {
+            $api = $yo->routerDelCliente($userId);
+            $red = $api ? $yo->redEnElRouter($api, $cliente['ip']) : null;
+            $pedido = ['gateway' => $red['gateway'] ?? null, 'mascara' => isset($red['bits']) ? "/{$red['bits']}" : null];
+        }
+
+        [$wan, $aviso] = $yo->wanDelCliente($cliente, $vlan ?: null, $pedido);
+
+        if (!$wan) {
+            return $aviso ? "La ONT no se reconfiguró sola: {$aviso}" : null;
+        }
+
+        Aprovisionamiento::where('company_id', $companyId)->where('serial', $ont->serial)
+            ->whereIn('estado', ['esperando', 'aplicando'])
+            ->update(['estado' => 'reemplazado', 'detalle' => 'Se cambió la conexión del cliente.']);
+
+        try {
+            $crudo = strtoupper((string) preg_replace('/[^0-9A-Za-z]/', '', $ont->serial));
+            $enAcs = GenieAcs::deEmpresa($companyId)->dispositivos(
+                ['_deviceId._SerialNumber' => ['$in' => array_values(array_unique([$crudo, EquiposDelAcs::serial($ont->serial)]))]], ['_id']
+            )[0]['_id'] ?? null;
+        } catch (\Throwable) {
+            $enAcs = null;
+        }
+
+        Aprovisionamiento::create([
+            'company_id' => $companyId,
+            'olt_id'     => $ont->olt_id,
+            'fsp'        => $ont->fsp,
+            'ont_id'     => $ont->ont_id,
+            'serial'     => $ont->serial,
+            'user_id'    => $userId,
+            'datos'      => ['cliente' => $cliente['nombre'] ?? null, 'wan' => $wan, 'avisos' => [], 'origen' => 'cambio_de_conexion'],
+            'estado'     => $enAcs ? 'aplicando' : 'esperando',
+            'acs_id'     => $enAcs,
+            'pasos'      => $enAcs ? [['paso' => 'Cambio de conexión desde la ficha del cliente', 'ok' => true, 'detalle' => $enAcs]] : [],
+            'detalle'    => $enAcs ? 'Aplicando la conexión nueva…' : 'Esperando que el equipo aparezca en el TR-069…',
+        ]);
+
+        return 'La ONT se reconfigura sola en uno o dos minutos: ' . self::resumenWan($wan) . '.';
+    }
+
     /** @return array{id:int, nombre:string, nombres:string, apellidos:string, tipo:string, pppoe_usuario:?string, ip:?string}|null */
     private function cliente(int $userId): ?array
     {
@@ -453,14 +527,26 @@ class AprovisionamientoDeOnt
 
         $pasos = [
             'wan'    => fn () => $this->aplicarWan($acs, $a, $d, $huawei && $igd),
+            'mac'    => fn () => $this->registrarMac($a, $d),
             'wifi'   => fn () => $this->aplicarWifi($acs, $a, $d),
             'cuenta' => fn () => $this->aplicarCuenta($acs, $a, $d, $huawei && $igd),
         ];
-        $pedidos = ['wan' => !empty($datos['wan']), 'wifi' => !empty($datos['wifi']), 'cuenta' => !empty($datos['admin'])];
+        $pedidos = [
+            'wan'    => !empty($datos['wan']),
+            // Con IP fija el MikroTik sólo le contesta si tiene la MAC de su WAN.
+            'mac'    => ($datos['wan']['tipo'] ?? null) === 'static' && $huawei && $igd,
+            'wifi'   => !empty($datos['wifi']),
+            'cuenta' => !empty($datos['admin']),
+        ];
         $pendienteDe = null;
 
         foreach ($pasos as $clave => $aplicar) {
             if (!$pedidos[$clave] || (($resultados[$clave]['ok'] ?? false) && empty($resultados[$clave]['reintentar']))) {
+                continue;
+            }
+
+            // La MAC se lee de la conexión ya creada: antes no hay qué leer.
+            if ($clave === 'mac' && !($resultados['wan']['ok'] ?? false)) {
                 continue;
             }
 
@@ -763,6 +849,92 @@ class AprovisionamientoDeOnt
         ]]);
 
         return $this->resultado($acs, (string) $a->acs_id, $r, $titulo, "Usuario {$g->onu_admin_usuario} con la clave de la empresa");
+    }
+
+    /**
+     * Carga en el ARP del MikroTik la MAC de la WAN de IP fija del cliente.
+     *
+     * Las VLAN de clientes tienen el ARP en "reply-only": el router sólo le
+     * contesta a la IP si la entrada tiene la MAC real del equipo. El alta y
+     * los cambios de conexión la dejaban en 00:00:00:00:00:00 y el cliente
+     * nunca respondía.
+     */
+    private function registrarMac(Aprovisionamiento $a, array $d): array
+    {
+        $titulo = 'MAC en el MikroTik';
+        $wan = $a->datos['wan'];
+
+        $conexion = collect($this->conexiones($d))
+            ->first(fn ($c) => $c['objeto'] === 'WANIPConnection' && $c['vlan'] === (int) $wan['vlan']);
+        $mac = $conexion ? strtoupper((string) self::v($d, "{$conexion['ruta']}.MACAddress")) : '';
+
+        if (!preg_match('/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/', $mac) || $mac === '00:00:00:00:00:00') {
+            return ['paso' => $titulo, 'ok' => false, 'detalle' => 'El equipo todavía no informó la MAC de su conexión.', 'reintentar' => self::WAN];
+        }
+
+        $api = $this->routerDelCliente((int) $a->user_id);
+
+        if (!$api) {
+            return ['paso' => $titulo, 'ok' => false, 'detalle' => "No se pudo entrar al router del cliente: cargá a mano la MAC {$mac} para la IP {$wan['ip']}.", 'reintentar' => self::WAN];
+        }
+
+        try {
+            $entrada = $api->query((new \RouterOS\Query('/ip/arp/print'))->where('address', $wan['ip']))->read()[0] ?? null;
+
+            if ($entrada && ($entrada['dynamic'] ?? 'false') !== 'true') {
+                $api->query((new \RouterOS\Query('/ip/arp/set'))->equal('.id', $entrada['.id'])->equal('mac-address', $mac))->read();
+                $como = 'Se actualizó la entrada del ARP';
+            } else {
+                $red = $this->redEnElRouter($api, $wan['ip']);
+
+                if (!$red) {
+                    return ['paso' => $titulo, 'ok' => false, 'detalle' => "No se encontró en el router la red de {$wan['ip']}: cargá a mano la MAC {$mac}."];
+                }
+
+                $dni = (string) UserData::where('user_id', $a->user_id)->where('company_id', $this->companyId)->value('dni');
+                $api->query((new \RouterOS\Query('/ip/arp/add'))->equal('address', $wan['ip'])->equal('mac-address', $mac)
+                    ->equal('interface', $red['interfaz'])->equal('comment', $dni))->read();
+                $como = "Se creó la entrada del ARP en {$red['interfaz']}";
+            }
+        } catch (\Throwable $e) {
+            return ['paso' => $titulo, 'ok' => false, 'detalle' => 'No se pudo escribir en el MikroTik: ' . mb_substr($e->getMessage(), 0, 150), 'reintentar' => self::WAN];
+        }
+
+        return ['paso' => $titulo, 'ok' => true, 'detalle' => "{$como}: {$wan['ip']} con la MAC {$mac}."];
+    }
+
+    /** La conexión al router del cliente, o null si no hay. */
+    private function routerDelCliente(int $userId)
+    {
+        try {
+            $routerId = UserData::where('user_id', $userId)->where('company_id', $this->companyId)->value('router_id');
+            $token = DB::table('conection_routers')->where('company_id', $this->companyId)
+                ->when($routerId, fn ($q) => $q->where('id', $routerId))->orderBy('id')->value('token');
+
+            return $token ? app(\App\Managers\Interfaces\ConectionRouterManagerInterface::class)->conection($token) : null;
+        } catch (\Throwable $e) {
+            Log::info('[Aprovisionamiento] No se pudo entrar al router del cliente', ['user' => $userId, 'error' => $e->getMessage()]);
+
+            return null;
+        }
+    }
+
+    /** La red del router que contiene la IP: gateway, máscara e interfaz. @return array{gateway:string,bits:int,interfaz:string}|null */
+    private function redEnElRouter($api, string $ip): ?array
+    {
+        foreach ($api->query(new \RouterOS\Query('/ip/address/print'))->read() as $fila) {
+            if (($fila['disabled'] ?? 'false') === 'true' || !preg_match('#^(\d+\.\d+\.\d+\.\d+)/(\d+)$#', (string) ($fila['address'] ?? ''), $m)) {
+                continue;
+            }
+
+            $mascara = (-1 << (32 - (int) $m[2])) & 0xFFFFFFFF;
+
+            if ((ip2long($ip) & $mascara) === (ip2long($m[1]) & $mascara)) {
+                return ['gateway' => $m[1], 'bits' => (int) $m[2], 'interfaz' => (string) $fila['interface']];
+            }
+        }
+
+        return null;
     }
 
     /** Por qué no se pudo crear el último objeto, para contarlo en el paso. */

@@ -266,6 +266,19 @@ class ManagementRouterController extends Controller
             $request->only(['connection_type', 'pppoe_user', 'pppoe_password', 'pppoe_profile', 'ip', 'vlan'])
         );
 
+        // Con la ONT en el TR-069, el equipo se reconfigura solo: sin esto había
+        // que ir al equipo o reautorizarlo para que tomara la conexión nueva.
+        if ($r['ok']) {
+            try {
+                $extra = \App\Services\Red\AprovisionamientoDeOnt::reaplicarConexion((int) $companyId, $userId);
+                if ($extra) {
+                    $r['mensaje'] = preg_replace('/ Tiene que (reconectar|reiniciar)[^.]*\./', '', $r['mensaje']) . ' ' . $extra;
+                }
+            } catch (\Throwable $e) {
+                \Log::warning('[Aprovisionamiento] No se pudo programar tras cambiar la conexión', ['user' => $userId, 'error' => $e->getMessage()]);
+            }
+        }
+
         return standardApiReponse($r['mensaje'], null, $r['ok'] ? 0 : 1, JsonResponse::HTTP_OK);
     }
 
@@ -475,6 +488,18 @@ class ManagementRouterController extends Controller
     ): object {
         try {
             $result = $getIpAvaliblesUseCaseInterface->migrarIp($gestionUserRequest, $this->routerId($gestionUserRequest));
+
+            // La ONT toma la IP nueva sola si está en el TR-069.
+            if (($result['status'] ?? 1) === 0) {
+                try {
+                    $extra = \App\Services\Red\AprovisionamientoDeOnt::reaplicarConexion((int) getSessionCompanyId(), (int) $gestionUserRequest['service_id']);
+                    if ($extra) {
+                        $result['message'] .= '. ' . $extra;
+                    }
+                } catch (\Throwable $e) {
+                    \Log::warning('[Aprovisionamiento] No se pudo programar tras migrar la IP', ['error' => $e->getMessage()]);
+                }
+            }
         } catch (JWTException $e) {
             return standardApiReponse(
                 'Error al migrar IP: ' . $e->getMessage(),

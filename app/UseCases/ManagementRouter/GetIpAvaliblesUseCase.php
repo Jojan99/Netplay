@@ -411,8 +411,13 @@ public function registerIpInArp(string $ip, string $mac, string $vlan, string $c
             // 1️⃣ Eliminar ARP anterior del cliente (busca por comment = DNI)
             $query = new Query('/ip/arp/print');
             $query->where('comment', $dni);
-            $query->add('=.proplist=.id');
+            $query->add('=.proplist=.id,mac-address');
             $existing = $api->query($query)->read();
+
+            // El equipo es el mismo: su MAC también. Con 00:00:00:00:00:00 y el
+            // ARP en reply-only el router deja de contestarle.
+            $macAnterior = collect($existing)->pluck('mac-address')
+                ->first(fn ($m) => $m && $m !== '00:00:00:00:00:00') ?? '00:00:00:00:00:00';
 
             foreach ($existing as $entry) {
                 $del = new Query('/ip/arp/remove');
@@ -423,7 +428,7 @@ public function registerIpInArp(string $ip, string $mac, string $vlan, string $c
             // 2️⃣ Crear nuevo ARP con la nueva IP
             $query = new Query('/ip/arp/add');
             $query->equal('address', $newIp);
-            $query->equal('mac-address', '00:00:00:00:00:00');
+            $query->equal('mac-address', $macAnterior);
             $query->equal('interface', $vlan);
             $query->equal('comment', $dni);
             $api->query($query)->read();
