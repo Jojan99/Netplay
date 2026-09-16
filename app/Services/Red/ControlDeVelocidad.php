@@ -247,111 +247,25 @@ class ControlDeVelocidad
     }
 
     /**
-     * Los perfiles PPP del plan, uno por cada perfil base que usen sus clientes.
+     * El perfil PPP del plan: uno solo, sin importar la VLAN del cliente.
      *
-     * Un perfil PPP no es sólo velocidad: también dice de qué pool sale la IP
-     * del cliente. Si se crea uno sólo con rate-limit, el cliente se queda sin
-     * IP y la sesión no levanta —el router lo registra como "port-error"—, o
-     * sea que el cliente se queda sin internet. Por eso cada perfil del plan
-     * se hace copiando el que el cliente ya usaba, que en esta red cambia
-     * según la VLAN por donde entra.
+     * Un perfil PPP no es sólo velocidad: también dice de qué pool sale la IP.
+     * Sin eso la sesión no levanta ("port-error"). Antes se hacía un perfil
+     * por plan y por cada perfil de VLAN que usaran sus clientes; ahora todos
+     * los de plan reparten del rango de planes ({@see PerfilesPorPlan}) y la
+     * VLAN la pone el servidor PPPoE por donde entra cada uno.
      *
-     * @return array<string,string>  perfil base → perfil del plan
+     * @return array<string,string>  '*' → perfil del plan
      */
     private function perfilesDelPlan($api, object $plan): array
     {
-        $limite = $this->rateLimit($plan);
-        $mapa   = [];
+        $router = ConectionRouter::where('company_id', $this->companyId)->orderBy('id')->first();
+        $rango  = PerfilesPorPlan::asegurarRango($api, $router);
+        $nombre = $plan->pppoe_profile ?: PerfilesPorPlan::nombreDelPerfil($plan->plan_name);
 
-        foreach ($this->basesDeLosClientes($api, $plan) as $base => $datos) {
-            $sufijo = $base === $this->basePorDefecto($api) ? '' : '-' . trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($base)), '-');
-            $nombre = 'plan-' . $this->slug($plan) . $sufijo;
+        PerfilesPorPlan::asegurarPerfil($api, $nombre, $this->rateLimit($plan), $rango);
 
-            $existe = $api->query((new Query('/ppp/profile/print'))->where('name', $nombre)->add('=.proplist=.id'))->read();
-            $q = new Query($existe ? '/ppp/profile/set' : '/ppp/profile/add');
-
-            if ($existe) {
-                $q->equal('.id', $existe[0]['.id']);
-            }
-
-            $q->equal('name', $nombre);
-            $q->equal('rate-limit', $limite);
-            $q->equal('comment', "Netplay velocidad · base {$base}");
-
-            // Lo que hace que la sesión funcione: de dónde sale la IP y con qué
-            // DNS. Se copia tal cual del perfil que el cliente ya tenía.
-            foreach (['local-address', 'remote-address', 'dns-server', 'change-tcp-mss', 'use-encryption', 'only-one'] as $campo) {
-                if (($datos[$campo] ?? '') !== '') {
-                    $q->equal($campo, $datos[$campo]);
-                }
-            }
-
-            $api->query($q)->read();
-            $mapa[$base] = $nombre;
-        }
-
-        return $mapa;
-    }
-
-    /**
-     * Qué perfiles usan hoy los clientes del plan, con sus datos.
-     *
-     * @return array<string, array<string,mixed>>
-     */
-    private function basesDeLosClientes($api, object $plan): array
-    {
-        $perfiles = [];
-
-        foreach ($api->query(new Query('/ppp/profile/print'))->read() as $p) {
-            $perfiles[$p['name']] = $p;
-        }
-
-        $usuarios = DB::table('user_data')
-            ->where('company_id', $this->companyId)->where('active', 1)
-            ->where('internet_plans_id', $plan->id)
-            ->where('connection_type', 'pppoe')
-            ->whereNotNull('pppoe_user')
-            ->pluck('pppoe_user');
-
-        $bases = [];
-
-        foreach ($usuarios as $usuario) {
-            $secret = $api->query((new Query('/ppp/secret/print'))->where('name', $usuario))->read();
-            $actual = $secret[0]['profile'] ?? null;
-
-            if (!$actual || !isset($perfiles[$actual])) {
-                continue;
-            }
-
-            // Si ya está en un perfil nuestro, su base quedó anotada al crearlo.
-            if (preg_match('/base (\S+)/', $perfiles[$actual]['comment'] ?? '', $m) && isset($perfiles[$m[1]])) {
-                $actual = $m[1];
-            }
-
-            $bases[$actual] = $perfiles[$actual];
-        }
-
-        // Sin clientes todavía, se usa el perfil con el que atiende el servidor.
-        if (!$bases) {
-            $porDefecto = $this->basePorDefecto($api);
-            $bases[$porDefecto] = $perfiles[$porDefecto] ?? [];
-        }
-
-        return $bases;
-    }
-
-    /** El perfil con el que el servidor PPPoE atiende por defecto. */
-    private function basePorDefecto($api): string
-    {
-        static $cache = null;
-
-        if ($cache !== null) {
-            return $cache;
-        }
-
-        $servidores = $api->query(new Query('/interface/pppoe-server/server/print'))->read();
-
-        return $cache = $servidores[0]['default-profile'] ?? 'default';
+        return ['*' => $nombre];
     }
 
     /**
@@ -380,10 +294,8 @@ class ControlDeVelocidad
                     continue;
                 }
 
-                // Cada cliente va al perfil del plan que sale de su perfil
-                // actual: así conserva su pool de IP y su VLAN.
-                $actual = $secret[0]['profile'] ?? '';
-                $perfil = $perfiles[$actual] ?? (in_array($actual, $perfiles, true) ? $actual : reset($perfiles));
+                // Un perfil por plan: la VLAN la da el servidor por donde entra.
+                $perfil = reset($perfiles);
 
                 if (!$perfil) {
                     $avisos[] = "No se pudo decidir el perfil de {$c->pppoe_user}.";

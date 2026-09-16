@@ -184,6 +184,12 @@ class ConfigurarServidorPppoe
             $this->servidor($servicio, $interfaz, $perfil);
             $pasos[] = "Servidor PPPoE escuchando en «{$interfaz}».";
 
+            // Los perfiles de plan sacan IP del rango de planes, no del de esta
+            // VLAN: el mismo plan sirve a clientes de cualquier VLAN.
+            $rangoPlanes = !empty($datos['perfiles'])
+                ? PerfilesPorPlan::asegurarRango($this->api(), \App\Models\ConectionRouter::where('token', $this->token)->first())
+                : null;
+
             foreach ($datos['perfiles'] ?? [] as $plan) {
                 $nombre = trim((string) ($plan['perfil'] ?? ''));
                 $rate   = trim((string) ($plan['velocidad'] ?? ''));
@@ -192,7 +198,7 @@ class ConfigurarServidorPppoe
                     continue;
                 }
 
-                $this->perfilDePlan($nombre, $gateway, $pool, $rate);
+                PerfilesPorPlan::asegurarPerfil($this->api(), $nombre, ServicioPppoe::velocidadParaElRouter($rate), $rangoPlanes);
 
                 // Queda anotado en el plan: al dar de alta un cliente PPPoE se
                 // elige solo el perfil que le corresponde.
@@ -242,7 +248,7 @@ class ConfigurarServidorPppoe
         $pools      = $this->leer($api, '/ip/pool/print');
         $perfiles   = $this->leer($api, '/ppp/profile/print');
         $servidores = $this->leer($api, '/interface/pppoe-server/server/print');
-        $octeto     = $this->octetoLibre($this->octetosUsados($pools, $this->leer($api, '/ip/address/print')));
+        $octeto     = self::octetoLibre(self::octetosUsados($pools, $this->leer($api, '/ip/address/print')));
 
         $libre = function (string $base, array $lista, string $campo) {
             $usados = array_map(fn ($x) => strtolower((string) ($x[$campo] ?? '')), $lista);
@@ -430,7 +436,7 @@ class ConfigurarServidorPppoe
         $secrets    = $this->leer($api, '/ppp/secret/print');
 
         $gestion = (int) \App\Models\GestionRemota::where('company_id', getSessionCompanyId())->value('vlan');
-        $ocupados = $this->octetosUsados($pools, $direcciones);
+        $ocupados = self::octetosUsados($pools, $direcciones);
 
         $porNombre = fn (array $lista, string $nombre) => collect($lista)->first(fn ($x) => ($x['name'] ?? '') === $nombre);
         $usan = fn (string $perfil) => count(array_filter($secrets, fn ($x) => ($x['profile'] ?? '') === $perfil));
@@ -488,7 +494,7 @@ class ConfigurarServidorPppoe
                 continue;
             }
 
-            $octeto = $this->octetoLibre($ocupados);
+            $octeto = self::octetoLibre($ocupados);
             $ocupados[] = $octeto;
 
             $filas[] = $fila + [
@@ -606,7 +612,7 @@ class ConfigurarServidorPppoe
     }
 
     /** Segundos octetos de 10.X que ya usa algún rango o dirección. */
-    private function octetosUsados(array $pools, array $direcciones): array
+    public static function octetosUsados(array $pools, array $direcciones): array
     {
         $texto = implode(' ', array_merge(
             array_map(fn ($p) => $p['ranges'] ?? '', $pools),
@@ -618,7 +624,7 @@ class ConfigurarServidorPppoe
         return array_map('intval', $m[1]);
     }
 
-    private function octetoLibre(array $ocupados): int
+    public static function octetoLibre(array $ocupados): int
     {
         for ($x = 20; $x < 250; $x++) {
             if (!in_array($x, $ocupados, true)) {
@@ -887,38 +893,6 @@ class ConfigurarServidorPppoe
         } catch (\Throwable $e) {
             // Que no se pueda cortar la sesión no impide borrar la credencial.
         }
-    }
-
-    /**
-     * El perfil de un plan: mismo pool y puerta de enlace que el base, pero
-     * con la velocidad del plan.
-     */
-    private function perfilDePlan(string $nombre, string $gateway, string $pool, string $rate): void
-    {
-        $api = $this->api();
-        $id  = $this->buscar($api, '/ppp/profile/print', 'name', $nombre);
-
-        $q = new Query($id ? '/ppp/profile/set' : '/ppp/profile/add');
-        if ($id) $q->equal('.id', $id);
-        $q->equal('name', $nombre);
-
-        // Si el perfil ya existía sólo se le ajusta la velocidad. Antes se le
-        // cambiaba también el rango y la puerta: montar PPPoE en una VLAN nueva
-        // dejaba los perfiles de todos los planes repartiendo IP de esa VLAN.
-        if (!$id) {
-            $q->equal('local-address', $gateway);
-            $q->equal('remote-address', $pool);
-            $q->equal('only-one', 'yes');
-        }
-
-        // Sin unidad, el MikroTik entiende bits por segundo: se completan las megas.
-        $rate = ServicioPppoe::velocidadParaElRouter($rate);
-
-        if ($rate !== '') {
-            $q->equal('rate-limit', $rate);
-        }
-
-        $api->query($q)->read();
     }
 
     /**
