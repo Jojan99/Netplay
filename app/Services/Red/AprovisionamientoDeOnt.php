@@ -569,9 +569,31 @@ class AprovisionamientoDeOnt
         } else {
             $choca = $conexiones->first(fn ($c) => $c['vlan'] === (int) $wan['vlan'] || str_contains($c['servicios'], 'INTERNET'));
 
+            // Una conexión de internet de otro tipo en la VLAN del cliente es la
+            // que tenía antes de cambiarle la conexión (PRUEBA_TR pasó de IP fija
+            // a PPPoE y seguía con la IP fija): se reemplaza por la que dice su
+            // ficha. Las de otras VLAN ya se borraron arriba como ajenas.
             if ($choca) {
-                return ['paso' => $titulo, 'ok' => false,
-                    'detalle' => "El equipo ya tiene la conexión {$choca['nombre']} de otro tipo para internet: no se creó otra encima. Borrala en el equipo o revisá el tipo de conexión del cliente."];
+                $grupo = (string) $choca['dispositivo'];
+                $soloEsa = $todas->where('dispositivo', $grupo)->count() === 1;
+
+                try {
+                    $r = $acs->tarea((string) $a->acs_id, ['name' => 'deleteObject', 'objectName' => $soloEsa ? self::WAN . ".{$grupo}" : $choca['ruta']]);
+                } catch (\Throwable $e) {
+                    $r = ['hecha' => false];
+                }
+
+                if (!($r['hecha'] ?? false)) {
+                    return ['paso' => $titulo, 'ok' => false,
+                        'detalle' => "No se pudo borrar la conexión anterior {$choca['nombre']} para crear la nueva. Reintentalo cuando el equipo esté en línea."];
+                }
+
+                if ($soloEsa) {
+                    $quitados[] = $grupo;
+                }
+
+                $todas = $todas->reject(fn ($c) => $c['ruta'] === $choca['ruta']);
+                $nota .= " Se reemplazó la conexión anterior {$choca['nombre']}.";
             }
 
             // Un grupo vacío (de un intento anterior o de una conexión borrada) se
