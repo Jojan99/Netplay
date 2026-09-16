@@ -68,6 +68,7 @@ Route::prefix('management')->middleware('empresa.propia')->group(function () {
         Route::get('pppoe/opciones',  [ManagementRouterController::class, 'pppoeOpciones']);
         Route::post('pppoe/montar',   [ManagementRouterController::class, 'pppoeMontar']);
         Route::get('pppoe/propuesta',   [ManagementRouterController::class, 'pppoePropuesta']);
+        Route::post('pppoe/validar',    [ManagementRouterController::class, 'pppoeValidar']);
         Route::post('pppoe/automatico', [ManagementRouterController::class, 'pppoeAutomatico']);
         Route::get('pppoe/que-se-borra', [ManagementRouterController::class, 'pppoeQueSeBorra']);
         Route::post('pppoe/desmontar',   [ManagementRouterController::class, 'pppoeDesmontar']);

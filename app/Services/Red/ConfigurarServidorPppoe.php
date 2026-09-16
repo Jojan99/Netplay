@@ -59,14 +59,13 @@ class ConfigurarServidorPppoe
             'salidas' => $this->salidas($api),
             // Un perfil por plan: en PPPoE la velocidad la fija el perfil.
             'planes'  => $this->planesPropuestos(),
-            // Un rango que no suele chocar con lo que ya haya armado.
-            'sugerencia' => [
-                'pool'           => 'pool-pppoe',
-                'rango'          => '10.20.0.2-10.20.3.254',
-                'gateway'        => '10.20.0.1',
-                'perfil'         => 'perfil-pppoe',
-                'servicio'       => 'pppoe-netplay',
-            ],
+            // Las direcciones del router: el rango nuevo no puede pisarlas.
+            'direcciones' => array_values(array_filter(array_map(
+                fn ($a) => ['red' => $a['address'] ?? '', 'interfaz' => $a['interface'] ?? ''],
+                $this->leer($api, '/ip/address/print')
+            ), fn ($a) => $a['red'] !== '' && !str_ends_with($a['red'], '/32'))),
+            // Nombres y rango libres: proponer algo que ya existe lo pisaría.
+            'sugerencia' => $this->sugerenciaLibre($api),
         ];
     }
 
@@ -159,6 +158,12 @@ class ConfigurarServidorPppoe
         $perfil   = trim((string) ($datos['perfil'] ?? 'perfil-pppoe'));
         $servicio = trim((string) ($datos['servicio'] ?? 'pppoe-netplay'));
 
+        $choques = $this->choques($interfaz, $pool, $rango, $gateway, $perfil, $servicio);
+
+        if ($choques) {
+            return ['ok' => false, 'pasos' => [], 'error' => implode(' ', $choques)];
+        }
+
         $pasos = [];
 
         try {
@@ -223,6 +228,182 @@ class ConfigurarServidorPppoe
                 'error' => 'El router rechazó la configuración: ' . $e->getMessage(),
             ];
         }
+    }
+
+    /* ── Que lo nuevo no pise lo que ya hay ───────────────────────────────── */
+
+    /**
+     * Nombres y rango que no existen todavía en el router.
+     *
+     * @return array<string,string>
+     */
+    private function sugerenciaLibre($api): array
+    {
+        $pools      = $this->leer($api, '/ip/pool/print');
+        $perfiles   = $this->leer($api, '/ppp/profile/print');
+        $servidores = $this->leer($api, '/interface/pppoe-server/server/print');
+        $octeto     = $this->octetoLibre($this->octetosUsados($pools, $this->leer($api, '/ip/address/print')));
+
+        $libre = function (string $base, array $lista, string $campo) {
+            $usados = array_map(fn ($x) => strtolower((string) ($x[$campo] ?? '')), $lista);
+            $nombre = $base;
+
+            for ($i = 2; in_array(strtolower($nombre), $usados, true); $i++) {
+                $nombre = "{$base}-{$i}";
+            }
+
+            return $nombre;
+        };
+
+        return [
+            'pool'     => $libre('pool-pppoe', $pools, 'name'),
+            'rango'    => "10.{$octeto}.0.2-10.{$octeto}.3.254",
+            'gateway'  => "10.{$octeto}.0.1",
+            'perfil'   => $libre('perfil-pppoe', $perfiles, 'name'),
+            'servicio' => $libre('pppoe-netplay', $servidores, 'service-name'),
+        ];
+    }
+
+    /**
+     * Qué de lo pedido choca con lo que ya tiene el router.
+     *
+     * Las piezas se crean «o se actualizan si ya existen»: con un nombre
+     * repetido se reescribía el rango o el perfil de otra VLAN y sus clientes
+     * empezaban a tomar IP de otro lado.
+     *
+     * @return list<string>
+     */
+    public function choques(string $interfaz, string $pool, string $rango, string $gateway, string $perfil, string $servicio): array
+    {
+        $api = $this->api();
+        $mal = [];
+
+        $pools      = $this->leer($api, '/ip/pool/print');
+        $perfiles   = $this->leer($api, '/ppp/profile/print');
+        $servidores = $this->leer($api, '/interface/pppoe-server/server/print');
+        $direcciones = $this->leer($api, '/ip/address/print');
+
+        $igual = fn (array $lista, string $campo, string $valor) => collect($lista)->first(fn ($x) => strcasecmp((string) ($x[$campo] ?? ''), $valor) === 0);
+
+        if ($igual($pools, 'name', $pool)) {
+            $mal[] = "Ya existe un rango llamado «{$pool}».";
+        }
+
+        if ($igual($perfiles, 'name', $perfil)) {
+            $mal[] = "Ya existe un perfil llamado «{$perfil}».";
+        }
+
+        if ($igual($servidores, 'service-name', $servicio)) {
+            $mal[] = "Ya hay un servidor PPPoE llamado «{$servicio}».";
+        }
+
+        if ($srv = $igual($servidores, 'interface', $interfaz)) {
+            $mal[] = "La interfaz «{$interfaz}» ya tiene el servidor «" . ($srv['service-name'] ?? '') . '»: quedaría reemplazado.';
+        }
+
+        $nuevo = self::tramos($rango);
+
+        if (!$nuevo) {
+            $mal[] = 'El rango tiene que ir como 10.25.0.2-10.25.3.254.';
+        }
+
+        $gw = ip2long($gateway);
+
+        if ($gw === false) {
+            $mal[] = 'La puerta de enlace no es una IP válida.';
+        } elseif (self::dentro($gw, $nuevo)) {
+            $mal[] = 'La puerta de enlace no puede estar dentro del rango.';
+        }
+
+        foreach ($pools as $p) {
+            $suyo = self::tramos((string) ($p['ranges'] ?? ''));
+
+            if (self::cruzan($nuevo, $suyo) || ($gw !== false && self::dentro($gw, $suyo))) {
+                $mal[] = "Choca con el rango «{$p['name']}» ({$p['ranges']}).";
+            }
+        }
+
+        foreach ($direcciones as $a) {
+            $red = (string) ($a['address'] ?? '');
+
+            // Las /32 son las puntas de sesiones PPP ya conectadas: salen del
+            // rango de algún pool, que ya se revisó arriba.
+            if ($red === '' || str_ends_with($red, '/32')) {
+                continue;
+            }
+
+            $suya = self::tramos($red);
+
+            if (self::cruzan($nuevo, $suya) || ($gw !== false && self::dentro($gw, $suya))) {
+                $mal[] = "Choca con la red {$red} de «{$a['interface']}».";
+            }
+        }
+
+        return $mal;
+    }
+
+    /**
+     * «10.20.0.2-10.20.3.254», «10.20.0.0/22» o una IP suelta, separados por
+     * comas, como tramos [desde, hasta] en enteros.
+     *
+     * @return list<array{0:int,1:int}>
+     */
+    private static function tramos(string $texto): array
+    {
+        $tramos = [];
+
+        foreach (array_filter(array_map('trim', explode(',', $texto))) as $parte) {
+            if (str_contains($parte, '/')) {
+                [$ip, $bits] = explode('/', $parte, 2);
+                $n = ip2long($ip);
+                $bits = (int) $bits;
+
+                if ($n === false || $bits < 0 || $bits > 32) {
+                    return [];
+                }
+
+                $mascara = $bits === 0 ? 0 : (~0 << (32 - $bits)) & 0xFFFFFFFF;
+                $tramos[] = [$n & $mascara, ($n & $mascara) | (~$mascara & 0xFFFFFFFF)];
+            } elseif (str_contains($parte, '-')) {
+                [$a, $b] = array_map('trim', explode('-', $parte, 2));
+                $a = ip2long($a);
+                $b = ip2long($b);
+
+                if ($a === false || $b === false || $a > $b) {
+                    return [];
+                }
+
+                $tramos[] = [$a, $b];
+            } else {
+                $n = ip2long($parte);
+
+                if ($n === false) {
+                    return [];
+                }
+
+                $tramos[] = [$n, $n];
+            }
+        }
+
+        return $tramos;
+    }
+
+    private static function cruzan(array $a, array $b): bool
+    {
+        foreach ($a as [$x1, $x2]) {
+            foreach ($b as [$y1, $y2]) {
+                if ($x1 <= $y2 && $y1 <= $x2) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static function dentro(int $ip, array $tramos): bool
+    {
+        return self::cruzan([[$ip, $ip]], $tramos);
     }
 
     /* ── Automático: un servidor por VLAN ─────────────────────────────────── */

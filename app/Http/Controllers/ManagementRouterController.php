@@ -368,6 +368,28 @@ class ManagementRouterController extends Controller
         }
     }
 
+    /** Si lo elegido en el paso a paso choca con lo que ya hay en el router. */
+    public function pppoeValidar(Request $request, \App\Managers\Interfaces\ConectionRouterManagerInterface $conexion): object
+    {
+        $token = $this->tokenDelRouter($request);
+
+        if (!$token) {
+            return standardApiReponse('No hay router configurado', null, 1, JsonResponse::HTTP_OK);
+        }
+
+        try {
+            $choques = (new \App\Services\Red\ConfigurarServidorPppoe($conexion, $token))->choques(
+                (string) $request->input('interfaz', ''), trim((string) $request->input('pool', '')),
+                trim((string) $request->input('rango', '')), trim((string) $request->input('gateway', '')),
+                trim((string) $request->input('perfil', '')), trim((string) $request->input('servicio', '')),
+            );
+
+            return standardApiReponse($choques ? 'Hay choques' : 'Libre', ['choques' => $choques], 0, JsonResponse::HTTP_OK);
+        } catch (\Throwable $e) {
+            return standardApiReponse('No se pudo leer el router: ' . $e->getMessage(), null, 1, JsonResponse::HTTP_OK);
+        }
+    }
+
     /** Qué se llevaría por delante desmontar PPPoE. */
     public function pppoeQueSeBorra(Request $request, \App\Managers\Interfaces\ConectionRouterManagerInterface $conexion): object
     {
