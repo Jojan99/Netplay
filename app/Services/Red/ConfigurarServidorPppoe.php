@@ -901,9 +901,15 @@ class ConfigurarServidorPppoe
         $q = new Query($id ? '/ppp/profile/set' : '/ppp/profile/add');
         if ($id) $q->equal('.id', $id);
         $q->equal('name', $nombre);
-        $q->equal('local-address', $gateway);
-        $q->equal('remote-address', $pool);
-        $q->equal('only-one', 'yes');
+
+        // Si el perfil ya existía sólo se le ajusta la velocidad. Antes se le
+        // cambiaba también el rango y la puerta: montar PPPoE en una VLAN nueva
+        // dejaba los perfiles de todos los planes repartiendo IP de esa VLAN.
+        if (!$id) {
+            $q->equal('local-address', $gateway);
+            $q->equal('remote-address', $pool);
+            $q->equal('only-one', 'yes');
+        }
 
         // Sin unidad, el MikroTik entiende bits por segundo: se completan las megas.
         $rate = ServicioPppoe::velocidadParaElRouter($rate);
