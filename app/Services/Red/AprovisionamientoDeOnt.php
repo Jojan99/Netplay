@@ -416,8 +416,10 @@ class AprovisionamientoDeOnt
         if (!$leido) {
             $a->intentos++;
 
+            // Rotando: primero las conexiones, después el WiFi y las cuentas.
             if ($a->intentos % 3 === 0) {
-                $this->refrescar($acs, (string) $a->acs_id, $igd);
+                $ramas = $igd ? [self::WAN, self::WLAN, 'InternetGatewayDevice.UserInterface'] : ['Device.WiFi'];
+                $this->refrescar($acs, (string) $a->acs_id, $igd, $ramas[intdiv($a->intentos, 3) % count($ramas)]);
             }
 
             if ($a->intentos >= 15) {
@@ -476,16 +478,30 @@ class AprovisionamientoDeOnt
         return (string) $fila['_id'];
     }
 
-    private function refrescar(GenieAcs $acs, string $id, bool $igd): void
+    /**
+     * Le pide al equipo una rama de su configuración.
+     *
+     * Una sola por vez: pedir tres juntas hacía sesiones largas que el equipo
+     * no alcanzaba a terminar («session timeout»), la tarea fallaba y quedaba
+     * en cola. Con cada reporte se repetía y se acumulaban (PRUEBA_TR llegó a
+     * nueve). Por eso también se limpia lo que haya quedado colgado antes.
+     */
+    private function refrescar(GenieAcs $acs, string $id, bool $igd, ?string $rama = null): void
     {
-        $ramas = $igd ? [self::WAN, self::WLAN, 'InternetGatewayDevice.UserInterface'] : ['Device.WiFi'];
+        $rama ??= $igd ? self::WAN : 'Device.WiFi';
 
-        foreach ($ramas as $rama) {
-            try {
-                $acs->tarea($id, ['name' => 'refreshObject', 'objectName' => $rama]);
-            } catch (\Throwable $e) {
-                Log::info('[Aprovisionamiento] No se pudo pedir la configuración', ['equipo' => $id, 'rama' => $rama, 'error' => $e->getMessage()]);
+        try {
+            foreach ($acs->tareasPendientes($id) as $vieja) {
+                $acs->borrarTarea((string) $vieja['_id']);
             }
+        } catch (\Throwable $e) {
+            Log::info('[Aprovisionamiento] No se pudo limpiar la cola del equipo', ['equipo' => $id, 'error' => $e->getMessage()]);
+        }
+
+        try {
+            $acs->tarea($id, ['name' => 'refreshObject', 'objectName' => $rama]);
+        } catch (\Throwable $e) {
+            Log::info('[Aprovisionamiento] No se pudo pedir la configuración', ['equipo' => $id, 'rama' => $rama, 'error' => $e->getMessage()]);
         }
     }
 
