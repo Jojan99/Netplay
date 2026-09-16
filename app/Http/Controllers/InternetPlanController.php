@@ -44,15 +44,55 @@ class InternetPlanController extends Controller
     }
 
     /**
+     * Lo que se guarda de un plan, ya revisado.
+     *
+     * La descripción es opcional, pero la columna no acepta nulos: sin esto,
+     * crear un plan sin descripción devolvía el error de SQL tal cual.
+     */
+    private function datosDelPlan(Request $request, bool $parcial = false): array
+    {
+        $req = $parcial ? 'sometimes|required' : 'required';
+
+        $datos = $request->validate([
+            'plan_name'      => "{$req}|string|max:255",
+            'download_speed' => "{$req}|numeric|min:0",
+            'upload_speed'   => "{$req}|numeric|min:0",
+            'monthly_price'  => "{$req}|numeric|min:0",
+            'description'    => 'nullable|string|max:255',
+            'type'           => 'nullable|string|max:255',
+            'active'         => 'nullable|boolean',
+        ], [
+            'plan_name.required'      => 'Falta el nombre del plan.',
+            'download_speed.required' => 'Falta la velocidad de bajada.',
+            'upload_speed.required'   => 'Falta la velocidad de subida.',
+            'monthly_price.required'  => 'Falta el precio mensual.',
+            '*.numeric'               => 'Las velocidades y el precio tienen que ser números.',
+        ]);
+
+        if (array_key_exists('description', $datos) || !$parcial) {
+            $datos['description'] = trim((string) ($datos['description'] ?? ''));
+        }
+
+        if (array_key_exists('type', $datos) && !$datos['type']) {
+            unset($datos['type']);
+        }
+
+        return $datos;
+    }
+
+    /**
      * POST /api/plans
      */
     public function store(Request $request): JsonResponse
     {
         try {
-            $plan = InternetPlan::create(array_merge(
-                $request->only('plan_name', 'download_speed', 'upload_speed', 'monthly_price', 'description', 'type', 'active'),
-                ['company_id' => $this->companyId()]
-            ));
+            $datos = $this->datosDelPlan($request);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return $this->err(collect($e->errors())->flatten()->first());
+        }
+
+        try {
+            $plan = InternetPlan::create($datos + ['company_id' => $this->companyId()]);
 
             return $this->ok($plan, 'Plan creado correctamente.');
         } catch (\Throwable $e) {
@@ -70,11 +110,11 @@ class InternetPlanController extends Controller
                 ->where('company_id', $this->companyId())
                 ->firstOrFail();
 
-            $plan->update($request->only(
-                'plan_name', 'download_speed', 'upload_speed', 'monthly_price', 'description', 'type', 'active'
-            ));
+            $plan->update($this->datosDelPlan($request, true));
 
             return $this->ok($plan->fresh(), 'Plan actualizado.');
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return $this->err(collect($e->errors())->flatten()->first());
         } catch (\Throwable $e) {
             return $this->err($e->getMessage());
         }
