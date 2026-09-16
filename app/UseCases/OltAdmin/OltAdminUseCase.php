@@ -713,7 +713,8 @@ class OltAdminUseCase
             }
         }
 
-        $alta = $this->registerONT($oltId, $data);
+        // Un traslado no es una instalación nueva: el cliente ya tiene su WiFi.
+        $alta = $this->registerONT($oltId, $data + ['_trasladada' => (bool) $donde['encontrada']]);
 
         $pasos[] = [
             'paso'    => "Autorizar en {$data['fsp']}",
@@ -842,11 +843,17 @@ class OltAdminUseCase
                 // Aprovisionamiento: WAN, WiFi y cuenta del equipo cuando
                 // aparezca en el TR-069, si la empresa lo tiene encendido.
                 try {
-                    $aprovisionamiento = \App\Services\Red\AprovisionamientoDeOnt::programar(
-                        $oltId, $data['fsp'], $ontId, (string) ($data['serial'] ?? ''),
-                        isset($data['user_data_id']) ? (int) $data['user_data_id'] : null,
-                        $vlan, (array) ($data['aprovisionar'] ?? [])
-                    );
+                    // Trasladada a otro puerto: sólo se le reaplica la conexión
+                    // (y la MAC con IP fija); su WiFi y su cuenta quedan como están.
+                    $companyDeLaOlt = (int) (OltAdmin::find($oltId)?->company_id ?: 0);
+                    $aprovisionamiento = !empty($data['_trasladada']) && !empty($data['user_data_id'])
+                        ? (($texto = \App\Services\Red\AprovisionamientoDeOnt::reaplicarConexion($companyDeLaOlt, (int) $data['user_data_id']))
+                            ? ['paso' => 'Conexión del cliente', 'ok' => true, 'detalle' => $texto] : null)
+                        : \App\Services\Red\AprovisionamientoDeOnt::programar(
+                            $oltId, $data['fsp'], $ontId, (string) ($data['serial'] ?? ''),
+                            isset($data['user_data_id']) ? (int) $data['user_data_id'] : null,
+                            $vlan, (array) ($data['aprovisionar'] ?? [])
+                        );
 
                     if ($aprovisionamiento) {
                         $pasos[] = $aprovisionamiento;
