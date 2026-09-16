@@ -366,16 +366,17 @@ class GestionRemotaDeOnt
             return ['error' => 'La OLT no respondió al pedir la lista de perfiles. Suele ser el túnel: probá de nuevo en un momento.', 'perfiles' => []];
         }
 
+        // También los que todavía no usa nadie: son los que la OLT aplica al
+        // autorizar (el predeterminado) y los recién creados para una VLAN. Antes
+        // se saltaban, y el aviso «preparalo en Perfiles de línea» mandaba a una
+        // lista donde ese perfil no aparecía (pasó con el 10 y con el 109).
         foreach ($todos as $p) {
-            // Los que no usa nadie no se leen ni se tocan: no suman nada.
-            if ((int) $p['equipos'] === 0) {
-                continue;
-            }
-
             $lista[] = $p + $this->estadoDePerfil($leer('perfilDeLinea', ['perfil' => (int) $p['id']]), (int) $g->vlan);
         }
 
-        usort($lista, fn ($a, $b) => $b['equipos'] <=> $a['equipos']);
+        // Primero lo que hay que hacer, y dentro de eso los de más clientes.
+        usort($lista, fn ($a, $b) => [$a['estado'] === 'listo', -$a['equipos']]
+                                 <=> [$b['estado'] === 'listo', -$b['equipos']]);
 
         $cuantos = fn (string $estado) => count(array_filter($lista, fn ($p) => $p['estado'] === $estado));
 
