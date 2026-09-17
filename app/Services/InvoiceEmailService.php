@@ -2,25 +2,41 @@
 
 namespace App\Services;
 
+use App\Models\Company;
 use Illuminate\Support\Facades\Log;
 use Mailjet\Client;
 use Mailjet\Resources;
 
+/**
+ * Correo de factura con la marca de la empresa dueña de la factura.
+ * La dirección remitente es la verificada en Mailjet (MAILJET_FROM_EMAIL); el
+ * nombre, las respuestas (Reply-To) y todo el contenido son de la empresa.
+ */
 class InvoiceEmailService
 {
     private string $apiKeyPublic;
     private string $apiKeyPrivate;
     private string $fromEmail;
-    private string $fromName;
     private bool $enabled;
 
-    public function __construct()
+    private string $empresa;
+    private string $empresaEmail;
+    private string $empresaTelefono;
+    private string $empresaPie;
+    private ?string $logo;
+
+    public function __construct(private Company $company)
     {
-        $this->apiKeyPublic = config('services.mailjet.api_key_public', env('MAILJET_APIKEY_PUBLIC', ''));
-        $this->apiKeyPrivate = config('services.mailjet.api_key_private', env('MAILJET_APIKEY_PRIVATE', ''));
-        $this->fromEmail = config('services.mailjet.from_email', env('MAILJET_FROM_EMAIL', 'atencionalcliente@netplay.com.co'));
-        $this->fromName = config('services.mailjet.from_name', env('MAILJET_FROM_NAME', 'Netplay ISP'));
-        $this->enabled = !empty($this->apiKeyPublic) && !empty($this->apiKeyPrivate);
+        $this->apiKeyPublic = (string) config('services.mailjet.api_key_public', '');
+        $this->apiKeyPrivate = (string) config('services.mailjet.api_key_private', '');
+        $this->fromEmail = trim((string) config('services.mailjet.from_email', ''));
+        $this->enabled = $this->apiKeyPublic !== '' && $this->apiKeyPrivate !== '' && $this->fromEmail !== '';
+
+        $this->empresa         = trim((string) $company->invoice_business_name) ?: trim((string) $company->name);
+        $this->empresaEmail    = filter_var(trim((string) $company->email), FILTER_VALIDATE_EMAIL) ? trim((string) $company->email) : '';
+        $this->empresaTelefono = trim((string) $company->invoice_phone) ?: trim((string) $company->phone);
+        $this->empresaPie      = trim((string) $company->invoice_footer);
+        $this->logo            = \App\Resources\Templates\TemplatesPdf::logoEmpresa($company);
     }
 
     /**
@@ -49,32 +65,45 @@ class InvoiceEmailService
 
             $htmlBody = $this->buildInvoiceHtml($userData);
 
-            $body = [
-                'Messages' => [
+            $mensaje = [
+                'From' => [
+                    'Email' => $this->fromEmail,
+                    'Name'  => $this->empresa,
+                ],
+                'To' => [
                     [
-                        'From' => [
-                            'Email' => $this->fromEmail,
-                            'Name'  => $this->fromName,
-                        ],
-                        'To' => [
-                            [
-                                'Email' => $email,
-                                'Name'  => trim(($userData['names'] ?? '') . ' ' . ($userData['lastname'] ?? '')),
-                            ],
-                        ],
-                        'Subject'     => 'Su Factura #' . ($userData['number_facture'] ?? '') . ' - Netplay ISP',
-                        'TextPart'    => $this->buildInvoiceText($userData),
-                        'HTMLPart'    => $htmlBody,
-                        'Attachments' => [
-                            [
-                                'ContentType'   => 'application/pdf',
-                                'Filename'      => $filename,
-                                'Base64Content' => base64_encode($pdfContent),
-                            ],
-                        ],
+                        'Email' => $email,
+                        'Name'  => trim(($userData['names'] ?? '') . ' ' . ($userData['lastname'] ?? '')),
+                    ],
+                ],
+                'Subject'     => 'Su Factura #' . ($userData['number_facture'] ?? '') . ($this->empresa !== '' ? ' - ' . $this->empresa : ''),
+                'TextPart'    => $this->buildInvoiceText($userData),
+                'HTMLPart'    => $htmlBody,
+                'Attachments' => [
+                    [
+                        'ContentType'   => 'application/pdf',
+                        'Filename'      => $filename,
+                        'Base64Content' => base64_encode($pdfContent),
                     ],
                 ],
             ];
+
+            // Las respuestas del cliente van al correo de la empresa.
+            if ($this->empresaEmail !== '') {
+                $mensaje['ReplyTo'] = ['Email' => $this->empresaEmail, 'Name' => $this->empresa];
+            }
+
+            // Logo como imagen incrustada: los clientes de correo bloquean data: URIs.
+            if ($this->logo && preg_match('#^data:(image/[a-z+.-]+);base64,(.+)$#is', $this->logo, $m)) {
+                $mensaje['InlinedAttachments'] = [[
+                    'ContentType'   => strtolower($m[1]),
+                    'Filename'      => 'logo.' . (str_contains(strtolower($m[1]), 'png') ? 'png' : 'jpg'),
+                    'ContentID'     => 'logo',
+                    'Base64Content' => preg_replace('/\s+/', '', $m[2]),
+                ]];
+            }
+
+            $body = ['Messages' => [$mensaje]];
 
             $response = $mj->post(Resources::$Email, ['body' => $body]);
             $data = $response->getData();
@@ -147,13 +176,46 @@ class InvoiceEmailService
      */
     private function buildInvoiceHtml(array $data): string
     {
-        $names = trim(($data['names'] ?? '') . ' ' . ($data['lastname'] ?? ''));
-        $numberFacture = $data['number_facture'] ?? '';
-        $dateFacturation = $data['date_facturation'] ?? '';
+        $e = fn ($v) => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
+        $names = $e(trim(($data['names'] ?? '') . ' ' . ($data['lastname'] ?? '')));
+        $numberFacture = $e($data['number_facture'] ?? '');
+        $dateFacturation = $e($data['date_facturation'] ?? '');
         $total = isset($data['price_total']) ? number_format($data['price_total'] - ($data['price_discount'] ?? 0), 0, ',', '.') : '0';
-        $planName = $data['plan_name'] ?? 'Servicio de Internet';
+        $planName = $e($data['plan_name'] ?? 'Servicio de Internet');
         $monthlyPrice = isset($data['monthly_price']) ? number_format($data['monthly_price'], 0, ',', '.') : '0';
-        $address = $data['address'] ?? '';
+        $address = $e($data['address'] ?? '');
+
+        // Marca de la empresa de la factura
+        $empresa = $e($this->empresa);
+        $logoHtml = $this->logo && str_starts_with($this->logo, 'data:')
+            ? "<img src='cid:logo' alt='{$empresa}' style='max-height:60px;max-width:200px;margin-bottom:10px;'><br>"
+            : '';
+
+        $contacto = [];
+        if ($this->empresaEmail !== '') {
+            $mail = $e($this->empresaEmail);
+            $contacto[] = "<strong>Email:</strong> <a href='mailto:{$mail}'>{$mail}</a>";
+        }
+        if ($this->empresaTelefono !== '') {
+            $digitos = preg_replace('/\D+/', '', $this->empresaTelefono);
+            if (strlen($digitos) === 10) {
+                $digitos = '57' . $digitos;
+            }
+            $tel = $e($this->empresaTelefono);
+            $contacto[] = strlen($digitos) >= 11
+                ? "<strong>WhatsApp:</strong> <a href='https://wa.me/{$digitos}'>{$tel}</a>"
+                : "<strong>Teléfono:</strong> {$tel}";
+        }
+        $contactoHtml = $contacto
+            ? "<p class='message'>Si tiene alguna pregunta o requiere asistencia, no dude en contactarnos:</p>
+            <p class='message' style='text-align:center;'>" . implode('<br>', $contacto) . "</p>"
+            : '';
+
+        $pie = $this->empresaPie !== '' ? "<p>" . $e($this->empresaPie) . "</p>" : '';
+        $derechos = $empresa !== '' ? "<p>&copy; " . date('Y') . " {$empresa}. Todos los derechos reservados.</p>" : '';
+        $responder = $this->empresaEmail !== ''
+            ? '<p>Puede responder a este correo para comunicarse con nosotros.</p>'
+            : '<p>Este es un correo automático, por favor no responda a esta dirección.</p>';
 
         return "<!DOCTYPE html>
 <html lang='es'>
@@ -191,7 +253,8 @@ class InvoiceEmailService
 <body>
     <div class='container'>
         <div class='header'>
-            <h1>Netplay ISP</h1>
+            {$logoHtml}
+            <h1>{$empresa}</h1>
             <p>Factura de Servicios</p>
         </div>
         <div class='content'>
@@ -229,16 +292,12 @@ class InvoiceEmailService
 
             <p class='message'>Adjunto a este correo encontrará su factura en formato PDF. Por favor realice el pago antes de la fecha límite indicada para evitar suspensión del servicio.</p>
 
-            <p class='message'>Si tiene alguna pregunta o requiere asistencia, no dude en contactarnos:</p>
-            <p class='message' style='text-align:center;'>
-                <strong>Email:</strong> <a href='mailto:atencionalcliente@netplay.com.co'>atencionalcliente@netplay.com.co</a><br>
-                <strong>WhatsApp:</strong> <a href='https://wa.me/573001234567'>+57 300 123 4567</a>
-            </p>
+            {$contactoHtml}
         </div>
         <div class='footer'>
-            <p>Netplay ISP - Conectando su mundo</p>
-            <p>&copy; " . date('Y') . " Netplay. Todos los derechos reservados.</p>
-            <p>Este es un correo automático, por favor no responda a esta dirección.</p>
+            {$pie}
+            {$derechos}
+            {$responder}
         </div>
     </div>
 </body>
@@ -258,7 +317,7 @@ class InvoiceEmailService
             . "Le informamos que su factura #{$numberFacture} ha sido generada.\n"
             . "Total a pagar: \${$total} COP\n\n"
             . "Adjunto encontrará su factura en PDF.\n\n"
-            . "Gracias por preferir Netplay ISP.\n"
-            . "atencionalcliente@netplay.com.co";
+            . ($this->empresa !== '' ? "Gracias por preferir {$this->empresa}.\n" : '')
+            . $this->empresaEmail;
     }
 }

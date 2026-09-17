@@ -29,10 +29,12 @@ class NetplayWhatsAppService
             $this->apiKey     = $company->wa_api_key;
             $this->instanceId = $company->wa_instance_id;
         } else {
-            // Fallback a config global (.env) para compatibilidad
-            $this->enabled    = (bool) config('services.netplay_whatsapp.enabled', false);
-            $this->apiKey     = config('services.netplay_whatsapp.api_key', '');
-            $this->instanceId = config('services.netplay_whatsapp.instance_id', '');
+            // Sin empresa o sin credenciales propias no se envía. Antes caía en la
+            // línea global del .env (la de Netplay) y otra empresa terminaba
+            // escribiéndole a sus clientes desde ese número.
+            $this->enabled    = false;
+            $this->apiKey     = '';
+            $this->instanceId = '';
         }
 
         $this->baseUrl = rtrim(config('services.netplay_whatsapp.base_url', 'http://127.0.0.1:3001/crm'), '/');

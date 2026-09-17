@@ -365,11 +365,25 @@ class MetaWhatsAppController extends Controller
         $phone = $this->normalizePhone($request->phone);
         $companyId = getSessionCompanyId();
 
-        // Verificar si hay otra empresa con este número en Netplay
-        $netplayExists = Company::where('wa_provider', 'netplay')
-            ->where('id', '!=', $companyId)
-            ->whereRaw("wa_instance_id IS NOT NULL")
-            ->exists();
+        // Verificar si hay otra empresa con este número en Netplay. Antes no miraba
+        // el número: daba true apenas otra empresa tuviera cualquier instancia.
+        // El número conectado de cada instancia está en la base del servicio Node.
+        $netplayExists = false;
+        $ultimos = substr($phone, -10);
+        if (strlen($ultimos) >= 7) {
+            try {
+                $instancias = Company::where('id', '!=', $companyId)
+                    ->whereNotNull('wa_instance_id')
+                    ->pluck('wa_instance_id');
+                $wsDb = config('services.netplay_whatsapp.db_name') ?: 'whatsapp_service';
+                $netplayExists = $instancias->isNotEmpty() && \DB::table($wsDb . '.wa_instances')
+                    ->whereIn('id', $instancias)
+                    ->where('phone', 'like', '%' . $ultimos)
+                    ->exists();
+            } catch (\Throwable $e) {
+                \Log::warning('[validatePhone] No se pudo consultar las instancias de Netplay', ['error' => $e->getMessage()]);
+            }
+        }
 
         // Verificar si hay otra empresa con este número en Meta
         $metaExists = Company::where('wa_provider', 'meta')

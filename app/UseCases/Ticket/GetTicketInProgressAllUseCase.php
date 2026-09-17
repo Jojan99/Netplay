@@ -32,7 +32,7 @@ class GetTicketInProgressAllUseCase implements GetTicketInProgressAllUseCaseInte
     public function getTicketInProgressAll($status): mixed
     {
         try {
-            if(getSessionUserProfileId() != 1){
+            if(!sessionUserHasProfile('USER')){
                 $userAll = $this->ticketRepositoryInterface->getTicketInProgressAll($status);
             }else{
                 return [

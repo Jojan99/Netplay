@@ -64,26 +64,23 @@ class ContractController extends Controller
                 'document_number_back'  => 'nullable|string|max:50',
             ]);
 
+            // Carpeta privada: las cédulas no se sirven en /storage sin autenticación.
             $companyId = getSessionCompanyId();
-            $dir = "contracts/{$companyId}/documents";
-            $fullDir = storage_path('app/public/' . $dir);
-            if (!is_dir($fullDir)) {
-                mkdir($fullDir, 0755, true);
-            }
+            $dir = \App\Support\ArchivosContrato::dirDocumentos((int) $companyId);
 
             $updateData = [];
 
             if ($request->hasFile('document_front')) {
                 $frontFile = $request->file('document_front');
                 $frontName = "cc_{$clientContractId}_front_" . uniqid() . '.' . $frontFile->getClientOriginalExtension();
-                $frontPath = $frontFile->storeAs($dir, $frontName, 'public');
+                $frontPath = $frontFile->storeAs($dir, $frontName, 'local');
                 $updateData['document_front_path'] = $frontPath;
             }
 
             if ($request->hasFile('document_back')) {
                 $backFile = $request->file('document_back');
                 $backName = "cc_{$clientContractId}_back_" . uniqid() . '.' . $backFile->getClientOriginalExtension();
-                $backPath = $backFile->storeAs($dir, $backName, 'public');
+                $backPath = $backFile->storeAs($dir, $backName, 'local');
                 $updateData['document_back_path'] = $backPath;
             }
 
@@ -102,8 +99,8 @@ class ContractController extends Controller
                 'status'  => 0,
                 'message' => 'Documentos actualizados.',
                 'data'    => [
-                    'document_front_url' => $cc->document_front_path ? url('storage/' . $cc->document_front_path) : null,
-                    'document_back_url'  => $cc->document_back_path ? url('storage/' . $cc->document_back_path) : null,
+                    'document_front_url' => $this->urlDocumento($cc, 'frente'),
+                    'document_back_url'  => $this->urlDocumento($cc, 'reverso'),
                     'document_number_front' => $cc->document_number_front,
                     'document_number_back'  => $cc->document_number_back,
                 ],
@@ -129,8 +126,8 @@ class ContractController extends Controller
                 'status' => 0,
                 'data'   => [
                     'require_documents'     => $cc->require_documents,
-                    'document_front_url'    => $cc->document_front_path ? url('storage/' . $cc->document_front_path) : null,
-                    'document_back_url'     => $cc->document_back_path ? url('storage/' . $cc->document_back_path) : null,
+                    'document_front_url'    => $this->urlDocumento($cc, 'frente'),
+                    'document_back_url'     => $this->urlDocumento($cc, 'reverso'),
                     'document_number_front' => $cc->document_number_front,
                     'document_number_back'  => $cc->document_number_back,
                 ],
@@ -166,8 +163,9 @@ class ContractController extends Controller
                     'token'     => $r->token,
                     'signed_at' => $r->signed_at,
                     'require_documents'      => (bool) $r->require_documents,
-                    'document_front_path'    => $r->document_front_path,
-                    'document_back_path'     => $r->document_back_path,
+                    // El panel arma rootUrl + "storage/" + ruta: se le da la ruta protegida.
+                    'document_front_path'    => $r->document_front_path ? \App\Support\ArchivosContrato::rutaParaPanel((int) $r->id, 'frente') : null,
+                    'document_back_path'     => $r->document_back_path ? \App\Support\ArchivosContrato::rutaParaPanel((int) $r->id, 'reverso') : null,
                     'document_number_front'  => $r->document_number_front,
                     'document_number_back'   => $r->document_number_back,
                     'contract'  => ['id' => $r->contract_id, 'title' => $r->contract_title],
@@ -183,7 +181,30 @@ class ContractController extends Controller
                 ]);
             return response()->json(['status' => 0, 'message' => 'ok', 'data' => $data]);
         }
-        return response()->json($uc->getByUser($userId));
+        $res = $uc->getByUser($userId);
+
+        // Igual que arriba: las rutas de las cédulas pasan por la ruta protegida.
+        if (is_iterable($res['data'] ?? null)) {
+            foreach ($res['data'] as $cc) {
+                if (!is_object($cc)) continue;
+                if ($cc->document_front_path) {
+                    $cc->document_front_path = \App\Support\ArchivosContrato::rutaParaPanel((int) $cc->id, 'frente');
+                }
+                if ($cc->document_back_path) {
+                    $cc->document_back_path = \App\Support\ArchivosContrato::rutaParaPanel((int) $cc->id, 'reverso');
+                }
+            }
+        }
+
+        return response()->json($res);
+    }
+
+    /** URL temporal (firmada) de una foto de cédula, o null si no hay archivo. */
+    private function urlDocumento($cc, string $tipo): ?string
+    {
+        return \App\Support\ArchivosContrato::archivo($cc, $tipo)
+            ? \App\Support\ArchivosContrato::urlFirmada((int) $cc->id, $tipo, now()->addHours(2))
+            : null;
     }
 
     public function sendEmail(int $clientContractId, Request $request, ContractRepositoryInterface $repo): JsonResponse

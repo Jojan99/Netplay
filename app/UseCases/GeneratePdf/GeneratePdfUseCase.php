@@ -86,8 +86,12 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
 
         try {
             // ── Verificar configuración de canales de la empresa ─────────────────────
+            // Sin empresa no se factura: antes se seguía con datos por defecto.
             $company = $companyId > 0 ? Company::find($companyId) : null;
-            $waEnabled = $company ? $company->invoice_whatsapp_enabled : true;
+            if (!$company) {
+                return ['message' => 'Empresa no encontrada', 'status' => 1];
+            }
+            $waEnabled = $company->invoice_whatsapp_enabled;
 
             // Interruptor del panel: si el aviso de factura está apagado, el
             // proceso sigue corriendo y generando los PDF, pero no le escribe
@@ -96,7 +100,7 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
                 Log::info('[WA_BILLING] Envío de factura desactivado en el panel', ['company_id' => $companyId]);
                 $waEnabled = false;
             }
-            $emailEnabled = $company ? $company->email_enabled : true;
+            $emailEnabled = $company->email_enabled;
 
             // Sin plantilla aprobada no se puede escribir por WhatsApp. Antes eso
             // abortaba el proceso entero, así que una plantilla en revisión
@@ -154,7 +158,7 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
             $fecha = date('Y-m-d', strtotime('+1 days'));
             $waService = $waEnabled ? new WhatsAppService($companyId, true) : null;
             $humanizer = new WhatsAppMessageHumanizerService();
-            $emailService = new InvoiceEmailService();
+            $emailService = new InvoiceEmailService($company);
 
             $waMessages = [];
             $emailInvoices = [];
@@ -185,7 +189,7 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
                         continue; // límite diario alcanzado
                     }
 
-                    $pdfContent = $this->generateIndividualPdf($user, 0);
+                    $pdfContent = $this->generateIndividualPdf($user, 0, $companyId);
                     $filename = 'factura_' . preg_replace('/[^A-Za-z0-9_\-]/', '_', $user['number_facture'] ?? '') . '_' . ($user['dni'] ?? '') . '.pdf';
 
                     $emailInvoices[] = [
@@ -270,7 +274,10 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
     {
         try {
             $company = $companyId > 0 ? Company::find($companyId) : null;
-            if ($company?->wa_provider === 'meta' && in_array($sendChannel, ['whatsapp', 'both'], true)) {
+            if (!$company) {
+                return ['message' => 'Empresa no encontrada', 'status' => 1];
+            }
+            if ($company->wa_provider === 'meta' && in_array($sendChannel, ['whatsapp', 'both'], true)) {
                 return [
                     'message' => 'El envío masivo por Meta requiere una plantilla aprobada y un mapeo de variables. El envío por texto libre está bloqueado.',
                     'status' => 1,
@@ -288,8 +295,8 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
             }
 
             $waService = new WhatsAppService($companyId, true);
-            $humanizer = new WhatsAppMessageHumanizerService();
-            $emailService = new InvoiceEmailService();
+            $humanizer = new WhatsAppMessageHumanizerService($company);
+            $emailService = new InvoiceEmailService($company);
 
             $waMessages = [];
             $emailInvoices = [];
@@ -328,7 +335,7 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
                         continue; // límite diario alcanzado
                     }
 
-                    $pdfContent = $this->generateIndividualPdf($user, $Cab);
+                    $pdfContent = $this->generateIndividualPdf($user, $Cab, $companyId);
                     $filename = 'factura_' . preg_replace('/[^A-Za-z0-9_\-]/', '_', $user['number_facture'] ?? '') . '_' . ($user['dni'] ?? '') . '.pdf';
 
                     $emailInvoices[] = [
@@ -402,10 +409,17 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
      * @param string $invoiceId
      * @return array
      */
-    public function sendInvoiceByEmail(string $invoiceId): array
+    public function sendInvoiceByEmail(string $invoiceId, ?int $companyId = null): array
     {
         try {
-            $data = $this->generatePdfRepository->generatePdfById($invoiceId);
+            // Los números se repiten entre empresas: sin empresa no se busca.
+            $companyId = $companyId ?: (int) getSessionCompanyId();
+            $company = $companyId ? Company::find($companyId) : null;
+            if (!$company) {
+                return ['status' => 'error', 'message' => 'Empresa no encontrada'];
+            }
+
+            $data = $this->generatePdfRepository->generatePdfById($invoiceId, $companyId);
 
             if (!$data) {
                 return ['status' => 'error', 'message' => 'Factura no encontrada'];
@@ -418,11 +432,11 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
 
             $saldoAnt = $this->generatePdfRepository->getSaldoAnt($data['id'], $data['number_facture']) ?? 0;
 
-            $pdfContent = $this->generateIndividualPdf($data, $saldoAnt);
+            $pdfContent = $this->generateIndividualPdf($data, $saldoAnt, $companyId);
             $filename = 'factura_' . preg_replace('/[^A-Za-z0-9_\-]/', '_', $data['number_facture']) . '_' . $data['dni'] . '.pdf';
 
-            $emailService = new InvoiceEmailService();
-            return $emailService->sendInvoice($data, $pdfContent, $filename);
+            $emailService = new InvoiceEmailService($company);
+            return $emailService->sendInvoice($data->toArray(), $pdfContent, $filename);
 
         } catch (\Throwable $e) {
             Log::error('[EMAIL_SINGLE] Error enviando factura individual', [
@@ -433,7 +447,7 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
         }
     }
 
-    private function generateIndividualPdf($user, $Cab)
+    private function generateIndividualPdf($user, $Cab, int $companyId)
     {
         $options = new Options();
         $options->set('isHtml5ParserEnabled', true);
@@ -442,7 +456,7 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
         $pdfT = new TemplatesPdf();
         $pdf = new Dompdf($options);
 
-        $html = $pdfT->PdfFacturas($user, $Cab);
+        $html = $pdfT->PdfFacturas($user, $Cab, $companyId);
         $pdf->loadHtml($html);
         $pdf->render();
 

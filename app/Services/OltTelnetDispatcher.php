@@ -114,10 +114,16 @@ class OltTelnetDispatcher
             'params'     => $params,
         ]));
 
-        $result = Redis::blpop($resultKey, self::RESULT_TIMEOUT);
+        // Los que mueven equipos y esperan a que vuelvan (y revierten si no)
+        // tardan más: cortar la espera dejaba al panel diciendo "timeout"
+        // mientras el worker seguía cambiando la ONT sin nadie mirando.
+        $timeout = in_array($method, ['darGestionAOnt', 'prepararGestionPorPerfil', 'prepararVlanDeGestion'], true)
+            ? 240
+            : self::RESULT_TIMEOUT;
+
+        $result = Redis::blpop($resultKey, $timeout);
 
         if ($result === null) {
-            $timeout = self::RESULT_TIMEOUT;
             throw new \RuntimeException(
                 "Timeout ({$timeout}s) esperando respuesta del OLT worker para '{$method}'."
             );
@@ -191,6 +197,14 @@ class OltTelnetDispatcher
             // Sólo algunos equipos la tienen (hoy, C-Data EPON).
             'puertosDeSubida'   => method_exists($driver, 'puertosDeSubida')
                                        ? $driver->puertosDeSubida() : [],
+            'prepararGestionPorPerfil' => method_exists($driver, 'prepararGestionPorPerfil')
+                                       ? $driver->prepararGestionPorPerfil((int) $p['vlan'], (string) $p['url'], $p['usuario'] ?? null, $p['clave'] ?? null) : null,
+            'quitarGestionDeOnt' => method_exists($driver, 'quitarGestionDeOnt')
+                                       ? $driver->quitarGestionDeOnt((string) $p['fsp'], (int) $p['ont_id'], (int) $p['vlan']) : null,
+            'quitarGestionEpon' => method_exists($driver, 'quitarGestionEpon')
+                                       ? $driver->quitarGestionEpon((string) $p['fsp'], (int) $p['ont_id']) : null,
+            'servidorTr069Vigente' => method_exists($driver, 'servidorTr069Vigente')
+                                       ? $driver->servidorTr069Vigente((int) $p['perfil'], (string) $p['url']) : null,
             'prepararVlanDeGestion' => method_exists($driver, 'prepararVlanDeGestion')
                                        ? $driver->prepararVlanDeGestion((int) $p['vlan'], (string) $p['uplink']) : null,
             'darGestionAOnt'    => method_exists($driver, 'darGestionAOnt')
@@ -207,7 +221,7 @@ class OltTelnetDispatcher
             'crearServidorTr069' => method_exists($driver, 'crearServidorTr069')
                                        ? $driver->crearServidorTr069((int) $p['perfil'], (string) $p['nombre'], (string) $p['url'], (string) $p['usuario'], (string) $p['clave']) : null,
             'asignarServidorTr069' => method_exists($driver, 'asignarServidorTr069')
-                                       ? $driver->asignarServidorTr069((string) $p['fsp'], (int) $p['ont_id'], (int) $p['perfil']) : null,
+                                       ? $driver->asignarServidorTr069((string) $p['fsp'], (int) $p['ont_id'], (int) $p['perfil'], $p['url'] ?? null, $p['usuario'] ?? null, $p['clave'] ?? null) : null,
             'reiniciarOnt'      => method_exists($driver, 'reiniciarOnt')
                                        ? $driver->reiniciarOnt((string) $p['fsp'], (int) $p['ont_id']) : null,
             'equipoDeOnt'       => method_exists($driver, 'equipoDeOnt')

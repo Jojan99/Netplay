@@ -38,6 +38,17 @@ class SendNotificationUseCase implements SendNotificationUseCaseInterface
         try {
             if(true){
 
+                // Datos de pago y nombre de la empresa en sesión, nunca los de otra.
+                $empresa = \App\Models\Company::find(getSessionCompanyId());
+                if (!$empresa) {
+                    return ['message' => 'Empresa no encontrada', 'status' => 1, 'data' => ApiResponseConstants::DATA_NULL];
+                }
+                $nombreEmpresa = trim((string) $empresa->invoice_business_name) ?: trim((string) $empresa->name);
+                $mediosPago = trim((string) $empresa->invoice_payment_info);
+                $bloquePago = $mediosPago !== ''
+                    ? "Recuerda que puedes realizar tus pagos por estos medios:\n\n{$mediosPago}\n\n"
+                    : '';
+
                 $whatsapp = new WhatsAppService('u99eyqpz5jwn5h4w', 'instance106490');
 
                 $getDataInfoPenddingFacture = $this->facturationRepositoryInterface->getDataInfoPenddingFacture();
@@ -54,18 +65,11 @@ $message = "¡Hola! *{$value->names} {$value->lastname}* te informamos que tu se
                 
 Tu saldo actual es de *{$value->price_total}* con *{$value->monthPedding}* meses pendientes.
                                         
-Recuerda que puedes realizar tus pagos a las siguientes cuentas bancarias o en un corresponsal bancolombia:
-                
-BANCOLOMBIA CTA AHO 47800013328  
-DAVIPLATA 3022042294  
-NEQUI 3022042294 (Hum Gom)  
-NEQUI 3245127869 (Joj Pom)
-                
-Estar siempre al día con tu factura evita suspensiones de servicio y reportes negativos en centrales de riesgo.
+{$bloquePago}Estar siempre al día con tu factura evita suspensiones de servicio y reportes negativos en centrales de riesgo.
 
 *Si ya ha cancelado, por favor ignore este mensaje.* 
 
-Gracias por preferirnos @.NET, somos Soluciones NetPlay";
+Gracias por preferirnos, somos {$nombreEmpresa}";
                 
                     // Envía el mensaje a cada número individualmente
                     foreach ($phoneNumbers as $phone) {

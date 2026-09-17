@@ -10,6 +10,10 @@ Broadcast::channel('conversation.{conversationId}', function ($user, $conversati
     // portal podía suscribirse y leer los mensajes en vivo.
     if (\App\Http\Middleware\JwtMiddleware::esCliente($user)) return false;
 
+    // Solo conversaciones de la empresa del usuario.
+    $companyId = \Illuminate\Support\Facades\DB::table('crm_conversations')->where('id', $conversationId)->value('company_id');
+    if (!$companyId || (int) $companyId !== (int) $user->company_id) return false;
+
     return ['id' => $user->id, 'name' => $user->name];
     
     // O si quieres verificar permisos:
@@ -19,6 +23,19 @@ Broadcast::channel('conversation.{conversationId}', function ($user, $conversati
 Broadcast::channel('crm.inbox', function ($user) {
     // Sólo el equipo: antes aceptaba a cualquier usuario autenticado.
     return !\App\Http\Middleware\JwtMiddleware::esCliente($user);
+});
+
+// Bandeja por empresa. 'crm.inbox' (global) queda solo mientras el panel compilado
+// no se actualice para escuchar este canal.
+Broadcast::channel('crm.inbox.{companyId}', function ($user, $companyId) {
+    if (\App\Http\Middleware\JwtMiddleware::esCliente($user)) return false;
+    return (int) $user->company_id === (int) $companyId;
+});
+
+// Ubicación de los técnicos, solo para el equipo de la misma empresa.
+Broadcast::channel('company.{companyId}.technicians', function ($user, $companyId) {
+    if (\App\Http\Middleware\JwtMiddleware::esCliente($user)) return false;
+    return (int) $user->company_id === (int) $companyId;
 });
 
 // Presencia por empresa: quién del equipo está en línea (chat interno y llamadas)

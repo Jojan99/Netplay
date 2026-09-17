@@ -37,6 +37,11 @@ class GeneratePdfByIdFacturesUseCase implements GeneratePdfByIdFacturesUseCaseIn
 
     if(true){
       try {
+        // Sin empresa no se busca: el mismo número existe en varias empresas.
+        if (!$companyId) {
+            return response()->json(['message' => 'Factura no encontrada', 'status' => 1], 404);
+        }
+
         // Obtener los datos del usuario y generar el PDF
         $generatePdf = $this->generatePdfRepository->generatePdfById($userFacture, $companyId);
 
@@ -53,7 +58,7 @@ class GeneratePdfByIdFacturesUseCase implements GeneratePdfByIdFacturesUseCaseIn
         $options->set('isPhpEnabled', true);
         $pdf = new Dompdf($options);
   
-        $html = $this->generateIndividualPdf($generatePdf,$Cab);
+        $html = $this->generateIndividualPdf($generatePdf, $Cab, $companyId);
   
   
         $pdf->loadHtml($html);
@@ -82,33 +87,12 @@ class GeneratePdfByIdFacturesUseCase implements GeneratePdfByIdFacturesUseCaseIn
   }
 
 
-  private function generateIndividualPdf($user,$Cab)
+  private function generateIndividualPdf($user, $Cab, int $companyId)
   {
-    // Crea un PDF individual y devuelve su contenido
-    // Aquí puedes usar Dompdf, TCPDF, o cualquier otra biblioteca de tu elección
-    $options = new Options();
-    // Crea una instancia de Dompdf, TCPDF u otra biblioteca
-    $options->set('isHtml5ParserEnabled', true);
-    $options->set('isPhpEnabled', true);
-    $options->set('paperSize', array(0, 0, 58, 100)); // Ancho x alto en milímetros
     $pdfT = new TemplatesPdf();
-    $pdf = new Dompdf($options);
 
-    $html = $pdfT->PdfFacturas($user,$Cab);
-
-    // Agrega contenido al PDF personalizado (por ejemplo, el nombre del usuario)
-    $pdf->loadHtml($html);
-
-    // Renderiza el PDF
-    $pdf->render();
-
-    // Devuelve el contenido del PDF generado
-
-    $pdfContent = $pdf->output();
-
-    $filePath = storage_path('app/pdf.pdf');
-    file_put_contents($filePath, $pdfContent);
-
-    return $html;
+    // Membrete de la empresa dueña de la factura. Antes además se escribía un
+    // storage/app/pdf.pdf compartido que nadie leía: se quitó.
+    return $pdfT->PdfFacturas($user, $Cab, (int) ($user['company_id'] ?? $companyId));
   }
 }

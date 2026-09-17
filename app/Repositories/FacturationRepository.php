@@ -188,12 +188,12 @@ class FacturationRepository implements FacturationRepositoryInterface
             $cab       = CabFacturation::find($data['cab_id']);
             $companyId = $cab ? $cab->company_id : getSessionCompanyId();
             $company   = Company::find($companyId);
-            $prefix    = ($company && $company->invoice_prefix) ? $company->invoice_prefix : 'GL';
+            $prefix    = $this->prefijoFactura($company, (int) $companyId);
 
             // Bloquea filas de la empresa para que dos procesos simultáneos no obtengan el mismo consecutivo
             DB::table('cab_facturations')->where('company_id', $companyId)->lockForUpdate()->count();
 
-            $number = $prefix . $this->getConsecutiveFacture($companyId);
+            $number = $prefix . $this->getConsecutiveFacture((int) $companyId, $prefix);
 
             return DetFacturation::create([
                 'cab_id'                  => $data['cab_id'],
@@ -242,13 +242,45 @@ class FacturationRepository implements FacturationRepositoryInterface
         return true;
     }
 
-    public function getConsecutiveFacture(int $companyId): mixed
+    /**
+     * Prefijo de factura de la empresa. Sin prefijo configurado antes todas
+     * salían con 'GL' y se mezclaban entre empresas; ahora cada empresa sin
+     * prefijo toma uno propio (F{id}-), salvo las que ya facturaron con GL,
+     * que siguen con GL para no romper su consecutivo.
+     */
+    private function prefijoFactura(?Company $company, int $companyId): string
     {
-        $last = DetFacturation::join('cab_facturations', 'cab_facturations.id', '=', 'det_facturations.cab_id')
+        $prefix = trim((string) ($company?->invoice_prefix ?? ''));
+        if ($prefix !== '') {
+            return $prefix;
+        }
+
+        $tieneGL = DetFacturation::join('cab_facturations', 'cab_facturations.id', '=', 'det_facturations.cab_id')
+            ->where('cab_facturations.company_id', $companyId)
+            ->where('det_facturations.number_facture', 'like', 'GL%')
+            ->exists();
+
+        return $tieneGL ? 'GL' : 'F' . $companyId . '-';
+    }
+
+    public function getConsecutiveFacture(int $companyId, ?string $prefix = null): mixed
+    {
+        $base = DetFacturation::join('cab_facturations', 'cab_facturations.id', '=', 'det_facturations.cab_id')
             ->where('cab_facturations.company_id', $companyId)
             ->orderBy('det_facturations.id', 'desc')
-            ->select('det_facturations.number_facture')
-            ->first();
+            ->select('det_facturations.number_facture');
+
+        // Se sigue la serie del prefijo actual. Tomar la última factura sin mirar
+        // el prefijo hacía que una factura de prueba de la pasarela (TEST260916150703)
+        // disparara el consecutivo a NT260916150704.
+        $last = null;
+        if ($prefix !== null && $prefix !== '') {
+            $last = (clone $base)
+                ->whereRaw('det_facturations.number_facture REGEXP ?', ['^' . preg_quote($prefix) . '[0-9]+$'])
+                ->first();
+        }
+        // Prefijo nuevo: sigue la numeración anterior de la empresa (sin las de prueba).
+        $last ??= (clone $base)->where('det_facturations.number_facture', 'not like', 'TEST%')->first();
 
         if (!$last) return 1;
 

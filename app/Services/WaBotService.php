@@ -1852,7 +1852,12 @@ class WaBotService
 
     private function recordBotConversationMessage(Company $company, string $phone, string $senderType, string $content, ?string $externalId = null): void
     {
-        if ($externalId && DB::table('crm_messages')->where('external_id', $externalId)->exists()) {
+        // Duplicado solo dentro de la empresa: el mismo id puede estar en otra.
+        if ($externalId && DB::table('crm_messages as m')
+            ->join('crm_conversations as cv', 'cv.id', '=', 'm.conversation_id')
+            ->where('cv.company_id', $company->id)
+            ->where('m.external_id', $externalId)
+            ->exists()) {
             return;
         }
 

@@ -118,7 +118,7 @@ class FotoDelRouter
     {
         try {
             $r = Http::timeout(30)
-                ->withHeaders(['User-Agent' => 'NetplayISP/1.0 (panel de gestion)'])
+                ->withHeaders(['User-Agent' => 'NetvulaISP/1.0 (panel de gestion)'])
                 ->get('https://mikrotik.com/sitemap.xml');
 
             if (!$r->successful()) {
@@ -202,7 +202,7 @@ class FotoDelRouter
     {
         try {
             $r = Http::timeout(25)
-                ->withHeaders(['User-Agent' => 'NetplayISP/1.0 (panel de gestion)'])
+                ->withHeaders(['User-Agent' => 'NetvulaISP/1.0 (panel de gestion)'])
                 ->get('https://mikrotik.com/product/' . $slug);
 
             if (!$r->successful()) {

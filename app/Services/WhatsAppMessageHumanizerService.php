@@ -85,22 +85,29 @@ class WhatsAppMessageHumanizerService
     private array $optionalEmojis = ['📄', '💡', '📅', '💰', '✅', '📲', '👋', '👍'];
 
     /**
-     * Variaciones naturales de métodos de pago tradicional (billing_electronic = 0).
+     * Encabezados y cierres para los medios de pago. Los medios en sí salen de
+     * la empresa (companies.invoice_payment_info): antes iban aquí las cuentas
+     * de Netplay para todas las empresas.
      */
-    private array $traditionalPaymentLines = [
-        "Medios de pago:\nBANCOLOMBIA CTA AHO 47800013328\nDAVIPLATA 3022042294\n💚 NEQUI 3022042294 (Hum Gom)\n💜 NEQUI 3245127869 (Joj Pom)\n\n📩 Responde con el comprobante cuando realices el pago.",
-        "Puedes pagar por:\n🏦 Bancolombia Ahorros 47800013328\n📲 Daviplata 3022042294\n💚 Nequi 3022042294 (Hum Gom)\n💜 Nequi 3245127869 (Joj Pom)\n\n📩 Envíanos el comprobante respondiendo este mensaje.",
-        "Realiza tu pago en:\n• Bancolombia Cta Aho 47800013328\n• Daviplata 3022042294\n• 💚 Nequi 3022042294 (Hum Gom)\n• 💜 Nequi 3245127869 (Joj Pom)\n\n📩 Una vez hecho el pago, responde con el comprobante.",
+    private array $paymentHeaders = [
+        "Medios de pago:",
+        "Puedes pagar por:",
+        "Realiza tu pago en:",
     ];
 
-    /**
-     * Variaciones de métodos de pago electrónico / llave (billing_electronic = 1).
-     */
-    private array $electronicPaymentLines = [
-        "Puedes realizar tu pago siguiendo una de estas opciones:\n1️⃣  transferencia por Bre-B usando la siguiente llave:\n🔑 0091768855\n\n📩 Envíanos el comprobante en tu siguiente mensaje.",
-        "Opciones de pago:\n📎 Cancela por transferencia Bre-B con llave:\n🔑 0091768855\n\n📩 Responde con el comprobante.",
-        "Paga fácil:\n1️⃣ Paga con Bre-B con llave *0091768855*\n\n📩 Envía el comprobante por aquí.",
+    private array $paymentClosings = [
+        "📩 Responde con el comprobante cuando realices el pago.",
+        "📩 Envíanos el comprobante respondiendo este mensaje.",
+        "📩 Una vez hecho el pago, responde con el comprobante.",
     ];
+
+    /** Medios de pago de la empresa, uno por línea. */
+    private string $paymentInfo;
+
+    public function __construct(?\App\Models\Company $company = null)
+    {
+        $this->paymentInfo = trim((string) ($company?->invoice_payment_info ?? ''));
+    }
 
     /**
      * Genera un mensaje de factura único y humanizado.
@@ -139,12 +146,11 @@ class WhatsAppMessageHumanizerService
         // Barajar las secciones intermedias para más variación
         shuffle($sections);
 
-        // 💳 Métodos de pago según billing_electronic (siempre se incluye)
+        // 💳 Medios de pago de la empresa; si no tiene configurados, no se muestran
         $paymentSection = [];
-        if ($isElectronic) {
-            $paymentSection = ['', $this->pickRandom($this->electronicPaymentLines)];
-        } else {
-            $paymentSection = ['', $this->pickRandom($this->traditionalPaymentLines)];
+        $medios = array_values(array_filter(array_map('trim', preg_split('/\r\n|\r|\n/', $this->paymentInfo)), fn ($l) => $l !== '' && $l !== '-'));
+        if ($medios) {
+            $paymentSection = ['', $this->pickRandom($this->paymentHeaders) . "\n" . implode("\n", $medios) . "\n\n" . $this->pickRandom($this->paymentClosings)];
         }
 
         // Ensamblar mensaje final

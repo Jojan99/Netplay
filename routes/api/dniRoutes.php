@@ -12,10 +12,12 @@ Route::prefix('dni')->group(function () {
     Route::get('pruebaMikroPing', [DniController::class, 'pruebaMikroPing']);
     Route::get('pruebaMikroPingBots', [DniController::class, 'pruebaMikroPingBots']);
     Route::get('diagnosticoConexionBot', [DniController::class, 'diagnosticoConexionBot']);
-    Route::get('pruebaMikroAll', [DniController::class, 'pruebaMikroAll']);
+    // pruebaMikroAll, createUser y getOltName deshabilitadas (multiempresa): usaban
+    // equipos de Netplay con IP/credenciales fijas y el panel no las llama.
+    // Route::get('pruebaMikroAll', [DniController::class, 'pruebaMikroAll']);
     Route::get('listFiles', [FileController::class, 'listFiles']);
     Route::get('downloadFiles/{name}', [FileController::class, 'downloadFiles']);
-    Route::get('createUser', [DniController::class, 'createUser']);
+    // Route::get('createUser', [DniController::class, 'createUser']);
     Route::post('disableUser', [DniController::class, 'disableUser']);
-    Route::get('getOltName', [OltController::class, 'getOltName']);
+    // Route::get('getOltName', [OltController::class, 'getOltName']);
 });

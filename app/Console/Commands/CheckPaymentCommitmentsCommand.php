@@ -3,10 +3,12 @@
 namespace App\Console\Commands;
 
 use App\Managers\ConectionRouterManager;
+use App\Models\ConectionRouter;
 use App\Models\PaymentCommitment;
 use App\Models\UserData;
 use App\Repositories\ManagementRouterRepository;
 use App\Repositories\RouterRepository;
+use App\Services\Red\ClienteEnElRouter;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -119,9 +121,10 @@ class CheckPaymentCommitmentsCommand extends Command
         ManagementRouterRepository $mgmtRepo,
         string $logFile
     ): bool {
-        // Obtener username (dni) del usuario para buscarlo en el ARP del router
+        // Usuario de la misma empresa del compromiso
         $user = DB::table('users')
             ->where('id', $commitment->user_id)
+            ->where('company_id', $commitment->company_id)
             ->select('username', 'id')
             ->first();
 
@@ -130,49 +133,82 @@ class CheckPaymentCommitmentsCommand extends Command
             return false;
         }
 
-        $routerToken = $routerRepo->getTokenByCompany($commitment->company_id);
-        if (!$routerToken) {
-            $this->log($logFile, "SIN ROUTER | company_id={$commitment->company_id}");
-            return false;
-        }
-
         try {
-            $client = $connection->conection($routerToken);
+            // Misma lógica que al suspender desde el panel: el router del propio
+            // cliente (no el primero de la empresa), PPPoE o ARP por su documento.
+            $enRouter  = new ClienteEnElRouter($connection, (int) $commitment->company_id);
+            $resultado = $enRouter->suspender((int) $user->id);
 
-            // Buscar en ARP por username (comment)
-            $arpQuery = (new Query('/ip/arp/print'))->where('comment', $user->username);
-            $arp      = $client->query($arpQuery)->read();
-
-            if (!empty($arp[0]['.id'])) {
-                // Desactivar ARP
-                $client->query((new Query('/ip/arp/disable'))->equal('.id', $arp[0]['.id']))->read();
-
-                // Actualizar estado en BD (sin sesión — escribir directamente)
-                UserData::where('user_id', $user->id)->update(['status_internet_id' => 2]);
-
-                DB::table('user_audit_logs')->insert([
-                    'user_id'       => $user->id,
-                    'changed_by'    => null,
-                    'company_id'    => $commitment->company_id,
-                    'field_changed' => 'estado_internet',
-                    'old_value'     => 'ACTIVE',
-                    'new_value'     => 'INACTIVE',
-                    'description'   => "Suspensión automática por compromiso de pago #{$commitment->id}",
-                    'created_at'    => now(),
-                    'updated_at'    => now(),
-                ]);
-
-                $this->log($logFile, "SUSPENDIDO | commitment_id={$commitment->id} | user={$user->username}");
-                return true;
+            if (!$resultado['ok']) {
+                $this->log($logFile, "SIN ROUTER / ERROR MIKROTIK | commitment_id={$commitment->id} | " . implode('; ', $resultado['errores']));
+                return false;
             }
 
-            $this->log($logFile, "ARP NO ENCONTRADO | user={$user->username}");
-            return false;
+            // Compatibilidad: entradas ARP viejas con el username como comment
+            if (empty($resultado['quitado'])) {
+                $resultado['quitado'] = $this->suspenderArpPorUsername($commitment, $user, $connection);
+            }
+
+            if (empty($resultado['quitado'])) {
+                $this->log($logFile, "NO ENCONTRADO EN ROUTER | user={$user->username}");
+                return false;
+            }
+
+            // Actualizar estado en BD (sin sesión — escribir directamente)
+            UserData::where('user_id', $user->id)
+                ->where('company_id', $commitment->company_id)
+                ->update(['status_internet_id' => 2]);
+
+            DB::table('user_audit_logs')->insert([
+                'user_id'       => $user->id,
+                'changed_by'    => null,
+                'company_id'    => $commitment->company_id,
+                'field_changed' => 'estado_internet',
+                'old_value'     => 'ACTIVE',
+                'new_value'     => 'INACTIVE',
+                'description'   => "Suspensión automática por compromiso de pago #{$commitment->id}",
+                'created_at'    => now(),
+                'updated_at'    => now(),
+            ]);
+
+            $this->log($logFile, "SUSPENDIDO | commitment_id={$commitment->id} | user={$user->username} | " . implode('; ', $resultado['quitado']));
+            return true;
 
         } catch (Throwable $e) {
             $this->log($logFile, "ERROR MIKROTIK | commitment_id={$commitment->id} | {$e->getMessage()}");
             return false;
         }
+    }
+
+    /** ARP con el username como comment, en el router del cliente (o el de la empresa). */
+    private function suspenderArpPorUsername(PaymentCommitment $commitment, object $user, ConectionRouterManager $connection): array
+    {
+        if (empty($user->username)) {
+            return [];
+        }
+
+        $routerId = UserData::where('user_id', $user->id)
+            ->where('company_id', $commitment->company_id)
+            ->value('router_id');
+
+        $routers = ConectionRouter::where('company_id', $commitment->company_id);
+        $router  = ($routerId ? (clone $routers)->where('id', $routerId)->first() : null)
+            ?? $routers->orderBy('id')->first();
+
+        if (!$router) {
+            return [];
+        }
+
+        $client = $connection->conection($router->token);
+        $arp    = $client->query((new Query('/ip/arp/print'))->where('comment', $user->username))->read();
+
+        if (empty($arp[0]['.id'])) {
+            return [];
+        }
+
+        $client->query((new Query('/ip/arp/disable'))->equal('.id', $arp[0]['.id']))->read();
+
+        return ['ARP ' . ($arp[0]['address'] ?? '') . ' deshabilitado (por username)'];
     }
 
     private function log(string $file, string $msg): void

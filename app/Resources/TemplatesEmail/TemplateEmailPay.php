@@ -11,7 +11,20 @@ class TemplateEmailPay
 {
   public function EmailPay($data,$price,$id_facture): mixed
   {
-    
+    // Aviso interno de abono para la empresa del operador. Antes iba, desde
+    // cualquier empresa, a dos correos personales de Netplay con claves de
+    // Mailjet escritas en el código.
+    $empresa = \App\Models\Company::find(getSessionCompanyId());
+    $destino = trim((string) ($empresa?->email ?? ''));
+    $desde   = trim((string) config('services.mailjet.from_email', ''));
+    $public  = (string) config('services.mailjet.api_key_public', '');
+    $private = (string) config('services.mailjet.api_key_private', '');
+    if (!$empresa || !filter_var($destino, FILTER_VALIDATE_EMAIL) || $desde === '' || $public === '' || $private === '') {
+      return ['message' => 'Aviso de pago no enviado: la empresa no tiene correo o el correo no está configurado', 'status' => 1, 'data' => ApiResponseConstants::DATA_NULL];
+    }
+    $nombreEmpresa = trim((string) $empresa->invoice_business_name) ?: trim((string) $empresa->name);
+    $e = fn ($v) => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
+
     $html = "
     <!DOCTYPE html>
     <html lang='es'>
@@ -60,43 +73,39 @@ class TemplateEmailPay
     <body>
       <div class='container'>
         <div class='header'>
-          <h2>Pago Exitoso: ".$id_facture."</h2>
+          <h2>Pago Exitoso: ".$e($id_facture)."</h2>
         </div>
         <div class='content'>
           <h1>¡Gracias por tu pago! Valor</h1>
-          <a><strong>Sr. (es): </strong>" . $data['names'] . " " . $data['lastname'] . "</a>
+          <a><strong>Sr. (es): </strong>" . $e($data['names'] ?? '') . " " . $e($data['lastname'] ?? '') . "</a>
           <p>Hemos recibido tu pago con éxito. Ahora puedes disfrutar de nuestros servicios sin interrupciones.</p>
-          <a><strong>Valor: </strong>" . $price ."</a>
+          <a><strong>Valor: </strong>" . $e($price) ."</a>
           <p>Si tienes alguna pregunta, no dudes en contactarnos.</p>
         </div>
         <div class='footer'>
-          <p>&copy; 2024 Netplay. Todos los derechos reservados.</p>
+          <p>&copy; " . date('Y') . " " . $e($nombreEmpresa) . ". Todos los derechos reservados.</p>
         </div>
       </div>
     </body>
     </html>
 ";
 
-    $mj = new Client(('0ad0ef7d5bf8c1139875a80397e6de7b'), ('b2aeeed4129241ac2811174578f6c5d3'), true, ['version' => 'v3.1']);
+    $mj = new Client($public, $private, true, ['version' => 'v3.1']);
     $body = [
       'Messages' => [
         [
           'From' => [
-            'Email' => "atencionalcliente@netplay.com.co",
-            'Name' => "Netplay"
+            'Email' => $desde,
+            'Name' => $nombreEmpresa
           ],
           'To' => [
             [
-              'Email' => "jojanemece@gmail.com",
-              'Name' => "Jojan"
-            ],
-            [
-              'Email' => "mlxhumbertopte@gmail.com",
-              'Name' => "Humberto"
+              'Email' => $destino,
+              'Name' => $nombreEmpresa
             ]
           ],
           'Subject' => "PAGO EXITOSO",
-          'TextPart' => "AAAA",
+          'TextPart' => "Pago recibido " . $id_facture . ": " . $price,
           'HTMLPart' => $html,
       //     'Attachments' => [
       //   [
@@ -108,20 +117,25 @@ class TemplateEmailPay
         ]
       ]
     ];
-    $response = $mj->post(Resources::$Email, ['body' => $body]);
+    try {
+      $response = $mj->post(Resources::$Email, ['body' => $body]);
+    } catch (\Throwable $err) {
+      // El aviso no debe tumbar el registro del abono
+      return ['message' => 'The mail could not be sent', 'status' => 1, 'data' => ApiResponseConstants::DATA_NULL];
+    }
 
     
     $responseEmail = $response->getData();
 
     error_log(json_encode($responseEmail));
 
-    if ($responseEmail['Messages'][0]['Status'] == "error") {
+    if (($responseEmail['Messages'][0]['Status'] ?? 'error') == "error") {
       return [
         'message' => 'The mail could not be sent',
         'status' => 1,
         'data' => ApiResponseConstants::DATA_NULL
       ];
-    } else if ($responseEmail['Messages'][0]['Status'] == "success") {
+    } else if (($responseEmail['Messages'][0]['Status'] ?? '') == "success") {
       return [
         'message' => 'Email sent successfully',
         'status' => 0,

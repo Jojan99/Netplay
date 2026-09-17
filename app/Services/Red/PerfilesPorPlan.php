@@ -23,7 +23,7 @@ use RouterOS\Query;
 class PerfilesPorPlan
 {
     public const POOL = 'pool-pppoe-planes';
-    public const MARCA = 'Netplay · perfil del plan';
+    public const MARCA = 'Netvula · perfil del plan'; // sólo se escribe; la búsqueda es por nombre
 
     public function __construct(
         private ConectionRouterManagerInterface $conexion,

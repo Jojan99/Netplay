@@ -40,6 +40,7 @@ class TicketRepository implements TicketRepositoryInterface
 
     public function createTicket(CreateTicketRequest $data): int
     {
+        // Cliente y técnico ya validados por empresa en CreateTicketRequest
         $ticket = Ticket::create([
             'company_id'      => getSessionCompanyId(),
             'user_id'         => $data->user_id,
@@ -94,10 +95,8 @@ class TicketRepository implements TicketRepositoryInterface
         ->join('ticket_type_services', 'ticket_type_services.id', '=', 'tickets.service_id')
         ->where('tickets.status_id', $status->status)
         ->where('tickets.company_id', getSessionCompanyId())
-        ->where(function ($q) {
-            $q->where('tickets.technical_id', getSessionUserId())
-              ->orWhereRaw(getSessionUserProfileId() . ' = 2');
-        })
+        // ADMIN ve todos; por nombre de perfil (el id 2 era sólo el ADMIN de la empresa 1)
+        ->when(!sessionUserHasProfile('ADMIN'), fn ($q) => $q->where('tickets.technical_id', getSessionUserId()))
         ->orderBy('ticket_type_prioritys.id', 'asc')
         ->get();
     }
@@ -136,8 +135,10 @@ class TicketRepository implements TicketRepositoryInterface
         ->join('ticket_type_services', 'ticket_type_services.id', '=', 'tickets.service_id')
         ->where('tickets.company_id', getSessionCompanyId());
 
-        // Role filter: technicians only see their own, admins see all
-        if (getSessionUserProfileId() != 2) {
+        // Role filter: technicians only see their own, admins see all.
+        // Por nombre: cada empresa tiene su propio id de perfil ADMIN (el 2 es
+        // sólo el de la empresa 1, y con él las demás no veían sus tickets).
+        if (!sessionUserHasProfile('ADMIN')) {
             $query->where('tickets.technical_id', getSessionUserId());
         }
 
@@ -333,10 +334,8 @@ class TicketRepository implements TicketRepositoryInterface
         $ticket = Ticket::where('id', $id)
             ->where('company_id', getSessionCompanyId())
             ->where('status_id', 2)
-            ->where(function ($q) {
-                $q->where('technical_id', getSessionUserId())
-                  ->orWhereRaw(getSessionUserProfileId() . ' = 2');
-            })
+            // ADMIN cierra cualquiera; por nombre de perfil, no por el id 2 de la empresa 1
+            ->when(!sessionUserHasProfile('ADMIN'), fn ($q) => $q->where('technical_id', getSessionUserId()))
             ->first();
 
         if (!$ticket) return false;
@@ -441,6 +440,13 @@ class TicketRepository implements TicketRepositoryInterface
             ->first();
 
         if (!$ticket) return false;
+
+        // El técnico tiene que ser usuario de la misma empresa
+        $tecnicoPropio = DB::table('users')
+            ->where('id', $techId)
+            ->where('company_id', getSessionCompanyId())
+            ->exists();
+        if (!$tecnicoPropio) return false;
 
         $updates = ['technical_id' => $techId];
 

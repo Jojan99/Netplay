@@ -135,9 +135,35 @@ class VpnUseCase
         }
 
         try {
+            // Al reactivar un túnel se revisan sus redes otra vez: mientras
+            // estuvo apagado otra empresa pudo haber publicado alguna, y
+            // encenderlo tal cual le quitaba la ruta.
+            $reactivar = !empty($datos['activo']) && !$tunel->activo;
+
+            if ($reactivar && !array_key_exists('redes_remotas', $datos)) {
+                $datos['redes_remotas'] = $tunel->redes_remotas ?? [];
+            }
+
             if (array_key_exists('redes_remotas', $datos)) {
-                $datos['redes_remotas'] = ServidorVpn::normalizarRedes($datos['redes_remotas']);
+                // Las virtuales que ya tenía vuelven a su red real, así la
+                // traducción se decide de nuevo contra el estado actual.
+                $redes = ServidorVpn::normalizarRedes($datos['redes_remotas']);
+
+                if ($reactivar) {
+                    $redes = array_map(fn ($r) => $tunel->realDe((string) $r), $redes);
+                }
+
+                [$datos['redes_remotas'], $traducciones] = ServidorVpn::resolverChoques(
+                    $redes,
+                    (int) $tunel->company_id,
+                    $tunel->id,
+                    $tunel->traducciones ?? [],
+                );
                 ServidorVpn::verificarRedesLibres($datos['redes_remotas'], $tunel->id);
+
+                if ($traducciones || $tunel->traducciones) {
+                    $tunel->traducciones = $traducciones ?: null;
+                }
             }
 
             $tunel->fill(array_intersect_key($datos, array_flip([
@@ -201,10 +227,14 @@ class VpnUseCase
             return ['status' => 1, 'message' => 'Túnel u OLT no encontrados', 'data' => null];
         }
 
+        // En una red traducida la OLT se alcanza por su IP virtual.
+        $ipReal = $olt->host;
+        $olt->host = $tunel->ipAlcanzable((string) $olt->host);
+
         if (!$this->estaEnAlgunaRed($olt->host, $tunel)) {
             return [
                 'status'  => 1,
-                'message' => "La IP de la OLT ({$olt->host}) no está en las redes de este túnel ("
+                'message' => "La IP de la OLT ({$ipReal}) no está en las redes de este túnel ("
                     . implode(', ', $tunel->redes_remotas ?? []) . '). Agregá la red y volvé a intentar.',
                 'data'    => null,
             ];
@@ -234,6 +264,7 @@ class VpnUseCase
         // ya no hacen falta. Si algún día hay que volver atrás, se cargan de
         // nuevo en la configuración de la OLT.
         $olt->forceFill([
+            'host'           => $olt->host,
             'access_mode'    => 'direct',
             'jump_host'      => null,
             'jump_user'      => null,
@@ -259,7 +290,9 @@ class VpnUseCase
 
         return [
             'status'  => 0,
-            'message' => "La OLT {$olt->name} ahora se alcanza por el túnel. Se quitó el jump host"
+            'message' => "La OLT {$olt->name} ahora se alcanza por el túnel"
+                . ($olt->host !== $ipReal ? " en {$olt->host} (su IP real {$ipReal} la usa otra empresa)" : '')
+                . '. Se quitó el jump host'
                 . ($antes['jump_host'] ? " ({$antes['jump_host']})" : '') . ' y sus credenciales.',
             'data'    => ['antes' => $antes, 'olt' => $olt->fresh()],
         ];
@@ -273,6 +306,8 @@ class VpnUseCase
         if (!$tunel) {
             return ['status' => 1, 'message' => 'Túnel no encontrado', 'data' => null];
         }
+
+        $ip = $tunel->ipAlcanzable($ip);
 
         if (!$this->estaEnAlgunaRed($ip, $tunel)) {
             return [

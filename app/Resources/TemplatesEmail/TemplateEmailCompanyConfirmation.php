@@ -29,11 +29,11 @@ class TemplateEmailCompanyConfirmation
         <body>
           <div class='container'>
             <div class='header'>
-              <h2>Confirma tu empresa en Netplay</h2>
+              <h2>Confirma tu empresa en Netvula</h2>
             </div>
             <div class='content'>
               <p>Hola, <strong>" . htmlspecialchars($companyName) . "</strong>.</p>
-              <p>Tu empresa ha sido registrada exitosamente en la plataforma <strong>Netplay ISP</strong>.</p>
+              <p>Tu empresa ha sido registrada exitosamente en la plataforma <strong>Netvula</strong>.</p>
               <p>Para activar tu cuenta y comenzar a operar, por favor confirma tu correo electrónico haciendo clic en el siguiente botón:</p>
               <p style='text-align:center;'>
                 <a href='" . htmlspecialchars($confirmUrl) . "' class='btn'>Confirmar correo</a>
@@ -44,7 +44,7 @@ class TemplateEmailCompanyConfirmation
               <p>Si no solicitaste este registro, ignora este correo.</p>
             </div>
             <div class='footer'>
-              &copy; " . date('Y') . " Netplay ISP. Todos los derechos reservados.
+              &copy; " . date('Y') . " Netvula. Todos los derechos reservados.
             </div>
           </div>
         </body>
@@ -62,12 +62,13 @@ class TemplateEmailCompanyConfirmation
                 [
                     'From' => [
                         'Email' => env('MAILJET_FROM_EMAIL', 'atencionalcliente@netplay.com.co'),
-                        'Name'  => env('MAILJET_FROM_NAME', 'Netplay ISP'),
+                        // Correo de la plataforma, no de una empresa cliente.
+                        'Name'  => 'Netvula',
                     ],
                     'To' => [
                         ['Email' => $toEmail, 'Name' => $companyName],
                     ],
-                    'Subject'  => 'Confirma tu empresa en Netplay ISP',
+                    'Subject'  => 'Confirma tu empresa en Netvula',
                     'TextPart' => "Confirma tu empresa: {$confirmUrl}",
                     'HTMLPart' => $html,
                 ],

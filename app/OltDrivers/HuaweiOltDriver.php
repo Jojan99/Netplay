@@ -1038,6 +1038,20 @@ public function parseServicePorts(string $output): array
      *
      * @return array{ok:bool, detalle:string}
      */
+    /**
+     * ¿El perfil de servidor TR-069 existe y apunta a esta dirección?
+     *
+     * Se guarda en la plataforma el número de perfil y antes no se volvía a
+     * mirar: si cambiaba la dirección del servidor (netplay → netvula) o se
+     * reseteaba la OLT, los equipos seguían recibiendo la vieja o ninguna.
+     */
+    public function servidorTr069Vigente(int $perfil, string $url): bool
+    {
+        $leido = $this->runCommand("display ont tr069-server-profile profile-id {$perfil}");
+
+        return str_contains($leido, $url);
+    }
+
     public function crearServidorTr069(int $perfil, string $nombre, string $url, string $usuario, string $clave): array
     {
         $this->runCommand('config');
@@ -1377,6 +1391,55 @@ public function parseServicePorts(string $output): array
                 : (!$spOk
                     ? "La OLT no aceptó el service-port {$servicePort}: " . (self::primeraLinea($sp) ?: 'número ocupado')
                     : 'La ONT no tomó la VLAN de gestión: ' . self::primeraLinea($ip)),
+        ];
+    }
+
+    /**
+     * Quita la conexión de gestión que la OLT le creó a la ONT ("ont ipconfig")
+     * y su service-port, cuando el TR-069 ya va por la conexión de internet
+     * ("TR069_INTERNET").
+     *
+     * La conexión que crea la OLT se vuelve a crear en cada reinicio de la ONT
+     * y puede quedar en el lugar de la de internet: el 17-09 la OLT se reinició
+     * y DOUGLAS_MENDEZ y LILIANA_COROMOTO amanecieron sin internet.
+     *
+     * @return array{ok:bool, detalle:string}
+     */
+    public function quitarGestionDeOnt(string $fsp, int $ontId, int $vlan): array
+    {
+        [$frame, $slot, $puerto] = $this->parseFsp($fsp);
+
+        $this->runCommand('config');
+
+        $listar = fn () => $this->runCommand("display service-port port {$frame}/{$slot}/{$puerto} ont {$ontId}");
+        $carril = preg_match('/^\s*(\d+)\s+' . $vlan . '\s+\w+\s+gpon\b/m', $listar(), $m) ? (int) $m[1] : null;
+
+        $this->runCommand("interface gpon {$frame}/{$slot}");
+        $this->runCommand(sprintf('undo ont ipconfig %d %d', $puerto, $ontId));
+        $this->runCommand('quit');
+
+        if ($carril !== null) {
+            $salida = $this->runCommand("undo service-port {$carril}");
+
+            if (preg_match('/\(y\/n\)/i', $salida)) {
+                $this->runCommand('y');
+            }
+        }
+
+        // Cuenta lo que quedó guardado, no lo que contestó.
+        $config  = $this->runCommand("display current-configuration ont {$frame}/{$slot}/{$puerto} {$ontId}");
+        $sigueIp = (bool) preg_match('/ont ipconfig ' . $puerto . ' ' . $ontId . '\b/', $config);
+        $sigueSp = (bool) preg_match('/^\s*\d+\s+' . $vlan . '\s+\w+\s+gpon\b/m', $listar());
+
+        $this->volverAlPrincipio();
+
+        $ok = !$sigueIp && !$sigueSp;
+
+        return [
+            'ok'      => $ok,
+            'detalle' => $ok
+                ? "Se quitó de la OLT la conexión de gestión (VLAN {$vlan})" . ($carril !== null ? " y su service-port {$carril}" : '')
+                : 'La OLT no dejó quitar ' . ($sigueIp ? 'la conexión de gestión' : "el service-port {$carril}") . '.',
         ];
     }
 

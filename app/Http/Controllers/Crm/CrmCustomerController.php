@@ -186,7 +186,7 @@ class CrmCustomerController extends Controller
             $options->set('isHtml5ParserEnabled', true);
             $options->set('isPhpEnabled', true);
             $pdf = new Dompdf($options);
-            $pdf->loadHtml($templatesPdf->PdfFacturas($data, $saldoAnt));
+            $pdf->loadHtml($templatesPdf->PdfFacturas($data, $saldoAnt, (int)$conv->company_id));
             $pdf->render();
             $base64Pdf = base64_encode($pdf->output());
 

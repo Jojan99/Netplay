@@ -142,7 +142,22 @@ class TicketController extends Controller
 
     public function addNote(Request $request, int $id, TicketRepositoryInterface $repo): object
     {
-        $request->validate(['note' => 'required|string']);
+        $request->validate([
+            'note'     => 'required|string',
+            'photos'   => 'nullable|array|max:10',
+            'photos.*' => 'file|mimes:jpg,jpeg,png,webp,gif,heic,heif|max:10240',
+            // El panel graba con MediaRecorder: webm/ogg (Chrome/Firefox) o mp4 (Safari)
+            'audio'    => 'nullable|file|mimes:mp3,mpga,ogg,oga,opus,webm,weba,m4a,mp4,wav,aac|max:20480',
+        ]);
+
+        // El ticket tiene que ser de la empresa antes de guardar archivos
+        $propio = \Illuminate\Support\Facades\DB::table('tickets')
+            ->where('id', $id)
+            ->where('company_id', getSessionCompanyId())
+            ->exists();
+        if (!$propio) {
+            return standardApiReponse('Ticket no encontrado', null, 1, JsonResponse::HTTP_NOT_FOUND);
+        }
 
         $photos    = [];
         $audioPath = null;

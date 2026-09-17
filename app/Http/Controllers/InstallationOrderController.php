@@ -11,6 +11,7 @@ use App\Models\PaymentMethod;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 
 class InstallationOrderController extends Controller
 {
@@ -49,7 +50,7 @@ class InstallationOrderController extends Controller
         
         $installations->getCollection()->transform(function ($inst) {
             if (!empty($inst->technician_ids)) {
-                $inst->technicians_list = Employee::whereIn('id', $inst->technician_ids)->get(['id', 'first_name', 'last_name']);
+                $inst->technicians_list = Employee::where('company_id', getSessionCompanyId())->whereIn('id', $inst->technician_ids)->get(['id', 'first_name', 'last_name']);
             }
             return $inst;
         });
@@ -66,16 +67,16 @@ class InstallationOrderController extends Controller
             'client_email' => 'nullable|email',
             'address' => 'required|string|max:500',
             'neighborhood' => 'nullable|string|max:255',
-            'internet_plan_id' => 'nullable|exists:internet_plans,id',
+            'internet_plan_id' => ['nullable', $this->deLaEmpresa('internet_plans')],
             'scheduled_date' => 'required|date',
             'scheduled_time' => 'required',
             'installation_cost' => 'nullable|numeric|min:0',
             'technician_ids' => 'nullable|array',
-            'technician_ids.*' => 'exists:employees,id',
-            'payment_method_id' => 'nullable|exists:payment_methods,id',
+            'technician_ids.*' => [$this->deLaEmpresa('employees')],
+            'payment_method_id' => ['nullable', $this->deLaEmpresa('payment_methods')],
             'commission_amount' => 'nullable|numeric|min:0',
             'observations' => 'nullable|string',
-            'user_data_id' => 'nullable|exists:user_data,id',
+            'user_data_id' => ['nullable', $this->deLaEmpresa('user_data')],
         ]);
         
         $validated['company_id'] = getSessionCompanyId();
@@ -121,15 +122,15 @@ class InstallationOrderController extends Controller
             'client_email' => 'nullable|email',
             'address' => 'sometimes|string|max:500',
             'neighborhood' => 'nullable|string|max:255',
-            'internet_plan_id' => 'nullable|exists:internet_plans,id',
+            'internet_plan_id' => ['nullable', $this->deLaEmpresa('internet_plans')],
             'scheduled_date' => 'sometimes|date',
             'scheduled_time' => 'sometimes',
             'installation_cost' => 'nullable|numeric|min:0',
             'technician_ids' => 'nullable|array',
-            'technician_ids.*' => 'exists:employees,id',
+            'technician_ids.*' => [$this->deLaEmpresa('employees')],
             'commission_amount' => 'nullable|numeric|min:0',
             'observations' => 'nullable|string',
-            'user_data_id' => 'nullable|exists:user_data,id',
+            'user_data_id' => ['nullable', $this->deLaEmpresa('user_data')],
         ]);
         
         $installation->update($validated);
@@ -286,7 +287,7 @@ class InstallationOrderController extends Controller
             'payment_amount' => 'nullable|numeric|min:0',
             'payment_reference' => 'nullable|string|max:100',
             'payment_image_url' => 'nullable|string|max:500',
-            'payment_method_id' => 'nullable|exists:payment_methods,id',
+            'payment_method_id' => ['nullable', $this->deLaEmpresa('payment_methods')],
         ]);
         
         $oldStatus = $installation->payment_status;
@@ -314,7 +315,7 @@ class InstallationOrderController extends Controller
         
         $validated = $request->validate([
             'technician_ids' => 'nullable|array',
-            'technician_ids.*' => 'exists:employees,id',
+            'technician_ids.*' => [$this->deLaEmpresa('employees')],
             'commission_amount' => 'nullable|numeric|min:0',
         ]);
         
@@ -453,5 +454,11 @@ class InstallationOrderController extends Controller
         ]);
         
         return response()->json($log);
+    }
+
+    // exists limitado a la empresa de la sesión
+    private function deLaEmpresa(string $tabla)
+    {
+        return Rule::exists($tabla, 'id')->where('company_id', getSessionCompanyId());
     }
 }

@@ -8,13 +8,13 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 /**
- * Repara empresas incompletas: sin slug, sin perfiles (ADMIN/TECNICO/CONTADOR),
+ * Repara empresas incompletas: sin slug, sin perfiles (ADMIN/TECNICO/CONTADOR/USER),
  * sin módulos asignados o con usuarios sin perfil. Es idempotente.
  */
 class RepairCompanies extends Command
 {
     protected $signature = 'company:repair {--company= : Reparar sólo esta empresa} {--dry : Sólo mostrar lo que haría}';
-    protected $description = 'Completa empresas sin slug, perfiles o módulos y engancha usuarios huérfanos al perfil ADMIN';
+    protected $description = 'Completa empresas sin slug, perfiles o módulos y engancha usuarios huérfanos a su perfil (USER si no tienen)';
 
     public function handle(): int
     {
@@ -36,7 +36,8 @@ class RepairCompanies extends Command
 
             // 2. perfiles base
             $profiles = DB::table('profiles')->where('company_id', $company->id)->pluck('id', 'name')->all();
-            foreach (['ADMIN', 'TECNICO', 'CONTADOR'] as $role) {
+            // USER es el de los clientes: sin él el alta de clientes no tiene perfil que darles.
+            foreach (['ADMIN', 'TECNICO', 'CONTADOR', 'USER'] as $role) {
                 if (isset($profiles[$role])) continue;
                 $changes[] = "perfil $role";
                 if (!$dry) {

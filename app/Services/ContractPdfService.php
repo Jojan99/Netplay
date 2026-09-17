@@ -68,17 +68,18 @@ class ContractPdfService
             $pdf->Cell(0, 8, 'Se anexan las fotografias de ambas caras del documento de identidad del cliente.', 0, 1, 'C');
             $pdf->Ln(4);
 
-            if ($documentFrontPath && file_exists(storage_path('app/public/' . $documentFrontPath))) {
+            // Fotos nuevas en carpeta privada, las viejas en public (ArchivosContrato resuelve ambas)
+            if ($frontAbs = \App\Support\ArchivosContrato::absoluta($documentFrontPath)) {
                 $pdf->SetFont('Helvetica', 'B', 11);
                 $pdf->Cell(0, 8, 'CARA FRONTAL', 0, 1, 'C');
-                $pdf->Image(storage_path('app/public/' . $documentFrontPath), 35, $pdf->GetY(), 140, 0, pathinfo($documentFrontPath, PATHINFO_EXTENSION));
+                $pdf->Image($frontAbs, 35, $pdf->GetY(), 140, 0, pathinfo($documentFrontPath, PATHINFO_EXTENSION));
                 $pdf->Ln(90);
             }
 
-            if ($documentBackPath && file_exists(storage_path('app/public/' . $documentBackPath))) {
+            if ($backAbs = \App\Support\ArchivosContrato::absoluta($documentBackPath)) {
                 $pdf->SetFont('Helvetica', 'B', 11);
                 $pdf->Cell(0, 8, 'CARA TRASERA', 0, 1, 'C');
-                $pdf->Image(storage_path('app/public/' . $documentBackPath), 35, $pdf->GetY(), 140, 0, pathinfo($documentBackPath, PATHINFO_EXTENSION));
+                $pdf->Image($backAbs, 35, $pdf->GetY(), 140, 0, pathinfo($documentBackPath, PATHINFO_EXTENSION));
             }
         }
 

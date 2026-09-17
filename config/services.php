@@ -52,11 +52,11 @@ return [
 
 // El propio servidor: su IP pública y a dónde se entra por SSH para las
 // consultas viejas de la OLT. Van en el .env para que cambiar de servidor no
-// obligue a tocar el código. Los valores por defecto son los del servidor
-// original (181.48.150.43), para que nada cambie donde el .env no los define.
+// obligue a tocar el código. Sin valores por defecto: eran la infraestructura
+// de Netplay y las consultas viejas de la OLT están deshabilitadas.
 'servidor' => [
-    'ips'      => env('IPS_DEL_SERVIDOR', '181.48.150.43'),
-    'ssh_host' => env('SERVIDOR_SSH_HOST', '181.48.150.43'),
+    'ips'      => env('IPS_DEL_SERVIDOR', ''),
+    'ssh_host' => env('SERVIDOR_SSH_HOST'),
 ],
 
 'netplay_whatsapp' => [
@@ -67,6 +67,8 @@ return [
     'base_url'    => env('NETPLAY_WS_URL', 'http://127.0.0.1:3001/crm'),
     // Sin valor por defecto a propósito: la clave sale del .env y no del código.
     'master_key'  => env('NETPLAY_WS_MASTER_KEY'),
+    // Base del servicio Node (misma instancia de MySQL): de ahí sale el número de cada instancia.
+    'db_name'     => env('NETPLAY_WS_DB_NAME', 'whatsapp_service'),
 ],
 
 'meta_whatsapp' => [
@@ -79,6 +81,8 @@ return [
     // webhook entrante. Mientras esté vacío el webhook se acepta sin verificar
     // y queda el aviso en el log, para no cortar mensajes antes de configurarlo.
     'app_secret'       => env('META_WS_APP_SECRET', ''),
+    // Token que Meta manda al verificar el webhook (hub.verify_token).
+    'verify_token'     => env('META_WS_VERIFY_TOKEN', 'netplay_verify_token_2026'),
 ],
 
 'netplay_payments' => [

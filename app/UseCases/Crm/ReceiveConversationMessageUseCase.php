@@ -19,6 +19,20 @@ class ReceiveConversationMessageUseCase
         private ConversationRepositoryInterface $repository
     ) {}
 
+/**
+ * Mensaje por id externo de WhatsApp, dentro de la empresa si se conoce.
+ * Sin empresa se busca global, como antes (luego el webhook se rechaza igual).
+ */
+private function mensajePorExternalId(string $externalId, $companyId, array $cols): ?object
+{
+    $q = DB::table('crm_messages as m')->where('m.external_id', $externalId);
+    if ($companyId) {
+        $q->join('crm_conversations as cv', 'cv.id', '=', 'm.conversation_id')
+          ->where('cv.company_id', (int) $companyId);
+    }
+    return $q->first(array_map(fn ($c) => 'm.' . $c, $cols));
+}
+
 public function execute(array $payload): array
 {
     Log::info('[Webhook recibido]', $payload);
@@ -28,12 +42,32 @@ public function execute(array $payload): array
         throw new \Exception('Invalid payload: estructura inválida');
     }
 
+    // ─── Empresa del webhook ───
+    // Se resuelve antes que nada: el id de un mensaje de WhatsApp o el jid de un
+    // grupo se repiten entre empresas (p.ej. una línea le escribe a otra), así que
+    // toda búsqueda por ellos va filtrada por empresa.
+    $provider = ($payload['provider'] ?? null) === 'meta' || ($payload['instanceId'] ?? null) === 'meta_official_api'
+        ? 'meta'
+        : 'netplay';
+    $companyId = isset($payload['company_id']) ? (int) $payload['company_id'] : null;
+
+    // Netplay envía instanceId, no company_id. Resolver la empresa por la instancia
+    // evita crear clientes/conversaciones sin compañía y no altera el flujo de Meta.
+    if ($provider === 'netplay' && !$companyId && !empty($payload['instanceId'])) {
+        $companyId = Company::where('wa_instance_id', $payload['instanceId'])->value('id');
+
+        if ($payload['event'] === 'message.received') Log::info('[Netplay Webhook] Empresa resuelta por instancia', [
+            'instance_id' => $payload['instanceId'],
+            'company_id' => $companyId,
+        ]);
+    }
+
     // Acks de entrega / lectura de mensajes enviados por el agente
     if ($payload['event'] === 'message.status') {
         $d = $payload['data'];
         $status = $d['status'] ?? null;
         if (!empty($d['messageId']) && in_array($status, ['sent', 'delivered', 'read', 'failed'], true)) {
-            $hit = $this->repository->applyMessageStatus((string) $d['messageId'], $status);
+            $hit = $this->repository->applyMessageStatus((string) $d['messageId'], $status, $companyId ? (int) $companyId : null);
             if ($hit) broadcast(new \App\Events\MessageStatusEvent($hit['conversation_id'], $hit['id'], $status));
         }
         return ['status' => 'ok', 'event' => 'message.status'];
@@ -43,7 +77,7 @@ public function execute(array $payload): array
     if ($payload['event'] === 'message.deleted') {
         $d = $payload['data'];
         $msg = !empty($d['messageId'])
-            ? DB::table('crm_messages')->where('external_id', $d['messageId'])->first(['id', 'conversation_id'])
+            ? $this->mensajePorExternalId((string) $d['messageId'], $companyId, ['id', 'conversation_id'])
             : null;
 
         if ($msg) {
@@ -66,7 +100,7 @@ public function execute(array $payload): array
     if ($payload['event'] === 'message.edited') {
         $d = $payload['data'];
         $msg = !empty($d['messageId'])
-            ? DB::table('crm_messages')->where('external_id', $d['messageId'])->first(['id', 'conversation_id', 'content', 'content_original'])
+            ? $this->mensajePorExternalId((string) $d['messageId'], $companyId, ['id', 'conversation_id', 'content', 'content_original'])
             : null;
 
         if ($msg) {
@@ -89,7 +123,7 @@ public function execute(array $payload): array
     // Votos de encuesta (descifrados por el servicio Node)
     if ($payload['event'] === 'poll.vote') {
         $d = $payload['data'];
-        $msg = !empty($d['pollMessageId']) ? DB::table('crm_messages')->where('external_id', $d['pollMessageId'])->first(['id', 'conversation_id']) : null;
+        $msg = !empty($d['pollMessageId']) ? $this->mensajePorExternalId((string) $d['pollMessageId'], $companyId, ['id', 'conversation_id']) : null;
         if ($msg) {
             $fromMe = !empty($d['fromMe']);
             $name = $fromMe ? null : DB::table('crm_conversations as c')->join('crm_customers as cu', 'cu.id', '=', 'c.customer_id')->where('c.id', $msg->conversation_id)->value('cu.name');
@@ -133,7 +167,9 @@ public function execute(array $payload): array
             return ['status' => 'ignored', 'reason' => 'grupo_sin_jid'];
         }
 
-        $seguido = DB::table('crm_grupos_seguidos')
+        // Sin empresa no hay grupo seguido: el mismo grupo puede estar en varias líneas.
+        $seguido = !$companyId ? null : DB::table('crm_grupos_seguidos')
+            ->where('company_id', $companyId)
             ->where('jid', $grupoJid)
             ->where('activo', 1)
             ->first(['company_id', 'nombre']);
@@ -152,10 +188,7 @@ public function execute(array $payload): array
 
     // ─── Evitar duplicados ───
     if ($externalId) {
-        $duplicate = DB::table('crm_messages')
-            ->where('external_id', $externalId)
-            ->select('id', 'conversation_id')
-            ->first();
+        $duplicate = $this->mensajePorExternalId((string) $externalId, $companyId, ['id', 'conversation_id']);
 
         if ($duplicate) {
             Log::info('[DUPLICADO IGNORADO]', ['external_id' => $externalId]);
@@ -172,22 +205,6 @@ public function execute(array $payload): array
     }
 
     // ─── Crear o recuperar conversación ───
-    $provider = ($payload['provider'] ?? null) === 'meta' || ($payload['instanceId'] ?? null) === 'meta_official_api'
-        ? 'meta'
-        : 'netplay';
-    $companyId = isset($payload['company_id']) ? (int) $payload['company_id'] : null;
-
-    // Netplay envía instanceId, no company_id. Resolver la empresa por la instancia
-    // evita crear clientes/conversaciones sin compañía y no altera el flujo de Meta.
-    if ($provider === 'netplay' && !$companyId && !empty($payload['instanceId'])) {
-        $companyId = Company::where('wa_instance_id', $payload['instanceId'])->value('id');
-
-        Log::info('[Netplay Webhook] Empresa resuelta por instancia', [
-            'instance_id' => $payload['instanceId'],
-            'company_id' => $companyId,
-        ]);
-    }
-
     if (!$companyId) {
         throw new \Exception('No se pudo resolver la empresa del webhook');
     }
@@ -483,7 +500,10 @@ public function execute(array $payload): array
             // real de este webhook (meta o netplay), nunca por un valor global de la empresa.
             (new WhatsAppService($companyId, false, $provider))->mensajeInformativo(
                 $phone,
-                $settings['welcome_message'] ?: \App\Support\CrmSettings::DEFAULT_WELCOME
+                \App\Support\CrmSettings::withCompany(
+                    $settings['welcome_message'] ?: \App\Support\CrmSettings::DEFAULT_WELCOME,
+                    (int) $companyId
+                )
             );
         } catch (\Throwable $e) {
             Log::warning('[Auto-mensaje] No se pudo enviar mensaje de bienvenida', [

@@ -297,6 +297,89 @@ class AprovisionamientoDeOnt
     }
 
     /**
+     * Pasa el TR-069 a la conexión de internet que la ONT ya tiene y quita de la
+     * OLT la de gestión, sin tocar los datos de esa conexión (IP, usuario PPPoE):
+     * para equipos que ya andan y quedaron con las dos conexiones.
+     *
+     * @return array{texto:string, id:?int}
+     */
+    public static function tr069PorInternetDeOnt(int $companyId, int $oltId, string $fsp, int $ontId): array
+    {
+        $ont = \App\Models\OltOnt::where('olt_id', $oltId)->where('fsp', $fsp)->where('ont_id', $ontId)
+            ->whereHas('olt', fn ($q) => $q->where('company_id', $companyId))->first();
+
+        if (!$ont || !$ont->serial) {
+            return ['texto' => 'No se encontró la ONT.', 'id' => null];
+        }
+
+        $vlanGestion = (int) (GestionRemota::where('company_id', $companyId)->value('vlan') ?: 0);
+        $d = null;
+
+        try {
+            $acs = GenieAcs::deEmpresa($companyId);
+            $crudo = strtoupper((string) preg_replace('/[^0-9A-Za-z]/', '', $ont->serial));
+            $id = $acs->dispositivos(
+                ['_deviceId._SerialNumber' => ['$in' => array_values(array_unique([$crudo, EquiposDelAcs::serial($ont->serial)]))]], ['_id']
+            )[0]['_id'] ?? null;
+            $d = $id ? $acs->dispositivo($id) : null;
+        } catch (\Throwable) {
+            $id = null;
+        }
+
+        if (!$id || !$d) {
+            return ['texto' => 'El equipo no está en el servidor TR-069: no se puede pasar el TR-069 a su conexión de internet.', 'id' => null];
+        }
+
+        // La conexión de internet que tiene hoy (la VLAN que no es la de gestión).
+        $yo = new self($companyId);
+        $buscar = fn (array $d) => collect($yo->conexiones($d))
+            ->first(fn ($c) => $c['vlan'] && $c['vlan'] !== $vlanGestion && str_contains($c['servicios'], 'INTERNET'));
+        $conexion = $buscar($d);
+
+        // El servidor muchas veces no tiene leídas las conexiones: se le piden.
+        if (!$conexion) {
+            try {
+                $acs->tarea($id, ['name' => 'refreshObject', 'objectName' => self::WAN]);
+                $d = $acs->dispositivo($id) ?? $d;
+                $conexion = $buscar($d);
+            } catch (\Throwable) {
+            }
+        }
+
+        if (!$conexion) {
+            return ['texto' => 'El servidor TR-069 no tiene leída la conexión de internet del equipo: pedí leerla y volvé a intentar.', 'id' => null];
+        }
+
+        Aprovisionamiento::where('company_id', $companyId)->where('serial', $ont->serial)
+            ->whereIn('estado', ['esperando', 'aplicando'])
+            ->update(['estado' => 'reemplazado', 'detalle' => 'Se pasó el TR-069 a la conexión de internet.']);
+
+        $dejar = fn (string $clave, string $paso) => ['paso' => $paso, 'ok' => true, 'clave' => $clave, 'detalle' => 'Se dejó como estaba.'];
+        $tipo = $conexion['objeto'] === 'WANPPPConnection' ? 'pppoe' : 'static';
+
+        $nuevo = Aprovisionamiento::create([
+            'company_id' => $companyId,
+            'olt_id'     => $oltId,
+            'fsp'        => $fsp,
+            'ont_id'     => $ontId,
+            'serial'     => $ont->serial,
+            'user_id'    => $ont->user_data_id,
+            // Los pasos de la conexión se dan por hechos: sólo corre el del TR-069.
+            'datos'      => [
+                'cliente' => $ont->description, 'avisos' => [], 'origen' => 'tr069_por_internet',
+                'wan' => ['tipo' => $tipo, 'vlan' => $conexion['vlan']],
+                'resultados' => ['wan' => $dejar('wan', 'Conexión a internet'), 'mac' => $dejar('mac', 'MAC en el MikroTik')],
+            ],
+            'estado'     => 'aplicando',
+            'acs_id'     => $id,
+            'pasos'      => [['paso' => 'TR-069 a la conexión de internet', 'ok' => true, 'detalle' => "{$conexion['nombre']} (VLAN {$conexion['vlan']})"]],
+            'detalle'    => 'Pasando el TR-069 a la conexión de internet…',
+        ]);
+
+        return ['texto' => "Se pasa el TR-069 a {$conexion['nombre']} y se quita la gestión de la OLT.", 'id' => $nuevo->id];
+    }
+
+    /**
      * Reaplica la conexión de un cliente que ya tiene ONT, después de cambiarle
      * el tipo (PPPoE ↔ IP fija) o la IP desde su ficha. Sólo la conexión y, con
      * IP fija, la MAC en el MikroTik: su WiFi y su cuenta no se tocan. Si la ONT
@@ -326,6 +409,17 @@ class AprovisionamientoDeOnt
         $vlanGestion = (int) ($g->vlan ?: 0);
         $vlan = collect(json_decode((string) $ont->service_ports, true) ?: [])
             ->pluck('vlan')->map(fn ($v) => (int) $v)->first(fn ($v) => $v && $v !== $vlanGestion);
+
+        // La ficha guardada a veces sólo tiene el carril de gestión (DOUGLAS_MENDEZ):
+        // la VLAN del cliente se lee de la OLT.
+        if (!$vlan) {
+            try {
+                $vlan = collect(app(\App\Services\OltTelnetDispatcher::class)->dispatch((int) $ont->olt_id, 'getServicePorts', [
+                    'fsp' => $ont->fsp, 'ont_id' => (int) $ont->ont_id,
+                ]) ?: [])->pluck('vlan')->map(fn ($v) => (int) $v)->first(fn ($v) => $v && $v !== $vlanGestion);
+            } catch (\Throwable) {
+            }
+        }
 
         $pedido = [];
 
@@ -590,6 +684,8 @@ class AprovisionamientoDeOnt
             'mac'    => fn () => $this->registrarMac($a, $d),
             'wifi'   => fn () => $this->aplicarWifi($acs, $a, $d),
             'cuenta' => fn () => $this->aplicarCuenta($acs, $a, $d, $huawei && $igd),
+            // Al final: mientras se mueve el TR-069 el equipo deja de atender un momento.
+            'tr069'  => fn () => $this->tr069PorInternet($acs, $a, $d),
         ];
         $pedidos = [
             'wan'    => !empty($datos['wan']),
@@ -597,6 +693,7 @@ class AprovisionamientoDeOnt
             'mac'    => ($datos['wan']['tipo'] ?? null) === 'static' && $huawei && $igd,
             'wifi'   => !empty($datos['wifi']),
             'cuenta' => !empty($datos['admin']),
+            'tr069'  => !empty($datos['wan']) && $huawei && $igd,
         ];
         $pendienteDe = null;
 
@@ -607,6 +704,13 @@ class AprovisionamientoDeOnt
 
             // La MAC se lee de la conexión ya creada: antes no hay qué leer.
             if ($clave === 'mac' && !($resultados['wan']['ok'] ?? false)) {
+                continue;
+            }
+
+            // El TR-069 pasa a la conexión de internet sólo si ésta ya anda
+            // (con IP fija, también su MAC en el MikroTik): si no, el equipo
+            // quedaría fuera del servidor.
+            if ($clave === 'tr069' && (!($resultados['wan']['ok'] ?? false) || ($pedidos['mac'] && !($resultados['mac']['ok'] ?? false)))) {
                 continue;
             }
 
@@ -837,6 +941,103 @@ class AprovisionamientoDeOnt
         return $this->resultado($acs, (string) $a->acs_id, $r, $titulo, "{$como}: " . self::resumenWan($wan) . ($nota ? ".{$nota}" : ''));
     }
 
+    /**
+     * Deja el TR-069 en la conexión de internet ("TR069_INTERNET") y, cuando el
+     * equipo ya reporta por ahí, quita de la OLT la conexión de gestión.
+     *
+     * La de gestión la crea la OLT ("ont ipconfig") y la vuelve a crear en cada
+     * reinicio de la ONT: puede caer en el lugar de la de internet y borrarla.
+     * Pasó el 17-09 cuando se reinició la OLT Huawei (DOUGLAS_MENDEZ y
+     * LILIANA_COROMOTO). Con una sola conexión, como JULIO_VALLEJO, no pasa.
+     */
+    private function tr069PorInternet(GenieAcs $acs, Aprovisionamiento $a, array $d): array
+    {
+        $titulo = 'TR-069 por la conexión de internet';
+        $wan = $a->datos['wan'];
+        $g = GestionRemota::where('company_id', $this->companyId)->first();
+
+        $conexion = collect($this->conexiones($d))
+            ->first(fn ($c) => $c['vlan'] === (int) $wan['vlan'] && str_contains($c['servicios'], 'INTERNET'));
+
+        if (!$conexion) {
+            return ['paso' => $titulo, 'ok' => false, 'detalle' => 'El equipo todavía no informó su conexión de internet.', 'reintentar' => self::WAN];
+        }
+
+        if (!str_contains($conexion['servicios'], 'TR069')) {
+            $r = $acs->tarea((string) $a->acs_id, ['name' => 'setParameterValues', 'parameterValues' => [
+                ["{$conexion['ruta']}.X_HW_SERVICELIST", 'TR069_INTERNET', 'xsd:string'],
+            ]]);
+
+            if (!($r['hecha'] ?? false)) {
+                $falla = ($r['id'] ?? null) ? $acs->fallaDeTarea((string) $a->acs_id, (string) $r['id']) : null;
+
+                if ($falla) {
+                    $acs->borrarTarea((string) $r['id']);
+
+                    return ['paso' => $titulo, 'ok' => false, 'omitido' => true,
+                        'detalle' => "El equipo no aceptó el TR-069 en su conexión de internet ({$falla}): sigue por la de gestión."];
+                }
+            }
+
+            return ['paso' => $titulo, 'ok' => false, 'detalle' => 'Pasando el TR-069 a la conexión de internet…', 'reintentar' => self::WAN];
+        }
+
+        // Mientras la OLT le tenga creada la de gestión, la ONT sigue reportando
+        // por ésa (la OLT se la marca para el TR-069): no se puede esperar a que
+        // cambie sola. Lo que se exige antes de quitarla es que la de internet
+        // esté conectada y con su IP; por ahí reportan JULIO_VALLEJO y los demás.
+        $estado = (string) self::v($d, "{$conexion['ruta']}.ConnectionStatus");
+        $ip = (string) self::v($d, "{$conexion['ruta']}.ExternalIPAddress");
+
+        if ($estado !== 'Connected' || !filter_var($ip, FILTER_VALIDATE_IP) || ($g?->red && self::enRed($ip, (string) $g->red))) {
+            return ['paso' => $titulo, 'ok' => false,
+                'detalle' => 'El TR-069 ya está en la conexión de internet; se espera que esa conexión quede conectada para quitar la de gestión.',
+                'reintentar' => self::WAN];
+        }
+
+        $vlanGestion = (int) ($g?->vlan ?: 0);
+        $olt = OltAdmin::where('company_id', $this->companyId)->find($a->olt_id);
+
+        if (!$vlanGestion || !$olt) {
+            return ['paso' => $titulo, 'ok' => true, 'detalle' => "El TR-069 va por la conexión de internet ({$ip})."];
+        }
+
+        try {
+            $q = app(\App\Services\OltTelnetDispatcher::class)->dispatch((int) $olt->id, 'quitarGestionDeOnt', [
+                'fsp' => $a->fsp, 'ont_id' => (int) $a->ont_id, 'vlan' => $vlanGestion,
+            ]);
+        } catch (\Throwable $e) {
+            return ['paso' => $titulo, 'ok' => false,
+                'detalle' => "El TR-069 ya va por internet ({$ip}), pero no se pudo quitar la gestión de la OLT: " . mb_substr($e->getMessage(), 0, 120),
+                'reintentar' => self::WAN];
+        }
+
+        // Otras marcas de OLT no crean esa conexión: no hay nada que quitar.
+        if (!is_array($q)) {
+            return ['paso' => $titulo, 'ok' => true, 'detalle' => "El TR-069 va por la conexión de internet ({$ip})."];
+        }
+
+        if ($q['ok']) {
+            $ont = \App\Models\OltOnt::where('olt_id', $olt->id)->where('fsp', $a->fsp)->where('ont_id', $a->ont_id)->first();
+
+            if ($ont) {
+                $ont->update(['service_ports' => collect($ont->service_ports ?? [])
+                    ->reject(fn ($s) => (int) ($s['vlan'] ?? 0) === $vlanGestion)->values()->all()]);
+            }
+        }
+
+        return ['paso' => $titulo, 'ok' => (bool) $q['ok'],
+            'detalle' => $q['ok'] ? "El TR-069 va por la conexión de internet ({$ip}). {$q['detalle']}." : $q['detalle']];
+    }
+
+    private static function enRed(string $ip, string $cidr): bool
+    {
+        [$red, $bits] = array_pad(explode('/', $cidr), 2, 32);
+        $mascara = -1 << (32 - (int) $bits);
+
+        return (ip2long($ip) & $mascara) === (ip2long($red) & $mascara);
+    }
+
     private function aplicarWifi(GenieAcs $acs, Aprovisionamiento $a, array $d): array
     {
         $ssid = (string) $a->datos['wifi']['ssid'];
@@ -880,6 +1081,14 @@ class AprovisionamientoDeOnt
     {
         $titulo = 'Cuenta de administración del equipo';
         $g = GestionRemota::where('company_id', $this->companyId)->first();
+
+        // C-Data: la cuenta del proveedor (usuario fijo adminisp) va en
+        // DeviceInfo.X_CATV_TeleComAccount.
+        if (self::v($d, 'InternetGatewayDevice.DeviceInfo.X_CATV_TeleComAccount.Enable') !== null) {
+            $r = (new \App\Services\Acs\ClaveDeOnuPorTr069($this->companyId, $acs))->asegurar((string) $a->acs_id, (string) $g?->onu_admin_clave);
+
+            return ['paso' => $titulo, 'ok' => $r['ok'], 'detalle' => $r['detalle']] + (($r['omitido'] ?? false) ? ['omitido' => true] : []);
+        }
 
         if (!$soportado) {
             return ['paso' => $titulo, 'ok' => false, 'omitido' => true, 'detalle' => 'En esta marca todavía no se cambia por TR-069.'];

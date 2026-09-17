@@ -89,7 +89,7 @@ class InstallationOrder extends Model
     public function getTechniciansListAttribute()
     {
         if (!empty($this->technician_ids)) {
-            return Employee::whereIn('id', $this->technician_ids)->get();
+            return Employee::where('company_id', $this->company_id)->whereIn('id', $this->technician_ids)->get();
         }
         return collect([]);
     }
@@ -97,7 +97,7 @@ class InstallationOrder extends Model
     public function getTechniciansAttribute()
     {
         if (!empty($this->technician_ids)) {
-            return Employee::whereIn('id', $this->technician_ids)->get()->toArray();
+            return Employee::where('company_id', $this->company_id)->whereIn('id', $this->technician_ids)->get()->toArray();
         }
         return [];
     }

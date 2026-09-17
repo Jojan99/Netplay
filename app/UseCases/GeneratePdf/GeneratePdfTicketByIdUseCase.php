@@ -41,6 +41,9 @@ class GeneratePdfTicketByIdUseCase implements GeneratePdfTicketByIdUseCaseInterf
       try {
         // Obtener los datos del usuario y generar el PDF
         $generatePdf = $this->generatePdfRepository->getTicketInProgressAll($id);
+        if ($generatePdf->isEmpty()) {
+          return ['message' => 'Ticket no encontrado', 'status' => 1, 'data' => ApiResponseConstants::DATA_NULL];
+        }
 
 
 
@@ -82,33 +85,10 @@ class GeneratePdfTicketByIdUseCase implements GeneratePdfTicketByIdUseCaseInterf
 
   private function generateIndividualPdf($user)
   {
-    error_log("ABAJOO".json_encode($user));
-
-    // Crea un PDF individual y devuelve su contenido
-    // Aquí puedes usar Dompdf, TCPDF, o cualquier otra biblioteca de tu elección
-    $options = new Options();
-    // Crea una instancia de Dompdf, TCPDF u otra biblioteca
-    $options->set('isHtml5ParserEnabled', true);
-    $options->set('isPhpEnabled', true);
-    $options->set('paperSize', array(0, 0, 58, 100)); // Ancho x alto en milímetros
     $pdfT = new TemplatePdfOrderWork();
-    $pdf = new Dompdf($options);
 
-    $html = $pdfT->PdfOrderWork($user);
-
-    // Agrega contenido al PDF personalizado (por ejemplo, el nombre del usuario)
-    $pdf->loadHtml($html);
-
-    // Renderiza el PDF
-    $pdf->render();
-
-    // Devuelve el contenido del PDF generado
-
-    $pdfContent = $pdf->output();
-
-    $filePath = storage_path('app/pdf.pdf');
-    file_put_contents($filePath, $pdfContent);
-
-    return $html;
+    // Membrete de la empresa en sesión (el ticket ya se filtró por ella). Ya no
+    // se escribe el storage/app/pdf.pdf compartido: nadie lo leía.
+    return $pdfT->PdfOrderWork($user, (int) getSessionCompanyId());
   }
 }

@@ -84,6 +84,22 @@ public function UpdateStatus(GestionUserRequest $gestionUserRequest): array
             ? '/ip/arp/disable'
             : '/ip/arp/enable';
 
+        // El cliente debe ser de la empresa de la sesión antes de tocar BD o router
+        $companyId = getSessionCompanyId();
+        $cliente = $companyId
+            ? UserData::where('user_id', $gestionUserRequest['id_user'])
+                ->where('company_id', $companyId)
+                ->first(['router_id', 'connection_type', 'pppoe_user'])
+            : null;
+
+        if (!$cliente) {
+            return [
+                'message' => 'Cliente no encontrado',
+                'status'  => 1,
+                'data'    => null
+            ];
+        }
+
         // RESPUESTA DEL UPDATE (NO SOBREESCRIBIR)
         $routerResponse = $this->managementRouterRepositoryInterface->UpdateStatus($gestionUserRequest);
 
@@ -98,10 +114,7 @@ public function UpdateStatus(GestionUserRequest $gestionUserRequest): array
             ];
         }
 
-        // 🔹 Obtener router_id del usuario
-        $cliente = UserData::where('user_id', $gestionUserRequest['id_user'])
-            ->first(['router_id', 'connection_type', 'pppoe_user']);
-
+        // 🔹 router_id del usuario (ya cargado arriba, filtrado por empresa)
         $userRouterId = $cliente->router_id ?? null;
 
         // ✅ UNA SOLA CONEXIÓN (al router del usuario o al default)

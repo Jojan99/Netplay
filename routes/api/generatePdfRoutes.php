@@ -5,7 +5,8 @@ use Illuminate\Support\Facades\Route;
 
 
 Route::prefix('generatePdf')->group(function () {
-    Route::post('generatePdf', [GeneratePdfController::class, 'generatePdf']);
+    // Facturación masiva de la empresa en sesión: solo administración y contabilidad.
+    Route::post('generatePdf', [GeneratePdfController::class, 'generatePdf'])->middleware('role:admin,contador');
     // Sólo con sesión del panel. Los clientes y WhatsApp usan /api/factura/{token}
     // (enlace firmado): los números de factura son correlativos y se adivinan.
     Route::get('generatePdfbyId/{userid}', [GeneratePdfController::class, 'generatePdfbyId']);

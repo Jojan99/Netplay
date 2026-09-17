@@ -202,6 +202,7 @@ class CreateUserDataUseCase implements CreateUserDataUseCaseInterface
         if ($perfil === '') {
             $perfil = (string) \Illuminate\Support\Facades\DB::table('internet_plans')
                 ->where('id', $data['planInternet'] ?? 0)
+                ->where('company_id', getSessionCompanyId())
                 ->value('pppoe_profile');
         }
 

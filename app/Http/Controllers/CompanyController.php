@@ -811,6 +811,16 @@ class CompanyController extends Controller
      */
     public function getProfileModules(int $profileId): JsonResponse
     {
+        // El perfil tiene que ser de la empresa en sesión (igual que al actualizar)
+        $propio = \Illuminate\Support\Facades\DB::table('profiles')
+            ->where('id', $profileId)
+            ->where('company_id', getSessionCompanyId())
+            ->exists();
+
+        if (!$propio) {
+            return standardApiReponse('Perfil no encontrado', null, true, JsonResponse::HTTP_NOT_FOUND);
+        }
+
         $catalog = \App\Support\Modules::flat();
         $all = array_column($catalog, 'module');
 

@@ -35,17 +35,22 @@ Route::prefix('management')->middleware('empresa.propia')->group(function () {
 
     Route::post('UpdateStatus', [ManagementRouterController::class, 'UpdateStatus']);
     Route::post('disableUser', [ManagementRouterController::class, 'disableUser']);
-    Route::get('getCpuStatus', [ManagementRouterController::class, 'getCpuStatus']);
-    Route::get('getCpuStatus1', [ManagementRouterController::class, 'getCpuStatus1']);
-    Route::get('getOntPort', [ManagementRouterController::class, 'getOntPort']);
-    Route::get('getOntStatusAll', [ManagementRouterController::class, 'getOntStatusAll']);
+    // getCpuStatus, getOntPort, getOntStatusAll, getCpuStatusSnmpnew y getOntAutoFind
+    // deshabilitadas (multiempresa): entraban a la OLT de Netplay por SSH/SNMP con
+    // IP y credenciales fijas, para cualquier empresa. El panel no las llama; las
+    // consultas de OLT van por olt/{oltId}. getCpuStatus1, getCpuStatusSnmp y prueba
+    // apuntaban a métodos que no existen.
+    // Route::get('getCpuStatus', [ManagementRouterController::class, 'getCpuStatus']);
+    // Route::get('getCpuStatus1', [ManagementRouterController::class, 'getCpuStatus1']);
+    // Route::get('getOntPort', [ManagementRouterController::class, 'getOntPort']);
+    // Route::get('getOntStatusAll', [ManagementRouterController::class, 'getOntStatusAll']);
     // registerOnt y deleteontOnt quitadas: nadie las usaba, tenían IP y root/admin
     // fijos y metían datos del cuerpo sin limpiar en comandos de la OLT. El alta y
     // la baja de ONT van por olt/{oltId}/register y olt/{oltId}/ont.
-    Route::get('getCpuStatusSnmpnew', [SnmpController::class, 'getCpuStatusSnmpnew']);
-    Route::get('getCpuStatusSnmp', [ManagementRouterController::class, 'getCpuStatusSnmp']);
-    Route::get('getOntAutoFind', [SnmpController::class, 'getOntAutoFind']);
-    Route::get('prueba', [SnmpController::class, 'prueba']);
+    // Route::get('getCpuStatusSnmpnew', [SnmpController::class, 'getCpuStatusSnmpnew']);
+    // Route::get('getCpuStatusSnmp', [ManagementRouterController::class, 'getCpuStatusSnmp']);
+    // Route::get('getOntAutoFind', [SnmpController::class, 'getOntAutoFind']);
+    // Route::get('prueba', [SnmpController::class, 'prueba']);
     Route::get('getOntInfo/{id}', [ManagementRouterController::class, 'getOntInfo']);
     Route::post('getIpAvalibles', [ManagementRouterController::class, 'getIpAvalibles']);
     Route::get('getLanSegments', [ManagementRouterController::class, 'getLanSegments']);
@@ -94,13 +99,18 @@ Route::prefix('management')->middleware('empresa.propia')->group(function () {
     // depender de abrir una sesión SSH en el router del cliente.
     Route::prefix('vpn')->group(function () {
         Route::get('/estado',            [VpnController::class, 'estado']);
-        Route::get('/instalador',        [VpnController::class, 'instalador']);
-        Route::post('/tuneles',          [VpnController::class, 'crearTunel']);
-        Route::get('/tuneles/{id}/script', [VpnController::class, 'script']);
-        Route::put('/tuneles/{id}',      [VpnController::class, 'actualizarTunel']);
-        Route::delete('/tuneles/{id}',   [VpnController::class, 'eliminarTunel']);
-        Route::post('/tuneles/{id}/usar-en-olt', [VpnController::class, 'usarEnOlt']);
         Route::post('/tuneles/{id}/probar',      [VpnController::class, 'probar']);
+
+        // Lo que cambia rutas del servidor compartido, claves o el acceso a
+        // las OLT: sólo administradores.
+        Route::middleware('role:admin')->group(function () {
+            Route::get('/instalador',        [VpnController::class, 'instalador']);
+            Route::post('/tuneles',          [VpnController::class, 'crearTunel']);
+            Route::get('/tuneles/{id}/script', [VpnController::class, 'script']);
+            Route::put('/tuneles/{id}',      [VpnController::class, 'actualizarTunel']);
+            Route::delete('/tuneles/{id}',   [VpnController::class, 'eliminarTunel']);
+            Route::post('/tuneles/{id}/usar-en-olt', [VpnController::class, 'usarEnOlt']);
+        });
     });
 
     // ── Router del cliente por TR-069 (GenieACS) ───────────────────────────

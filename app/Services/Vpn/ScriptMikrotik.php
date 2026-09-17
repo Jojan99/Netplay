@@ -27,20 +27,28 @@ use App\Models\VpnTunel;
  */
 class ScriptMikrotik
 {
+    private const IFACE    = 'wg-netvula';
+    private const ETIQUETA = 'Netvula gestion remota';
+
+    // Nombres de cuando la plataforma era Netplay: los routers que ya tienen el
+    // túnel los llevan así, y el script los reconoce para no duplicar nada.
+    private const IFACE_VIEJA    = 'wg-netplay';
+    private const ETIQUETA_VIEJA = 'Netplay gestion remota';
+
     /**
      * @param  string  $clavePrivada     en claro: sólo se entrega al generar
      * @param  string  $claveCompartida  en claro
      */
     public static function para(VpnTunel $tunel, VpnServidor $servidor, string $clavePrivada, string $claveCompartida): string
     {
-        $iface    = 'wg-netplay';
-        $etiqueta = 'Netplay gestion remota';
+        $iface    = self::IFACE;
+        $etiqueta = self::ETIQUETA;
         $mascara  = explode('/', $servidor->subred)[1];
 
         $l = [];
 
         $l[] = '# ─────────────────────────────────────────────────────────────';
-        $l[] = '#  Netplay · túnel de gestión: ' . $tunel->nombre;
+        $l[] = '#  Netvula · túnel de gestión: ' . $tunel->nombre;
         $l[] = '#  Generado ' . now()->format('d/m/Y H:i');
         $l[] = '#';
         $l[] = '#  Pegá todo este bloque en la terminal del router.';
@@ -48,30 +56,36 @@ class ScriptMikrotik
         $l[] = '#  Se puede volver a ejecutar: primero limpia lo que dejó antes.';
         $l[] = '# ─────────────────────────────────────────────────────────────';
         $l[] = '';
-        $l[] = ':put "Netplay: configurando tunel de gestion...";';
+        $l[] = ':put "Netvula: configurando tunel de gestion...";';
         $l[] = '';
         $l[] = '# Seguro: si este router ya tiene el túnel de OTRO nodo, no se toca.';
         $l[] = '# Un router lleva un solo túnel; si tiene más de una OLT, sus redes';
         $l[] = '# se agregan a ese mismo túnel desde la plataforma. Sin este control';
         $l[] = '# el script borraba el túnel anterior y dejaba sin acceso a la otra OLT.';
-        $l[] = ':if ([:len [/interface/wireguard find name="' . $iface . '"]] > 0) do={';
-        $l[] = '    :if ([/interface/wireguard get [find name="' . $iface . '"] public-key] != "' . $tunel->clave_publica . '") do={';
-        $l[] = '        :error "Netplay: este router ya tiene otro tunel de gestion. No se cambio nada. Agrega la red de esta OLT a ese tunel en la plataforma y usa su script.";';
-        $l[] = '    }';
-        $l[] = '}';
+        foreach ([$iface, self::IFACE_VIEJA] as $nombre) {
+            $l[] = ':if ([:len [/interface/wireguard find name="' . $nombre . '"]] > 0) do={';
+            $l[] = '    :if ([/interface/wireguard get [find name="' . $nombre . '"] public-key] != "' . $tunel->clave_publica . '") do={';
+            $l[] = '        :error "Netvula: este router ya tiene otro tunel de gestion. No se cambio nada. Agrega la red de esta OLT a ese tunel en la plataforma y usa su script.";';
+            $l[] = '    }';
+            $l[] = '}';
+        }
         $l[] = '';
         $l[] = '# 0. Limpieza de una corrida anterior.';
         $l[] = '#    Las reglas se buscan por comentario, que es texto y siempre';
         $l[] = '#    se puede comparar. Lo que cuelga de la interfaz se toca sólo';
         $l[] = '#    si la interfaz existe: si no, RouterOS rechaza el filtro';
         $l[] = '#    porque el nombre no corresponde a ninguna interfaz.';
-        $l[] = '/ip/firewall/nat remove [find comment="' . $etiqueta . '"];';
-        $l[] = '/ip/firewall/filter remove [find comment="' . $etiqueta . '"];';
-        $l[] = ':if ([:len [/interface/wireguard find name="' . $iface . '"]] > 0) do={';
-        $l[] = '    /interface/wireguard/peers remove [find interface="' . $iface . '"];';
-        $l[] = '    /ip/address remove [find interface="' . $iface . '"];';
-        $l[] = '    /interface/wireguard remove [find name="' . $iface . '"];';
-        $l[] = '}'; 
+        foreach ([$etiqueta, self::ETIQUETA_VIEJA] as $comentario) {
+            $l[] = '/ip/firewall/nat remove [find comment="' . $comentario . '"];';
+            $l[] = '/ip/firewall/filter remove [find comment="' . $comentario . '"];';
+        }
+        foreach ([$iface, self::IFACE_VIEJA] as $nombre) {
+            $l[] = ':if ([:len [/interface/wireguard find name="' . $nombre . '"]] > 0) do={';
+            $l[] = '    /interface/wireguard/peers remove [find interface="' . $nombre . '"];';
+            $l[] = '    /ip/address remove [find interface="' . $nombre . '"];';
+            $l[] = '    /interface/wireguard remove [find name="' . $nombre . '"];';
+            $l[] = '}';
+        }
         $l[] = '';
         $l[] = '# 1. La interfaz del túnel, con la clave privada de este router.';
         $l[] = '/interface/wireguard add name="' . $iface . '" \\';
@@ -84,7 +98,7 @@ class ScriptMikrotik
         $l[] = '    address=' . $tunel->ip_tunel . '/' . $mascara . ' \\';
         $l[] = '    comment="' . $etiqueta . '";';
         $l[] = '';
-        $l[] = '# 3. El servidor de Netplay como par. El keepalive hace que el';
+        $l[] = '# 3. El servidor de Netvula como par. El keepalive hace que el';
         $l[] = '#    router sea quien marca: no hay que abrir ningún puerto acá.';
         $l[] = '/interface/wireguard/peers add interface="' . $iface . '" \\';
         $l[] = '    public-key="' . $servidor->clave_publica . '" \\';
@@ -116,11 +130,29 @@ class ScriptMikrotik
             $l[] = '#    contestar, y el túnel queda arriba sin dar servicio.';
 
             foreach ($redes as $red) {
+                $real = $tunel->realDe($red);
+
+                if ($real !== $red) {
+                    $l[] = '#    ' . $real . ' también la usa otra empresa en la VPN: la plataforma';
+                    $l[] = '#    la ve como ' . $red . ' y este router la traduce a la real.';
+                    $l[] = '/ip/firewall/nat add chain=dstnat \\';
+                    $l[] = '    in-interface="' . $iface . '" \\';
+                    $l[] = '    dst-address=' . $red . ' \\';
+                    $l[] = '    action=netmap to-addresses=' . $real . ' \\';
+                    $l[] = '    comment="' . $etiqueta . '";';
+                }
+
                 $l[] = '/ip/firewall/nat add chain=srcnat \\';
                 $l[] = '    src-address=' . $servidor->subred . ' \\';
-                $l[] = '    dst-address=' . $red . ' \\';
+                $l[] = '    dst-address=' . $real . ' \\';
                 $l[] = '    action=masquerade \\';
                 $l[] = '    comment="' . $etiqueta . '";';
+            }
+
+            // La traducción va arriba de todo: un dstnat previo del router
+            // (port forwarding, por ejemplo) podría tomar el paquete antes.
+            if ($tunel->traducciones) {
+                $l[] = '/ip/firewall/nat move [find comment="' . $etiqueta . '" chain=dstnat] destination=0;';
             }
 
             $l[] = '';
@@ -130,7 +162,7 @@ class ScriptMikrotik
             $l[] = '';
         }
 
-        $l[] = ':put "Netplay: listo. Probando alcance al servidor...";';
+        $l[] = ':put "Netvula: listo. Probando alcance al servidor...";';
         $l[] = ':delay 3s;';
         $l[] = '/ping ' . $servidor->ip_servidor . ' count=3 interface="' . $iface . '";';
         $l[] = '';
@@ -154,8 +186,8 @@ class ScriptMikrotik
      */
     public static function comandos(VpnTunel $tunel, VpnServidor $servidor, string $clavePrivada, string $claveCompartida): array
     {
-        $iface    = 'wg-netplay';
-        $etiqueta = 'Netplay gestion remota';
+        $iface    = self::IFACE;
+        $etiqueta = self::ETIQUETA;
         $mascara  = explode('/', $servidor->subred)[1];
 
         $pasos = [
@@ -190,10 +222,24 @@ class ScriptMikrotik
         ];
 
         foreach ($tunel->redes_remotas ?? [] as $red) {
+            $real = $tunel->realDe($red);
+
+            if ($real !== $red) {
+                $pasos[] = ['ruta' => '/ip/firewall/nat', 'accion' => 'add', 'datos' => [
+                    'chain'        => 'dstnat',
+                    'in-interface' => $iface,
+                    'dst-address'  => $red,
+                    'action'       => 'netmap',
+                    'to-addresses' => $real,
+                    'comment'      => $etiqueta,
+                    'place-before' => '0',
+                ]];
+            }
+
             $pasos[] = ['ruta' => '/ip/firewall/nat', 'accion' => 'add', 'datos' => [
                 'chain'       => 'srcnat',
                 'src-address' => $servidor->subred,
-                'dst-address' => $red,
+                'dst-address' => $real,
                 'action'      => 'masquerade',
                 'comment'     => $etiqueta,
             ]];

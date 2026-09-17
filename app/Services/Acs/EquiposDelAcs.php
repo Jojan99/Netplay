@@ -460,12 +460,23 @@ class EquiposDelAcs
             $propias = collect(is_array($propias) ? $propias : [])
                 ->filter(fn ($r) => $r['elegida'] ?? false)->pluck('red')->values()->all();
 
+            // Sin redes declaradas, las del túnel de la empresa. Las traducidas
+            // cuentan por su red real: el equipo informa su IP real, no la
+            // virtual con la que lo ve el servidor.
             if (!$propias) {
-                $propias = \App\Models\VpnTunel::where('company_id', $this->companyId)
-                    ->get()->flatMap(fn ($t) => $t->redes_remotas ?? [])->unique()->values()->all();
+                $propias = \App\Models\VpnTunel::where('company_id', $this->companyId)->get()
+                    ->flatMap(fn ($t) => array_map(fn ($r) => $t->realDe((string) $r), $t->redes_remotas ?? []))
+                    ->unique()->values()->all();
             }
 
-            return compact('ips', 'pppoe', 'series') + ['propias' => $propias];
+            // Las que también usa otra empresa: una IP ahí no dice de quién es
+            // el equipo, así que no alcanza para atribuirlo por IP.
+            $ajenas = \App\Models\VpnTunel::where('company_id', '!=', $this->companyId)->get()
+                ->flatMap(fn ($t) => array_map(fn ($r) => $t->realDe((string) $r), $t->redes_remotas ?? []))
+                ->merge(\App\Models\GestionRemota::where('company_id', '!=', $this->companyId)->whereNotNull('red')->pluck('red'))
+                ->filter()->unique()->values()->all();
+
+            return compact('ips', 'pppoe', 'series') + ['propias' => $propias, 'ajenas' => $ajenas];
         });
     }
 
@@ -480,6 +491,9 @@ class EquiposDelAcs
         return Cache::remember("acs:equipos:{$this->companyId}", self::VIGENCIA, fn () => $this->acs->dispositivos([], [
             '_id', '_deviceId', '_lastInform', '_lastBoot', '_registered',
             'InternetGatewayDevice.WANDevice', 'InternetGatewayDevice.DeviceInfo.SoftwareVersion',
+            // La MAC de la ONT: las C-Data EPON se registran en la OLT por MAC y
+            // en el ACS con otro serial (DF1E-…); por acá se emparejan.
+            'InternetGatewayDevice.ManagementServer.mac', 'InternetGatewayDevice.X_CATV_UserInfo.UserName',
             'Device.PPP.Interface', 'Device.IP.Interface', 'Device.DeviceInfo.SoftwareVersion',
         ]));
     }
@@ -489,10 +503,15 @@ class EquiposDelAcs
     {
         $ips = [];
         $usuarios = [];
+        $macs = [];
 
         foreach (self::parametros($d) as $ruta => $valor) {
             if ($valor === '' || $valor === null) {
                 continue;
+            }
+            if (preg_match('/(ManagementServer\.mac|X_CATV_UserInfo\.UserName)$/i', $ruta)
+                && preg_match('/^([0-9A-Fa-f]{2}[:-]?){5}[0-9A-Fa-f]{2}$/', trim((string) $valor))) {
+                $macs[] = self::serial((string) $valor);
             }
             if (preg_match('/(ExternalIPAddress|IPv4Address\.\d+\.IPAddress)$/', $ruta)) {
                 $ips[] = (string) $valor;
@@ -506,9 +525,15 @@ class EquiposDelAcs
         $ont = null;
         $via = null;
 
-        // Si la empresa declaró sus redes, el equipo tiene que estar en una de
-        // ellas para ser suyo. El serial no necesita esto: es único.
-        $enSuRed = !$vinculos['propias'] || self::enAlgunaRed($ips, $vinculos['propias']);
+        // Por usuario PPPoE o por IP, el equipo tiene que estar en una red de
+        // la empresa. Sin redes conocidas no se atribuye así: en el ACS
+        // compartido "cliente1" o 192.168.1.x son de cualquiera. El serial y
+        // la MAC no necesitan esto: son únicos.
+        $enSuRed = $vinculos['propias'] && self::enAlgunaRed($ips, $vinculos['propias']);
+
+        // Una IP en una red que también usa otra empresa no alcanza sola; con
+        // el usuario PPPoE sí (usuario y red juntos).
+        $ipsPropias = array_values(array_filter($ips, fn ($ip) => !self::enAlgunaRed([$ip], $vinculos['ajenas'] ?? [])));
 
         foreach ($enSuRed ? $usuarios : [] as $u) {
             if (isset($vinculos['pppoe'][$u])) {
@@ -518,7 +543,7 @@ class EquiposDelAcs
         }
 
         if (!$cliente) {
-            foreach ($enSuRed ? $ips : [] as $ip) {
+            foreach ($enSuRed ? $ipsPropias : [] as $ip) {
                 if (isset($vinculos['ips'][$ip])) {
                     [$cliente, $via] = [$vinculos['ips'][$ip], 'ip'];
                     break;
@@ -527,6 +552,12 @@ class EquiposDelAcs
         }
 
         $o = $vinculos['series'][self::serial((string) ($d['_deviceId']['_SerialNumber'] ?? ''))] ?? null;
+
+        foreach ($o ? [] : array_unique($macs) as $mac) {
+            if ($o = $vinculos['series'][$mac] ?? null) {
+                break;
+            }
+        }
 
         if ($o) {
             $ont = ['olt' => $o->olt, 'fsp' => $o->fsp, 'ont_id' => $o->ont_id];

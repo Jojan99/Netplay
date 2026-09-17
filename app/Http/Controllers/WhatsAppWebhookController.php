@@ -12,7 +12,12 @@ use Symfony\Component\HttpFoundation\Response;
 
 class WhatsAppWebhookController extends Controller
 {
-    private const VERIFY_TOKEN = 'netplay_verify_token_2026';
+    /** Token de verificación de Meta: sale de META_WS_VERIFY_TOKEN (config/services.php). */
+    private function verifyToken(): string
+    {
+        // El valor por defecto cubre una config cacheada sin la clave nueva.
+        return (string) (config('services.meta_whatsapp.verify_token') ?: 'netplay_verify_token_2026');
+    }
 
     public function __construct(
         private ReceiveConversationMessageUseCaseInterface $useCase,
@@ -31,22 +36,20 @@ class WhatsAppWebhookController extends Controller
         $token     = $request->query('hub_verify_token');
         $challenge = $request->query('hub_challenge');
 
+        // El token no se registra en el log.
         Log::info('[Meta Webhook] Verificación recibida', [
-            'hub_mode'          => $mode,
-            'hub_verify_token'  => $token,
-            'hub_challenge'     => $challenge,
+            'hub_mode' => $mode,
         ]);
 
-        if ($mode === 'subscribe' && $token === self::VERIFY_TOKEN) {
+        if ($mode === 'subscribe' && is_string($token) && hash_equals($this->verifyToken(), $token)) {
             Log::info('[Meta Webhook] Verificación exitosa');
             return response($challenge, 200);
         }
 
         Log::warning('[Meta Webhook] Verificación fallida', [
-            'expected_mode'  => 'subscribe',
-            'received_mode'  => $mode,
-            'expected_token' => self::VERIFY_TOKEN,
-            'received_token' => $token,
+            'expected_mode' => 'subscribe',
+            'received_mode' => $mode,
+            'ip'            => $request->ip(),
         ]);
 
         return response('Verificación fallida', 403);
@@ -59,7 +62,7 @@ class WhatsAppWebhookController extends Controller
      * disparar el bot y el CRM con mensajes inventados. Los webhooks de las
      * pasarelas de pago ya validaban su firma; este era el único que no.
      *
-     * Si WHATSAPP_APP_SECRET todavía no está configurado se deja pasar y se
+     * Si META_WS_APP_SECRET todavía no está configurado se deja pasar y se
      * avisa en el log, para no cortar los mensajes en producción antes de que
      * el secreto esté puesto. Una vez configurado, la validación es obligatoria.
      */
@@ -68,7 +71,7 @@ class WhatsAppWebhookController extends Controller
         $appSecret = (string) config('services.meta_whatsapp.app_secret', '');
 
         if ($appSecret === '') {
-            Log::warning('[Meta Webhook] WHATSAPP_APP_SECRET sin configurar: el webhook se acepta sin verificar firma');
+            Log::warning('[Meta Webhook] META_WS_APP_SECRET sin configurar: el webhook se acepta sin verificar firma');
             return true;
         }
 

@@ -14,63 +14,27 @@ class TemplatesPdf
 
 
   /**
-   * Load company invoice config, falling back to sensible defaults.
+   * Datos de facturación de la empresa. Cada empresa sale con lo suyo: si un
+   * campo está vacío se toma el de la empresa o se deja en blanco, nunca los
+   * datos, cuentas ni logo de otra empresa. Sin empresa no se genera nada.
    */
   private function loadCompany(?int $companyId = null): array
   {
-    $id = $companyId ?? (function_exists('getSessionCompanyId') ? getSessionCompanyId() : null);
+    $id = $companyId ?: (function_exists('getSessionCompanyId') ? getSessionCompanyId() : null);
     $company = $id ? Company::with('invoiceTemplate')->find($id) : null;
 
-    $defaultLogoPath = realpath(__DIR__ . "/../../../resources/img/NET-PLAY-LOGO-Mesa-de-trabajo-1.jpg");
-
-    // Resolve logo to base64
-    $logoBase64 = null;
-    
-    // First try: use invoice_logo_base64 directly (already in base64 format)
-    if ($company?->invoice_logo_base64) {
-      $logoBase64 = $company->invoice_logo_base64;
-    }
-    // Fallback: if invoice_logo_url is already base64, use it directly
-    elseif ($company?->invoice_logo_url && str_starts_with($company->invoice_logo_url, 'data:')) {
-      $logoBase64 = $company->invoice_logo_url;
-    }
-    // Legacy: if invoice_logo_url is a URL, try to convert it
-    elseif ($company?->invoice_logo_url && filter_var($company->invoice_logo_url, FILTER_VALIDATE_URL)) {
-      try {
-        $data = @file_get_contents($company->invoice_logo_url);
-        if ($data) {
-          $mime = 'image/jpeg';
-          if (str_ends_with(strtolower(parse_url($company->invoice_logo_url, PHP_URL_PATH) ?? ''), '.png')) {
-            $mime = 'image/png';
-          }
-          $logoBase64 = "data:{$mime};base64," . base64_encode($data);
-        }
-      } catch (\Throwable) {}
-    }
-    // Fallback to company logo
-    elseif ($company?->logo && filter_var($company->logo, FILTER_VALIDATE_URL)) {
-      try {
-        $data = @file_get_contents($company->logo);
-        if ($data) {
-          $logoBase64 = "data:image/jpeg;base64," . base64_encode($data);
-        }
-      } catch (\Throwable) {}
-    }
-    
-    // Last resort: use default logo
-    if (!$logoBase64 && $defaultLogoPath && file_exists($defaultLogoPath)) {
-      $logoBase64 = "data:image/jpeg;base64," . base64_encode(file_get_contents($defaultLogoPath));
+    if (!$company) {
+      throw new \RuntimeException('No se pudo determinar la empresa de la factura.');
     }
 
-    // Load template config if exists
+    // Plantilla de la empresa
     $templateType = 'classic';
     $templateConfig = [];
-    if ($company?->invoiceTemplate) {
+    if ($company->invoiceTemplate) {
         $templateType = $company->invoiceTemplate->type ?? 'classic';
         $templateConfig = $company->invoiceTemplate->config ?? [];
     } else {
-        // Fallback: try to find default template for company
-        $defaultTemplate = InvoiceTemplate::where('company_id', $id)
+        $defaultTemplate = InvoiceTemplate::where('company_id', $company->id)
             ->where('is_default', true)
             ->first();
         if ($defaultTemplate) {
@@ -79,21 +43,58 @@ class TemplatesPdf
         }
     }
 
-    return [
-      'business_name'      => $company?->invoice_business_name ?? $company?->name ?? 'SOLUCIONES NETPLAY S.A.S',
-      'nit'                => $company?->invoice_nit            ?? $company?->nit  ?? '901911441-2',
-      'phone'              => $company?->invoice_phone          ?? $company?->phone ?? '3022042294',
-      'address'            => $company?->invoice_address        ?? $company?->address ?? 'Soledad, Atlantico',
-      'city'               => $company?->invoice_city           ?? 'Soledad',
-      'country'            => $company?->invoice_country        ?? 'COLOMBIA',
-      'iva_condition'      => $company?->invoice_iva_condition  ?? 'No Aplica',
-      'economic_activity'  => $company?->invoice_economic_activity ?? '6110 - Actividades de telecomunicaciones alámbricas',
-      'payment_info'       => $company?->invoice_payment_info   ?? "- BANCOLOMBIA CTA AHO 47800013328\n- DAVIPLATA 3022042294\n- NEQUI 3022042294",
-      'footer'             => $company?->invoice_footer         ?? '¡Gracias por preferirnos!',
-      'logo_base64'        => $logoBase64,
+    return self::datosEmpresa($company) + [
       'template_type'      => $templateType,
       'template_config'    => $templateConfig,
     ];
+  }
+
+  /**
+   * Membrete de una empresa para facturas, recibos y vista previa.
+   * Los vacíos se completan con los datos generales de la misma empresa.
+   */
+  public static function datosEmpresa(Company $company): array
+  {
+    $txt = fn ($v) => trim((string) $v);
+
+    return [
+      'business_name'      => $txt($company->invoice_business_name) ?: $txt($company->name),
+      'nit'                => $txt($company->invoice_nit)           ?: $txt($company->nit),
+      'phone'              => $txt($company->invoice_phone)         ?: $txt($company->phone),
+      'address'            => $txt($company->invoice_address)       ?: $txt($company->address),
+      'city'               => $txt($company->invoice_city),
+      'country'            => $txt($company->invoice_country)       ?: 'COLOMBIA',
+      'iva_condition'      => $txt($company->invoice_iva_condition) ?: 'No Aplica',
+      'economic_activity'  => $txt($company->invoice_economic_activity),
+      'payment_info'       => $txt($company->invoice_payment_info),
+      'footer'             => $txt($company->invoice_footer)        ?: '¡Gracias por preferirnos!',
+      'logo_base64'        => self::logoEmpresa($company),
+    ];
+  }
+
+  /** Logo en base64: el de factura, si no el de la empresa, si no ninguno. */
+  public static function logoEmpresa(Company $company): ?string
+  {
+    foreach ([$company->invoice_logo_base64, $company->invoice_logo_url, $company->logo] as $logo) {
+      $logo = trim((string) $logo);
+      if ($logo === '') {
+        continue;
+      }
+      if (str_starts_with($logo, 'data:image')) {
+        return $logo;
+      }
+      if (preg_match('#^https?://#i', $logo)) {
+        try {
+          $data = @file_get_contents($logo, false, stream_context_create(['http' => ['timeout' => 5]]));
+          if ($data) {
+            $mime = str_ends_with(strtolower(parse_url($logo, PHP_URL_PATH) ?? ''), '.png') ? 'image/png' : 'image/jpeg';
+            return "data:{$mime};base64," . base64_encode($data);
+          }
+        } catch (\Throwable) {}
+      }
+    }
+
+    return null;
   }
 
   /**
@@ -134,7 +135,7 @@ class TemplatesPdf
   public function PdfReceiptPay($dataUser, $Cab, $extraParam, ?int $companyId = null)
   {
     $co = $this->loadCompany($companyId);
-    return $this->renderReceipt($dataUser, $co, $Cab, $extraParam);
+    return $this->renderReceipt($this->userToArray($dataUser), $co, $Cab, $extraParam);
   }
 
   /**
@@ -241,7 +242,7 @@ class TemplatesPdf
         <div class="header">
             <h1>' . htmlspecialchars($co['business_name']) . '</h1>
             <p>Régimen fiscal: ' . htmlspecialchars($co['iva_condition']) . '</p>
-            <p>' . htmlspecialchars($co['city']) . '</p>
+            ' . ($co['city'] !== '' ? '<p>' . htmlspecialchars($co['city']) . '</p>' : '') . '
             <p>NIT: ' . htmlspecialchars($co['nit']) . '</p>
             <p>Tel: ' . htmlspecialchars($co['phone']) . '</p>
             <p>' . htmlspecialchars($co['address']) . '</p>

@@ -52,6 +52,17 @@ class EmployeeController extends Controller
     public function store(Request $request): JsonResponse
     {
         try {
+            // El usuario vinculado tiene que ser de la misma empresa
+            if ($request->filled('user_id')) {
+                $propio = \Illuminate\Support\Facades\DB::table('users')
+                    ->where('id', $request->input('user_id'))
+                    ->where('company_id', getSessionCompanyId() ?: (\Tymon\JWTAuth\Facades\JWTAuth::user()->company_id ?? 0))
+                    ->exists();
+                if (!$propio) {
+                    return $this->err('El usuario no pertenece a la empresa.');
+                }
+            }
+
             return $this->ok($this->repo->create($request->only(
                 'user_id','first_name','last_name','dni','email','phone','address','job_title','start_date','birthday','active'
             )), 'Empleado creado.');

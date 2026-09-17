@@ -27,10 +27,11 @@ class MetaWhatsAppService
             $this->phoneNumberId  = $company->wa_phone_number_id;
             $this->accessToken    = $company->wa_access_token;
         } else {
-            // Fallback a config global (.env)
-            $this->enabled       = (bool) config('services.meta_whatsapp.enabled', false);
-            $this->phoneNumberId = config('services.meta_whatsapp.phone_number_id', '');
-            $this->accessToken   = config('services.meta_whatsapp.access_token', '');
+            // Sin empresa o sin credenciales de Meta propias no se envía: nada de
+            // usar el número global del .env para otra empresa.
+            $this->enabled       = false;
+            $this->phoneNumberId = '';
+            $this->accessToken   = '';
         }
     }
 

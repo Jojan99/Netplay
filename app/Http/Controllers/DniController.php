@@ -108,14 +108,13 @@ class DniController extends Controller
 
         try {
 
-            $query =
-                (new Query('/ip/arp/add'))
-                ->equal('address', '192.168.9.3')
-                ->equal('interface', 'TRONCAL 1')
-                ->equal('mac-address', '00:00:00:00:40:27')
-                ->equal('comment', 'Marcela Te Amo');
-
-            $response = $this->connection->conection($this->getCompanyRouterId())->query($query)->read();
+            // Deshabilitada: era una prueba que metía una entrada ARP fija (de Netplay)
+            // en el router de la empresa que la llamara.
+            return [
+                'message' => 'Función deshabilitada',
+                'status' => 1,
+                'data' => null
+            ];
         } catch (JWTException $e) {
 
             // Respuesta en caso de excepción
@@ -185,11 +184,12 @@ class DniController extends Controller
     public function pruebaMikroAll(GetDniUseCaseInterface $getDniUseCaseInterface): array
     {
         try {
-            $result = $getDniUseCaseInterface->conection();
-            error_log("result" . json_encode($result));
-            $response = $result->qr('/ip/address/print');
-
-            print_r($response, true);
+            // Deshabilitada: usaba el MikroTik de Netplay con credenciales fijas.
+            return [
+                'message' => 'Función deshabilitada',
+                'status' => 1,
+                'data' => null
+            ];
         } catch (JWTException $e) {
 
             // Respuesta en caso de excepción
@@ -540,8 +540,10 @@ public function diagnosticoConexionBot(GestionUserRequest $request)
      */
     private function ipDeSesionPppoe($connection, string $dni): ?string
     {
+        $companyId = getSessionCompanyId();
         $usuario = \Illuminate\Support\Facades\DB::table('user_data')
             ->where('dni', $dni)
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
             ->value('pppoe_user') ?: $dni;
 
         try {

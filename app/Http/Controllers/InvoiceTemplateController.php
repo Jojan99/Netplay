@@ -249,52 +249,14 @@ class InvoiceTemplateController extends Controller
         ]);
     }
 
+    /** Mismo membrete que la factura real: solo datos de la propia empresa. */
     private function loadCompanyData(?Company $company): array
     {
-        $defaultLogoPath = realpath(__DIR__ . "/../../../resources/img/NET-PLAY-LOGO-Mesa-de-trabajo-1.jpg");
-        $logoBase64 = null;
-
-        if ($company?->invoice_logo_base64) {
-            $logoBase64 = $company->invoice_logo_base64;
-        } elseif ($company?->invoice_logo_url && str_starts_with($company->invoice_logo_url, 'data:')) {
-            $logoBase64 = $company->invoice_logo_url;
-        } elseif ($company?->invoice_logo_url && filter_var($company->invoice_logo_url, FILTER_VALIDATE_URL)) {
-            try {
-                $data = @file_get_contents($company->invoice_logo_url);
-                if ($data) {
-                    $mime = 'image/jpeg';
-                    if (str_ends_with(strtolower(parse_url($company->invoice_logo_url, PHP_URL_PATH) ?? ''), '.png')) {
-                        $mime = 'image/png';
-                    }
-                    $logoBase64 = "data:{$mime};base64," . base64_encode($data);
-                }
-            } catch (\Throwable) {}
-        } elseif ($company?->logo && filter_var($company->logo, FILTER_VALIDATE_URL)) {
-            try {
-                $data = @file_get_contents($company->logo);
-                if ($data) {
-                    $logoBase64 = "data:image/jpeg;base64," . base64_encode($data);
-                }
-            } catch (\Throwable) {}
+        if (!$company) {
+            abort(404, 'Empresa no encontrada');
         }
 
-        if (!$logoBase64 && $defaultLogoPath && file_exists($defaultLogoPath)) {
-            $logoBase64 = "data:image/jpeg;base64," . base64_encode(file_get_contents($defaultLogoPath));
-        }
-
-        return [
-            'business_name'      => $company?->invoice_business_name ?? $company?->name ?? 'SOLUCIONES NETPLAY S.A.S',
-            'nit'                => $company?->invoice_nit            ?? $company?->nit  ?? '901911441-2',
-            'phone'              => $company?->invoice_phone          ?? $company?->phone ?? '3022042294',
-            'address'            => $company?->invoice_address        ?? $company?->address ?? 'Soledad, Atlantico',
-            'city'               => $company?->invoice_city           ?? 'Soledad',
-            'country'            => $company?->invoice_country        ?? 'COLOMBIA',
-            'iva_condition'      => $company?->invoice_iva_condition  ?? 'No Aplica',
-            'economic_activity'  => $company?->invoice_economic_activity ?? '6110 - Actividades de telecomunicaciones alámbricas',
-            'payment_info'       => $company?->invoice_payment_info   ?? "- BANCOLOMBIA CTA AHO 47800013328\n- DAVIPLATA 3022042294\n- NEQUI 3022042294",
-            'footer'             => $company?->invoice_footer         ?? '¡Gracias por preferirnos!',
-            'logo_base64'        => $logoBase64,
-        ];
+        return \App\Resources\Templates\TemplatesPdf::datosEmpresa($company);
     }
 
     private function dummyInvoiceData(): array

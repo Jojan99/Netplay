@@ -668,7 +668,7 @@ public function transcodeAudio(Request $request)
 public function getSettings(): JsonResponse
 {
     $s = \App\Support\CrmSettings::for(getSessionCompanyId());
-    $s['welcome_message_default']   = \App\Support\CrmSettings::DEFAULT_WELCOME;
+    $s['welcome_message_default']   = \App\Support\CrmSettings::defaultWelcome(getSessionCompanyId());
     $s['off_hours_message_default'] = \App\Support\CrmSettings::DEFAULT_OFF_HOURS;
     $s['identificacion_mensaje_default'] = \App\Support\CrmSettings::DEFAULT_IDENTIFICACION;
     $s['open_now'] = \App\Support\CrmSettings::isOpenNow($s);

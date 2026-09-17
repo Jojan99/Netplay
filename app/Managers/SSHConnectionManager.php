@@ -15,10 +15,11 @@ class SSHConnectionManager implements SSHConnectionManagerInterface
 
     public function __construct()
     {
-        $this->host = '10.11.104.2';
-        $this->port = 22;
-        $this->username = 'root';
-        $this->password = '4dm1nn3t';
+        // Sin credenciales en el código: sólo lo usaba getOntStatusAll (deshabilitada)
+        $this->host = config('ssh.default.host');
+        $this->port = config('ssh.default.port', 22);
+        $this->username = config('ssh.default.username');
+        $this->password = config('ssh.default.password');
     }
 
     private function connect(): void

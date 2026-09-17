@@ -11,6 +11,32 @@ use Illuminate\Support\Facades\DB;
 
 class UserRepository implements UserRepositoryInterface
 {
+    /**
+     * El perfil USER de la empresa, creándolo si no existe.
+     *
+     * Antes, si faltaba, se tomaba el primer perfil de la empresa: en las
+     * empresas registradas sin perfil USER ése es ADMIN, y cada cliente nuevo
+     * quedaba de administrador (y fuera de facturación, que excluye al equipo).
+     */
+    private function perfilDeCliente(int $companyId): int
+    {
+        $id = DB::table('profiles')
+            ->where('company_id', $companyId)
+            ->where('name', 'USER')
+            ->value('id');
+
+        if ($id) {
+            return (int) $id;
+        }
+
+        return (int) DB::table('profiles')->insertGetId([
+            'company_id' => $companyId,
+            'name'       => 'USER',
+            'active'     => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
 
 
 
@@ -48,12 +74,7 @@ class UserRepository implements UserRepositoryInterface
     public function createUser(CreateUserDataRequest $data): mixed
     {
         $companyId = getSessionCompanyId();
-        $profileId = DB::table('profiles')
-            ->where('company_id', $companyId)
-            ->where('name', 'USER')
-            ->value('id') ?? DB::table('profiles')
-            ->where('company_id', $companyId)
-            ->value('id');
+        $profileId = $this->perfilDeCliente($companyId);
 
         return User::create([
             'username'   => $data['dni'],
@@ -71,12 +92,7 @@ class UserRepository implements UserRepositoryInterface
     public function createUserData(CreateUserDataRequest $data): mixed
     {
         $companyId = getSessionCompanyId();
-        $roleId = DB::table('profiles')
-            ->where('company_id', $companyId)
-            ->where('name', 'USER')
-            ->value('id') ?? DB::table('profiles')
-            ->where('company_id', $companyId)
-            ->value('id');
+        $roleId = $this->perfilDeCliente($companyId);
 
         return UserData::create([
             'names'              => $data['names'],
@@ -140,7 +156,7 @@ class UserRepository implements UserRepositoryInterface
             // Audit log for plan change
             if ($oldPlanId != $data['planInternet']) {
                 $oldPlanName = DB::table('internet_plans')->where('id', $oldPlanId)->value('plan_name') ?? $oldPlanId;
-                $newPlanName = DB::table('internet_plans')->where('id', $data['planInternet'])->value('plan_name') ?? $data['planInternet'];
+                $newPlanName = DB::table('internet_plans')->where('id', $data['planInternet'])->where('company_id', $companyId)->value('plan_name') ?? $data['planInternet'];
                 DB::table('user_audit_logs')->insert([
                     'user_id'       => $userId,
                     'changed_by'    => getSessionUserId(),

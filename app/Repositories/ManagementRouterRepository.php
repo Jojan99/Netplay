@@ -50,6 +50,7 @@ class ManagementRouterRepository implements ManagementRouterRepositoryInterface
             ->value('status_internet_id') ?? 1;
 
         UserData::where('user_id', $data['id_user'])
+        ->when($companyId, fn($q) => $q->where('company_id', $companyId))
         ->update([
             'status_internet_id' => $status
         ]);

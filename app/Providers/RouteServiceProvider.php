@@ -58,6 +58,7 @@ class RouteServiceProvider extends ServiceProvider
                     require base_path('routes/api/transferRoutes.php');
                     require base_path('routes/api/onboardingRoutes.php');
                     require base_path('routes/api/plataformaRoutes.php');
+                    require base_path('routes/api/importadorRoutes.php');
                 });
 
             // Pasarela de pago: config (jwt.verify+role) + webhooks + checkout ePayco (públicos)

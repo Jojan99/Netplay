@@ -32,14 +32,16 @@ class User extends Authenticatable implements JWTSubject
         'status'
     ];
 
-    // /**
-    //  * The attributes that should be hidden for serialization.
-    //  *
-    //  * @var array<int, string>
-    //  */
-    // protected $hidden = [
-    //     'password'
-    // ];
+    /**
+     * The attributes that should be hidden for serialization.
+     * (el hash de la clave no debe salir en ninguna respuesta JSON)
+     *
+     * @var array<int, string>
+     */
+    protected $hidden = [
+        'password',
+        'remember_token',
+    ];
 
     /**
      * The attributes that should be cast.

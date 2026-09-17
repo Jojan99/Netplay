@@ -2,6 +2,7 @@
 
 namespace App\Resources\Templates;
 
+use App\Models\Company;
 use Carbon\Carbon;
 use Dompdf\Dompdf;
 use Dompdf\Options;
@@ -9,25 +10,29 @@ use Dompdf\Options;
 class TemplatePdfOrderWork
 {
   
-  public function PdfOrderWork($user): mixed
+  public function PdfOrderWork($user, ?int $companyId = null): mixed
   {
+    // Membrete de la empresa del ticket, nunca el de otra empresa.
+    $empresa = Company::find($companyId ?: getSessionCompanyId());
+    if (!$empresa) {
+      throw new \RuntimeException('No se pudo determinar la empresa del ticket.');
+    }
+    $co = TemplatesPdf::datosEmpresa($empresa);
+    $e = fn ($v) => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
 
-    $nombre = $user[0]->user_names .' '. $user[0]->user_lastname;
-    $telefono = $user[0]->phone;
-    $cedula = $user[0]->cedula;
-    $direccion = $user[0]->address;
-    $fecha = $user[0]->date;
-    $orden = $user[0]->id;
-    $nombreTecnico = $user[0]->tech_names .' '. $user[0]->tech_lastname;
-    $estado = $user[0]->status;
-    $servicio = $user[0]->service;
-    $observacion = $user[0]->observation;
-    $prioridad = $user[0]->prioritys;
+    $nombre = $e($user[0]->user_names .' '. $user[0]->user_lastname);
+    $telefono = $e($user[0]->phone);
+    $cedula = $e($user[0]->cedula);
+    $direccion = $e($user[0]->address);
+    $fecha = $e($user[0]->date);
+    $orden = $e($user[0]->id);
+    $nombreTecnico = $e($user[0]->tech_names .' '. $user[0]->tech_lastname);
+    $estado = $e($user[0]->status);
+    $servicio = $e($user[0]->service);
+    $observacion = $e($user[0]->observation);
+    $prioridad = $e($user[0]->prioritys);
 
-
-    $logoPath = realpath(__DIR__ . "/../../../resources/img/NET-PLAY-LOGO-Mesa-de-trabajo-1.jpg");
-
-    $imagenBase64 = "data:image/png;base64," . base64_encode(file_get_contents($logoPath));
+    $imagenBase64 = $co['logo_base64'];
 
     $html = '
         <!DOCTYPE html>
@@ -95,9 +100,9 @@ class TemplatePdfOrderWork
 </head>
 <body>
     <div class="header">
-           <div class="logo"><img src="' . $imagenBase64 . '" alt="Logo"></div>
-        <h1>SOLUCIONES NETPLAY S.A.S.</h1>
-        <p>NIT 901911441 - 2</p>
+           ' . ($imagenBase64 ? '<div class="logo"><img src="' . $imagenBase64 . '" alt="Logo"></div>' : '') . '
+        <h1>' . $e($co['business_name']) . '</h1>
+        ' . ($co['nit'] !== '' ? '<p>NIT ' . $e($co['nit']) . '</p>' : '') . '
         <h3 style="color: #52c0db;">Nro. '.$orden.'</h3>
     </div>
 
@@ -108,7 +113,6 @@ class TemplatePdfOrderWork
             <p><strong>NOMBRE:</strong>'.$nombre.'</p>
             <p><strong>CELULAR:</strong>'.$telefono.'</p>
             <p><strong>DIRECCION:</strong> '.$direccion.'</p>
-            <p><strong>BARRIO:</strong> SOLEDAD</p>
         </div>
     </div>
 

@@ -40,7 +40,8 @@ class RegisterCompanyUseCase implements RegisterCompanyUseCaseInterface
                 $company->save();
 
                 $adminProfileId = null;
-                foreach (['ADMIN', 'TECNICO', 'CONTADOR'] as $roleName) {
+                // USER es el perfil de los clientes: sin él, el alta de clientes no tenía cuál asignarles.
+                foreach (['ADMIN', 'TECNICO', 'CONTADOR', 'USER'] as $roleName) {
                     $profileId = DB::table('profiles')->insertGetId([
                         'company_id' => $company->id,
                         'name'       => $roleName,

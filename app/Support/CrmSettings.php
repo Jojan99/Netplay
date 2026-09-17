@@ -8,7 +8,8 @@ use Illuminate\Support\Facades\DB;
 /** Lectura de la configuración del CRM con valores por defecto y utilidades de horario. */
 class CrmSettings
 {
-    public const DEFAULT_WELCOME = "👋 Hola, gracias por contactar a *Netplay*.\n\nEn breve uno de nuestros asesores continuará la conversación contigo.";
+    // {empresa} se reemplaza por el nombre de la empresa al enviarlo (ver defaultWelcome).
+    public const DEFAULT_WELCOME = "👋 Hola, gracias por contactar a *{empresa}*.\n\nEn breve uno de nuestros asesores continuará la conversación contigo.";
     public const DEFAULT_IDENTIFICACION = \App\Services\Crm\PuertaIdentificacion::PREGUNTA_POR_DEFECTO;
     public const DEFAULT_OFF_HOURS = "🕒 Gracias por escribirnos. En este momento estamos fuera del horario de atención; te responderemos apenas retomemos. Si es una emergencia del servicio, dejanos el detalle y lo priorizamos.";
 
@@ -33,6 +34,25 @@ class CrmSettings
             'identificacion_intentos'          => (int)($row->identificacion_intentos ?? 2),
             'identificacion_mensaje'           => $row->identificacion_mensaje ?? null,
         ];
+    }
+
+    /** Nombre de la empresa para los mensajes al cliente (nunca el de otra empresa). */
+    public static function companyName(int $companyId): string
+    {
+        $name = trim((string) DB::table('companies')->where('id', $companyId)->value('name'));
+        return $name !== '' ? $name : 'nuestra empresa';
+    }
+
+    /** Reemplaza {empresa} por el nombre de la empresa. */
+    public static function withCompany(string $text, int $companyId): string
+    {
+        return str_contains($text, '{empresa}') ? str_replace('{empresa}', self::companyName($companyId), $text) : $text;
+    }
+
+    /** Bienvenida por defecto con el nombre de la empresa. */
+    public static function defaultWelcome(int $companyId): string
+    {
+        return self::withCompany(self::DEFAULT_WELCOME, $companyId);
     }
 
     /** ¿Estamos dentro del horario de atención? */

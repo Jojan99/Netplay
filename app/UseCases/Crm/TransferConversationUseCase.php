@@ -34,6 +34,29 @@ class TransferConversationUseCase implements TransferConversationUseCaseInterfac
             ];
         }
 
+        // La conversación y el agente destino deben ser de la empresa en sesión:
+        // no se puede pasar un chat a un usuario de otra empresa.
+        $companyId = (int) getSessionCompanyId();
+        if (!$companyId || (int) $conversation->company_id !== $companyId) {
+            return [
+                'message' => 'Conversación no encontrada',
+                'status' => 1,
+                'data' => ApiResponseConstants::DATA_NULL
+            ];
+        }
+
+        $destinoEsDeLaEmpresa = \Illuminate\Support\Facades\DB::table('users')
+            ->where('id', $toUserId)
+            ->where('company_id', $companyId)
+            ->exists();
+        if (!$destinoEsDeLaEmpresa) {
+            return [
+                'message' => 'El agente destino no pertenece a la empresa',
+                'status' => 1,
+                'data' => ApiResponseConstants::DATA_NULL
+            ];
+        }
+
         if ($conversation->status === 'closed') {
              return [
                 'message' => 'No se puede transferir una conversación cerrada',

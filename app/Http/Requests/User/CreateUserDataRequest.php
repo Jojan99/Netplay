@@ -3,6 +3,7 @@
 namespace App\Http\Requests\User;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 use App\Http\Requests\Traits\DefaultResponseTrait;
 
 class CreateUserDataRequest extends FormRequest
@@ -37,10 +38,11 @@ class CreateUserDataRequest extends FormRequest
             'dni' => 'required|string',
             'email' => 'required|string',
             'phone' => 'required|string',
-            'planInternet' => 'required|int',
+            // Plan y router tienen que ser de la empresa de la sesión
+            'planInternet' => ['required', 'int', Rule::exists('internet_plans', 'id')->where('company_id', getSessionCompanyId())],
             'ip_assignment_id' => 'nullable|string',
             'group' => 'required|int',
-            'router_id' => 'nullable|int',
+            'router_id' => ['nullable', 'int', Rule::exists('conection_routers', 'id')->where('company_id', getSessionCompanyId())],
             // Con PPPoE no hay IP que asignar: el cliente entra con usuario y
             // contraseña y la IP se la da el pool del router.
             'connection_type' => 'nullable|in:static,pppoe',

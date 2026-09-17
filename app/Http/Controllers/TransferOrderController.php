@@ -8,6 +8,7 @@ use App\Models\ConectionRouter;
 use App\Models\Employee;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Validation\Rule;
 
 class TransferOrderController extends Controller
 {
@@ -44,6 +45,7 @@ class TransferOrderController extends Controller
         $transfers = $query->orderBy('scheduled_date', 'asc')
             ->orderBy('scheduled_time', 'asc')
             ->paginate($request->get('per_page', 20));
+        $transfers->getCollection()->each(fn ($t) => $this->sinCredenciales($t));
         
         return response()->json($transfers);
     }
@@ -51,21 +53,21 @@ class TransferOrderController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'user_data_id' => 'required|exists:user_data,id',
+            'user_data_id' => ['required', $this->deLaEmpresa('user_data')],
             'new_address' => 'required|string|max:500',
             'new_neighborhood' => 'nullable|string|max:255',
-            'new_router_id' => 'nullable|exists:conection_routers,id',
+            'new_router_id' => ['nullable', $this->deLaEmpresa('conection_routers')],
             'new_ip' => 'nullable|ip',
             'scheduled_date' => 'required|date',
             'scheduled_time' => 'required',
             'transfer_cost' => 'nullable|numeric|min:0',
-            'technician_1_id' => 'nullable|exists:employees,id',
-            'technician_2_id' => 'nullable|exists:employees,id',
+            'technician_1_id' => ['nullable', $this->deLaEmpresa('employees')],
+            'technician_2_id' => ['nullable', $this->deLaEmpresa('employees')],
             'commission_amount' => 'nullable|numeric|min:0',
             'observations' => 'nullable|string',
         ]);
         
-        $client = UserData::findOrFail($request->user_data_id);
+        $client = UserData::where('company_id', getSessionCompanyId())->findOrFail($request->user_data_id);
         
         $validated['company_id'] = getSessionCompanyId();
         $validated['created_by'] = Auth::id();
@@ -78,7 +80,7 @@ class TransferOrderController extends Controller
         
         return response()->json([
             'message' => 'Orden de traslado creada exitosamente',
-            'data' => $transfer->load(['client', 'oldRouter', 'newRouter', 'technician1', 'technician2'])
+            'data' => $this->sinCredenciales($transfer->load(['client', 'oldRouter', 'newRouter', 'technician1', 'technician2']))
         ], 201);
     }
 
@@ -88,7 +90,7 @@ class TransferOrderController extends Controller
             ->with(['client', 'oldRouter', 'newRouter', 'technician1', 'technician2', 'creator', 'assignee'])
             ->findOrFail($id);
         
-        return response()->json($transfer);
+        return response()->json($this->sinCredenciales($transfer));
     }
 
     public function update(Request $request, $id)
@@ -99,13 +101,13 @@ class TransferOrderController extends Controller
         $validated = $request->validate([
             'new_address' => 'sometimes|string|max:500',
             'new_neighborhood' => 'nullable|string|max:255',
-            'new_router_id' => 'nullable|exists:conection_routers,id',
+            'new_router_id' => ['nullable', $this->deLaEmpresa('conection_routers')],
             'new_ip' => 'nullable|ip',
             'scheduled_date' => 'sometimes|date',
             'scheduled_time' => 'sometimes',
             'transfer_cost' => 'nullable|numeric|min:0',
-            'technician_1_id' => 'nullable|exists:employees,id',
-            'technician_2_id' => 'nullable|exists:employees,id',
+            'technician_1_id' => ['nullable', $this->deLaEmpresa('employees')],
+            'technician_2_id' => ['nullable', $this->deLaEmpresa('employees')],
             'commission_amount' => 'nullable|numeric|min:0',
             'observations' => 'nullable|string',
         ]);
@@ -114,7 +116,7 @@ class TransferOrderController extends Controller
         
         return response()->json([
             'message' => 'Orden de traslado actualizada',
-            'data' => $transfer->fresh(['client', 'oldRouter', 'newRouter', 'technician1', 'technician2'])
+            'data' => $this->sinCredenciales($transfer->fresh(['client', 'oldRouter', 'newRouter', 'technician1', 'technician2']))
         ]);
     }
 
@@ -259,8 +261,8 @@ class TransferOrderController extends Controller
             ->findOrFail($id);
         
         $validated = $request->validate([
-            'technician_1_id' => 'nullable|exists:employees,id',
-            'technician_2_id' => 'nullable|exists:employees,id',
+            'technician_1_id' => ['nullable', $this->deLaEmpresa('employees')],
+            'technician_2_id' => ['nullable', $this->deLaEmpresa('employees')],
             'commission_amount' => 'nullable|numeric|min:0',
         ]);
         
@@ -359,5 +361,22 @@ class TransferOrderController extends Controller
             ->get(['id', 'name', 'ip_address']);
         
         return response()->json($routers);
+    }
+
+    // exists limitado a la empresa de la sesión
+    private function deLaEmpresa(string $tabla)
+    {
+        return Rule::exists($tabla, 'id')->where('company_id', getSessionCompanyId());
+    }
+
+    // No exponer host/usuario/clave/token de los routers en las respuestas
+    private function sinCredenciales($transfer)
+    {
+        foreach (['oldRouter', 'newRouter'] as $rel) {
+            if ($transfer && $transfer->relationLoaded($rel) && $transfer->$rel) {
+                $transfer->$rel->makeHidden(['host', 'user', 'pass', 'token', 'port']);
+            }
+        }
+        return $transfer;
     }
 }

@@ -73,7 +73,8 @@ class ClientStatementController extends Controller
         $fecha = function ($s) { $t = strtotime((string) $s); return $t ? date('d/m/Y', $t) : '—'; };
         $e = fn($s) => htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
 
-        $empresa = $company->invoice_business_name ?? $company->name ?? 'Netplay';
+        // Nombre de la empresa del cliente; nunca el de otra empresa.
+        $empresa = ($company->invoice_business_name ?? '') ?: ($company->name ?? '');
         $c = $data['client'];
         $s = $data['summary'];
 

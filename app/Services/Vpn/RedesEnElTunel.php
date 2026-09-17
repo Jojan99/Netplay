@@ -45,13 +45,17 @@ class RedesEnElTunel
         }
 
         try {
-            // Dos túneles no pueden llevar la misma red: el tráfico iría a uno solo.
-            ServidorVpn::verificarRedesLibres($faltan, $tunel->id);
+            // Dos túneles no pueden llevar la misma red: la de otra empresa se
+            // publica traducida; la del mismo router cargada dos veces se rechaza.
+            [$todas, $traducciones] = ServidorVpn::resolverChoques(
+                array_values(array_merge($actuales, $faltan)), (int) $tunel->company_id, $tunel->id, $tunel->traducciones ?? []
+            );
+            ServidorVpn::verificarRedesLibres($todas, $tunel->id);
         } catch (\RuntimeException $e) {
             return ['ok' => false, 'detalle' => 'No se agregó al túnel: ' . $e->getMessage(), 'agregadas' => []];
         }
 
-        $tunel->update(['redes_remotas' => array_values(array_merge($actuales, $faltan))]);
+        $tunel->update(['redes_remotas' => $todas] + ($traducciones || $tunel->traducciones ? ['traducciones' => $traducciones ?: null] : []));
 
         try {
             $r = ServidorVpn::aplicar();

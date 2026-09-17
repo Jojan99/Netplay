@@ -166,7 +166,11 @@ class ClientAccountController extends Controller
                 'signed_at' => $r->signed_at,
                 'created_at'=> $r->created_at,
                 'status'    => $r->status,
-                'pdf_url'   => rtrim(config('app.url'), '/') . '/api/contracts/pdf/' . $r->id,
+                // Firmado: enlace temporal a la ruta protegida (el portal abre el link
+                // sin token del panel). Sin firmar queda la ruta anterior.
+                'pdf_url'   => \App\Support\ArchivosContrato::firmado((int) $r->id)
+                    ? \App\Support\ArchivosContrato::urlFirmada((int) $r->id, 'firmado', now()->addHours(2))
+                    : rtrim(config('app.url'), '/') . '/api/contracts/pdf/' . $r->id,
             ]);
 
         return response()->json(['status' => 0, 'data' => $rows]);

@@ -66,14 +66,23 @@ class IdentificarOlt
         $descripcion = self::limpiar($leer(self::SYS_DESCR));
         $objectId    = self::limpiar($leer(self::SYS_OBJECT_ID));
 
+        // Sin sysDescr ni sysObjectID el equipo no contestó SNMP: se dice eso
+        // en vez de seguir y romper más abajo con un error de tipos.
+        if ($descripcion === null && $objectId === null) {
+            throw new \RuntimeException('La OLT no responde por SNMP. Revisá que tenga SNMP habilitado y la comunidad y versión configuradas.');
+        }
+
         $marca = self::marcaDesdeObjectId($objectId) ?: self::marcaDesdeTexto($descripcion);
 
         $inventario = self::inventario($caminar);
 
+        $modelo = self::modelo($inventario, $descripcion)
+            ?? self::modeloPropio($marca, $leer);
+
         return [
             'marca'        => $marca,
             'marca_nombre' => self::nombreLindo($marca),
-            'modelo'       => self::modelo($inventario, $descripcion),
+            'modelo'       => $modelo,
             'descripcion'  => $descripcion,
             'nombre'       => self::limpiar($leer(self::SYS_NAME)),
             'ubicacion'    => self::limpiar($leer(self::SYS_LOCATION)),
@@ -160,8 +169,9 @@ class IdentificarOlt
      *
      * @param  array<string,array<string,mixed>>  $inventario
      */
-    private static function modelo(array $inventario, string $descripcion): ?string
+    private static function modelo(array $inventario, ?string $descripcion): ?string
     {
+        $descripcion = (string) $descripcion;
         $votos = [];
 
         foreach ($inventario as $entidad) {
@@ -337,6 +347,28 @@ class IdentificarOlt
         $mins  = intdiv($segundos % 3600, 60);
 
         return $dias > 0 ? "{$dias}d {$horas}h {$mins}m" : "{$horas}h {$mins}m";
+    }
+
+    /**
+     * OID propios donde el fabricante informa el modelo cuando el equipo deja
+     * vacío sysDescr y no trae ENTITY-MIB (pasa con las CDATA FD16xx EPON).
+     */
+    private const MODELO_POR_MARCA = [
+        'cdata' => ['1.3.6.1.4.1.17409.2.3.1.2.1.1.2.1', '1.3.6.1.4.1.17409.2.3.1.2.1.1.3.1'],
+    ];
+
+    /** @param  callable(string):?string  $leer */
+    private static function modeloPropio(?string $marca, callable $leer): ?string
+    {
+        foreach (self::MODELO_POR_MARCA[$marca] ?? [] as $oid) {
+            $valor = self::limpiar($leer($oid));
+
+            if ($valor !== null && !str_starts_with($valor, 'No Such')) {
+                return mb_substr($valor, 0, 60);
+            }
+        }
+
+        return null;
     }
 
     /** Saca el tipo que antepone snmpwalk y las comillas. */

@@ -11,9 +11,10 @@ class FileController extends Controller
     public function listFiles()
     {
         if (sessionUserHasProfile('CONTADOR', 'ADMIN')) {
-            $filePath = storage_path('archiveZip');
+            // Carpeta por empresa: antes todas las empresas veían los mismos archivos
+            $filePath = $this->carpetaDeLaEmpresa();
 
-            $files = scandir($filePath);
+            $files = is_dir($filePath) ? scandir($filePath) : [];
 
 
             $files = array_filter($files, function ($file) {
@@ -36,7 +37,7 @@ class FileController extends Controller
 
         $archivo = $name;
         $nombreArchivo = basename($archivo);
-        $rutaArchivo = storage_path('archiveZip/' . $nombreArchivo);
+        $rutaArchivo = $this->carpetaDeLaEmpresa() . '/' . $nombreArchivo;
 
         if (file_exists($rutaArchivo)) {
             // Descargar el archivo con el nombre original
@@ -47,5 +48,11 @@ class FileController extends Controller
             // Mostrar un mensaje de error si el archivo no existe
             echo "El archivo no existe.";
         }
+    }
+
+    /** storage/archiveZip/{companyId} */
+    private function carpetaDeLaEmpresa(): string
+    {
+        return storage_path('archiveZip/' . (int) getSessionCompanyId());
     }
 }

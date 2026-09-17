@@ -45,7 +45,18 @@ class SendNotificationRememberUseCase implements SendNotificationRememberUseCase
 {
     try {
         if (true) {
-            $getUserPeriode1 = $this->generatePdfRepository->getperiodeNotificationRemenber();
+            // Datos de pago y nombre de la empresa en sesión, nunca los de otra.
+            $empresa = \App\Models\Company::find(getSessionCompanyId());
+            if (!$empresa) {
+                return ['message' => 'Empresa no encontrada', 'status' => 1, 'data' => ApiResponseConstants::DATA_NULL];
+            }
+            $nombreEmpresa = trim((string) $empresa->invoice_business_name) ?: trim((string) $empresa->name);
+            $mediosPago = trim((string) $empresa->invoice_payment_info);
+            $bloquePago = $mediosPago !== ''
+                ? "Recuerda que puedes realizar tus pagos por estos medios:\n\n{$mediosPago}\n\n"
+                : '';
+
+            $getUserPeriode1 = $this->generatePdfRepository->getperiodeNotificationRemenber((int) $empresa->id);
 
             error_log(json_encode($getUserPeriode1));
 
@@ -62,7 +73,7 @@ class SendNotificationRememberUseCase implements SendNotificationRememberUseCase
                 $nombrMensaje = 'Sr_o_Sra ' . $user['dni'] . ' ' . $user['names'] . ' ' . $user['lastname'];
                 $pdfFiles[] = [
                     'nombre_archivo' => $nombreArchivo,
-                    'contenido' => $this->generateIndividualPdf($user,$Cab),
+                    'contenido' => $this->generateIndividualPdf($user, $Cab, (int) $empresa->id),
                 ];
 
                 $whatsapp = new WhatsAppService('u99eyqpz5jwn5h4w', 'instance106490');
@@ -77,7 +88,7 @@ class SendNotificationRememberUseCase implements SendNotificationRememberUseCase
                 $pdfFilePath = $storagePath . DIRECTORY_SEPARATOR . $nombreArchivo;
 
                 // Guardar el contenido en un archivo en la carpeta "pdf"
-                file_put_contents($pdfFilePath, $this->generateIndividualPdf($user, $Cab));
+                file_put_contents($pdfFilePath, $this->generateIndividualPdf($user, $Cab, (int) $empresa->id));
 
                 Log::info('RUTAAA'.$pdfFilePath);
                 $phoneNumbers = explode(' - ', $user['phone']); // Divide el string en números
@@ -96,18 +107,11 @@ class SendNotificationRememberUseCase implements SendNotificationRememberUseCase
                             $pdfFilePath,
                             '¡Hola! Sr_o_Sra '.$user['dni'].' '.$nombrMensaje.', te informamos que tu factura de servicio de internet ya está lista, tu fecha limite de pago es 31/08/2024, si ya realizaste tu pago envíanos el comprobante.
 
-Recuerda que puedes realizar tus pagos a las siguientes cuentas bancarias o en un corresponsal bancolombia
-
-BANCOLOMBIA CTA AHO 47800013328
-DAVIPLATA 3022042294
-NEQUI 3022042294 (Hum Gom)
-NEQUI 3245127869 (Joj Pom)
-
-Recuerda que estar al día con tu factura evita suspensiones de servicio.
+' . $bloquePago . 'Recuerda que estar al día con tu factura evita suspensiones de servicio.
 
 *Si ya pago y envio el comprobante de pago por favor omitir este mensaje*.
 
-Gracias por preferirnos @.NET, somos Soluciones NetPlay'
+Gracias por preferirnos, somos ' . $nombreEmpresa
                         );
                     }
                 }
@@ -168,7 +172,7 @@ Gracias por preferirnos @.NET, somos Soluciones NetPlay'
 }
 
 
-    private function generateIndividualPdf($user,$Cab)
+    private function generateIndividualPdf($user, $Cab, int $companyId)
     {
 
         // $fechaInit = substr($user['date_init_facturation'], 0, 10);
@@ -188,7 +192,6 @@ Gracias por preferirnos @.NET, somos Soluciones NetPlay'
         $options = new Options();
         $options->set('isHtml5ParserEnabled', true);
         $options->set('isPhpEnabled', true);
-        $logoPath = "https://i.ibb.co/wQyTjTy/NET-PLAY-LOGO-Mesa-de-trabajo-1.jpg";
 
         // $imagenBase64 = "data:image/png;base64," . base64_encode(file_get_contents($logoPath));
         // Crea una instancia de Dompdf, TCPDF u otra biblioteca
@@ -197,7 +200,7 @@ Gracias por preferirnos @.NET, somos Soluciones NetPlay'
         $pdf = new Dompdf($options);
        
 
-        $html = $pdfT->PdfFacturas($user,$Cab);
+        $html = $pdfT->PdfFacturas($user, $Cab, $companyId);
           // Agrega contenido al PDF personalizado (por ejemplo, el nombre del usuario)
           $pdf->loadHtml($html);
 

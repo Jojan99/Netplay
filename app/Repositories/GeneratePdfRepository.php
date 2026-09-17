@@ -170,10 +170,10 @@ class GeneratePdfRepository implements GeneratePdfRepositoryInterface
 
     /**
      * Factura por número. Los números se repiten entre empresas (GL11275 existe
-     * en dos), así que quien conoce la empresa debe pasarla: sin ella se toma la
-     * primera que aparezca, que puede ser de otra empresa.
+     * en dos), así que la empresa es obligatoria: sin ella se tomaba la primera
+     * que apareciera, que podía ser de otra empresa.
      */
-    public function generatePdfById($id, ?int $companyId = null): mixed{
+    public function generatePdfById($id, int $companyId): mixed{
         return User::select('user_data.names', 'user_data.lastname',
         'user_data.dni','internet_plans.plan_name','internet_plans.monthly_price',
         'user_data.address','user_data.phone','user_data.email','cab_facturations.date_init_facturation'
@@ -190,7 +190,7 @@ class GeneratePdfRepository implements GeneratePdfRepositoryInterface
         ->join('cab_facturations', 'cab_facturations.user_id', '=', 'user_data.user_id')
         ->join('det_facturations', 'det_facturations.cab_id', '=', 'cab_facturations.id')
         ->where('det_facturations.number_facture', $id)
-        ->when($companyId, fn ($q) => $q->where('cab_facturations.company_id', $companyId))
+        ->where('cab_facturations.company_id', $companyId)
         ->first();
     }
 

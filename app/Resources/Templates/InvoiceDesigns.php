@@ -86,6 +86,12 @@ trait InvoiceDesigns
         return (float) $d['saldoTotal'] + (float) $d['priceAntFactura'];
     }
 
+    /** Dirección y ciudad juntas, sin separador suelto si falta alguna. */
+    private function lugar(array $co, string $sep): string
+    {
+        return $this->esc(implode($sep, array_filter([(string) $co['address'], (string) $co['city']], fn ($v) => trim($v) !== '')));
+    }
+
     /** Bloque de medios de pago, en una caja legible. */
     private function bloquePago(array $co, string $borde): string
     {
@@ -145,9 +151,9 @@ trait InvoiceDesigns
         <div style="font-size:16px;font-weight:bold;color:' . $primary . ';letter-spacing:-0.2px;">' . $this->esc($co['business_name']) . '</div>
         <div style="font-size:10px;color:#6b7280;line-height:1.65;margin-top:4px;">
           NIT ' . $this->esc($co['nit']) . '<br>
-          ' . $this->esc($co['address']) . ' · ' . $this->esc($co['city']) . '<br>
+          ' . $this->lugar($co, ' · ') . '<br>
           Tel. ' . $this->esc($co['phone']) . '
-          ' . ($showActivity ? '<br>' . $this->esc($co['economic_activity']) : '') . '
+          ' . ($showActivity && $co['economic_activity'] !== '' ? '<br>' . $this->esc($co['economic_activity']) : '') . '
           ' . ($showIva ? '<br>Régimen: ' . $this->esc($co['iva_condition']) : '') . '
         </div>
       </td>
@@ -264,7 +270,7 @@ trait InvoiceDesigns
       <td style="padding:26px 36px 24px;vertical-align:middle;">
         ' . ($showLogo && $co['logo_base64'] ? '<img src="' . $co['logo_base64'] . '" style="max-height:44px;max-width:150px;margin-bottom:8px;"><br>' : '') . '
         <div style="font-size:17px;font-weight:bold;color:' . $textoHeader . ';">' . $this->esc($co['business_name']) . '</div>
-        <div style="font-size:9.5px;color:' . $textoHeader . ';opacity:.7;margin-top:3px;line-height:1.6;">NIT ' . $this->esc($co['nit']) . ' · ' . $this->esc($co['phone']) . '<br>' . $this->esc($co['address']) . ', ' . $this->esc($co['city']) . '</div>
+        <div style="font-size:9.5px;color:' . $textoHeader . ';opacity:.7;margin-top:3px;line-height:1.6;">NIT ' . $this->esc($co['nit']) . ' · ' . $this->esc($co['phone']) . '<br>' . $this->lugar($co, ', ') . '</div>
       </td>
       <td style="padding:26px 36px 24px;text-align:right;vertical-align:middle;">
         <div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:' . $textoHeader . ';opacity:.65;">Factura</div>

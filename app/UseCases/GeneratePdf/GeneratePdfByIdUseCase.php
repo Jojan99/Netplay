@@ -32,8 +32,12 @@ class GeneratePdfByIdUseCase implements GeneratePdfByIdUseCaseInterface
   public function generatePdfById($userFacture): mixed
   {
     try {
-      // Obtener los datos del usuario y generar el PDF
-      $generatePdf = $this->generatePdfRepository->generatePdfById($userFacture);
+      // Solo facturas de la empresa en sesión: los números se repiten entre empresas.
+      $empresa = (int) (getSessionCompanyId() ?: (\Tymon\JWTAuth\Facades\JWTAuth::user()->company_id ?? 0));
+      $generatePdf = $empresa ? $this->generatePdfRepository->generatePdfById($userFacture, $empresa) : null;
+      if (!$generatePdf) {
+        return response()->json(['message' => 'Factura no encontrada', 'status' => 1], 404);
+      }
 
       // Crear una instancia de Dompdf y cargar el contenido HTML
       $options = new Options();
@@ -69,31 +73,9 @@ class GeneratePdfByIdUseCase implements GeneratePdfByIdUseCaseInterface
 
   private function generateIndividualPdf($user)
   {
-    // Crea un PDF individual y devuelve su contenido
-    // Aquí puedes usar Dompdf, TCPDF, o cualquier otra biblioteca de tu elección
-    $options = new Options();
-    // Crea una instancia de Dompdf, TCPDF u otra biblioteca
-    $options->set('isHtml5ParserEnabled', true);
-    $options->set('isPhpEnabled', true);
-    $options->set('paperSize', array(0, 0, 58, 100)); // Ancho x alto en milímetros
     $pdfT = new TemplatesPdf();
-    $pdf = new Dompdf($options);
 
-    $html = $pdfT->PdfFacturas($user,null);
-
-    // Agrega contenido al PDF personalizado (por ejemplo, el nombre del usuario)
-    $pdf->loadHtml($html);
-
-    // Renderiza el PDF
-    $pdf->render();
-
-    // Devuelve el contenido del PDF generado
-
-    $pdfContent = $pdf->output();
-
-    $filePath = storage_path('app/pdf.pdf');
-    file_put_contents($filePath, $pdfContent);
-
-    return $html;
+    // Ya no se escribe el storage/app/pdf.pdf compartido: nadie lo leía.
+    return $pdfT->PdfFacturas($user, null, (int) $user['company_id']);
   }
 }

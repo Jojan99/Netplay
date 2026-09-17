@@ -54,7 +54,7 @@ class UpdateTicketUseCase implements UpdateTicketUseCaseInterface
     public function updateTicket(TicketRequest $data): mixed
     {
         try {
-            if (getSessionUserProfileId() != 1) {
+            if (!sessionUserHasProfile('USER')) {
 
                 // $dataUser = $this->userRepositoryInterface->getUserById($data['']);
                 // $data['log_id'] = getSessionUserId();

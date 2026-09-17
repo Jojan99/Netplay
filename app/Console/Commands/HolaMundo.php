@@ -12,7 +12,6 @@ use App\Http\Requests\Facturation\CreateFacturationRequest;
 use App\UseCases\GeneratePdf\GeneratePdfUseCase;
 use App\Repositories\Interfaces\GeneratePdfRepositoryInterface;
 use App\Repositories\GeneratePdfRepository;
-use App\Services\WhatsAppService;
 use Carbon\Carbon;
 
 class HolaMundo extends Command
@@ -53,12 +52,9 @@ class HolaMundo extends Command
 
         $this->info("Empresa ID: {$companyId} | Periodo: {$resultado} | Fecha factura: {$billingYear}-{$billingMonth}-{$billingDay} | Canal: {$channel}");
 
-        $whatsapp = new WhatsAppService($companyId);
-        $hora     = Carbon::now()->toDateTimeString();
-
-        try {
-            $whatsapp->mensajeInformativo('3245127869', "⚠️ *Se inicia Proceso* '{$hora}'. Canal: {$channel}");
-        } catch (\Throwable) {}
+        // Ya no se avisa por WhatsApp al número de Netplay (3245127869): se
+        // hacía con la línea de cada empresa y le llegaba a Netplay el proceso
+        // de todas. El seguimiento queda en la salida del comando.
 
         $FacturationRepository        = new FacturationRepository();
         $CreateDetFacturationUseCase  = new CreateDetFacturationUseCase($FacturationRepository);
@@ -77,13 +73,6 @@ class HolaMundo extends Command
 
         $this->info('Proceso finalizado.');
         //$this->info("Resultado: " . json_encode($result));
-
-        try {
-            $whatsapp->mensajeInformativo(
-                '3245127869',
-                "✅ *Se Finaliza Proceso* '{$hora}', '{$resultado}', '{$companyId}', '{$billingDay}'. Canal: {$channel}"
-            );
-        } catch (\Throwable) {}
 
         return 0;
     }

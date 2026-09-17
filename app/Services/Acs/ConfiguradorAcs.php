@@ -261,8 +261,11 @@ class ConfiguradorAcs
         $tunel = $this->tunelDelRouter($router->id);
 
         if ($tunel) {
-            ServidorVpn::verificarRedesLibres(ServidorVpn::normalizarRedes($redes), $tunel->id);
-            $tunel->fill(['redes_remotas' => ServidorVpn::normalizarRedes($redes)])->save();
+            [$publicar, $traducciones] = ServidorVpn::resolverChoques(
+                ServidorVpn::normalizarRedes($redes), (int) $tunel->company_id, $tunel->id, $tunel->traducciones ?? []
+            );
+            ServidorVpn::verificarRedesLibres($publicar, $tunel->id);
+            $tunel->fill(['redes_remotas' => $publicar] + ($traducciones || $tunel->traducciones ? ['traducciones' => $traducciones ?: null] : []))->save();
             ServidorVpn::aplicar();
         } else {
             $creado = ServidorVpn::crearTunel([

@@ -47,6 +47,7 @@ class OltTelnetWorker extends Command
         // Cambia la configuración: si no se guarda, vuelve atrás al reiniciar.
         'cambiarAutoAutorizacion', 'prepararVlanDeGestion', 'darGestionAOnt',
         'prepararPerfilDeLinea', 'crearServidorTr069', 'asignarServidorTr069',
+        'prepararGestionPorPerfil', 'quitarGestionEpon', 'quitarGestionDeOnt',
     ];
 
     private ?object          $connection     = null;
@@ -370,6 +371,14 @@ class OltTelnetWorker extends Command
             // Sólo algunos equipos la tienen (hoy, C-Data EPON).
             'puertosDeSubida'   => method_exists($this->driver, 'puertosDeSubida')
                                        ? $this->driver->puertosDeSubida() : [],
+            'prepararGestionPorPerfil' => method_exists($this->driver, 'prepararGestionPorPerfil')
+                                       ? $this->driver->prepararGestionPorPerfil((int) $p['vlan'], (string) $p['url'], $p['usuario'] ?? null, $p['clave'] ?? null) : null,
+            'quitarGestionDeOnt' => method_exists($this->driver, 'quitarGestionDeOnt')
+                                       ? $this->driver->quitarGestionDeOnt((string) $p['fsp'], (int) $p['ont_id'], (int) $p['vlan']) : null,
+            'quitarGestionEpon' => method_exists($this->driver, 'quitarGestionEpon')
+                                       ? $this->driver->quitarGestionEpon((string) $p['fsp'], (int) $p['ont_id']) : null,
+            'servidorTr069Vigente' => method_exists($this->driver, 'servidorTr069Vigente')
+                                       ? $this->driver->servidorTr069Vigente((int) $p['perfil'], (string) $p['url']) : null,
             'prepararVlanDeGestion' => method_exists($this->driver, 'prepararVlanDeGestion')
                                        ? $this->driver->prepararVlanDeGestion((int) $p['vlan'], (string) $p['uplink']) : null,
             'darGestionAOnt'    => method_exists($this->driver, 'darGestionAOnt')
@@ -388,7 +397,7 @@ class OltTelnetWorker extends Command
             'crearServidorTr069' => method_exists($this->driver, 'crearServidorTr069')
                                        ? $this->driver->crearServidorTr069((int) $p['perfil'], (string) $p['nombre'], (string) $p['url'], (string) $p['usuario'], (string) $p['clave']) : null,
             'asignarServidorTr069' => method_exists($this->driver, 'asignarServidorTr069')
-                                       ? $this->driver->asignarServidorTr069((string) $p['fsp'], (int) $p['ont_id'], (int) $p['perfil']) : null,
+                                       ? $this->driver->asignarServidorTr069((string) $p['fsp'], (int) $p['ont_id'], (int) $p['perfil'], $p['url'] ?? null, $p['usuario'] ?? null, $p['clave'] ?? null) : null,
             'reiniciarOnt'      => method_exists($this->driver, 'reiniciarOnt')
                                        ? $this->driver->reiniciarOnt((string) $p['fsp'], (int) $p['ont_id']) : null,
             'equipoDeOnt'       => method_exists($this->driver, 'equipoDeOnt')

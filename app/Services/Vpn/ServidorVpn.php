@@ -107,13 +107,17 @@ class ServidorVpn
             }
         }
 
+        $companyId = (int) ($datos['company_id'] ?? getSessionCompanyId());
+
+        [$redes, $traducciones] = self::resolverChoques($redes, $companyId);
+
         self::verificarRedesLibres($redes);
 
         $claves      = ClavesWireguard::par();
         $compartida  = ClavesWireguard::compartida();
 
-        $tunel = VpnTunel::create([
-            'company_id'       => $datos['company_id'] ?? getSessionCompanyId(),
+        $tunel = VpnTunel::create(($traducciones ? ['traducciones' => $traducciones] : []) + [
+            'company_id'       => $companyId,
             'nombre'           => $datos['nombre'],
             'router_id'        => $datos['router_id'] ?? null,
             'clave_privada'    => $claves['privada'],
@@ -153,7 +157,11 @@ class ServidorVpn
             ->get();
 
         foreach ($candidatos as $tunel) {
-            foreach ($tunel->redes_remotas ?? [] as $red) {
+            // Con empresa conocida también cuenta la red real de una traducida:
+            // la OLT se sigue registrando con su IP de la LAN.
+            $reales = $companyId !== null ? array_column($tunel->traducciones ?? [], 'real') : [];
+
+            foreach (array_merge($tunel->redes_remotas ?? [], $reales) as $red) {
                 [$base, $bits] = explode('/', $red);
                 $mascara = (int) $bits === 0 ? 0 : (-1 << (32 - (int) $bits)) & 0xFFFFFFFF;
 
@@ -219,6 +227,210 @@ class ServidorVpn
                 }
             }
         }
+    }
+
+    /**
+     * La IP por la que la plataforma llega a un equipo de esta empresa.
+     *
+     * - Si su red está traducida en un túnel de la empresa: la virtual.
+     * - Si su red va por un túnel de la empresa: la misma.
+     * - Si su red la lleva el túnel de OTRA empresa: null. Conectarse ahí
+     *   llegaría a un equipo ajeno (con credenciales de esta empresa).
+     * - Si no la lleva ningún túnel (IP pública): la misma.
+     */
+    public static function ipParaEmpresa(?string $ip, int $companyId, bool $soloPorTunel = false): ?string
+    {
+        if (!$ip || !filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            return null;
+        }
+
+        $propios = VpnTunel::where('company_id', $companyId)->where('activo', true)->get();
+
+        foreach ($propios as $tunel) {
+            if (($virtual = $tunel->ipAlcanzable($ip)) !== $ip) {
+                return $virtual;
+            }
+        }
+
+        $cubre = fn (VpnTunel $t) => collect($t->redes_remotas ?? [])->contains(fn ($red) => self::seSolapan($ip . '/32', $red));
+
+        if ($propios->contains($cubre)) {
+            return $ip;
+        }
+
+        // Fuera de todo túnel: sólo si se aceptan destinos por internet (a la
+        // página de un equipo, con su clave, nunca: iría en claro).
+        if ($soloPorTunel) {
+            return null;
+        }
+
+        $ajeno = VpnTunel::where('company_id', '!=', $companyId)->where('activo', true)->get()->contains($cubre);
+
+        return $ajeno ? null : $ip;
+    }
+
+    /** De dónde salen las redes virtuales de las redes que chocan entre empresas. */
+    public const POOL_TRADUCIDO = '10.250.0.0/16';
+
+    /**
+     * Cada empresa tiene su túnel aunque use las mismas redes privadas que otra.
+     *
+     * El servidor es uno solo y enruta por red, así que dos empresas con
+     * 192.168.5.0/24 no pueden publicarla igual. Cuando una red choca con la
+     * de un túnel de OTRA empresa, se publica con una red virtual libre del
+     * mismo tamaño y el router la traduce a la real (NETMAP en el script). Un
+     * choque con un túnel de la MISMA empresa no se traduce: es el mismo router
+     * cargado dos veces y verificarRedesLibres() lo explica.
+     *
+     * @param  list<string>  $redes         reales, o virtuales que ya tenía el túnel
+     * @param  list<array{real:string,virtual:string}>  $previas  las del túnel que se edita
+     * @return array{0:list<string>, 1:list<array{real:string,virtual:string}>}  redes a publicar y traducciones
+     */
+    public static function resolverChoques(array $redes, int $companyId, ?int $salvoTunel = null, array $previas = []): array
+    {
+        $otros = VpnTunel::where('activo', true)
+            ->when($salvoTunel !== null, fn ($q) => $q->where('id', '!=', $salvoTunel))
+            ->get();
+
+        $ajenas = $otros->where('company_id', '!=', $companyId)
+            ->flatMap(fn ($t) => $t->redes_remotas ?? [])->values()->all();
+
+        // Lo que ya está publicado en la VPN no puede ser una virtual nueva.
+        $ocupadas = array_merge(
+            $otros->flatMap(fn ($t) => $t->redes_remotas ?? [])->values()->all(),
+            [self::configuracion()->subred],
+        );
+
+        $publicar     = [];
+        $traducciones = [];
+        $subredVpn    = self::configuracion()->subred;
+
+        self::validarRedesDeTunel($redes, array_column($previas, 'virtual'));
+
+        foreach ($redes as $red) {
+            // La red interna de la VPN no es una red "detrás" de ningún router:
+            // se colaba al leer las direcciones del MikroTik (su wg tiene una).
+            if (self::seSolapan($red, $subredVpn)) {
+                continue;
+            }
+
+            // Una virtual que el túnel ya tenía se queda como está.
+            $yaVirtual = collect($previas)->firstWhere('virtual', $red);
+
+            if ($yaVirtual) {
+                $publicar[]     = $red;
+                $traducciones[] = $yaVirtual;
+                continue;
+            }
+
+            $choca = collect($ajenas)->contains(fn ($ajena) => self::seSolapan($red, $ajena));
+
+            if (!$choca) {
+                $publicar[] = $red;
+                continue;
+            }
+
+            $virtual = collect($previas)->firstWhere('real', $red)['virtual']
+                ?? self::redVirtualLibre($red, array_merge($ocupadas, $publicar, $redes));
+
+            $publicar[]     = $virtual;
+            $ocupadas[]     = $virtual;
+            $traducciones[] = ['real' => $red, 'virtual' => $virtual];
+        }
+
+        return [array_values(array_unique($publicar)), $traducciones];
+    }
+
+    /**
+     * Qué redes puede llevar un túnel.
+     *
+     * El servidor pone una ruta por cada red: una red pública (el /24 donde
+     * está el router de otra empresa, o el endpoint de un par) desviaría ese
+     * tráfico por el túnel de quien la cargó. Y una red local del servidor lo
+     * dejaría sin servicio para todos. Sólo privadas, fuera de las virtuales
+     * que reparte la plataforma y sin pisar las redes del propio servidor.
+     *
+     * @param  list<string>  $redes
+     * @param  list<string>  $virtualesPropias  las que el túnel ya tenía traducidas
+     */
+    public static function validarRedesDeTunel(array $redes, array $virtualesPropias = []): void
+    {
+        $privadas = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'];
+        $locales  = self::redesLocalesDelServidor();
+
+        foreach ($redes as $red) {
+            if (in_array($red, $virtualesPropias, true)) {
+                continue;
+            }
+
+            if (!collect($privadas)->contains(fn ($p) => self::dentroDe($red, $p))) {
+                throw new RuntimeException("La red {$red} no es privada: un túnel sólo puede llevar redes 10.x, 172.16-31.x o 192.168.x.");
+            }
+
+            if (self::seSolapan($red, self::POOL_TRADUCIDO)) {
+                throw new RuntimeException("La red {$red} está dentro de " . self::POOL_TRADUCIDO . ', reservada para las redes traducidas de la plataforma.');
+            }
+
+            if ($choca = collect($locales)->first(fn ($l) => self::seSolapan($red, $l))) {
+                throw new RuntimeException("La red {$red} choca con una red del propio servidor ({$choca}).");
+            }
+        }
+    }
+
+    /** ¿$red está entera dentro de $contenedora? */
+    private static function dentroDe(string $red, string $contenedora): bool
+    {
+        [, $bits]  = explode('/', $red);
+        [, $bitsC] = explode('/', $contenedora);
+
+        return (int) $bits >= (int) $bitsC && self::seSolapan($red, $contenedora);
+    }
+
+    /** Las redes que el servidor tiene por sus propias interfaces (no por la VPN). @return list<string> */
+    private static function redesLocalesDelServidor(): array
+    {
+        $salida = (string) @shell_exec('ip -4 route show 2>/dev/null');
+        $interfaz = self::configuracion()->interfaz;
+        $redes = [];
+
+        foreach (preg_split('/\r?\n/', $salida) as $linea) {
+            if (str_contains($linea, "dev {$interfaz}") || !preg_match('#^(\d+\.\d+\.\d+\.\d+/\d+)\s#', $linea, $m)) {
+                continue;
+            }
+
+            $redes[] = $m[1];
+        }
+
+        return $redes;
+    }
+
+    /** Una red del tamaño de $red dentro de POOL_TRADUCIDO que no pise ninguna ocupada. */
+    private static function redVirtualLibre(string $red, array $ocupadas): string
+    {
+        [, $bits]           = explode('/', $red);
+        [$pool, $bitsPool]  = explode('/', self::POOL_TRADUCIDO);
+        $bits               = (int) $bits;
+
+        if ($bits < (int) $bitsPool) {
+            throw new RuntimeException(
+                "La red {$red} ya la usa otra empresa y es demasiado grande para publicarla con otra dirección "
+                . '(máximo /' . $bitsPool . '). Dividila en redes más chicas.'
+            );
+        }
+
+        $inicio = ip2long($pool);
+        $fin    = $inicio + 2 ** (32 - (int) $bitsPool);
+        $paso   = 2 ** (32 - $bits);
+
+        for ($base = $inicio; $base + $paso <= $fin; $base += $paso) {
+            $candidata = long2ip($base) . '/' . $bits;
+
+            if (!collect($ocupadas)->contains(fn ($o) => self::seSolapan($candidata, $o))) {
+                return $candidata;
+            }
+        }
+
+        throw new RuntimeException('No quedan redes libres en ' . self::POOL_TRADUCIDO . ' para publicar ' . $red . '.');
     }
 
     /** La primera IP libre de la subred, salteando la del servidor. */
@@ -379,10 +591,31 @@ class ServidorVpn
             'ListenPort = ' . $servidor->listen_port,
         ];
 
+        $yaAsignadas = [];
+
         foreach (VpnTunel::where('activo', true)->orderBy('id')->get() as $tunel) {
             // AllowedIPs del lado servidor: la IP del router dentro del túnel
             // más las redes que hay detrás. De acá salen también las rutas.
             $permitidas = array_merge([$tunel->ip_tunel . '/32'], $tunel->redes_remotas ?? []);
+
+            // Seguro: WireGuard le quita una red al par que la tenía si otro par
+            // la declara. Pasó con 10.30.0.0/22: la gestión TR-069 de una empresa
+            // se llevó la de otra. La red se queda con el túnel más antiguo.
+            $permitidas = array_values(array_filter($permitidas, function ($red) use (&$yaAsignadas, $tunel) {
+                foreach ($yaAsignadas as $otra) {
+                    if (self::seSolapan($red, $otra)) {
+                        Log::error('[VPN] Red repetida entre túneles: no se carga en el más nuevo', [
+                            'red' => $red, 'ya_esta' => $otra, 'tunel' => $tunel->id,
+                        ]);
+
+                        return false;
+                    }
+                }
+
+                $yaAsignadas[] = $red;
+
+                return true;
+            }));
 
             $lineas[] = '';
             $lineas[] = '# ' . $tunel->nombre;
@@ -538,6 +771,7 @@ class ServidorVpn
                 'router_id'     => $tunel->router_id,
                 'ip_tunel'      => $tunel->ip_tunel,
                 'redes_remotas' => $tunel->redes_remotas ?? [],
+                'traducciones'  => $tunel->traducciones ?? [],
                 'clave_publica' => $tunel->clave_publica,
                 'puerto_router' => $tunel->puerto_router,
                 'activo'        => $tunel->activo,

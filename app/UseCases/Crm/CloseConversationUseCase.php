@@ -31,7 +31,7 @@ class CloseConversationUseCase implements CloseConversationUseCaseInterface
 
         broadcast(new ConversationClosedEvent($conversationId));
 
-        $closingMessage = "✨ Conversación finalizada.\n\n🙏 Fue un gusto atenderte.\n\nSi más adelante necesitas soporte o tienes alguna consulta, estaremos encantados de ayudarte nuevamente.\n\n📡 Gracias por confiar en Netplay.";
+        $closingMessage = "✨ Conversación finalizada.\n\n🙏 Fue un gusto atenderte.\n\nSi más adelante necesitas soporte o tienes alguna consulta, estaremos encantados de ayudarte nuevamente.\n\n📡 Gracias por confiar en " . \App\Support\CrmSettings::companyName((int) $conversation->company_id) . ".";
 
         try {
             // El aviso sale por el MISMO canal de la conversación.

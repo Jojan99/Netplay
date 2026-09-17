@@ -145,7 +145,7 @@ class PaymentNotificationService
             'medio_pago'       => $this->methodLabel($payload),
             'saldo'            => $this->money($owed),
             'estado_facturas'  => $this->invoiceSummary($tx),
-            'empresa'          => (string) ($company->name ?: 'Netplay'),
+            'empresa'          => (string) ($company->name ?: ''),
             'soporte'          => (string) ($company->phone ?: ''),
             'fecha'            => now()->format('d/m/Y'),
         ];

@@ -82,7 +82,9 @@ class EquipoDeOlt
             $snmp      = new HuaweiSnmpReader($olt);
             $identidad = $snmp->identidad();
 
-            if (empty($identidad['descripcion']) && empty($identidad['modelo'])) {
+            // Algunas OLT dejan vacío sysDescr y no traen modelo: si contestó
+            // sysObjectID, respondió.
+            if (empty($identidad['descripcion']) && empty($identidad['modelo']) && empty($identidad['object_id'])) {
                 return array_merge($base, [
                     'error' => 'La OLT no respondió por SNMP. Revise comunidad, versión y acceso.',
                 ]);

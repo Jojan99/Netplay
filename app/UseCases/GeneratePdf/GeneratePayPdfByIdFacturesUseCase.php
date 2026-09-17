@@ -39,8 +39,11 @@ class GeneratePayPdfByIdFacturesUseCase implements GeneratePayPdfByIdFacturesUse
         
         // Obtener los datos del usuario y generar el PDF
         // Con la empresa del operador: los números de factura se repiten entre empresas.
-        $empresa = getSessionCompanyId() ?: (\Tymon\JWTAuth\Facades\JWTAuth::user()->company_id ?? null);
-        $generatePdf = $this->generatePdfRepository->generatePdfById($userFacture, $empresa ? (int) $empresa : null);
+        $empresa = (int) (getSessionCompanyId() ?: (\Tymon\JWTAuth\Facades\JWTAuth::user()->company_id ?? 0));
+        $generatePdf = $empresa ? $this->generatePdfRepository->generatePdfById($userFacture, $empresa) : null;
+        if (!$generatePdf) {
+            return response()->json(['message' => 'Factura no encontrada', 'status' => 1], 404);
+        }
 
         $Cab = $this->generatePdfRepository->getPaySaldoAnt($generatePdf['id'],$generatePdf['number_facture']);
        
@@ -64,7 +67,7 @@ class GeneratePayPdfByIdFacturesUseCase implements GeneratePayPdfByIdFacturesUse
         $dompdf->setPaper([0, 0, 600, 300], 'landscape');
         
         // Genera el contenido HTML
-        $html = $this->generateIndividualPdf($generatePdf, $Cab,$extraParam);
+        $html = $this->generateIndividualPdf($generatePdf, $Cab, $extraParam, $empresa);
         
         // Carga el HTML en Dompdf
         $dompdf->loadHtml($html);
@@ -95,35 +98,12 @@ class GeneratePayPdfByIdFacturesUseCase implements GeneratePayPdfByIdFacturesUse
   }
 
 
-  private function generateIndividualPdf($user,$Cab,$extraParam)
+  private function generateIndividualPdf($user, $Cab, $extraParam, int $companyId)
   {
-
-
-    // Crea un PDF individual y devuelve su contenido
-    // Aquí puedes usar Dompdf, TCPDF, o cualquier otra biblioteca de tu elección
-    $options = new Options();
-    // Crea una instancia de Dompdf, TCPDF u otra biblioteca
-    $options->set('isHtml5ParserEnabled', true);
-    $options->set('isPhpEnabled', true);
-    $options->set('paperSize', array(0, 0, 58, 100)); // Ancho x alto en milímetros
     $pdfT = new TemplatesPdf();
-    $pdf = new Dompdf($options);
 
-    $html = $pdfT->PdfReceiptPay($user,$Cab,$extraParam);
-
-    // Agrega contenido al PDF personalizado (por ejemplo, el nombre del usuario)
-    $pdf->loadHtml($html);
-
-    // Renderiza el PDF
-    $pdf->render();
-
-    // Devuelve el contenido del PDF generado
-
-    $pdfContent = $pdf->output();
-
-    $filePath = storage_path('app/pdf.pdf');
-    file_put_contents($filePath, $pdfContent);
-
-    return $html;
+    // Recibo con los datos de la empresa de la factura. Ya no se escribe el
+    // storage/app/pdf.pdf compartido: nadie lo leía.
+    return $pdfT->PdfReceiptPay($user, $Cab, $extraParam, (int) ($user['company_id'] ?? $companyId));
   }
 }

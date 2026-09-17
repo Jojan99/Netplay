@@ -93,8 +93,9 @@ class ClientContractUseCase implements ClientContractUseCaseInterface
             $filename   = 'contrato-' . $clientContractId . '-' . $clientName . '.pdf';
 
             // Si ya existe el PDF firmado guardado permanentemente, devolverlo directamente
-            $signedPath = storage_path("app/public/contracts/signed/contract_{$clientContractId}_signed.pdf");
-            if (file_exists($signedPath)) {
+            // Privado (nuevos) o public (anteriores)
+            $signedPath = \App\Support\ArchivosContrato::firmado($clientContractId);
+            if ($signedPath) {
                 return response()->file($signedPath, [
                     'Content-Type'        => 'application/pdf',
                     'Content-Disposition' => 'attachment; filename="' . $filename . '"',

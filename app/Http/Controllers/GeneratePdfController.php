@@ -30,14 +30,19 @@ class GeneratePdfController extends Controller
      * POST /api/generatePdf/generatePdf
      * Genera y envía facturas masivamente.
      *
-     * Body: { ids: [...], company_id?: number, billing_day?: number, channel?: 'whatsapp'|'email'|'both' }
+     * Body: { ids: [...], billing_day?: number, channel?: 'whatsapp'|'email'|'both' }
+     * La empresa sale de la sesión; un company_id en el body se ignora.
      */
     public function generatePdf(
         GeneratePdfUseCaseInterface $generatePdfUseCaseInterface,
         Request $request
     ): object {
         try {
-            $companyId  = (int) $request->input('company_id', 0);
+            // Antes se tomaba del body: cualquiera podía disparar la facturación de otra empresa.
+            $companyId  = (int) getSessionCompanyId();
+            if (!$companyId) {
+                return response()->json(['status' => 'error', 'message' => 'Sin empresa en sesión.'], 403);
+            }
             $billingDay = (int) $request->input('billing_day', 0);
             $channel    = $request->input('channel', 'whatsapp');
             $ids        = $request->input('ids', [3]);
@@ -128,7 +133,7 @@ class GeneratePdfController extends Controller
         try {
             $response = $generatePdfTicketByIdUseCaseInterface->generatePdfTicketbyId($user_id);
 
-            if ($response instanceof \Illuminate\Http\Response) {
+            if ($response instanceof \Symfony\Component\HttpFoundation\Response) {
                 return $response;
             }
 
@@ -162,7 +167,7 @@ class GeneratePdfController extends Controller
 
             $response = $generatePayPdfByIdFacturesUseCaseInterface->generatePayPdfByIdFacture($id_facture, $extraParam);
 
-            if ($response instanceof \Illuminate\Http\Response) {
+            if ($response instanceof \Symfony\Component\HttpFoundation\Response) {
                 return $response;
             }
 
@@ -189,7 +194,8 @@ class GeneratePdfController extends Controller
         string $invoiceId
     ): JsonResponse {
         try {
-            $data = $pdfRepo->generatePdfById($invoiceId, $this->empresaDelOperador());
+            $empresa = $this->empresaDelOperador();
+            $data = $empresa ? $pdfRepo->generatePdfById($invoiceId, $empresa) : null;
 
             if (!$data) {
                 return response()->json(['status' => 'error', 'message' => 'Factura no encontrada'], 404);
@@ -199,7 +205,7 @@ class GeneratePdfController extends Controller
             // Antes esto se saltaba en silencio: company_id no venía en la
             // consulta, Company::find(0) daba null y la condición nunca se
             // evaluaba. Se resuelve también por la sesión.
-            $company = Company::find(($data['company_id'] ?? 0) ?: getSessionCompanyId());
+            $company = Company::find(($data['company_id'] ?? 0) ?: $empresa);
             if ($company && !$company->invoice_whatsapp_enabled) {
                 return response()->json([
                     'status'     => 'error',
@@ -220,7 +226,7 @@ class GeneratePdfController extends Controller
             $options->set('isHtml5ParserEnabled', true);
             $options->set('isPhpEnabled', true);
             $pdf = new Dompdf($options);
-            $pdf->loadHtml($templatesPdf->PdfFacturas($data, $saldoAnt));
+            $pdf->loadHtml($templatesPdf->PdfFacturas($data, $saldoAnt, (int) (($data['company_id'] ?? 0) ?: $empresa)));
             $pdf->render();
             $pdfContent = $pdf->output();
             $base64Pdf  = base64_encode($pdfContent);
@@ -239,7 +245,7 @@ class GeneratePdfController extends Controller
             // La empresa sale de la factura y, si faltara, de la sesión: sin
             // ella no se puede decidir el canal y todo envío se rechazaba con
             // "la empresa no tiene línea vinculada".
-            $companyId = (int) ($data['company_id'] ?? 0) ?: (int) getSessionCompanyId();
+            $companyId = (int) ($data['company_id'] ?? 0) ?: (int) $empresa;
             $decision  = (new \App\Services\WhatsApp\CanalDeEnvio($companyId))
                 ->evaluar(request()->input('canal'), $phone);
 
@@ -266,7 +272,7 @@ class GeneratePdfController extends Controller
                     $total,
                     $data['date_create_facturation'] ?? now()->format('Y-m-d'),
                     $vence,
-                    $company?->invoice_business_name ?: ($company?->name ?? 'Netplay'),
+                    $company?->invoice_business_name ?: ($company?->name ?? ''),
                 ];
 
                 $valores = [];
@@ -312,15 +318,19 @@ class GeneratePdfController extends Controller
         string $invoiceId
     ): JsonResponse {
         try {
-            $data = $pdfRepo->generatePdfById($invoiceId, $this->empresaDelOperador());
+            $empresa = $this->empresaDelOperador();
+            $data = $empresa ? $pdfRepo->generatePdfById($invoiceId, $empresa) : null;
 
             if (!$data) {
                 return response()->json(['status' => 'error', 'message' => 'Factura no encontrada'], 404);
             }
 
             // Verificar que la empresa tiene habilitado Email
-            $company = Company::find($data['company_id'] ?? 0);
-            if ($company && !$company->email_enabled) {
+            $company = Company::find(($data['company_id'] ?? 0) ?: $empresa);
+            if (!$company) {
+                return response()->json(['status' => 'error', 'message' => 'Factura no encontrada'], 404);
+            }
+            if (!$company->email_enabled) {
                 return response()->json(['status' => 'error', 'message' => 'El envío por correo está deshabilitado para esta empresa', 'error_code' => 'EMAIL_DISABLED'], 403);
             }
 
@@ -336,13 +346,13 @@ class GeneratePdfController extends Controller
             $options->set('isHtml5ParserEnabled', true);
             $options->set('isPhpEnabled', true);
             $pdf = new Dompdf($options);
-            $pdf->loadHtml($templatesPdf->PdfFacturas($data, $saldoAnt));
+            $pdf->loadHtml($templatesPdf->PdfFacturas($data, $saldoAnt, (int) $company->id));
             $pdf->render();
             $pdfContent = $pdf->output();
 
             $filename = 'factura_' . preg_replace('/[^A-Za-z0-9_\-]/', '_', $data['number_facture']) . '_' . $data['dni'] . '.pdf';
 
-            $emailService = new InvoiceEmailService();
+            $emailService = new InvoiceEmailService($company);
             $result = $emailService->sendInvoice($data->toArray(), $pdfContent, $filename);
 
             $statusCode = $result['status'] === 'ok' ? 200 : 500;
@@ -383,7 +393,8 @@ class GeneratePdfController extends Controller
         }
 
         $results = [];
-        $data = $pdfRepo->generatePdfById($invoiceId, $this->empresaDelOperador());
+        $empresa = $this->empresaDelOperador();
+        $data = $empresa ? $pdfRepo->generatePdfById($invoiceId, $empresa) : null;
         if (!$data) {
             return response()->json(['status' => 'error', 'message' => 'Factura no encontrada'], 404);
         }

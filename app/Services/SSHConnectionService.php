@@ -19,10 +19,11 @@ class SSHConnectionService
 
     public function __construct()
     {
-        $this->host = config('ssh.default.host', '10.11.104.2');
+        // Sin valores por defecto: eran la OLT y credenciales de Netplay
+        $this->host = config('ssh.default.host');
         $this->port = config('ssh.default.port', 22);
-        $this->username = config('ssh.default.username', 'root');
-        $this->password = config('ssh.default.password', 'admin');
+        $this->username = config('ssh.default.username');
+        $this->password = config('ssh.default.password');
     }
 
     public function getConnection(): SSH2

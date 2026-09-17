@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Ticket;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 use App\Http\Requests\Traits\DefaultResponseTrait;
 
 class CreateTicketRequest extends FormRequest
@@ -28,13 +29,14 @@ class CreateTicketRequest extends FormRequest
     {
         return [
             'id' => 'int',
-            'user_id' => 'int|int',
+            // Cliente y técnico: usuarios de la empresa de la sesión
+            'user_id' => ['int', Rule::exists('users', 'id')->where('company_id', getSessionCompanyId())],
             'address' => 'required|string',
             'date' => 'required|string',
             'type_service' => 'required|int',
             'priority' => 'required|int',
             'status' => 'int',
-            'tecnichal' => 'required|int',
+            'tecnichal' => ['required', 'int', Rule::exists('users', 'id')->where('company_id', getSessionCompanyId())],
             'observation' => 'required|string',
             'cedula' => 'required|string',
             'phone' => 'required|string',

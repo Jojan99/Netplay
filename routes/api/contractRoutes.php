@@ -7,6 +7,16 @@ use Illuminate\Support\Facades\Route;
 // Firma por token — sin JWT (el cliente accede desde el link)
 Route::post('/contracts/sign-token/{token}', [ContractSignController::class, 'sign']);
 
+// Contrato firmado y fotos de la cédula. Ya no se sirven en /storage: van por
+// enlace con firma temporal (panel, WhatsApp) o por el token del contrato.
+Route::get('/contracts/archivo/{clientContract}/{tipo}', [ContractSignController::class, 'archivo'])
+    ->whereNumber('clientContract')
+    ->whereIn('tipo', \App\Support\ArchivosContrato::TIPOS)
+    ->middleware('signed:relative')
+    ->name('contratos.archivo');
+Route::get('/contracts/archivo-token/{token}/{tipo}', [ContractSignController::class, 'archivoPorToken'])
+    ->whereIn('tipo', [...\App\Support\ArchivosContrato::TIPOS, 'preview']);
+
 // Pre-detección de cara de documento (sin JWT, usado en vista de firma)
 Route::post('/contracts/detect-document-side', [ContractSignController::class, 'detectDocumentSide']);
 

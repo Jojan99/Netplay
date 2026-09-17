@@ -58,17 +58,8 @@ class GetDniUseCase implements GetDniUseCaseInterface
 
 
     public function conection(){
-     
-        $defaultConfig = [
-            'host' => '190.144.128.35',
-            'user' => 'admin',
-            'pass' => 'net4dm1n1str4d0r',
-            'port' => 8724,
-            'timeout' => 60,
-        ];
-    
-        $client = new \RouterOS\Client($defaultConfig);
-    
-       return $client;
+        // Deshabilitada: se conectaba al MikroTik de Netplay con credenciales fijas
+        // en el código. Los routers de cada empresa van por ConectionRouterManager.
+        throw new \RuntimeException('Función deshabilitada');
     }
 }

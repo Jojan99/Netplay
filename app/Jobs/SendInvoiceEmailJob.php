@@ -46,7 +46,13 @@ class SendInvoiceEmailJob implements ShouldQueue
             $pdfContent = $this->generatePdf($data, $saldoAnt);
             $filename = 'factura_' . preg_replace('/[^A-Za-z0-9_\-]/', '_', $data['number_facture']) . '_' . $data['dni'] . '.pdf';
 
-            $emailService = new InvoiceEmailService();
+            $company = \App\Models\Company::find($this->companyId);
+            if (!$company) {
+                Log::warning('[EMAIL_JOB] Empresa no encontrada', ['company_id' => $this->companyId]);
+                return;
+            }
+
+            $emailService = new InvoiceEmailService($company);
             $result = $emailService->sendInvoice($data, $pdfContent, $filename);
 
             if ($result['status'] === 'ok') {
@@ -131,7 +137,8 @@ class SendInvoiceEmailJob implements ShouldQueue
         $pdfT = new TemplatesPdf();
         $pdf = new Dompdf($options);
 
-        $pdf->loadHtml($pdfT->PdfFacturas($data, $saldoAnt));
+        // Con la empresa del job: en cola no hay sesión.
+        $pdf->loadHtml($pdfT->PdfFacturas($data, $saldoAnt, $this->companyId));
         $pdf->render();
 
         return $pdf->output();

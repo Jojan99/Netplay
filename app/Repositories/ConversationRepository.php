@@ -568,9 +568,12 @@ DB::table('crm_conversations')
     }
 
     /** Aplica un ack (sent|delivered|read|failed) por id de WhatsApp. Devuelve [conversation_id, id] o null. */
-    public function applyMessageStatus(string $externalId, string $status): ?array
+    public function applyMessageStatus(string $externalId, string $status, ?int $companyId = null): ?array
     {
-        $row = DB::table('crm_messages')->where('external_id', $externalId)->where('sender_type', '!=', 'customer')->first(['id', 'conversation_id', 'status']);
+        $q = DB::table('crm_messages as m')->where('m.external_id', $externalId)->where('m.sender_type', '!=', 'customer');
+        // Con empresa, solo sus mensajes: el mismo id puede existir en otra empresa.
+        if ($companyId) $q->join('crm_conversations as cv', 'cv.id', '=', 'm.conversation_id')->where('cv.company_id', $companyId);
+        $row = $q->first(['m.id', 'm.conversation_id', 'm.status']);
         if (!$row) return null;
         $rank = ['pending' => 0, 'sent' => 1, 'delivered' => 2, 'read' => 3, 'failed' => 9];
         if (($rank[$row->status] ?? 0) >= ($rank[$status] ?? 0) && $status !== 'failed') return null; // nunca retroceder
@@ -617,6 +620,9 @@ DB::table('crm_conversations')
 
     public function getAgentsWithLoad(): Collection
     {
+        // Solo agentes y conversaciones de la empresa en sesión.
+        $companyId = getSessionCompanyId();
+
         return CrmAgent::query()
             // agente → user
             ->join('users', 'users.id', '=', 'crm_agents.user_id')
@@ -633,12 +639,14 @@ DB::table('crm_conversations')
             )
 
             // conversaciones activas
-            ->leftJoin('crm_conversations as c', function ($join) {
+            ->leftJoin('crm_conversations as c', function ($join) use ($companyId) {
                 $join->on('c.id', '=', 'ca.conversation_id')
-                    ->where('c.status', '=', 'in_progress');
+                    ->where('c.status', '=', 'in_progress')
+                    ->where('c.company_id', '=', $companyId);
             })
 
             ->where('crm_agents.active', 1)
+            ->where('crm_agents.company_id', $companyId)
 
             ->groupBy(
                 'crm_agents.id',
@@ -660,10 +668,14 @@ DB::table('crm_conversations')
 
     public function getActiveConversationsByAgent(): Collection
 {
+    // Solo conversaciones de la empresa en sesión.
+    $companyId = getSessionCompanyId();
+
     return DB::table('crm_conversation_assignments as ca')
-        ->join('crm_conversations as c', function ($join) {
+        ->join('crm_conversations as c', function ($join) use ($companyId) {
             $join->on('c.id', '=', 'ca.conversation_id')
-                 ->where('c.status', '=', 'in_progress');
+                 ->where('c.status', '=', 'in_progress')
+                 ->where('c.company_id', '=', $companyId);
         })
         ->join('users as u', 'u.id', '=', 'ca.to_user_id')
         ->join('user_data as ud', 'ud.user_id', '=', 'u.id')

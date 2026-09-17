@@ -91,17 +91,34 @@ class GestionRemotaDeOnt
         $interfaces = [];
         $porInterfaz = [];
 
+        $nombresPorInterfaz = [];
+
         foreach ($api->query(new Query('/interface/vlan/print'))->read() as $v) {
-            $vlans[] = (int) $v['vlan-id'];
             $padre = $v['interface'] ?? '';
+
+            // Las VLAN de gestión y el bridge que arma la plataforma no cuentan
+            // para adivinar por dónde llega cada OLT.
+            if (($v['comment'] ?? '') === self::MARCA || $padre === self::BRIDGE_GESTION) {
+                continue;
+            }
+
+            $vlans[] = (int) $v['vlan-id'];
             $interfaces[$padre] = ($interfaces[$padre] ?? 0) + 1;
             $porInterfaz[$padre][] = (int) $v['vlan-id'];
+            $nombresPorInterfaz[$padre][] = strtolower((string) $v['name']);
         }
 
         $redesUsadas = array_map(
             fn ($a) => $a['address'],
             $api->query(new Query('/ip/address/print'))->read()
         );
+
+        // Las que otras empresas ya llevan por la VPN tampoco sirven: el servidor
+        // TR-069 no podría distinguir sus equipos de los de esta empresa.
+        $redesUsadas = array_merge($redesUsadas, \App\Models\VpnTunel::where('company_id', '!=', $this->companyId)
+            ->get()
+            ->flatMap(fn ($t) => array_merge($t->redes_remotas ?? [], array_column($t->traducciones ?? [], 'real')))
+            ->all());
 
         // Lo que usan las OLT en sus puertos de subida, y por dónde salen.
         $porOlt = [];
@@ -118,13 +135,17 @@ class GestionRemotaDeOnt
                 $vlans = array_merge($vlans, $p['vlans']);
             }
 
+            $sugerido = $this->uplinkQueCoincide($puertos, $interfaces, $api);
+
             $porOlt[] = [
-                'olt_id'   => (int) $olt->id,
-                'nombre'   => $olt->name,
-                'marca'    => $olt->brand,
-                'puertos'  => $puertos,
-                'sugerido' => $this->uplinkQueCoincide($puertos, $interfaces, $api),
-                'soporte'  => $this->soporte($olt),
+                'olt_id'    => (int) $olt->id,
+                'nombre'    => $olt->name,
+                'marca'     => $olt->brand,
+                'puertos'   => $puertos,
+                'sugerido'  => $sugerido,
+                'soporte'   => $this->soporte($olt),
+                // Por qué interfaz del MikroTik llega esta OLT.
+                'interfaz'  => self::interfazDeOlt($olt, $puertos, $sugerido, $porInterfaz, $nombresPorInterfaz),
             ];
         }
 
@@ -134,11 +155,21 @@ class GestionRemotaDeOnt
         // La interfaz por la que salen más VLAN de clientes es la que va a la OLT.
         arsort($interfaces);
 
+        // Si las OLT llegan por interfaces distintas, se ofrece la combinación
+        // (la red de gestión se arma en un bridge) y queda sugerida.
+        $deOlts = array_values(array_unique(array_filter(array_column($porOlt, 'interfaz'))));
+        $combinada = count($deOlts) > 1 ? implode(' + ', $deOlts) : null;
+
+        if ($combinada) {
+            $interfaces = [$combinada => array_sum(array_intersect_key($interfaces, array_flip($deOlts)))] + $interfaces;
+            $porInterfaz[$combinada] = array_values(array_unique(array_merge(...array_map(fn ($i) => $porInterfaz[$i] ?? [], $deOlts))));
+        }
+
         return [
             'vlans_libres'   => $this->vlansLibres($vlans),
             'vlans_en_uso'   => $vlans,
             'redes_libres'   => $this->redesLibres($redesUsadas),
-            'interfaz'       => array_key_first($interfaces),
+            'interfaz'       => $combinada ?? ($deOlts[0] ?? array_key_first($interfaces)),
             'interfaces'     => $interfaces,
             // Qué VLAN lleva cada una, para reconocerla sin entrar al router.
             'vlans_por_interfaz' => array_map(function ($l) { sort($l); return $l; }, $porInterfaz),
@@ -176,6 +207,32 @@ class GestionRemotaDeOnt
 
         $g = $this->config();
 
+        // La red de gestión no puede ser una que otra empresa ya usa (en su
+        // túnel o como su red de gestión): el servidor no sabría a cuál llegar.
+        $ajenas = \App\Models\VpnTunel::where('company_id', '!=', $this->companyId)->get()
+            ->flatMap(fn ($t) => array_merge($t->redes_remotas ?? [], array_column($t->traducciones ?? [], 'real')))
+            ->merge(GestionRemota::where('company_id', '!=', $this->companyId)->whereNotNull('red')->pluck('red'))
+            ->filter()->unique();
+
+        if ($choca = $ajenas->first(fn ($otra) => $this->seSolapan($red, (string) $otra))) {
+            throw new \InvalidArgumentException("La red {$red} ya la usa otra empresa ({$choca}). Elegí otra: las sugeridas no chocan con nadie.");
+        }
+
+        // Las interfaces se validan antes de tocar nada: limpiar la red vieja
+        // y después descubrir que la nueva no existe dejaba al router sin red
+        // de gestión.
+        $ifaces = self::interfacesDe((string) ($datos['interfaz'] ?? ''));
+
+        if (!$ifaces) {
+            throw new \InvalidArgumentException('Elegí la interfaz del MikroTik hacia la OLT.');
+        }
+
+        $existentes = collect($this->conexion->conection($router->token)->query(new Query('/interface/print'))->read())->pluck('name')->all();
+
+        if ($faltan = array_diff($ifaces, $existentes)) {
+            throw new \InvalidArgumentException('El MikroTik no tiene la interfaz ' . implode(', ', $faltan) . '.');
+        }
+
         // Si ya había una VLAN puesta y ahora es otra, se limpia la anterior:
         // dos redes de gestión conviviendo confunden a cualquiera.
         if ($g->vlan && (int) $g->vlan !== $vlan) {
@@ -196,9 +253,17 @@ class GestionRemotaDeOnt
         $pasos = $this->enElRouter($api, $vlan, $red, $gateway, $desde, $hasta, $interfaz);
 
         $uplinks = [];
+        $mias = OltAdmin::where('company_id', $this->companyId)->pluck('id')->map(fn ($id) => (int) $id)->all();
 
         foreach ((array) ($datos['uplinks'] ?? []) as $oltId => $puerto) {
             if (!$puerto) {
+                continue;
+            }
+
+            // Sólo OLT de la empresa: el id llega en el cuerpo del pedido y el
+            // middleware de empresa no lo mira.
+            if (!in_array((int) $oltId, $mias, true)) {
+                $pasos[] = ['paso' => "VLAN en la OLT {$oltId}", 'ok' => false, 'detalle' => 'Esa OLT no es de tu empresa: no se tocó.'];
                 continue;
             }
 
@@ -207,13 +272,25 @@ class GestionRemotaDeOnt
                     'vlan' => $vlan, 'uplink' => $puerto,
                 ]);
 
-                $pasos[] = [
-                    'paso'    => "VLAN {$vlan} en la OLT por {$puerto}",
-                    'ok'      => (bool) ($r['ok'] ?? false),
-                    'detalle' => $r['detalle'] ?? '',
-                ];
+                $pasos[] = $r === null
+                    // El driver de esa marca no sabe hacerlo: se dice qué falta
+                    // en vez de mostrar un paso fallido sin explicación.
+                    ? [
+                        'paso'    => "VLAN {$vlan} en la OLT por {$puerto}",
+                        'ok'      => false,
+                        'detalle' => "Esta OLT no se configura sola: agregá la VLAN {$vlan} como tagged en el puerto {$puerto} de la OLT, a mano.",
+                    ]
+                    : [
+                        'paso'    => "VLAN {$vlan} en la OLT por {$puerto}",
+                        'ok'      => (bool) ($r['ok'] ?? false),
+                        'detalle' => $r['detalle'] ?? '',
+                    ];
 
-                $uplinks[(int) $oltId] = $puerto;
+                // Se guarda sólo si la VLAN quedó: si no, el diagnóstico la daba
+                // por pasando por la OLT sin estarlo.
+                if (($r['ok'] ?? false) === true) {
+                    $uplinks[(int) $oltId] = $puerto;
+                }
             } catch (\Throwable $e) {
                 $pasos[] = ['paso' => "VLAN en la OLT {$oltId}", 'ok' => false, 'detalle' => \App\Services\Olt\EstadoDeUnaOnt::explicar($e->getMessage())];
             }
@@ -285,16 +362,24 @@ class GestionRemotaDeOnt
         }
 
         if ($marca === 'cdata') {
-            $tecnologia = (Cache::get("olt:{$olt->id}:capacidades:v2") ?? [])['tecnologia'] ?? 'epon';
+            $tecnologia = self::tecnologiaCdata($olt);
+
+            if ($tecnologia === 'gpon') {
+                return [
+                    'nivel'   => 'completo',
+                    'titulo'  => 'Se configura sola',
+                    'detalle' => "La plataforma deja pasar la VLAN {$vlan} por la OLT, la suma a los perfiles de línea y le da a cada equipo su IP de gestión y el servidor TR-069.",
+                ];
+            }
 
             if ($tecnologia === 'epon') {
                 return [
-                    'nivel'   => 'manual',
-                    'titulo'  => 'La red queda lista; cada equipo se configura a mano',
-                    'detalle' => "En EPON la OLT no puede indicarle a la ONU que pida su IP de gestión. En cada equipo hay que crear una WAN "
-                        . "de tipo TR-069, IPoE por DHCP, en la VLAN {$vlan}, y que esa VLAN pase por el puerto PON. Con eso el equipo entra solo al sistema.",
+                    'nivel'   => 'completo',
+                    'titulo'  => 'Se configura sola',
+                    'detalle' => "La plataforma deja pasar la VLAN {$vlan} por el puerto de subida y los PON, y a cada equipo le crea su conexión de gestión por DHCP; la dirección del TR-069 le llega en esa IP.",
                 ];
             }
+
         }
 
         $nombre = ['zte' => 'ZTE', 'vsol' => 'V-SOL', 'cdata' => 'C-Data GPON'][$marca] ?? strtoupper($marca);
@@ -333,6 +418,17 @@ class GestionRemotaDeOnt
 
         if (!$g->vlan) {
             return ['error' => 'Primero activá el acceso remoto: hace falta saber qué VLAN agregar.', 'perfiles' => []];
+        }
+
+        // C-Data EPON no tiene perfiles de línea que preparar: la VLAN va en el
+        // puerto PON. Leerlos daba "No se pudo leer el perfil" / "Sin leer".
+        if (strtolower((string) $olt->brand) === 'cdata' && self::tecnologiaCdata($olt) === 'epon') {
+            return [
+                'perfiles' => [],
+                'leido_en' => now()->toIso8601String(),
+                'aviso'    => 'En EPON no hay perfiles de línea que preparar: la VLAN de gestión va en el puerto PON y se configura con «Volver a aplicar».',
+                'resumen'  => ['listos' => 0, 'pendientes' => 0, 'no_soportado' => 0, 'sin_leer' => 0, 'equipos_pendientes' => 0],
+            ];
         }
 
         $clave = "gestion:perfiles:{$oltId}:{$g->vlan}";
@@ -508,7 +604,20 @@ class GestionRemotaDeOnt
         $grupos[] = ['titulo' => 'MikroTik', 'items' => $this->revisarRouter($g)];
 
         foreach (OltAdmin::where('company_id', $this->companyId)->orderBy('id')->get() as $olt) {
-            $grupos[] = ['titulo' => $olt->name, 'olt_id' => (int) $olt->id, 'marca' => $olt->brand, 'items' => $this->revisarOlt($olt, $g)];
+            // La pantalla publicada sólo ofrece preparar perfiles cuando esta
+            // marca dice "huawei" (no la muestra: la usa para ese filtro). Las
+            // OLT que se configuran solas se informan así para que C-Data GPON
+            // también los ofrezca; la marca real va en marca_real.
+            $grupos[] = [
+                'titulo'     => $olt->name,
+                'olt_id'     => (int) $olt->id,
+                // Sólo las que tienen perfiles de línea que preparar (no C-Data EPON).
+                'marca'      => $this->soporte($olt)['nivel'] === 'completo'
+                    && !(strtolower((string) $olt->brand) === 'cdata' && self::tecnologiaCdata($olt) === 'epon')
+                    ? 'huawei' : $olt->brand,
+                'marca_real' => $olt->brand,
+                'items'      => $this->revisarOlt($olt, $g),
+            ];
         }
 
         $grupos[] = ['titulo' => 'Equipos', 'items' => $this->revisarEquipos($g)];
@@ -522,6 +631,10 @@ class GestionRemotaDeOnt
         $nivel = in_array('error', $estados, true) ? 'error'
             : (array_intersect(['pendiente', 'aviso'], $estados) ? 'aviso' : 'ok');
 
+        // La guía va primera y no cuenta para el semáforo: repite lo de abajo
+        // en orden, para que el cliente sepa qué paso sigue.
+        array_unshift($grupos, ['titulo' => 'Guía paso a paso', 'items' => $this->guia($g, $grupos)]);
+
         return [
             'nivel'   => $nivel,
             'resumen' => [
@@ -531,6 +644,116 @@ class GestionRemotaDeOnt
             ][$nivel],
             'grupos'  => $grupos,
         ];
+    }
+
+    /**
+     * La guía del cliente: los pasos hechos en verde y sólo el siguiente como
+     * pendiente, con su botón. Así se sabe en qué parte está y qué hacer.
+     *
+     * @param  list<array<string,mixed>>  $grupos  el diagnóstico ya armado
+     * @return list<array<string,mixed>>
+     */
+    private function guia(GestionRemota $g, array $grupos): array
+    {
+        $total = 6;
+        $items = [];
+        $malos = fn (array $grupo) => array_values(array_filter($grupo['items'] ?? [], fn ($i) => $i['estado'] !== 'ok'));
+        $hecho = function (int $n, string $titulo, string $detalle) use (&$items, $total) {
+            $items[] = $this->item('ok', "Paso {$n} de {$total} · {$titulo}", $detalle);
+        };
+        $sigue = function (int $n, string $titulo, string $detalle, ?string $accion = null) use (&$items, $total) {
+            $items[] = $this->item('pendiente', "👉 Paso {$n} de {$total} · {$titulo}", $detalle, $accion);
+
+            return $items;
+        };
+
+        // 1. MikroTik
+        $router = collect($grupos)->firstWhere('titulo', 'MikroTik') ?? ['items' => []];
+        if ($falta = $malos($router)) {
+            return $sigue(1, 'Red de gestión en el MikroTik',
+                "Falta: {$falta[0]['titulo']} — {$falta[0]['detalle']} Entrá al asistente, revisá VLAN {$g->vlan}, red {$g->red} e interfaz, y pulsá «Volver a aplicar».", 'activar');
+        }
+        $hecho(1, 'Red de gestión en el MikroTik', "VLAN {$g->vlan}, red {$g->red}, DHCP con la dirección del TR-069 y aislamiento listos.");
+
+        // 2. OLT
+        foreach (collect($grupos)->filter(fn ($x) => isset($x['olt_id'])) as $olt) {
+            // Las de marcas que no se configuran solas no traban la guía: su
+            // aviso ya está en el diagnóstico y ningún botón lo resuelve.
+            $modelo = OltAdmin::where('id', $olt['olt_id'])->where('company_id', $this->companyId)->first();
+
+            if (!$modelo || $this->soporte($modelo)['nivel'] !== 'completo') {
+                continue;
+            }
+
+            if ($falta = $malos($olt)) {
+                return $sigue(2, "Preparar la OLT {$olt['titulo']}",
+                    "Falta: {$falta[0]['titulo']} — {$falta[0]['detalle']} "
+                    . (($falta[0]['accion'] ?? null) === 'perfiles'
+                        ? 'Andá a la pestaña «Perfiles de línea» y pulsá «Preparar» (hacelo en un horario tranquilo: los clientes de ese perfil pueden tener un corte de segundos).'
+                        : 'Elegí el puerto de subida de la OLT en el asistente y pulsá «Volver a aplicar».'),
+                    $falta[0]['accion'] ?? 'activar');
+            }
+        }
+        $hecho(2, 'OLT preparada', 'La VLAN pasa por la OLT, los perfiles de línea la llevan y los perfiles de gestión están creados. Ningún cliente se tocó.');
+
+        // 3. VPN
+        $tunel = \App\Models\VpnTunel::where('company_id', $this->companyId)->where('activo', true)->get()
+            ->first(fn ($t) => in_array($g->red, $t->redes_remotas ?? [], true) || $t->virtualDe((string) $g->red));
+
+        if (!$tunel) {
+            return $sigue(3, 'Conectar la VPN',
+                "La red {$g->red} no está en ningún túnel. Pulsá «Volver a aplicar» para sumarla y después, en OLT → VPN, «Ver script» y pegalo en el MikroTik.", 'activar');
+        }
+
+        if (!$tunel->conectado) {
+            return $sigue(3, 'Conectar la VPN',
+                "El túnel «{$tunel->nombre}» no está saludando. En OLT → VPN pulsá «Ver script» en ese túnel, copialo y pegalo completo en la terminal del MikroTik. En uno o dos minutos debe decir «conectado».");
+        }
+        $hecho(3, 'VPN conectada', "El túnel «{$tunel->nombre}» está conectado y lleva la red {$g->red}.");
+
+        // 4-6. Equipos
+        $olts = OltAdmin::where('company_id', $this->companyId)->get(['id', 'brand'])
+            ->filter(fn ($o) => self::admiteGestion((string) $o->brand))->pluck('id');
+        $totalOnts = OltOnt::whereIn('olt_id', $olts)->count();
+        $conGestion = OltOnt::whereIn('olt_id', $olts)->whereNotNull('gestion_en')->count();
+
+        try {
+            $enAcs = count((new \App\Services\Acs\EquiposDelAcs($this->companyId))->lista());
+        } catch (\Throwable) {
+            $enAcs = 0;
+        }
+
+        $modelos = array_keys(Cache::get('cdata:modelos-sin-wan-por-olt', []));
+        $url = (string) config('services.genieacs.url_equipos');
+
+        if ($conGestion === 0 && $enAcs === 0) {
+            $sigue(4, 'Probar con un solo equipo',
+                'En OLT → Autorizadas elegí una ONT de prueba (mejor sin cliente) y pulsá «Dar acceso remoto». '
+                . 'Si el modelo lo acepta, en uno o dos minutos pide IP de gestión y aparece en Equipos. '
+                . 'Si no lo acepta, la plataforma la devuelve sola a su perfil (sin dejarla sin servicio) y te dice cómo configurarla.');
+        } else {
+            $hecho(4, 'Primer equipo gestionado', "{$enAcs} equipo(s) ya reportan al TR-069.");
+
+            if ($totalOnts > 0 && $enAcs >= $totalOnts) {
+                $hecho(5, 'Resto de los equipos', 'Todos los equipos de las OLT fueron sumados.');
+                $hecho(6, 'Todos los equipos en el TR-069', "Los {$totalOnts} equipos reportan al TR-069.");
+            } else {
+            $sigue(5, 'Sumar el resto de los equipos',
+                "{$enAcs} de {$totalOnts} equipos reportan al TR-069. Los modelos que aceptan la gestión por la OLT se suman con «Poner al día» "
+                . '(cada equipo se corta unos 20 segundos: hacelo en un horario tranquilo). Los que no la aceptan se configuran en el equipo (ver abajo).',
+                'al_dia');
+            }
+        }
+
+        if ($modelos) {
+            $items[] = $this->item('manual', 'Equipos que se configuran en su página web · ' . implode(', ', $modelos),
+                'Estos modelos no aceptan que la OLT les cree la conexión de gestión. En cada uno, una sola vez: entrá a su página web (http://192.168.1.1), '
+                . "Maintenance/Management → TR-069 Client: CWMP activado, ACS URL {$url}, Periodic Inform activado cada 300 s, sobre su conexión de internet. "
+                . 'Guardá: en unos minutos aparece solo en Equipos y el contador de arriba sube. Sin corte para el cliente. '
+                . 'Para los equipos nuevos, configuralo en bodega antes de instalarlos.');
+        }
+
+        return $items;
     }
 
     /** @return list<array<string,mixed>> */
@@ -551,6 +774,13 @@ class GestionRemotaDeOnt
         $items = [];
         $nombre = "vlan{$g->vlan}-gestion";
         $leer = fn (string $cmd, string $campo, string $valor) => $api->query((new Query($cmd))->where($campo, $valor))->read();
+
+        foreach (array_slice(self::interfacesDe((string) $g->interfaz), 1) as $extra) {
+            $v = $leer('/interface/vlan/print', 'name', "{$nombre}-{$extra}")[0] ?? null;
+            $items[] = $v && ($v['running'] ?? 'false') === 'true'
+                ? $this->item('ok', "VLAN {$g->vlan} en {$extra}", 'Arriba y unida al bridge de gestión.')
+                : $this->item('error', "VLAN {$g->vlan} en {$extra}", $v ? 'Creada, pero la interfaz no está en uso.' : 'No está creada en el MikroTik.', 'activar');
+        }
 
         $vlan = $leer('/interface/vlan/print', 'name', $nombre)[0] ?? null;
         $items[] = !$vlan
@@ -575,6 +805,12 @@ class GestionRemotaDeOnt
         $posResp = $posAcs = $posNada = null;
 
         foreach ($reglas as $i => $r) {
+            // Sólo cuentan las de la red actual y activas: las de una red vieja
+            // se veían bien sin encerrar nada.
+            if (($r['src-address'] ?? '') !== $g->red || ($r['disabled'] ?? 'false') === 'true') {
+                continue;
+            }
+
             $posResp ??= ($r['comment'] ?? '') === self::MARCA . ': respuestas' ? $i : null;
             $posAcs  ??= ($r['comment'] ?? '') === self::MARCA . ': al ACS' ? $i : null;
             $posNada ??= ($r['comment'] ?? '') === self::MARCA . ': nada mas' ? $i : null;
@@ -611,6 +847,15 @@ class GestionRemotaDeOnt
             : $this->item('error', 'VLAN en la OLT', 'No pasa por ningún puerto de subida: los equipos piden IP y nadie les contesta.', 'activar');
 
         $perfilAcs = ($g->perfiles_acs ?? [])[(string) $olt->id] ?? null;
+
+        if (strtolower((string) $olt->brand) === 'cdata' && self::tecnologiaCdata($olt) === 'epon') {
+            $items[] = $perfilAcs
+                ? $this->item('ok', 'Servidor TR-069', 'En EPON los equipos reciben la dirección ' . config('services.genieacs.cwmp_url') . ' por el DHCP de la red de gestión.')
+                : $this->item('pendiente', 'Servidor TR-069', 'Falta revisar la OLT: pulsá «Volver a aplicar».', 'activar');
+            $items[] = $this->item('ok', 'Perfiles de línea', 'En EPON no hay perfiles que preparar: la VLAN va en el puerto PON.');
+
+            return $items;
+        }
 
         $items[] = $perfilAcs
             ? $this->item('ok', 'Servidor TR-069 en la OLT', 'La OLT les manda a los equipos la dirección ' . config('services.genieacs.url_equipos') . ' y las credenciales.')
@@ -745,6 +990,19 @@ class GestionRemotaDeOnt
         if ($enElAcs) {
             $registrada->update(['gestion_en' => now()]);
 
+            // Con el equipo en el TR-069, la clave de administración de la
+            // empresa se pone y se confirma por ahí: desde entonces la
+            // plataforma entra a su página con una clave conocida.
+            if (!empty($this->equipoAcs['id']) && $g->onu_admin_clave) {
+                $avance('Poniendo la clave de administración de la empresa…');
+                $clave = (new \App\Services\Acs\ClaveDeOnuPorTr069($this->companyId))
+                    ->asegurar((string) $this->equipoAcs['id'], (string) $g->onu_admin_clave);
+
+                if (!($clave['omitido'] ?? false)) {
+                    $enElAcs .= ' · ' . $clave['detalle'];
+                }
+            }
+
             return [
                 'ok'             => true,
                 'detalle'        => $enElAcs,
@@ -787,8 +1045,102 @@ class GestionRemotaDeOnt
             $evitar[] = $numero;
         }
 
+        // EPON: la OLT tarda en mostrar la IP de una WAN por DHCP. Se confirma
+        // en el DHCP del router (la MAC de la WAN es la de la ONT con el último
+        // byte distinto); si tampoco está, se borra la conexión creada.
+        // EPON: si al crear la conexión se le cayó el internet al cliente, se
+        // deshace aunque haya tomado IP.
+        if ($r['internet_caido'] ?? false) {
+            try {
+                $q = app(OltTelnetDispatcher::class)->dispatch($oltId, 'quitarGestionEpon', ['fsp' => $fsp, 'ont_id' => $ontId]);
+            } catch (\Throwable $e) {
+                $q = null;
+            }
+
+            return ['ok' => false, 'detalle' => $r['detalle'] . ' '
+                . (($q['borrada'] ?? false) ? 'Se borró la conexión de gestión. ' : '⚠️ La conexión «gestion» no se pudo borrar: revisala. ')
+                . (($q['internet_ok'] ?? false) ? 'Su internet volvió a conectarse.' : '⚠️ Revisá el internet del equipo ya.')];
+        }
+
+        if ($r['sin_confirmar'] ?? false) {
+            $avance('Confirmando la IP de gestión en el router…');
+            // Una conexión recién creada tiene que haber pedido IP recién; una
+            // que ya existía puede tener su IP desde hace horas.
+            $existente = (bool) ($r['existente'] ?? false);
+            $ip = $this->ipDeGestionEnRouter((string) ($registrada?->serial ?? ''), $existente ? 10 : 45, !$existente);
+
+            if (!$ip && $existente) {
+                return ['ok' => false, 'detalle' => 'La ONT tiene la conexión de gestión pero no se encontró su IP en el DHCP del router: no se tocó. Revisá que la VLAN llegue a esta OLT o reiniciá el equipo.'];
+            }
+
+            if ($ip) {
+                $r = ['ok' => true, 'por_perfil' => true, 'ip' => $ip,
+                    'detalle' => "Conexión de gestión creada: IP {$ip} en la VLAN {$g->vlan}. La dirección del TR-069 le llega por DHCP."];
+            } else {
+                try {
+                    $q = app(OltTelnetDispatcher::class)->dispatch($oltId, 'quitarGestionEpon', ['fsp' => $fsp, 'ont_id' => $ontId]);
+                } catch (\Throwable $e) {
+                    $q = null;
+                }
+
+                return ['ok' => false, 'detalle' => "La ONT no pidió IP de gestión en la VLAN {$g->vlan}. Revisá que la VLAN llegue del MikroTik a esta OLT. "
+                    . (($q['borrada'] ?? false) ? 'Se borró la conexión creada. ' : '⚠️ La conexión «gestion» no se pudo borrar: revisala. ')
+                    . (($q['internet_ok'] ?? false) ? 'Su internet sigue conectado.' : '⚠️ Revisá el internet del equipo.')];
+            }
+        }
+
         if (!($r['ok'] ?? false)) {
             return ['ok' => false, 'detalle' => $r['detalle'] ?? 'La OLT no aceptó la configuración.'];
+        }
+
+        // C-Data GPON: la gestión va en el perfil (TR-069 + WAN) y el driver ya
+        // comprobó que la ONT lo aceptó. No hay service-port ni servidor por equipo.
+        if ($r['por_perfil'] ?? false) {
+            // EPON: con la IP de gestión la plataforma llega a la página del
+            // equipo; algunos (C-Data FD5xx) ignoran la dirección del ACS que
+            // llega por DHCP y hay que encender su TR-069 ahí.
+            if (!empty($r['ip'])) {
+                $avance('Encendiendo el TR-069 en el equipo…');
+
+                // La OLT EPON muestra mal la IP de una WAN por DHCP (10.30.0.35
+                // aparece como 10.30.0.0): la real se toma del DHCP del router.
+                $ipReal = $this->ipDeGestionEnRouter((string) ($registrada?->serial ?? ''), 20, false)
+                    ?? (preg_match('/\.0$/', (string) $r['ip']) ? null : (string) $r['ip']);
+
+                // Por la IP con la que se llega a ESTE equipo por el túnel de
+                // la empresa (virtual si la red está traducida). Si esa red la
+                // lleva el túnel de otra empresa, no se entra.
+                $ipReal = \App\Services\Vpn\ServidorVpn::ipParaEmpresa($ipReal, $this->companyId, true);
+
+                $tr = $ipReal
+                    ? (new \App\Services\Acs\Tr069EnPaginaDeOnu($ipReal))->encender(
+                        [[(string) $g->onu_admin_usuario, (string) $g->onu_admin_clave]],
+                        (string) config('services.genieacs.url_equipos'),
+                        300,
+                        $g->acs_usuario ?: null,
+                        $g->acs_clave ?: null,
+                    )
+                    : ['ok' => false, 'detalle' => 'No se encontró la IP de gestión del equipo en el router para encender su TR-069.'];
+
+                $r['detalle'] .= ' · ' . $tr['detalle'];
+
+                // Sin el TR-069 encendido el equipo no se reporta: no cuenta
+                // como hecho, así «Poner al día» lo vuelve a intentar.
+                if (!($tr['ok'] ?? false)) {
+                    $registrada?->update(['gestion_en' => null]);
+
+                    return ['ok' => false, 'detalle' => 'Quedó a medias: ' . $r['detalle']];
+                }
+            }
+
+            $registrada?->update(['gestion_en' => now()]);
+
+            return [
+                'ok'             => true,
+                'detalle'        => $r['detalle'],
+                'servidor_tr069' => true,
+                'perfil'         => ['listo' => true, 'detalle' => 'Va en el mult-srv-profile de gestión.'],
+            ];
         }
 
         $ont = OltOnt::where('olt_id', $oltId)->where('fsp', $fsp)->where('ont_id', $ontId)->first();
@@ -883,12 +1235,24 @@ class GestionRemotaDeOnt
 
         $redes = (array) ($tunel->redes_remotas ?? []);
 
-        if (in_array($red, $redes, true)) {
-            return ['paso' => 'Ruta en la VPN', 'ok' => true, 'detalle' => "Ya estaba: {$red} por «{$tunel->nombre}»"];
+        if (in_array($red, $redes, true) || $tunel->virtualDe($red)) {
+            $comoSeVe = $tunel->virtualDe($red);
+
+            return ['paso' => 'Ruta en la VPN', 'ok' => true, 'detalle' => "Ya estaba: {$red}" . ($comoSeVe ? " (como {$comoSeVe})" : '') . " por «{$tunel->nombre}»"];
         }
 
-        $redes[] = $red;
-        $tunel->update(['redes_remotas' => array_values($redes)]);
+        // Si otra empresa ya usa esa red en la VPN, se publica traducida: agregarla
+        // tal cual le quitaba la ruta a la otra empresa.
+        try {
+            [$redes, $traducciones] = \App\Services\Vpn\ServidorVpn::resolverChoques(
+                array_values(array_merge($redes, [$red])), (int) $tunel->company_id, $tunel->id, $tunel->traducciones ?? []
+            );
+            \App\Services\Vpn\ServidorVpn::verificarRedesLibres($redes, $tunel->id);
+        } catch (\Throwable $e) {
+            return ['paso' => 'Ruta en la VPN', 'ok' => false, 'detalle' => 'No se agregó: ' . $e->getMessage()];
+        }
+
+        $tunel->update(['redes_remotas' => $redes] + ($traducciones || $tunel->traducciones ? ['traducciones' => $traducciones ?: null] : []));
 
         try {
             $r = \App\Services\Vpn\ServidorVpn::aplicar();
@@ -960,6 +1324,9 @@ class GestionRemotaDeOnt
      * ACS. Con PRUEBA_TR (0/0/9:0) se dio por gestionada con un reporte de seis
      * minutos antes y quedó sin ninguna conexión.
      */
+    /** El equipo del ACS que encontró yaEnElAcs(), para seguir trabajando con él. */
+    private ?array $equipoAcs = null;
+
     private function yaEnElAcs(string $serial, ?OltOnt $ont = null): ?string
     {
         if (trim($serial) === '') {
@@ -968,8 +1335,14 @@ class GestionRemotaDeOnt
 
         try {
             $buscado = \App\Services\Acs\EquiposDelAcs::serial($serial);
+            // Por serial, o por la ONT con la que la plataforma ya lo emparejó
+            // (las C-Data EPON se registran en el ACS con otro serial).
             $equipo = collect((new \App\Services\Acs\EquiposDelAcs($this->companyId))->lista())
-                ->first(fn ($e) => \App\Services\Acs\EquiposDelAcs::serial((string) ($e['serial'] ?? '')) === $buscado);
+                ->first(fn ($e) => \App\Services\Acs\EquiposDelAcs::serial((string) ($e['serial'] ?? '')) === $buscado
+                    || ($ont && ($e['ont']['fsp'] ?? null) === $ont->fsp && (int) ($e['ont']['ont_id'] ?? -1) === (int) $ont->ont_id
+                        // 0/0/1:36 existe en cada OLT C-Data: sin mirar la OLT se confundían.
+                        && ($e['ont']['olt'] ?? null) === OltAdmin::where('id', $ont->olt_id)->value('name')));
+            $this->equipoAcs = $equipo;
         } catch (\Throwable $e) {
             // Sin ACS para consultar se sigue como siempre.
             return null;
@@ -1081,8 +1454,56 @@ class GestionRemotaDeOnt
             return ['paso' => 'Servidor TR-069 en la OLT', 'ok' => true, 'detalle' => 'Esta OLT no lo permite: se configura en cada equipo.'];
         }
 
-        if (!empty(($g->perfiles_acs ?? [])[(string) $oltId])) {
-            return ['paso' => 'Servidor TR-069 en la OLT', 'ok' => true, 'detalle' => 'Ya estaba creado (perfil ' . $g->perfiles_acs[(string) $oltId] . ').'];
+        // C-Data GPON: el servidor TR-069 va en perfiles (TR-069 + WAN + copia de
+        // cada mult-srv-profile). Se revisa siempre: es idempotente y no toca
+        // a ningún equipo.
+        if (strtolower((string) $olt->brand) === 'cdata') {
+            if (!$g->acs_usuario || !$g->acs_clave) {
+                $g->fill(['acs_usuario' => 'netplay-acs', 'acs_clave' => \Illuminate\Support\Str::random(24)])->save();
+            }
+
+            try {
+                $r = app(OltTelnetDispatcher::class)->dispatch($oltId, 'prepararGestionPorPerfil', [
+                    'vlan' => (int) $g->vlan, 'url' => (string) config('services.genieacs.url_equipos'),
+                    'usuario' => $g->acs_usuario, 'clave' => $g->acs_clave,
+                ]);
+            } catch (\Throwable $e) {
+                return ['paso' => 'Perfiles de gestión en la OLT', 'ok' => false, 'detalle' => \App\Services\Olt\EstadoDeUnaOnt::explicar($e->getMessage())];
+            }
+
+            if ($r['ok'] ?? false) {
+                $perfiles = $g->perfiles_acs ?? [];
+                // EPON no tiene perfil TR-069: la dirección va por DHCP.
+                $perfiles[(string) $oltId] = $r['tr069'] !== null ? (int) $r['tr069'] : 'dhcp';
+                $g->perfiles_acs = $perfiles;
+                $g->save();
+            }
+
+            return ['paso' => 'Perfiles de gestión en la OLT', 'ok' => (bool) ($r['ok'] ?? false), 'detalle' => $r['detalle'] ?? 'sin detalle'];
+        }
+
+        if ($guardado = ($g->perfiles_acs ?? [])[(string) $oltId] ?? null) {
+            // Se comprueba en la OLT: si cambió la dirección del servidor o se
+            // reseteó la OLT, se crea uno nuevo y los equipos vuelven a recibirla.
+            try {
+                $vigente = app(OltTelnetDispatcher::class)->dispatch($oltId, 'servidorTr069Vigente', [
+                    'perfil' => (int) $guardado, 'url' => (string) config('services.genieacs.url_equipos'),
+                ]);
+            } catch (\Throwable) {
+                $vigente = true; // sin poder mirar, no se rehace nada
+            }
+
+            if ($vigente !== false) {
+                return ['paso' => 'Servidor TR-069 en la OLT', 'ok' => true, 'detalle' => "Ya estaba creado (perfil {$guardado})."];
+            }
+
+            $perfiles = $g->perfiles_acs;
+            unset($perfiles[(string) $oltId]);
+            $g->perfiles_acs = $perfiles;
+            $g->save();
+
+            // Los equipos de esa OLT tenían la dirección vieja: se les vuelve a dar.
+            OltOnt::where('olt_id', $oltId)->whereNotNull('gestion_en')->update(['gestion_en' => null]);
         }
 
         if (!$g->acs_usuario || !$g->acs_clave) {
@@ -1180,8 +1601,12 @@ class GestionRemotaDeOnt
         }
 
         try {
+            // Huawei usa el perfil; C-Data no tiene perfiles y se lo da al equipo directo.
+            $g = $this->config();
             $r = app(OltTelnetDispatcher::class)->dispatch($oltId, 'asignarServidorTr069', [
                 'fsp' => $fsp, 'ont_id' => $ontId, 'perfil' => (int) $perfil,
+                'url' => (string) config('services.genieacs.url_equipos'),
+                'usuario' => $g->acs_usuario, 'clave' => $g->acs_clave,
             ]);
         } catch (\Throwable $e) {
             return ['ok' => false, 'detalle' => 'No se asignó el servidor TR-069: ' . \App\Services\Olt\EstadoDeUnaOnt::explicar($e->getMessage())];
@@ -1207,25 +1632,42 @@ class GestionRemotaDeOnt
 
         $hay = fn (string $cmd, string $campo, string $valor) => $api->query((new Query($cmd))->where($campo, $valor))->read();
 
-        // 1. La VLAN sobre la interfaz que va a la OLT.
-        if (!$hay('/interface/vlan/print', 'name', $nombre)) {
-            $api->query((new Query('/interface/vlan/add'))
-                ->equal('name', $nombre)->equal('vlan-id', (string) $vlan)
-                ->equal('interface', $interfaz)->equal('comment', self::MARCA))->read();
+        // 1. La VLAN sobre cada interfaz que va a una OLT. Con más de una (OLT
+        //    colgadas de puertos distintos del router) se unen en un bridge y
+        //    la red vive en el bridge.
+        [$donde, $detalleVlan] = $this->vlanesDeGestion($api, $vlan, $interfaz);
+
+        $pasos[] = ['paso' => "VLAN {$vlan} en {$interfaz}", 'ok' => $donde !== null, 'detalle' => $detalleVlan];
+
+        if ($donde === null) {
+            return $pasos;
         }
 
-        $pasos[] = ['paso' => "VLAN {$vlan} en {$interfaz}", 'ok' => true, 'detalle' => $nombre];
+        // 2. La dirección del router en esa red (movida si estaba en otra interfaz).
+        $direccion = $gateway . '/' . explode('/', $red)[1];
+        $existente = $hay('/ip/address/print', 'address', $direccion)[0] ?? null;
 
-        // 2. La dirección del router en esa red.
-        if (!$hay('/ip/address/print', 'address', $gateway . '/' . explode('/', $red)[1])) {
+        if (!$existente) {
             $api->query((new Query('/ip/address/add'))
-                ->equal('address', $gateway . '/' . explode('/', $red)[1])
-                ->equal('interface', $nombre)->equal('comment', self::MARCA))->read();
+                ->equal('address', $direccion)
+                ->equal('interface', $donde)->equal('comment', self::MARCA))->read();
+        } elseif (($existente['interface'] ?? '') !== $donde) {
+            $api->query((new Query('/ip/address/set'))->equal('.id', $existente['.id'])->equal('interface', $donde))->read();
         }
 
-        // 3. El rango de IP para las ONT.
-        if (!$hay('/ip/pool/print', 'name', $pool)) {
+        // Direcciones de gestión de una red anterior (se cambió la red sin
+        // cambiar la VLAN): fuera, si no quedan dos redes en la misma interfaz.
+        foreach ($api->query((new Query('/ip/address/print'))->where('comment', self::MARCA))->read() as $d) {
+            if (($d['address'] ?? '') !== $direccion) {
+                $api->query((new Query('/ip/address/remove'))->equal('.id', $d['.id']))->read();
+            }
+        }
+
+        // 3. El rango de IP para las ONT (al día si cambió la red).
+        if (!$existePool = $hay('/ip/pool/print', 'name', $pool)[0] ?? null) {
             $api->query((new Query('/ip/pool/add'))->equal('name', $pool)->equal('ranges', "{$desde}-{$hasta}"))->read();
+        } elseif (($existePool['ranges'] ?? '') !== "{$desde}-{$hasta}") {
+            $api->query((new Query('/ip/pool/set'))->equal('.id', $existePool['.id'])->equal('ranges', "{$desde}-{$hasta}"))->read();
         }
 
         // 4. La opción 43: la dirección del ACS viaja con la IP.
@@ -1244,10 +1686,19 @@ class GestionRemotaDeOnt
         $pasos[] = ['paso' => 'Dirección del ACS por DHCP', 'ok' => true, 'detalle' => $url];
 
         // 5. El servidor DHCP y su red.
-        if (!$hay('/ip/dhcp-server/print', 'name', 'dhcp-gestion-ont')) {
+        if (!$servidor = $hay('/ip/dhcp-server/print', 'name', 'dhcp-gestion-ont')[0] ?? null) {
             $api->query((new Query('/ip/dhcp-server/add'))
-                ->equal('name', 'dhcp-gestion-ont')->equal('interface', $nombre)
+                ->equal('name', 'dhcp-gestion-ont')->equal('interface', $donde)
                 ->equal('address-pool', $pool)->equal('lease-time', '1d')->equal('disabled', 'no'))->read();
+        } elseif (($servidor['interface'] ?? '') !== $donde) {
+            $api->query((new Query('/ip/dhcp-server/set'))->equal('.id', $servidor['.id'])->equal('interface', $donde))->read();
+        }
+
+        // La red del DHCP de una red anterior, fuera.
+        foreach ($api->query((new Query('/ip/dhcp-server/network/print'))->where('comment', self::MARCA))->read() as $n) {
+            if (($n['address'] ?? '') !== $red) {
+                $api->query((new Query('/ip/dhcp-server/network/remove'))->equal('.id', $n['.id']))->read();
+            }
         }
 
         if (!$hay('/ip/dhcp-server/network/print', 'address', $red)) {
@@ -1266,11 +1717,213 @@ class GestionRemotaDeOnt
         ];
 
         // 6. Aislamiento: de esa red sólo se sale hacia el ACS.
-        $this->aislar($api, $red, parse_url($url, PHP_URL_HOST) ?: '');
+        $aislada = $this->aislar($api, $red, parse_url($url, PHP_URL_HOST) ?: '');
 
-        $pasos[] = ['paso' => 'Aislada del resto de la red', 'ok' => true, 'detalle' => 'sólo habla con el servidor TR-069'];
+        $pasos[] = [
+            'paso'    => 'Aislada del resto de la red',
+            'ok'      => $aislada['ok'],
+            'detalle' => $aislada['detalle'],
+        ];
 
         return $pasos;
+    }
+
+    /**
+     * La IP que el DHCP de gestión le dio a una ONT, buscándola por MAC: la
+     * conexión de gestión usa la MAC de la ONT con otro último byte
+     * (80:F7:A6:2B:F7:80 → 80:F7:A6:2B:F7:8C). Espera hasta $segundos.
+     */
+    private function ipDeGestionEnRouter(string $serial, int $segundos, bool $reciente = true): ?string
+    {
+        $hex = strtoupper(preg_replace('/[^0-9A-Fa-f]/', '', $serial));
+
+        if (strlen($hex) !== 12) {
+            return null;
+        }
+
+        $prefijo = substr($hex, 0, 10);
+        $ultimo  = hexdec(substr($hex, 10, 2));
+
+        // Las ONU numeran las MAC de sus conexiones a partir de la suya
+        // (…F7:80 → …F7:8C): se acepta hasta 32 más. Con sólo el prefijo, dos
+        // ONU del mismo lote se confundían.
+        $esDeEstaOnt = function (string $mac) use ($prefijo, $ultimo): bool {
+            if (!str_starts_with($mac, $prefijo)) {
+                return false;
+            }
+
+            $n = hexdec(substr($mac, 10, 2));
+
+            return $n >= $ultimo && $n <= $ultimo + 32;
+        };
+
+        // "last-seen" de RouterOS: 45s, 2m16s, 8h30m50s, 1d2h…
+        $segundosDesde = function (string $t): int {
+            preg_match_all('/(\d+)([wdhms])/', $t, $m, PREG_SET_ORDER);
+
+            return array_sum(array_map(fn ($x) => (int) $x[1] * ['w' => 604800, 'd' => 86400, 'h' => 3600, 'm' => 60, 's' => 1][$x[2]], $m));
+        };
+
+        try {
+            $router = $this->router($this->config()->router_id);
+            $api = $this->conexion->conection($router->token);
+        } catch (\Throwable) {
+            return null;
+        }
+
+        $limite = microtime(true) + $segundos;
+
+        do {
+            foreach ($api->query((new Query('/ip/dhcp-server/lease/print'))->where('server', 'dhcp-gestion-ont'))->read() as $l) {
+                $mac = strtoupper(preg_replace('/[^0-9A-Fa-f]/', '', (string) ($l['mac-address'] ?? '')));
+
+                if ($esDeEstaOnt($mac) && ($l['status'] ?? '') === 'bound'
+                    && (!$reciente || $segundosDesde((string) ($l['last-seen'] ?? '')) <= 600)) {
+                    return (string) $l['address'];
+                }
+            }
+
+            if (microtime(true) < $limite) {
+                sleep(5);
+            }
+        } while (microtime(true) < $limite);
+
+        return null;
+    }
+
+    private const BRIDGE_GESTION = 'bridge-gestion-ont';
+
+    /** "sfp1 + ether8" → ["sfp1", "ether8"]. @return list<string> */
+    public static function interfacesDe(string $interfaz): array
+    {
+        return array_values(array_unique(array_filter(array_map('trim', preg_split('/\s*[+,]\s*/', $interfaz)))));
+    }
+
+    /**
+     * Deja la VLAN de gestión sobre cada interfaz pedida y devuelve dónde tiene
+     * que vivir la red: la VLAN misma si es una sola, o el bridge que las une.
+     *
+     * La VLAN que ya existía (vlan{N}-gestion) se reutiliza para la primera
+     * interfaz: así la red que ya funciona no se corta más que al pasar su IP
+     * al bridge. Si cambió de interfaz, se mueve.
+     *
+     * @return array{0:?string, 1:string}
+     */
+    private function vlanesDeGestion($api, int $vlan, string $interfaz): array
+    {
+        $ifaces = self::interfacesDe($interfaz);
+
+        if (!$ifaces) {
+            return [null, 'Elegí la interfaz del MikroTik hacia la OLT.'];
+        }
+
+        $existentes = collect($api->query(new Query('/interface/print'))->read())->pluck('name')->all();
+        $noEsta = array_values(array_diff($ifaces, $existentes));
+
+        if ($noEsta) {
+            return [null, 'El MikroTik no tiene la interfaz ' . implode(', ', $noEsta) . '.'];
+        }
+
+        $vlans = collect($api->query(new Query('/interface/vlan/print'))->read());
+        $deseadas = [];
+
+        foreach ($ifaces as $i => $iface) {
+            $deseadas[$i === 0 ? "vlan{$vlan}-gestion" : "vlan{$vlan}-gestion-{$iface}"] = $iface;
+        }
+
+        // Antes de crear o mover: fuera las VLAN de gestión extra que ya no
+        // corresponden (o que están en otra interfaz). Al reordenar
+        // ("sfp1 + ether8" → "ether8 + sfp1") chocaban con la que se movía.
+        foreach ($vlans as $v) {
+            $nombre = (string) $v['name'];
+
+            if (str_starts_with($nombre, "vlan{$vlan}-gestion-") && ($deseadas[$nombre] ?? null) !== ($v['interface'] ?? null)) {
+                $this->quitarDelBridge($api, $nombre);
+                $api->query((new Query('/interface/vlan/remove'))->equal('.id', $v['.id']))->read();
+            }
+        }
+
+        $vlans = collect($api->query(new Query('/interface/vlan/print'))->read());
+        $nombres = [];
+
+        foreach ($ifaces as $i => $iface) {
+            $nombre = $i === 0 ? "vlan{$vlan}-gestion" : "vlan{$vlan}-gestion-{$iface}";
+            $actual = $vlans->firstWhere('name', $nombre);
+
+            if (!$actual) {
+                $api->query((new Query('/interface/vlan/add'))
+                    ->equal('name', $nombre)->equal('vlan-id', (string) $vlan)
+                    ->equal('interface', $iface)->equal('comment', self::MARCA))->read();
+            } elseif (($actual['interface'] ?? '') !== $iface) {
+                $api->query((new Query('/interface/vlan/set'))->equal('.id', $actual['.id'])->equal('interface', $iface))->read();
+            }
+
+            $nombres[] = $nombre;
+        }
+
+        // Las VLAN de gestión de interfaces que ya no se usan, fuera.
+        foreach ($vlans as $v) {
+            if (str_starts_with((string) $v['name'], "vlan{$vlan}-gestion-") && !in_array($v['name'], $nombres, true)) {
+                $this->quitarDelBridge($api, (string) $v['name']);
+                $api->query((new Query('/interface/vlan/remove'))->equal('.id', $v['.id']))->read();
+            }
+        }
+
+        $bridge = collect($api->query((new Query('/interface/bridge/print'))->where('name', self::BRIDGE_GESTION))->read())->first();
+
+        if (count($ifaces) === 1) {
+            // Volver a una sola: la red regresa a la VLAN y el bridge se quita.
+            if ($bridge) {
+                $this->quitarDelBridge($api, $nombres[0]);
+                $this->moverRed($api, self::BRIDGE_GESTION, $nombres[0]);
+                $api->query((new Query('/interface/bridge/remove'))->equal('.id', $bridge['.id']))->read();
+            }
+
+            return [$nombres[0], $nombres[0]];
+        }
+
+        if (!$bridge) {
+            $api->query((new Query('/interface/bridge/add'))
+                ->equal('name', self::BRIDGE_GESTION)->equal('protocol-mode', 'none')->equal('comment', self::MARCA))->read();
+        }
+
+        $puertos = collect($api->query((new Query('/interface/bridge/port/print'))->where('bridge', self::BRIDGE_GESTION))->read())->pluck('interface')->all();
+
+        foreach ($nombres as $nombre) {
+            if (!in_array($nombre, $puertos, true)) {
+                $api->query((new Query('/interface/bridge/port/add'))
+                    ->equal('bridge', self::BRIDGE_GESTION)->equal('interface', $nombre)->equal('comment', self::MARCA))->read();
+            }
+        }
+
+        // La red que vivía en la VLAN pasa al bridge enseguida: una IP sobre un
+        // puerto de bridge deja de responder.
+        $this->moverRed($api, $nombres[0], self::BRIDGE_GESTION);
+
+        return [self::BRIDGE_GESTION, implode(' + ', $nombres) . ' unidas en ' . self::BRIDGE_GESTION];
+    }
+
+    private function quitarDelBridge($api, string $interfaz): void
+    {
+        foreach ($api->query((new Query('/interface/bridge/port/print'))->where('interface', $interfaz))->read() as $p) {
+            $api->query((new Query('/interface/bridge/port/remove'))->equal('.id', $p['.id']))->read();
+        }
+    }
+
+    /** Pasa la IP y el DHCP de gestión de una interfaz a otra. */
+    private function moverRed($api, string $de, string $a): void
+    {
+        foreach ($api->query((new Query('/ip/address/print'))->where('interface', $de))->read() as $d) {
+            if (($d['comment'] ?? '') === self::MARCA) {
+                $api->query((new Query('/ip/address/set'))->equal('.id', $d['.id'])->equal('interface', $a))->read();
+            }
+        }
+
+        foreach ($api->query((new Query('/ip/dhcp-server/print'))->where('name', 'dhcp-gestion-ont'))->read() as $d) {
+            if (($d['interface'] ?? '') === $de) {
+                $api->query((new Query('/ip/dhcp-server/set'))->equal('.id', $d['.id'])->equal('interface', $a))->read();
+            }
+        }
     }
 
     /**
@@ -1284,8 +1937,20 @@ class GestionRemotaDeOnt
      *
      * El equipo sigue sin poder iniciar nada hacia otro lado que no sea el ACS.
      */
-    private function aislar($api, string $red, string $acs): void
+    private function aislar($api, string $red, string $acs): array
     {
+        // El firewall del MikroTik sólo acepta IP en dst-address: con el nombre
+        // (acs.netvula.com) rechazaba la regla en silencio y el aislamiento
+        // quedaba sin el paso al servidor.
+        if ($acs !== '' && !filter_var($acs, FILTER_VALIDATE_IP)) {
+            $ip  = gethostbyname($acs);
+            $acs = filter_var($ip, FILTER_VALIDATE_IP) ? $ip : '';
+        }
+
+        if ($acs === '') {
+            return ['ok' => false, 'detalle' => 'No se pudo averiguar la IP del servidor TR-069: no se crearon las reglas.'];
+        }
+
         $reglas = [
             self::MARCA . ': respuestas' => ['action' => 'accept', 'connection-state' => 'established,related'],
             self::MARCA . ': al ACS'     => ['action' => 'accept'] + ($acs ? ['dst-address' => $acs] : []),
@@ -1293,7 +1958,17 @@ class GestionRemotaDeOnt
         ];
 
         foreach ($reglas as $marca => $campos) {
-            if ($api->query((new Query('/ip/firewall/filter/print'))->where('comment', $marca))->read()) {
+            // Si ya existe se pone al día: al cambiar la red (10.30 → 10.40) las
+            // reglas quedaban encerrando la red vieja.
+            if ($existente = $api->query((new Query('/ip/firewall/filter/print'))->where('comment', $marca))->read()[0] ?? null) {
+                $q = (new Query('/ip/firewall/filter/set'))
+                    ->equal('.id', $existente['.id'])->equal('src-address', $red)->equal('disabled', 'no');
+
+                foreach ($campos as $campo => $valor) {
+                    $q->equal($campo, $valor);
+                }
+
+                $api->query($q)->read();
                 continue;
             }
 
@@ -1320,6 +1995,26 @@ class GestionRemotaDeOnt
                 }
             }
         }
+
+        // Se lee de vuelta: las tres, con la red actual, en su orden y arriba.
+        $todas = $api->query(new Query('/ip/firewall/filter/print'))->read();
+        $pos = [];
+
+        foreach ($todas as $i => $f) {
+            if (isset($reglas[$f['comment'] ?? '']) && ($f['src-address'] ?? '') === $red) {
+                $pos[$f['comment']] ??= $i;
+            }
+        }
+
+        $orden = array_keys($reglas);
+        $ok = count($pos) === 3 && $pos[$orden[0]] < $pos[$orden[1]] && $pos[$orden[1]] < $pos[$orden[2]];
+
+        return [
+            'ok'      => $ok,
+            'detalle' => $ok
+                ? "{$red} sólo habla con el servidor TR-069 ({$acs})"
+                : 'El MikroTik no dejó las tres reglas de aislamiento: faltan ' . implode(', ', array_diff($orden, array_keys($pos))),
+        ];
     }
 
     /** Borra del router lo que puso la plataforma para esa VLAN. */
@@ -1330,11 +2025,19 @@ class GestionRemotaDeOnt
             ['/ip/dhcp-server/print', '/ip/dhcp-server/remove', 'name', 'dhcp-gestion-ont'],
             ['/ip/pool/print', '/ip/pool/remove', 'name', 'pool-gestion-ont'],
             ['/ip/address/print', '/ip/address/remove', 'comment', self::MARCA],
+            ['/interface/bridge/port/print', '/interface/bridge/port/remove', 'bridge', self::BRIDGE_GESTION],
+            ['/interface/bridge/print', '/interface/bridge/remove', 'name', self::BRIDGE_GESTION],
             ['/interface/vlan/print', '/interface/vlan/remove', 'name', "vlan{$vlan}-gestion"],
             ['/ip/firewall/filter/print', '/ip/firewall/filter/remove', 'comment', self::MARCA . ': respuestas'],
             ['/ip/firewall/filter/print', '/ip/firewall/filter/remove', 'comment', self::MARCA . ': al ACS'],
             ['/ip/firewall/filter/print', '/ip/firewall/filter/remove', 'comment', self::MARCA . ': nada mas'],
         ];
+
+        foreach ($api->query(new Query('/interface/vlan/print'))->read() as $v) {
+            if (str_starts_with((string) $v['name'], "vlan{$vlan}-gestion-")) {
+                $borrar[] = ['/interface/vlan/print', '/interface/vlan/remove', 'name', $v['name']];
+            }
+        }
 
         foreach ($borrar as [$listar, $quitar, $campo, $valor]) {
             foreach ($api->query((new Query($listar))->where($campo, $valor))->read() as $fila) {
@@ -1357,7 +2060,31 @@ class GestionRemotaDeOnt
      */
     public static function admiteGestion(string $marca): bool
     {
-        return in_array(strtolower($marca), ['huawei'], true);
+        // C-Data: sólo GPON (el driver lo contesta; en EPON dice que no se puede).
+        return in_array(strtolower($marca), ['huawei', 'cdata'], true);
+    }
+
+    /** "gpon" o "epon" de una C-Data, preguntándole a la OLT si no está guardado. */
+    private static function tecnologiaCdata(OltAdmin $olt): string
+    {
+        $clave = "olt:{$olt->id}:capacidades:v2";
+        $capacidades = Cache::get($clave);
+
+        if (!is_array($capacidades)) {
+            try {
+                $capacidades = app(OltTelnetDispatcher::class)->dispatch((int) $olt->id, 'capacidades');
+
+                if (is_array($capacidades)) {
+                    Cache::put($clave, $capacidades, now()->addDay());
+                }
+            } catch (\Throwable) {
+                $capacidades = null;
+            }
+        }
+
+        // Sin respuesta de la OLT no se adivina: "desconocida" no habilita la
+        // configuración automática de ninguna de las dos familias.
+        return $capacidades['tecnologia'] ?? 'desconocida';
     }
 
     private function config(): GestionRemota
@@ -1451,6 +2178,39 @@ class GestionRemotaDeOnt
      * @param  list<array{puerto:string, vlans:list<int>}>  $puertos
      * @param  array<string,int>  $interfaces
      */
+    /**
+     * La interfaz del MikroTik por la que llega una OLT: la que lleva más VLAN
+     * de clientes del puerto de subida de esa OLT. Si empatan (la VLAN 100 está
+     * en dos interfaces), gana la que en el nombre de su VLAN menciona la OLT o
+     * su marca ("VLAN 100 CDATA").
+     */
+    private static function interfazDeOlt(OltAdmin $olt, array $puertos, ?string $uplink, array $porInterfaz, array $nombres): ?string
+    {
+        $vlansOlt = collect($puertos)->firstWhere('puerto', $uplink)['vlans']
+            ?? collect($puertos)->flatMap(fn ($p) => $p['vlans'] ?? [])->all();
+        $vlansOlt = array_values(array_diff(array_map('intval', (array) $vlansOlt), [1]));
+
+        if (!$vlansOlt) {
+            return null;
+        }
+
+        $pistas = array_filter([strtolower((string) $olt->brand), strtolower((string) $olt->name)]);
+        $mejor = null;
+        $puntaje = [0, 0];
+
+        foreach ($porInterfaz as $iface => $vlans) {
+            $comunes = count(array_intersect($vlansOlt, $vlans));
+            $nombre = collect($nombres[$iface] ?? [])->contains(fn ($n) => collect($pistas)->contains(fn ($p) => $p !== '' && str_contains($n, $p))) ? 1 : 0;
+
+            if ($comunes > 0 && [$comunes, $nombre] > $puntaje) {
+                $puntaje = [$comunes, $nombre];
+                $mejor = $iface;
+            }
+        }
+
+        return $mejor;
+    }
+
     private function uplinkQueCoincide(array $puertos, array $interfaces, $api): ?string
     {
         if (!$puertos) {

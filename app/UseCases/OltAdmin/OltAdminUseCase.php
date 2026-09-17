@@ -393,6 +393,14 @@ class OltAdminUseCase
         $existente = \App\Services\Vpn\ServidorVpn::tunelQueCubre($olt->host, (int) $olt->company_id);
 
         if ($existente) {
+            // Si la red de la OLT está traducida en ese túnel, la plataforma
+            // llega por la IP virtual: con la real iría al túnel de otra empresa.
+            $ipVirtual = $existente->ipAlcanzable((string) $olt->host);
+
+            if ($ipVirtual !== $olt->host && $olt->access_mode === 'direct') {
+                $olt->forceFill(['host' => $ipVirtual])->save();
+            }
+
             return [
                 'status'  => 0,
                 'message' => "OLT creada. Ya hay un túnel que cubre su red: «{$existente->nombre}». "
@@ -421,9 +429,18 @@ class OltAdminUseCase
                 'notas'         => "Creado con la OLT {$olt->name} ({$olt->host}).",
             ]);
 
+            // Si la red de la OLT la usa otra empresa, la plataforma llega por la virtual.
+            $mensaje = 'OLT y túnel creados. Pegá el script en el router para levantarlo.';
+            $ipVirtual = $creado['tunel']->ipAlcanzable((string) $olt->host);
+
+            if ($ipVirtual !== $olt->host && $olt->access_mode === 'direct') {
+                $mensaje .= " Su red la usa otra empresa: la plataforma la alcanza en {$ipVirtual} (IP real {$olt->host}).";
+                $olt->forceFill(['host' => $ipVirtual])->save();
+            }
+
             return [
                 'status'  => 0,
-                'message' => 'OLT y túnel creados. Pegá el script en el router para levantarlo.',
+                'message' => $mensaje,
                 'data'    => [
                     'olt'    => $olt,
                     'tunel'  => $creado['tunel'],
@@ -480,6 +497,9 @@ class OltAdminUseCase
         $redes = array_values(array_unique(array_merge($tunel->redes_remotas ?? [], $nuevas)));
 
         try {
+            [$redes, $traducciones] = \App\Services\Vpn\ServidorVpn::resolverChoques(
+                $redes, (int) $tunel->company_id, $tunel->id, $tunel->traducciones ?? []
+            );
             \App\Services\Vpn\ServidorVpn::verificarRedesLibres($redes, $tunel->id);
         } catch (\Throwable $e) {
             return [
@@ -489,7 +509,13 @@ class OltAdminUseCase
             ];
         }
 
-        $tunel->forceFill(['redes_remotas' => $redes])->save();
+        $tunel->forceFill(['redes_remotas' => $redes] + ($traducciones || $tunel->traducciones ? ['traducciones' => $traducciones ?: null] : []))->save();
+
+        $ipVirtual = $tunel->ipAlcanzable((string) $olt->host);
+
+        if ($ipVirtual !== $olt->host && $olt->access_mode === 'direct') {
+            $olt->forceFill(['host' => $ipVirtual])->save();
+        }
         \App\Services\Vpn\ServidorVpn::aplicar();
 
         return [
