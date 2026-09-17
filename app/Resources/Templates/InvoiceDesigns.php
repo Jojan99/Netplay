@@ -9,7 +9,7 @@ namespace App\Resources\Templates;
  * en línea. Cada método devuelve el HTML completo de una hoja carta.
  *
  * Datos que recibe:
- *  $user  names, lastname, dni, address, phone, plan_name, number_facture
+ *  $user  names, lastname, dni, address, phone, plan_name, concepto, number_facture
  *  $co    business_name, nit, phone, address, city, country, iva_condition,
  *         economic_activity, payment_info, footer, logo_base64
  *  $d     fechaInit, fechaNueva, fechaActual, fechaVence, Porcentage,
@@ -60,7 +60,9 @@ trait InvoiceDesigns
     private function lineas(array $user, array $d, bool $showBalance): array
     {
         $lineas = [[
-            'desc'    => $user['plan_name'] ?? 'Servicio de internet',
+            // El concepto manda cuando la factura no es la mensualidad del plan
+            // (por ejemplo el saldo que traía el cliente de otra plataforma).
+            'desc'    => ($user['concepto'] ?? '') ?: ($user['plan_name'] ?? 'Servicio de internet'),
             'periodo' => $this->fecha($d['fechaNueva']) . ' — ' . $this->fecha($d['fechaInit']),
             'dias'    => $d['daysFacture'],
             'precio'  => $d['monthlyPrice'],
@@ -190,7 +192,7 @@ trait InvoiceDesigns
       </td>
       <td style="width:50%;padding:11px 14px;vertical-align:top;">
         <div style="font-size:9px;letter-spacing:1px;text-transform:uppercase;color:#94a3b8;margin-bottom:5px;">Servicio</div>
-        <div style="font-size:12px;font-weight:bold;">' . $this->esc($user['plan_name'] ?? '') . '</div>
+        <div style="font-size:12px;font-weight:bold;">' . $this->esc(($user['concepto'] ?? '') ?: ($user['plan_name'] ?? '')) . '</div>
         <div style="font-size:10px;color:#64748b;line-height:1.6;margin-top:3px;">
           Período ' . $this->fecha($d['fechaNueva']) . ' — ' . $this->fecha($d['fechaInit']) . '<br>
           ' . $d['daysFacture'] . ' días facturados
@@ -390,7 +392,7 @@ trait InvoiceDesigns
       </td>
       <td style="width:50%;vertical-align:top;">
         <div style="font-size:9px;letter-spacing:2px;text-transform:uppercase;color:#9ca3af;margin-bottom:6px;">Servicio</div>
-        <div style="font-size:12.5px;color:#111827;">' . $this->esc($user['plan_name'] ?? '') . '</div>
+        <div style="font-size:12.5px;color:#111827;">' . $this->esc(($user['concepto'] ?? '') ?: ($user['plan_name'] ?? '')) . '</div>
         <div style="font-size:10px;color:#9ca3af;line-height:1.7;margin-top:3px;">' . $d['daysFacture'] . ' días · ' . $this->fecha($d['fechaNueva']) . ' a ' . $this->fecha($d['fechaInit']) . '</div>
       </td>
     </tr>

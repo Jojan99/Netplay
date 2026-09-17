@@ -114,6 +114,16 @@ class ImportadorDeClientes
             throw new \RuntimeException('Hace falta indicar al menos la columna del documento y la del nombre.');
         }
 
+        // Dos datos distintos no pueden salir de la misma columna. Pasó de
+        // verdad: apellidos apuntando a "Nombre" dejaba el nombre repetido, y
+        // el precio apuntando a "Plan Internet" leía "80 Mb" como $80.
+        if ($limpio['apellidos'] !== null && $limpio['apellidos'] === $limpio['nombre']) {
+            $limpio['apellidos'] = null;
+        }
+        if ($limpio['plan_precio'] !== null && $limpio['plan_precio'] === $limpio['plan']) {
+            $limpio['plan_precio'] = null;
+        }
+
         $tabla = LectorDeArchivo::leer(Storage::disk('local')->path($imp->archivo), (string) $imp->nombre_archivo);
         $clientes = array_map(fn ($fila) => Normalizador::desdeFila($fila, $limpio), $tabla['filas']);
 
@@ -184,9 +194,9 @@ class ImportadorDeClientes
     }
 
     /** Un cliente de la vista previa para mostrar: sin la contraseña PPPoE. */
-    public static function filaParaMostrar(ImportacionFila $f): array
+    public static function filaParaMostrar(ImportacionFila $f, string $regla = 'auto'): array
     {
-        $d = $f->datos ?? [];
+        $d = Normalizador::conRegla($f->datos ?? [], $regla);
         $d['pppoe_clave'] = ($d['pppoe_clave'] ?? '') !== '' ? '••••••' : '';
         unset($d['avisos_origen']);
 
@@ -197,9 +207,34 @@ class ImportadorDeClientes
             'resultado' => $f->resultado,
             'mensaje'   => $f->mensaje,
             'user_id'   => $f->user_id ?? $f->existente_user_id,
+            'factura_id' => $f->factura_id,
+            'grupo_elegido'  => $f->grupo_elegido,
+            'router_elegido' => $f->router_elegido,
             'errores'   => $f->avisos['errores'] ?? [],
             'avisos'    => $f->avisos['avisos'] ?? [],
             'datos'     => $d,
         ];
+    }
+
+    /**
+     * Unos nombres del archivo partidos con la regla indicada, para que se vea
+     * el efecto antes de importar.
+     *
+     * @return array<int, array<string,string>>
+     */
+    public static function ejemplosDeNombres(Importacion $imp, string $regla, int $cuantos = 5): array
+    {
+        $completos = ImportacionFila::where('importacion_id', $imp->id)
+            ->whereNotNull('nombre')
+            ->orderBy('id')
+            ->limit(120)
+            ->get()
+            ->map(fn ($f) => (string) (($f->datos['nombre_completo'] ?? '') ?: $f->nombre))
+            // Los más largos primero: son los que muestran mejor la diferencia.
+            ->sortByDesc(fn ($n) => str_word_count($n))
+            ->values()
+            ->all();
+
+        return SeparadorDeNombres::ejemplos($completos, $regla, $cuantos);
     }
 }

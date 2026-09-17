@@ -3,8 +3,7 @@
 namespace App\Resources\TemplatesEmail;
 
 use App\Constants\ApiResponseConstants;
-use Mailjet\Client;
-use \Mailjet\Resources;
+use App\Services\Correo\Correo;
 
 
 class TemplateEmailPay
@@ -16,10 +15,8 @@ class TemplateEmailPay
     // Mailjet escritas en el código.
     $empresa = \App\Models\Company::find(getSessionCompanyId());
     $destino = trim((string) ($empresa?->email ?? ''));
-    $desde   = trim((string) config('services.mailjet.from_email', ''));
-    $public  = (string) config('services.mailjet.api_key_public', '');
-    $private = (string) config('services.mailjet.api_key_private', '');
-    if (!$empresa || !filter_var($destino, FILTER_VALIDATE_EMAIL) || $desde === '' || $public === '' || $private === '') {
+    $correo  = $empresa ? Correo::deEmpresa($empresa) : null;
+    if (!$empresa || !filter_var($destino, FILTER_VALIDATE_EMAIL) || !$correo->configurado()) {
       return ['message' => 'Aviso de pago no enviado: la empresa no tiene correo o el correo no está configurado', 'status' => 1, 'data' => ApiResponseConstants::DATA_NULL];
     }
     $nombreEmpresa = trim((string) $empresa->invoice_business_name) ?: trim((string) $empresa->name);
@@ -90,57 +87,17 @@ class TemplateEmailPay
     </html>
 ";
 
-    $mj = new Client($public, $private, true, ['version' => 'v3.1']);
-    $body = [
-      'Messages' => [
-        [
-          'From' => [
-            'Email' => $desde,
-            'Name' => $nombreEmpresa
-          ],
-          'To' => [
-            [
-              'Email' => $destino,
-              'Name' => $nombreEmpresa
-            ]
-          ],
-          'Subject' => "PAGO EXITOSO",
-          'TextPart' => "Pago recibido " . $id_facture . ": " . $price,
-          'HTMLPart' => $html,
-      //     'Attachments' => [
-      //   [
-      //     'ContentType' => "application/pdf", // Tipo de contenido del archivo
-      //     'Filename' => "factura.pdf", // Nombre del archivo
-      //     'Base64Content' => base64_encode(file_get_contents("/ruta/al/archivo/factura.pdf")) // Contenido codificado en Base64
-      //   ]
-      // ]
-        ]
-      ]
-    ];
-    try {
-      $response = $mj->post(Resources::$Email, ['body' => $body]);
-    } catch (\Throwable $err) {
-      // El aviso no debe tumbar el registro del abono
-      return ['message' => 'The mail could not be sent', 'status' => 1, 'data' => ApiResponseConstants::DATA_NULL];
-    }
+    // Sale por la cuenta de correo de la empresa (propia o la de la plataforma).
+    // El aviso no debe tumbar el registro del abono: enviar() no lanza excepciones.
+    $resultado = $correo->enviar(
+      ['email' => $destino, 'nombre' => $nombreEmpresa],
+      'PAGO EXITOSO',
+      $html,
+      'Pago recibido ' . $id_facture . ': ' . $price,
+    );
 
-    
-    $responseEmail = $response->getData();
-
-    error_log(json_encode($responseEmail));
-
-    if (($responseEmail['Messages'][0]['Status'] ?? 'error') == "error") {
-      return [
-        'message' => 'The mail could not be sent',
-        'status' => 1,
-        'data' => ApiResponseConstants::DATA_NULL
-      ];
-    } else if (($responseEmail['Messages'][0]['Status'] ?? '') == "success") {
-      return [
-        'message' => 'Email sent successfully',
-        'status' => 0,
-        'data' => ApiResponseConstants::DATA_NULL
-      ];
-    }
+    return $resultado['ok']
+      ? ['message' => 'Email sent successfully', 'status' => 0, 'data' => ApiResponseConstants::DATA_NULL]
+      : ['message' => 'The mail could not be sent', 'status' => 1, 'data' => ApiResponseConstants::DATA_NULL];
   }
 }

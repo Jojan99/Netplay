@@ -98,7 +98,16 @@ class GenieAcs
         // codificar entero para que GenieACS lo reciba tal como lo guarda.
         $url = "{$this->base}/devices/" . rawurlencode($id) . '/tasks?timeout=8000&connection_request';
 
-        $r = Http::timeout(20)->post($url, $tarea);
+        // Avisarle al equipo puede tardar (equipos lentos, enlaces con demora).
+        // Se espera bastante más que los 8 s de la tarea y, si ni así contesta,
+        // la tarea igual quedó encolada en el ACS: se aplica en el próximo
+        // reporte del equipo. Antes esto salía como "cURL error 28" en medio del
+        // aprovisionamiento y había que reintentar a mano.
+        try {
+            $r = Http::timeout(45)->post($url, $tarea);
+        } catch (\Illuminate\Http\Client\ConnectionException) {
+            return ['hecha' => false, 'en_cola' => true, 'estado' => 0, 'instancia' => null, 'id' => null];
+        }
 
         if (!in_array($r->status(), [200, 202], true)) {
             throw new \RuntimeException("El ACS rechazó la tarea ({$r->status()}): " . mb_substr($r->body(), 0, 200));

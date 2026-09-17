@@ -2,8 +2,8 @@
 
 namespace App\Resources\TemplatesEmail;
 
-use Mailjet\Client;
-use Mailjet\Resources;
+use App\Services\Correo\Correo;
+use Illuminate\Support\Facades\Log;
 
 class TemplateEmailCompanyConfirmation
 {
@@ -50,32 +50,17 @@ class TemplateEmailCompanyConfirmation
         </body>
         </html>";
 
-        $mj = new Client(
-            env('MAILJET_APIKEY_PUBLIC'),
-            env('MAILJET_APIKEY_PRIVATE'),
-            true,
-            ['version' => 'v3.1']
+        // Correo de la plataforma: sale siempre de no-reply@netvula.com a nombre de Netvula.
+        $resultado = Correo::plataforma()->enviar(
+            ['email' => $toEmail, 'nombre' => $companyName],
+            'Confirma tu empresa en Netvula',
+            $html,
+            "Confirma tu empresa: {$confirmUrl}",
         );
 
-        $body = [
-            'Messages' => [
-                [
-                    'From' => [
-                        'Email' => env('MAILJET_FROM_EMAIL', 'atencionalcliente@netplay.com.co'),
-                        // Correo de la plataforma, no de una empresa cliente.
-                        'Name'  => 'Netvula',
-                    ],
-                    'To' => [
-                        ['Email' => $toEmail, 'Name' => $companyName],
-                    ],
-                    'Subject'  => 'Confirma tu empresa en Netvula',
-                    'TextPart' => "Confirma tu empresa: {$confirmUrl}",
-                    'HTMLPart' => $html,
-                ],
-            ],
-        ];
-
-        $response = $mj->post(Resources::$Email, ['body' => $body]);
-        error_log('MailJet company confirmation: ' . json_encode($response->getData()));
+        if (!$resultado['ok']) {
+            Log::error('[Confirmación empresa] correo no enviado', ['detalle' => $resultado['detalle']]);
+            throw new \RuntimeException($resultado['detalle']);
+        }
     }
 }

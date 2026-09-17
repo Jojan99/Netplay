@@ -3,21 +3,18 @@
 namespace App\Services;
 
 use App\Models\Company;
+use App\Services\Correo\Correo;
 use Illuminate\Support\Facades\Log;
-use Mailjet\Client;
-use Mailjet\Resources;
 
 /**
  * Correo de factura con la marca de la empresa dueña de la factura.
- * La dirección remitente es la verificada en Mailjet (MAILJET_FROM_EMAIL); el
- * nombre, las respuestas (Reply-To) y todo el contenido son de la empresa.
+ * Sale por la cuenta de Mailjet propia de la empresa si la conectó; si no, por
+ * la de la plataforma (no-reply@netvula.com) con el nombre de la empresa y las
+ * respuestas (Reply-To) al correo de la empresa. Ver App\Services\Correo\Correo.
  */
 class InvoiceEmailService
 {
-    private string $apiKeyPublic;
-    private string $apiKeyPrivate;
-    private string $fromEmail;
-    private bool $enabled;
+    private Correo $correo;
 
     private string $empresa;
     private string $empresaEmail;
@@ -27,10 +24,7 @@ class InvoiceEmailService
 
     public function __construct(private Company $company)
     {
-        $this->apiKeyPublic = (string) config('services.mailjet.api_key_public', '');
-        $this->apiKeyPrivate = (string) config('services.mailjet.api_key_private', '');
-        $this->fromEmail = trim((string) config('services.mailjet.from_email', ''));
-        $this->enabled = $this->apiKeyPublic !== '' && $this->apiKeyPrivate !== '' && $this->fromEmail !== '';
+        $this->correo = Correo::deEmpresa($company);
 
         $this->empresa         = trim((string) $company->invoice_business_name) ?: trim((string) $company->name);
         $this->empresaEmail    = filter_var(trim((string) $company->email), FILTER_VALIDATE_EMAIL) ? trim((string) $company->email) : '';
@@ -49,8 +43,8 @@ class InvoiceEmailService
      */
     public function sendInvoice(array $userData, string $pdfContent, string $filename): array
     {
-        if (!$this->enabled) {
-            Log::warning('[EMAIL_INVOICE] Mailjet no está configurado');
+        if (!$this->correo->configurado()) {
+            Log::warning('[EMAIL_INVOICE] Mailjet no está configurado', ['company_id' => $this->company->id]);
             return ['status' => 'error', 'message' => 'Servicio de correo no configurado'];
         }
 
@@ -60,74 +54,33 @@ class InvoiceEmailService
             return ['status' => 'error', 'message' => 'El cliente no tiene un correo válido'];
         }
 
-        try {
-            $mj = new Client($this->apiKeyPublic, $this->apiKeyPrivate, true, ['version' => 'v3.1']);
+        $adjuntos = [[
+            'ContentType'   => 'application/pdf',
+            'Filename'      => $filename,
+            'Base64Content' => base64_encode($pdfContent),
+        ]];
 
-            $htmlBody = $this->buildInvoiceHtml($userData);
-
-            $mensaje = [
-                'From' => [
-                    'Email' => $this->fromEmail,
-                    'Name'  => $this->empresa,
-                ],
-                'To' => [
-                    [
-                        'Email' => $email,
-                        'Name'  => trim(($userData['names'] ?? '') . ' ' . ($userData['lastname'] ?? '')),
-                    ],
-                ],
-                'Subject'     => 'Su Factura #' . ($userData['number_facture'] ?? '') . ($this->empresa !== '' ? ' - ' . $this->empresa : ''),
-                'TextPart'    => $this->buildInvoiceText($userData),
-                'HTMLPart'    => $htmlBody,
-                'Attachments' => [
-                    [
-                        'ContentType'   => 'application/pdf',
-                        'Filename'      => $filename,
-                        'Base64Content' => base64_encode($pdfContent),
-                    ],
-                ],
+        // Logo como imagen incrustada: los clientes de correo bloquean data: URIs.
+        if ($this->logo && preg_match('#^data:(image/[a-z+.-]+);base64,(.+)$#is', $this->logo, $m)) {
+            $adjuntos[] = [
+                'ContentType'   => strtolower($m[1]),
+                'Filename'      => 'logo.' . (str_contains(strtolower($m[1]), 'png') ? 'png' : 'jpg'),
+                'ContentID'     => 'logo',
+                'Base64Content' => preg_replace('/\s+/', '', $m[2]),
             ];
-
-            // Las respuestas del cliente van al correo de la empresa.
-            if ($this->empresaEmail !== '') {
-                $mensaje['ReplyTo'] = ['Email' => $this->empresaEmail, 'Name' => $this->empresa];
-            }
-
-            // Logo como imagen incrustada: los clientes de correo bloquean data: URIs.
-            if ($this->logo && preg_match('#^data:(image/[a-z+.-]+);base64,(.+)$#is', $this->logo, $m)) {
-                $mensaje['InlinedAttachments'] = [[
-                    'ContentType'   => strtolower($m[1]),
-                    'Filename'      => 'logo.' . (str_contains(strtolower($m[1]), 'png') ? 'png' : 'jpg'),
-                    'ContentID'     => 'logo',
-                    'Base64Content' => preg_replace('/\s+/', '', $m[2]),
-                ]];
-            }
-
-            $body = ['Messages' => [$mensaje]];
-
-            $response = $mj->post(Resources::$Email, ['body' => $body]);
-            $data = $response->getData();
-
-            Log::info('[EMAIL_INVOICE] Respuesta de Mailjet', [
-                'email' => $email,
-                'facture' => $userData['number_facture'] ?? '',
-                'response' => $data,
-            ]);
-
-            if (isset($data['Messages'][0]['Status']) && $data['Messages'][0]['Status'] === 'success') {
-                return ['status' => 'ok', 'message' => 'Factura enviada correctamente por correo'];
-            }
-
-            $errorMsg = $data['Messages'][0]['Errors'][0]['ErrorMessage'] ?? 'Error desconocido de Mailjet';
-            return ['status' => 'error', 'message' => $errorMsg];
-
-        } catch (\Throwable $e) {
-            Log::error('[EMAIL_INVOICE] Excepción enviando correo', [
-                'email' => $email,
-                'error' => $e->getMessage(),
-            ]);
-            return ['status' => 'error', 'message' => 'Error enviando correo: ' . $e->getMessage()];
         }
+
+        $resultado = $this->correo->enviar(
+            ['email' => $email, 'nombre' => trim(($userData['names'] ?? '') . ' ' . ($userData['lastname'] ?? ''))],
+            'Su Factura #' . ($userData['number_facture'] ?? '') . ($this->empresa !== '' ? ' - ' . $this->empresa : ''),
+            $this->buildInvoiceHtml($userData),
+            $this->buildInvoiceText($userData),
+            $adjuntos,
+        );
+
+        return $resultado['ok']
+            ? ['status' => 'ok', 'message' => 'Factura enviada correctamente por correo']
+            : ['status' => 'error', 'message' => $resultado['detalle']];
     }
 
     /**

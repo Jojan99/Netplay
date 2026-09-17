@@ -170,6 +170,7 @@ class Mikrowisp extends FuenteApi
             'router'        => $nodo ? ($routers[$nodo] ?? "Router #{$nodo}") : '',
             'estado'        => (string) ($c['estado'] ?? ''),
             'saldo'         => $saldo,
+            'facturas_pendientes' => (int) ($facturacion['facturas_nopagadas'] ?? 0) ?: null,
             'avisos_origen' => $avisos,
         ]);
     }

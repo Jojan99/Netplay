@@ -46,10 +46,10 @@ class Normalizador
      * que contiene la palabra.
      */
     private const SINONIMOS = [
-        'external_id'   => ['id', 'id servicio', 'idservicio', 'id cliente', 'idcliente', 'codigo cliente', 'codigo', 'servicio id', 'no servicio', 'n servicio', 'numero servicio'],
+        'external_id'   => ['servicio', 'id servicio', 'idservicio', 'id', 'id cliente', 'idcliente', 'codigo cliente', 'codigo', 'servicio id', 'no servicio', 'n servicio', 'numero servicio'],
         'nombre'        => ['nombre', 'nombres', 'cliente', 'nombre cliente', 'nombre completo', 'razon social', 'nombre y apellido', 'nombres y apellidos'],
         'apellidos'     => ['apellidos', 'apellido'],
-        'dni'           => ['cedula', 'dni', 'documento', 'dni c c ife', 'dni c i c c facturacion', 'numero documento', 'nro documento', 'no documento', 'identificacion', 'numero identificacion', 'nit', 'rfc ruc nit', 'ruc', 'rut', 'cc', 'c c', 'ci', 'cedula ruc', 'cedula nit'],
+        'dni'           => ['cedula', 'dni', 'documento', 'dni c c ife', 'dni c i c c ife', 'dni c i c c', 'dni c i c c facturacion', 'numero documento', 'nro documento', 'no documento', 'identificacion', 'numero identificacion', 'nit', 'rfc ruc nit', 'ruc', 'rut', 'cc', 'c c', 'ci', 'cedula ruc', 'cedula nit'],
         'email'         => ['email', 'e mail', 'correo', 'correo electronico', 'mail'],
         'telefono'      => ['telefono', 'telefono celular', 'celular', 'movil', 'telefono movil', 'whatsapp', 'telefono 1', 'telefonos', 'tel'],
         'direccion'     => ['direccion', 'direccion principal', 'domicilio', 'direccion instalacion'],
@@ -61,11 +61,11 @@ class Normalizador
         'pppoe_usuario' => ['usuario pppoe', 'pppoe usuario', 'user pppoe', 'pppoe user', 'ppp user', 'ppp usuario', 'pppuser', 'usuario rb', 'cliente rb', 'usuario', 'usuario servicio', 'secret'],
         'pppoe_clave'   => ['password hotspot pppoe', 'password pppoe', 'contrasena pppoe', 'clave pppoe', 'pppoe pass', 'ppp pass', 'ppp password', 'ppp clave', 'ppppass', 'password servicio', 'password', 'contrasena', 'clave'],
         'ip'            => ['ip', 'direccion ip', 'ip cliente', 'ip address', 'ip asignada', 'ip remota'],
-        'mac'           => ['mac', 'mac cpe', 'mac adress', 'mac address', 'direccion mac'],
+        'mac'           => ['mac', 'mac cpe', 'mac antena cliente', 'mac antena', 'mac adress', 'mac address', 'direccion mac'],
         'router'        => ['router', 'zona', 'nodo', 'servidor', 'mikrotik', 'torre', 'sector'],
         'estado'        => ['estado', 'status', 'estado servicio', 'estado cliente'],
         'dia_pago'      => ['dia de corte', 'dia corte', 'dia de pago', 'dia pago', 'fecha corte', 'corte', 'dia facturacion'],
-        'saldo'         => ['saldo', 'saldo pendiente', 'deuda', 'total pendiente', 'total facturas', 'monto pendiente'],
+        'saldo'         => ['saldo', 'pagos pendientes', 'saldo pendiente', 'deuda', 'total pendiente', 'total facturas', 'monto pendiente', 'ultima factura pendiente de pago'],
     ];
 
     /**
@@ -135,12 +135,17 @@ class Normalizador
             ? trim((string) ($fila[(int) $mapeo[$campo]] ?? ''))
             : '';
 
-        [$nombres, $apellidos] = self::separarNombre($v('nombre'), $v('apellidos'));
+        // El nombre completo se guarda tal cual: la regla para partirlo en
+        // nombres y apellidos se elige (y se cambia) en la vista previa.
+        $completo = $v('nombre');
+        $apellidos = $v('apellidos');
 
         return self::cliente([
-            'external_id'   => $v('external_id'),
-            'nombres'       => $nombres,
-            'apellidos'     => $apellidos,
+            'external_id'    => $v('external_id'),
+            'nombre_completo' => $apellidos !== '' ? trim($completo . ' ' . $apellidos) : $completo,
+            'nombres'        => $completo,
+            'apellidos'      => $apellidos,
+            'apellidos_del_origen' => $apellidos !== '',
             'dni'           => $v('dni'),
             'email'         => $v('email'),
             'telefono'      => $v('telefono'),
@@ -177,17 +182,23 @@ class Normalizador
 
         $nombres = $t($c['nombres'] ?? '');
         $apellidos = $t($c['apellidos'] ?? '');
-        if ($apellidos === '' && $nombres !== '') {
-            [$nombres, $apellidos] = self::separarNombre($nombres, '');
+        $delOrigen = (bool) ($c['apellidos_del_origen'] ?? ($apellidos !== ''));
+        $completo = $t($c['nombre_completo'] ?? '') ?: trim($nombres . ' ' . $apellidos);
+
+        if (!$delOrigen) {
+            // Regla por defecto; se recalcula con la que elija el administrador.
+            [$nombres, $apellidos] = SeparadorDeNombres::aplicar($completo, 'auto');
         }
 
         return [
             'external_id'   => mb_substr($t($c['external_id'] ?? ''), 0, 100),
+            'nombre_completo' => mb_substr($completo, 0, 255),
+            'apellidos_del_origen' => $delOrigen,
             'nombres'       => mb_substr($nombres, 0, 255),
             'apellidos'     => mb_substr($apellidos, 0, 255),
             'dni'           => self::documento((string) ($c['dni'] ?? '')),
             'email'         => mb_strtolower(mb_substr($t($c['email'] ?? ''), 0, 255)),
-            'telefono'      => mb_substr(preg_replace('/[^\d+ ]/', '', $t($c['telefono'] ?? '')), 0, 60),
+            'telefono'      => self::telefono((string) ($c['telefono'] ?? '')),
             'direccion'     => mb_substr($t($c['direccion'] ?? ''), 0, 255),
             'plan'          => mb_substr($plan, 0, 255),
             'plan_precio'   => self::dinero($c['plan_precio'] ?? null),
@@ -203,7 +214,8 @@ class Normalizador
             'estado'        => self::estado($t($c['estado'] ?? '')),
             'estado_origen' => mb_substr($t($c['estado'] ?? ''), 0, 60),
             'dia_pago'      => self::diaDePago($c['dia_pago'] ?? null),
-            'saldo'         => self::dinero($c['saldo'] ?? null),
+            'saldo'         => self::saldo($c['saldo'] ?? null),
+            'facturas_pendientes' => $c['facturas_pendientes'] ?? self::cuantasFacturas($c['saldo'] ?? null),
             'avisos_origen' => array_values(array_filter((array) ($c['avisos_origen'] ?? []))),
         ];
     }
@@ -248,7 +260,7 @@ class Normalizador
      *
      * @return array{0:string,1:string}
      */
-    public static function separarNombre(string $nombre, string $apellidos): array
+    public static function separarNombre(string $nombre, string $apellidos, string $regla = 'auto'): array
     {
         $nombre = trim(preg_replace('/\s+/u', ' ', $nombre));
         $apellidos = trim(preg_replace('/\s+/u', ' ', $apellidos));
@@ -257,14 +269,62 @@ class Normalizador
             return [$nombre, $apellidos];
         }
 
-        $p = explode(' ', $nombre);
+        return SeparadorDeNombres::aplicar($nombre, $regla);
+    }
 
-        return match (true) {
-            count($p) === 1 => [$p[0], ''],
-            count($p) === 2 => [$p[0], $p[1]],
-            count($p) === 3 => [$p[0], $p[1] . ' ' . $p[2]],
-            default         => [implode(' ', array_slice($p, 0, 2)), implode(' ', array_slice($p, 2))],
-        };
+    /**
+     * Vuelve a partir el nombre con la regla que eligió el administrador. No
+     * toca a los clientes cuyo archivo ya traía los apellidos aparte.
+     *
+     * @param  array<string,mixed> $d
+     * @return array<string,mixed>
+     */
+    public static function conRegla(array $d, string $regla): array
+    {
+        if (!empty($d['apellidos_del_origen']) || $regla === '' || ($d['nombre_completo'] ?? '') === '') {
+            return $d;
+        }
+
+        [$n, $a] = SeparadorDeNombres::aplicar((string) $d['nombre_completo'], $regla);
+        $d['nombres'] = $n;
+        $d['apellidos'] = $a;
+
+        return $d;
+    }
+
+    /**
+     * El primero de los teléfonos: WispHub exporta "3242806377,3242806377" y
+     * pegados quedaban como un número de veinte dígitos.
+     */
+    public static function telefono(string $valor): string
+    {
+        $primero = preg_split('/[,;\/|]|\s{2,}/', trim($valor))[0] ?? '';
+
+        return mb_substr(trim(preg_replace('/[^\d+ ]/', '', $primero)), 0, 60);
+    }
+
+    /**
+     * El saldo de una exportación. WispHub trae la columna "Pagos Pendientes"
+     * como "3, $150000.00": primero cuántas facturas y después el monto. Sin
+     * esto, "1, $50000.00" se leía como 150.000.
+     */
+    public static function saldo(mixed $valor): ?float
+    {
+        if (is_string($valor) && preg_match('/^\s*(\d+)\s*,\s*\$?\s*([\d.,]+)\s*$/', $valor, $m)) {
+            return self::dinero($m[2]);
+        }
+
+        return self::dinero($valor);
+    }
+
+    /** Cuántas facturas pendientes trae la columna del saldo, si lo dice. */
+    public static function cuantasFacturas(mixed $valor): ?int
+    {
+        if (is_string($valor) && preg_match('/^\s*(\d+)\s*,\s*\$?\s*[\d.,]+\s*$/', $valor, $m)) {
+            return (int) $m[1];
+        }
+
+        return null;
     }
 
     /** activo | suspendido | retirado | null (no se reconoce). */

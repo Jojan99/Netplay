@@ -550,9 +550,14 @@ class AprovisionamientoDeOnt
         return mb_substr(self::limpiarSsid(mb_strtoupper($primera)), 0, 12) ?: 'WIFI';
     }
 
+    /**
+     * El nombre de la red tal como lo escribieron, sin acentos ni caracteres
+     * que los equipos manejan mal. Se permiten los que las empresas usan en sus
+     * redes: arroba, numeral, ampersand, paréntesis, más, coma y apóstrofo.
+     */
     private static function limpiarSsid(string $s): string
     {
-        return mb_substr(trim((string) preg_replace('/[^A-Za-z0-9_\-. ]/', '', Str::ascii(trim($s)))), 0, 32);
+        return mb_substr(trim((string) preg_replace("/[^A-Za-z0-9_\-. @#&+,'()]/", '', Str::ascii(trim($s)))), 0, 32);
     }
 
     /** Diez letras y números sin los que se confunden (l, 1, o, 0). */

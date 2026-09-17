@@ -132,7 +132,9 @@ class AnalisisDeImportacion
                 $avisos[] = 'Sin teléfono.';
             }
             if (($d['saldo'] ?? 0) > 0) {
-                $avisos[] = 'Debe ' . number_format((float) $d['saldo'], 0, ',', '.') . ' en la plataforma anterior: el saldo no se importa como factura.';
+                $cuantas = (int) ($d['facturas_pendientes'] ?? 0);
+                $avisos[] = 'Debe $' . number_format((float) $d['saldo'], 0, ',', '.')
+                    . ($cuantas ? " en {$cuantas} factura(s)" : '') . ' en la plataforma anterior.';
             }
 
             $filas[] = [
@@ -202,7 +204,7 @@ class AnalisisDeImportacion
             'con_avisos' => 0,
             'por_estado' => ['activo' => 0, 'suspendido' => 0, 'retirado' => 0, 'desconocido' => 0],
             'conexiones' => ['pppoe' => 0, 'static' => 0, 'sin_ip' => 0],
-            'saldo'      => ['clientes' => 0, 'total' => 0.0],
+            'saldo'      => ['clientes' => 0, 'total' => 0.0, 'facturas' => 0],
             'errores'    => [],
             'dias_pago'  => [],
         ];
@@ -226,6 +228,7 @@ class AnalisisDeImportacion
             if (($d['saldo'] ?? 0) > 0) {
                 $r['saldo']['clientes']++;
                 $r['saldo']['total'] += (float) $d['saldo'];
+                $r['saldo']['facturas'] += (int) ($d['facturas_pendientes'] ?? 1);
             }
 
             foreach ($f['errores'] as $e) {
@@ -284,6 +287,15 @@ class AnalisisDeImportacion
 
             $p['sugerencia'] = null;
             $p['motivo'] = $p['clave'] === '' ? 'Elegí un plan para los clientes sin plan.' : 'No hay uno parecido: se puede crear.';
+
+            // Un precio de tres cifras casi nunca es una mensualidad: suele ser
+            // la velocidad leída de la columna equivocada. Se marca para que el
+            // administrador lo cargue a mano.
+            $p['precio_confiable'] = $p['precio'] !== null && $p['precio'] >= 1000;
+
+            if (!$p['precio_confiable']) {
+                $p['precio'] = null;
+            }
 
             if ($p['clave'] === '') {
                 continue;

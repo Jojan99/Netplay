@@ -57,6 +57,18 @@ class Company extends Model
         'pg_integrity_secret',
         'pg_client_id',
         'pg_office_id',
+        // Correo propio con Mailjet (sin esto se usa la cuenta de la plataforma)
+        'mailjet_activo',
+        'mailjet_api_key',
+        'mailjet_api_secret',
+        'mailjet_from_email',
+        'mailjet_from_name',
+        'mailjet_verificado_en',
+    ];
+
+    // El secreto de Mailjet nunca sale en un JSON de la empresa.
+    protected $hidden = [
+        'mailjet_api_secret',
     ];
 
     protected $casts = [
@@ -71,6 +83,7 @@ class Company extends Model
         'pg_events_secret'    => 'encrypted',
         'pg_integrity_secret' => 'encrypted',
         'wa_access_token'     => 'encrypted',
+        'mailjet_api_secret'  => 'encrypted',
 
         'email_verified_at' => 'datetime',
         'created_at'        => 'datetime:Y-m-d H:i:s',
@@ -81,6 +94,8 @@ class Company extends Model
         'whatsapp_enabled'          => 'boolean',
         'invoice_whatsapp_enabled'  => 'boolean',
         'email_daily_limit'         => 'integer',
+        'mailjet_activo'            => 'boolean',
+        'mailjet_verificado_en'     => 'datetime',
     ];
 
     public function invoiceTemplate()

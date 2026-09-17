@@ -9,7 +9,6 @@ use App\Repositories\Interfaces\ContractRepositoryInterface;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Mail;
 use App\Services\WhatsAppService;
 
 class ContractController extends Controller
@@ -213,13 +212,23 @@ class ContractController extends Controller
             $cc      = $repo->getClientContract($clientContractId);
             $signUrl = url("/contrato/firmar/{$cc->token}");
             $email   = $request->input('email');
+            $titulo  = htmlspecialchars((string) $cc->contract->title, ENT_QUOTES, 'UTF-8');
+            $url     = htmlspecialchars($signUrl, ENT_QUOTES, 'UTF-8');
 
-            Mail::raw(
+            // Sale por la cuenta de correo de la empresa del contrato (propia o
+            // la de la plataforma); el mailer de Laravel no está configurado.
+            $resultado = \App\Services\Correo\Correo::deEmpresa((int) $cc->company_id)->enviar(
+                $email,
+                "Contrato pendiente de firma: {$cc->contract->title}",
+                "<p>Hola, le compartimos el link para firmar su contrato <strong>{$titulo}</strong>:</p>"
+                . "<p><a href='{$url}'>{$url}</a></p>"
+                . "<p>Abra el link desde su teléfono para firmar.</p>",
                 "Hola, le compartimos el link para firmar su contrato \"{$cc->contract->title}\":\n\n{$signUrl}\n\nAbra el link desde su teléfono para firmar.",
-                fn($msg) => $msg->to($email)->subject("Contrato pendiente de firma: {$cc->contract->title}")
             );
 
-            return response()->json(['status' => 0, 'message' => 'Correo enviado exitosamente.']);
+            return $resultado['ok']
+                ? response()->json(['status' => 0, 'message' => 'Correo enviado exitosamente.'])
+                : response()->json(['status' => 1, 'message' => 'Error al enviar correo: ' . $resultado['detalle']]);
         } catch (\Throwable $e) {
             return response()->json(['status' => 1, 'message' => 'Error al enviar correo: ' . $e->getMessage()]);
         }

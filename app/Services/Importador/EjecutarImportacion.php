@@ -47,6 +47,9 @@ class EjecutarImportacion
     /** @var array<int,int> día de facturación => grupo */
     private array $grupoPorDia = [];
 
+    /** El router que se le pone a todo el que no tenga uno propio. */
+    private int $routerParaTodos = 0;
+
     public function __construct(private Importacion $imp)
     {
     }
@@ -65,6 +68,7 @@ class EjecutarImportacion
 
         $this->prepararPlanes($companyId, (array) ($o['planes'] ?? []), (string) ($o['tipo_plan'] ?? 'fibra'));
         $this->routers = array_map(fn ($v) => $v ? (int) $v : null, (array) ($o['routers'] ?? []));
+        $this->routerParaTodos = (int) ($o['router_todos'] ?? 0);
 
         if (!empty($o['grupo_por_dia'])) {
             $this->grupoPorDia = DB::table('company_billing_schedules')
@@ -94,7 +98,15 @@ class EjecutarImportacion
 
                     [$resultado, $mensaje, $userId] = $this->procesar($fila);
 
-                    $fila->update(['resultado' => $resultado, 'mensaje' => mb_substr($mensaje, 0, 255), 'user_id' => $userId]);
+                    $fila->update([
+                        'resultado' => $resultado,
+                        'mensaje'   => mb_substr($mensaje, 0, 255),
+                        'user_id'   => $userId,
+                    ] + (Esquema::filasAmpliadas() ? [
+                        'factura_id'     => $fila->factura_id,
+                        'grupo_elegido'  => $fila->grupo_elegido,
+                        'router_elegido' => $fila->router_elegido,
+                    ] : []));
 
                     $contadores[match ($resultado) {
                         'creado' => 'creados', 'actualizado' => 'actualizados', 'omitido' => 'omitidos', default => 'errores',
@@ -136,7 +148,8 @@ class EjecutarImportacion
     public function procesar(ImportacionFila $fila): array
     {
         $o = $this->imp->opciones ?? [];
-        $d = $fila->datos;
+        // El nombre se parte con la regla que eligió el administrador.
+        $d = Normalizador::conRegla($fila->datos, (string) ($o['regla_nombre'] ?? 'auto'));
         $companyId = (int) $this->imp->company_id;
 
         if ($fila->previo === 'invalido') {
@@ -156,10 +169,22 @@ class EjecutarImportacion
             return ['error', 'No se eligió un plan para "' . ($d['plan'] ?: 'sin plan') . '".', null];
         }
 
-        $routerId = $this->routers[Normalizador::clave($d['router'] ?? '')] ?? null;
+        $routerId = $this->routerDe($fila, $d);
+        $grupo = $this->grupoDe($fila, $d, $clavePlan);
+
+        // Queda escrito lo que efectivamente se aplicó: es lo que después
+        // muestra el reporte.
+        if (Esquema::filasAmpliadas()) {
+            $fila->grupo_elegido = $grupo;
+            $fila->router_elegido = $routerId;
+        }
+
+        if (!$grupo) {
+            return ['error', 'No hay grupo de facturación para este cliente.', null];
+        }
 
         try {
-            return DB::transaction(function () use ($d, $companyId, $planId, $routerId, $estado, $o) {
+            return DB::transaction(function () use ($fila, $d, $companyId, $planId, $routerId, $estado, $grupo, $o) {
                 $existente = $this->buscarExistente($companyId, $d);
 
                 if ($error = $this->conflictos($companyId, $d, $existente)) {
@@ -173,28 +198,199 @@ class EjecutarImportacion
                         return ['omitido', "Ya existía (documento {$d['dni']}): no se modificó.", $existente];
                     }
 
-                    $this->actualizar($companyId, $existente, $d, $planId, $routerId, $estado);
+                    $this->actualizar($companyId, $existente, $d, $planId, $routerId, $estado, $grupo);
+                    $factura = $this->facturaDeSaldo($companyId, $existente, $d, $grupo, $fila);
 
-                    return ['actualizado', 'Datos actualizados.', $existente];
+                    return ['actualizado', 'Datos actualizados.' . $this->textoFactura($factura), $existente];
                 }
 
-                $userId = $this->crear($companyId, $d, $planId, $routerId, $estado);
+                $userId = $this->crear($companyId, $d, $planId, $routerId, $estado, $grupo);
+                $factura = $this->facturaDeSaldo($companyId, $userId, $d, $grupo, $fila);
 
-                return ['creado', 'Cliente creado.', $userId];
+                return ['creado', 'Cliente creado.' . $this->textoFactura($factura), $userId];
             });
         } catch (\Throwable $e) {
             Log::warning('[Importador] No se pudo importar un cliente', [
                 'importacion' => $this->imp->id, 'fila' => $fila->fila, 'error' => $e->getMessage(),
             ]);
 
+            // La transacción se deshizo: la factura que se hubiera creado adentro
+            // tampoco existe.
+            if (Esquema::filasAmpliadas()) {
+                $fila->factura_id = null;
+            }
+
             return ['error', 'No se pudo guardar: ' . mb_substr($e->getMessage(), 0, 180), null];
         }
+    }
+
+    /** Lo que el administrador eligió a mano para ese cliente, si la base ya lo guarda. */
+    private function deLaFila(ImportacionFila $fila, string $campo): ?int
+    {
+        return Esquema::filasAmpliadas() ? ((int) $fila->getOriginal($campo) ?: null) : null;
+    }
+
+    private function textoFactura(?array $factura): string
+    {
+        return $factura
+            ? ' Factura de saldo ' . $factura['numero'] . ' por $' . number_format($factura['valor'], 0, ',', '.') . '.'
+            : '';
+    }
+
+    /**
+     * El router del cliente: el que le eligieron a mano, el del nombre que
+     * traía el archivo, o el que se puso para todos.
+     *
+     * @param  array<string,mixed> $d
+     */
+    private function routerDe(ImportacionFila $fila, array $d): ?int
+    {
+        if ($this->deLaFila($fila, 'router_elegido')) {
+            return (int) $fila->getOriginal('router_elegido');
+        }
+
+        $porNombre = $this->routers[Normalizador::clave($d['router'] ?? '')] ?? null;
+
+        return $porNombre ?: ($this->routerParaTodos ?: null);
+    }
+
+    /**
+     * El grupo de facturación: el elegido a mano, el de la regla (por plan,
+     * router o estado), el que sale del día de corte del origen, o el general.
+     *
+     * @param  array<string,mixed> $d
+     */
+    private function grupoDe(ImportacionFila $fila, array $d, string $clavePlan): ?int
+    {
+        if ($this->deLaFila($fila, 'grupo_elegido')) {
+            return (int) $fila->getOriginal('grupo_elegido');
+        }
+
+        $o = $this->imp->opciones ?? [];
+
+        $porRegla = match ((string) ($o['grupo_modo'] ?? 'todos')) {
+            'plan'   => $o['grupos_por_plan'][$clavePlan] ?? null,
+            'router' => $o['grupos_por_router'][Normalizador::clave($d['router'] ?? '')] ?? null,
+            'estado' => $o['grupos_por_estado'][$d['estado'] ?? 'activo'] ?? null,
+            default  => null,
+        };
+
+        if ($porRegla) {
+            return (int) $porRegla;
+        }
+
+        if (!empty($d['dia_pago']) && isset($this->grupoPorDia[(int) $d['dia_pago']])) {
+            return $this->grupoPorDia[(int) $d['dia_pago']];
+        }
+
+        return (int) ($o['grupo'] ?? 0) ?: null;
+    }
+
+    /**
+     * La factura del saldo que el cliente traía de la otra plataforma.
+     *
+     * Se crea con el mismo camino que una factura manual del panel
+     * (FacturationRepository: prefijo y consecutivo por empresa), nunca se
+     * envía desde acá y queda anotada en la fila para el reporte.
+     *
+     * @param  array<string,mixed> $d
+     * @return array{id:int, numero:string, valor:float}|null
+     */
+    private function facturaDeSaldo(int $companyId, int $userId, array $d, int $grupo, ImportacionFila $fila): ?array
+    {
+        $o = $this->imp->opciones['saldo'] ?? [];
+        $valor = (float) ($d['saldo'] ?? 0);
+
+        if (empty($o['crear']) || $valor <= 0 || !Esquema::conceptoEnFacturas()) {
+            return null;
+        }
+
+        $concepto = mb_substr(trim((string) ($o['concepto'] ?? '')) ?: 'Saldo anterior', 0, 160);
+
+        $cab = CabFacturation::where('user_id', $userId)->where('company_id', $companyId)
+            ->orderByRaw('CASE WHEN `group` = ? THEN 0 ELSE 1 END', [$grupo])
+            ->orderBy('id')
+            ->first();
+
+        if (!$cab) {
+            return null;
+        }
+
+        // Volver a correr la importación no le crea la factura dos veces.
+        $ya = DB::table('det_facturations')->where('cab_id', $cab->id)->where('concepto', $concepto)->first(['id', 'number_facture', 'price_total']);
+
+        if ($ya) {
+            if (Esquema::filasAmpliadas()) {
+                $fila->factura_id = (int) $ya->id;
+            }
+
+            return ['id' => (int) $ya->id, 'numero' => (string) $ya->number_facture, 'valor' => (float) $ya->price_total];
+        }
+
+        $fecha = $this->fechaDeFactura($companyId, $grupo, $cab);
+
+        // Se arma como un POST de verdad: un FormRequest sin método lee del
+        // query string y los datos no llegaban.
+        $datos = \App\Http\Requests\Facturation\CreateFacturationRequest::create('/importador/saldo', 'POST', [
+            'cab_id'                  => $cab->id,
+            'date_facturation'        => $fecha,
+            'date_create_facturation' => $fecha,
+            'total'                   => 1,
+            'price_total'             => round($valor, 2),
+            'porcentage_discount'     => 0,
+            'days_facture'            => 0,
+            'discount'                => 0,
+            'price_discount'          => 0,
+            'create_facture_manual'   => 1,
+        ]);
+
+        $det = (new \App\Repositories\FacturationRepository())->createDetFacturation($datos);
+
+        // El concepto y, si se pidió, la marca de "ya enviada" para que el
+        // envío diario de facturas por correo no salga con estas.
+        $cambios = ['concepto' => $concepto];
+        if (!empty($o['evitar_envio'])) {
+            $cambios['email_sent_at'] = now();
+        }
+        DB::table('det_facturations')->where('id', $det->id)->update($cambios);
+
+        if (Esquema::filasAmpliadas()) {
+            $fila->factura_id = (int) $det->id;
+        }
+
+        return ['id' => (int) $det->id, 'numero' => (string) $det->number_facture, 'valor' => round($valor, 2)];
+    }
+
+    /** La fecha que lleva la factura del saldo. */
+    private function fechaDeFactura(int $companyId, int $grupo, CabFacturation $cab): string
+    {
+        $o = $this->imp->opciones['saldo'] ?? [];
+
+        if (($o['fecha_modo'] ?? 'corte') === 'fecha' && !empty($o['fecha'])) {
+            return (string) $o['fecha'];
+        }
+        if (($o['fecha_modo'] ?? 'corte') === 'hoy') {
+            return now()->format('Y-m-d');
+        }
+
+        // Día de corte del grupo, en el mes en curso.
+        $dia = (int) (DB::table('company_billing_schedules')
+            ->where('company_id', $companyId)->where('grupo', $grupo)->value('billing_day') ?: 0);
+
+        if (!$dia) {
+            return (string) ($cab->date_init_facturation ?: now()->format('Y-m-d'));
+        }
+
+        $hoy = Carbon::now();
+
+        return $hoy->copy()->setDate((int) $hoy->format('Y'), (int) $hoy->format('m'), min($dia, (int) $hoy->copy()->endOfMonth()->format('d')))->format('Y-m-d');
     }
 
     /** Los planes elegidos; los marcados "crear" se crean una sola vez (o se reusan si ya hay uno con ese nombre). */
     private function prepararPlanes(int $companyId, array $eleccion, string $tipo): void
     {
         $resumen = collect($this->imp->analisis['planes'] ?? [])->keyBy('clave');
+        $precios = (array) ($this->imp->opciones['precios'] ?? []);
 
         foreach ($eleccion as $clave => $valor) {
             $clave = (string) $clave;
@@ -210,19 +406,43 @@ class EjecutarImportacion
                 continue;
             }
 
+            $precio = (float) ($precios[$clave] ?? $p['precio'] ?? 0);
+
             $existente = InternetPlan::where('company_id', $companyId)->get(['id', 'plan_name'])
                 ->first(fn ($x) => Normalizador::clave($x->plan_name) === $clave);
 
-            $this->planes[$clave] = $existente ? (int) $existente->id : (int) InternetPlan::create([
+            if ($existente) {
+                // Ya había uno con ese nombre: se reusa y sólo se le pone el
+                // precio si estaba en cero y ahora lo cargaron.
+                if ($precio > 0 && (float) InternetPlan::where('id', $existente->id)->value('monthly_price') <= 0) {
+                    InternetPlan::where('id', $existente->id)->update(['monthly_price' => $precio]);
+                }
+
+                $this->planes[$clave] = (int) $existente->id;
+                continue;
+            }
+
+            $this->planes[$clave] = (int) InternetPlan::create([
                 'company_id'     => $companyId,
                 'plan_name'      => mb_substr($p['nombre'], 0, 255),
                 'download_speed' => (string) ($p['bajada'] ?? 0),
                 'upload_speed'   => (string) ($p['subida'] ?? 0),
-                'monthly_price'  => (float) ($p['precio'] ?? 0),
+                'monthly_price'  => $precio,
                 'description'    => 'Importado de ' . ucfirst($this->imp->origen),
                 'type'           => in_array($tipo, ['fibra', 'wireless', 'cable', 'dsl', 'otro'], true) ? $tipo : 'fibra',
                 'active'         => true,
             ])->id;
+        }
+
+        // Precios de planes que ya existían en la empresa, sólo si el
+        // administrador marcó pisarlos.
+        foreach ((array) ($this->imp->opciones['actualizar_precio'] ?? []) as $clave => $si) {
+            $planId = $this->planes[(string) $clave] ?? null;
+            $precio = (float) ($precios[(string) $clave] ?? 0);
+
+            if ($si && $planId && $precio > 0) {
+                InternetPlan::where('id', $planId)->where('company_id', $companyId)->update(['monthly_price' => $precio]);
+            }
         }
     }
 
@@ -302,7 +522,7 @@ class EjecutarImportacion
         };
     }
 
-    private function crear(int $companyId, array $d, int $planId, ?int $routerId, string $estado): int
+    private function crear(int $companyId, array $d, int $planId, ?int $routerId, string $estado, int $grupo): int
     {
         $user = User::create([
             'username'   => $d['dni'],
@@ -349,13 +569,13 @@ class EjecutarImportacion
             'pppoe_profile'      => $esPppoe && $d['pppoe_perfil'] !== '' ? $d['pppoe_perfil'] : null,
         ] + self::camposDeEstado($estado));
 
-        $this->crearFacturacion($companyId, (int) $user->id, $d);
+        $this->crearFacturacion($companyId, (int) $user->id, $grupo);
         $this->vincular($companyId, $d, (int) $user->id);
 
         return (int) $user->id;
     }
 
-    private function actualizar(int $companyId, int $userId, array $d, int $planId, ?int $routerId, string $estado): void
+    private function actualizar(int $companyId, int $userId, array $d, int $planId, ?int $routerId, string $estado, int $grupo): void
     {
         $ficha = UserData::where('user_id', $userId)->where('company_id', $companyId)->firstOrFail();
 
@@ -397,7 +617,7 @@ class EjecutarImportacion
         }
 
         if (!CabFacturation::where('user_id', $userId)->exists()) {
-            $this->crearFacturacion($companyId, $userId, $d);
+            $this->crearFacturacion($companyId, $userId, $grupo);
         }
 
         $this->vincular($companyId, $d, $userId);
@@ -409,19 +629,16 @@ class EjecutarImportacion
      * facturación prorratea a los clientes con menos de 20 días, y un cliente
      * que viene de otra plataforma no es nuevo.
      */
-    private function crearFacturacion(int $companyId, int $userId, array $d): void
+    private function crearFacturacion(int $companyId, int $userId, int $grupo): void
     {
         $o = $this->imp->opciones ?? [];
-        $grupo = (int) ($o['grupo'] ?? 1);
-
-        if (!empty($d['dia_pago']) && isset($this->grupoPorDia[(int) $d['dia_pago']])) {
-            $grupo = $this->grupoPorDia[(int) $d['dia_pago']];
-        }
-
         $hoy = Carbon::now();
-        $cabs = $grupo === 3
-            ? [[1, 15], [2, 30]]
-            : [[$grupo, $grupo === 1 ? 15 : 30]];
+        // El día que se le cobra es el del grupo de la empresa; si el grupo no
+        // está configurado se cae al 15/30 del alta del panel.
+        $dias = $this->diasDeGrupo($companyId);
+        $cabs = $grupo === 3 && !isset($dias[3])
+            ? [[1, $dias[1] ?? 15], [2, $dias[2] ?? 30]]
+            : [[$grupo, $dias[$grupo] ?? ($grupo === 1 ? 15 : 30)]];
 
         foreach ($cabs as [$g, $dia]) {
             $cab = CabFacturation::create([
@@ -450,6 +667,19 @@ class EjecutarImportacion
             ['company_id' => $companyId, 'origen' => $this->imp->origen, 'external_id' => $d['external_id']],
             ['user_id' => $userId, 'importacion_id' => $this->imp->id, 'saldo_origen' => $d['saldo']]
         );
+    }
+
+    /** @var array<int,int>|null grupo => día de facturación */
+    private ?array $diasPorGrupo = null;
+
+    /** @return array<int,int> */
+    private function diasDeGrupo(int $companyId): array
+    {
+        return $this->diasPorGrupo ??= DB::table('company_billing_schedules')
+            ->where('company_id', $companyId)->where('active', true)
+            ->pluck('billing_day', 'grupo')
+            ->map(fn ($d) => (int) $d)
+            ->all();
     }
 
     /** El perfil USER de la empresa, creándolo si falta (igual que UserRepository). */

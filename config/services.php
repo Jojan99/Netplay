@@ -98,8 +98,8 @@ return [
 'mailjet' => [
     'api_key_public'  => env('MAILJET_APIKEY_PUBLIC'),
     'api_key_private' => env('MAILJET_APIKEY_PRIVATE'),
-    'from_email'      => env('MAILJET_FROM_EMAIL', 'atencionalcliente@netplay.com.co'),
-    'from_name'       => env('MAILJET_FROM_NAME', 'Netplay ISP'),
+    'from_email'      => env('MAILJET_FROM_EMAIL', 'no-reply@netvula.com'),
+    'from_name'       => env('MAILJET_FROM_NAME', 'Netvula'),
 ],
 
 

@@ -102,6 +102,29 @@ class GeneratePdfRepository implements GeneratePdfRepositoryInterface
     ->value('priceantfactura');
 }
 
+    /**
+     * El concepto de la factura, si la columna ya existe.
+     *
+     * La agregó el importador para las facturas que no son la mensualidad del
+     * plan ("Saldo anterior de WispHub"). Se consulta una vez y se recuerda,
+     * para que las facturas sigan saliendo aunque la migración todavía no se
+     * haya corrido.
+     *
+     * @return array<int,string>
+     */
+    private static function conceptoSiExiste(): array
+    {
+        static $columnas = null;
+
+        if ($columnas === null) {
+            $columnas = \App\Services\Importador\Esquema::conceptoEnFacturas()
+                ? ['det_facturations.concepto']
+                : [];
+        }
+
+        return $columnas;
+    }
+
     public function generatePdf($data): mixed
     {
         $select = [];
@@ -116,6 +139,7 @@ class GeneratePdfRepository implements GeneratePdfRepositoryInterface
                 'det_facturations.price_total', 'det_facturations.days_facture', 'det_facturations.create_facture_manual',
                 'det_facturations.porcentage_discount', 'cab_facturations.id','cab_facturations.billing_electronic'
             )
+            ->addSelect(self::conceptoSiExiste())
             ->join('user_data', 'users.id', '=', 'user_data.user_id')
             ->join('internet_plans', 'internet_plans.id', '=', 'user_data.internet_plans_id')
             ->join('cab_facturations', 'cab_facturations.user_id', '=', 'user_data.user_id')
@@ -150,6 +174,7 @@ class GeneratePdfRepository implements GeneratePdfRepositoryInterface
                 'det_facturations.price_total', 'det_facturations.days_facture', 'det_facturations.create_facture_manual',
                 'det_facturations.porcentage_discount', 'cab_facturations.id'
             )
+            ->addSelect(self::conceptoSiExiste())
             ->join('user_data', 'users.id', '=', 'user_data.user_id')
             ->join('internet_plans', 'internet_plans.id', '=', 'user_data.internet_plans_id')
             ->join('cab_facturations', 'cab_facturations.user_id', '=', 'user_data.user_id')
@@ -185,6 +210,7 @@ class GeneratePdfRepository implements GeneratePdfRepositoryInterface
         // 'id' es el de la cabecera: para el enlace firmado hace falta el del
         // detalle, que es la factura en sí.
         'cab_facturations.company_id','det_facturations.id as det_id')
+        ->addSelect(self::conceptoSiExiste())
         ->join('user_data', 'users.id', '=', 'user_data.user_id')
         ->join('internet_plans', 'internet_plans.id', '=', 'user_data.internet_plans_id')
         ->join('cab_facturations', 'cab_facturations.user_id', '=', 'user_data.user_id')
