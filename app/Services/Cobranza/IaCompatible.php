@@ -25,26 +25,41 @@ class IaCompatible extends Ia
     public function mensaje(string $sistema, array $mensajes, array $herramientas = [], int $maxTokens = 700): array
     {
         $modelos = array_values(array_filter(array_map('trim', explode(',', (string) config('services.cobranza_ia.modelo')))));
-        $agotados = (array) \Illuminate\Support\Facades\Cache::get('cobranza:ia:agotados', []);
         $ultimo = null;
 
-        foreach ($modelos as $modelo) {
-            // Un modelo que ya dio "cuota agotada" hoy no se vuelve a probar.
-            if (isset($agotados[$modelo]) && $agotados[$modelo] === now('America/Los_Angeles')->toDateString()) {
-                continue;
-            }
+        // Dos pasadas por la cadena: si todos estaban en su límite por minuto,
+        // se espera un poco y se prueba otra vez (el cupo por minuto se libera
+        // rápido; el del día no).
+        for ($pasada = 0; $pasada < 2; $pasada++) {
+            $porMinuto = false;
+            $agotados = (array) \Illuminate\Support\Facades\Cache::get('cobranza:ia:agotados', []);
 
-            try {
-                return $this->conModelo($modelo, $sistema, $mensajes, $herramientas, $maxTokens);
-            } catch (IaOcupada $e) {
-                $ultimo = $e;
+            foreach ($modelos as $modelo) {
+                // Un modelo que ya dio "cuota agotada" hoy no se vuelve a probar.
+                if (isset($agotados[$modelo]) && $agotados[$modelo] === now('America/Los_Angeles')->toDateString()) {
+                    continue;
+                }
 
-                if (str_contains($e->getMessage(), 'cuota')) {
-                    // Los cupos del plan gratis se reinician a medianoche del Pacífico.
-                    $agotados[$modelo] = now('America/Los_Angeles')->toDateString();
-                    \Illuminate\Support\Facades\Cache::put('cobranza:ia:agotados', $agotados, now()->addDay());
+                try {
+                    return $this->conModelo($modelo, $sistema, $mensajes, $herramientas, $maxTokens);
+                } catch (IaOcupada $e) {
+                    $ultimo = $e;
+
+                    if (str_contains($e->getMessage(), 'cuota')) {
+                        // Los cupos del plan gratis se reinician a medianoche del Pacífico.
+                        $agotados[$modelo] = now('America/Los_Angeles')->toDateString();
+                        \Illuminate\Support\Facades\Cache::put('cobranza:ia:agotados', $agotados, now()->addDay());
+                    } elseif (str_contains($e->getMessage(), 'minuto')) {
+                        $porMinuto = true;
+                    }
                 }
             }
+
+            if (!$porMinuto) {
+                break;
+            }
+
+            sleep((int) config('services.cobranza_ia.espera_minuto', 8));
         }
 
         throw $ultimo ?? new IaOcupada('Todos los modelos de IA llegaron a su cupo de hoy. Se reintenta en la próxima revisión.');
@@ -88,6 +103,11 @@ class IaCompatible extends Ia
         // Cuota del día agotada: esperar no sirve, se pasa al siguiente modelo.
         if ($primera->status() === 429 && str_contains((string) $primera->body(), 'PerDay')) {
             throw new IaOcupada("El modelo {$modelo} llegó a su cuota del día.");
+        }
+
+        // Límite por minuto: el siguiente modelo tiene su propio cupo.
+        if ($primera->status() === 429) {
+            throw new IaOcupada("El modelo {$modelo} llegó a su límite por minuto.");
         }
 
         // Un historial con llamadas de otro modelo puede no traer la firma que

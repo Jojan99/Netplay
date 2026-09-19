@@ -117,7 +117,7 @@ return [
         'key'       => env('COBRANZA_IA_KEY'),
         'url'       => env('COBRANZA_IA_URL', 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'),
         // Lista: si uno agota su cupo del día se usa el siguiente.
-        'modelo'    => env('COBRANZA_IA_MODELO', 'gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-flash-lite-latest,gemini-3.5-flash,gemini-3.6-flash'),
+        'modelo'    => env('COBRANZA_IA_MODELO', 'gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.5-flash,gemini-3.6-flash'),
     ],
 
     'anthropic' => [
