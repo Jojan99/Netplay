@@ -65,12 +65,12 @@ class Asistente
         $historial[] = ['role' => 'user', 'content' => $instruccion ? $entrada : "[CLIENTE] {$entrada}"];
 
         $herr = new Herramientas($this->caso, $this->cfg);
-        $claude = app()->bound(Ia::class) ? app(Ia::class) : Ia::crear();
+        $claude = app()->bound(Ia::class) ? app(Ia::class) : Ia::para((int) $this->caso->company_id);
         $texto = '';
         $fin = false;
 
         for ($i = 0; $i < self::VUELTAS; $i++) {
-            $r = $claude->mensaje($this->sistema(), $historial, $herr->definiciones());
+            $r = $this->contar($claude)->mensaje($this->sistema(), $historial, $herr->definiciones());
             $historial[] = ['role' => 'assistant', 'content' => $r['content']];
 
             foreach ($r['content'] as $b) {
@@ -104,7 +104,7 @@ class Asistente
         if ($texto !== '' && ($malas = $this->cifrasInventadas($texto, $historial))) {
             $historial[] = ['role' => 'user', 'content' => '[SISTEMA] Tu mensaje tiene montos que no corresponden a los datos: ' . implode(', ', array_map([Deuda::class, 'pesos'], $malas))
                 . '. Reescríbelo usando únicamente las cifras exactas de la deuda, de las facturas o de lo que respondieron las herramientas. No uses herramientas ahora.'];
-            $r = $claude->mensaje($this->sistema(), $historial, $herr->definiciones());
+            $r = $this->contar($claude)->mensaje($this->sistema(), $historial, $herr->definiciones());
             $historial[] = ['role' => 'assistant', 'content' => $r['content']];
             $texto = trim((string) collect($r['content'])->where('type', 'text')->pluck('text')->last());
 
@@ -200,6 +200,20 @@ class Asistente
         preg_match_all('/\$\s?(\d{1,3}(?:[.,]\d{3})+|\d{4,})/u', $texto, $m);
 
         return array_values(array_filter(array_map(fn ($s) => (int) preg_replace('/\D/', '', $s), $m[1] ?? []), fn ($v) => $v >= 1000));
+    }
+
+    /** Cuenta la consulta (por empresa y por caso) antes de hacerla. */
+    private function contar(Ia $ia): Ia
+    {
+        UsoIa::consulta((int) $this->caso->company_id);
+
+        try {
+            \App\Models\CobranzaCaso::where('id', $this->caso->id)->increment('consultas_ia');
+        } catch (\Throwable) {
+            // Sin la columna (migración pendiente) no se cuenta.
+        }
+
+        return $ia;
     }
 
     /** Lo que sabe y lo que no puede hacer. */

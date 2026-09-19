@@ -17,6 +17,23 @@ use Illuminate\Support\Facades\Http;
  */
 class IaCompatible extends Ia
 {
+    private string $clave;
+    private string $url;
+    private string $modelos;
+
+    /** Sin parámetros, la de Netvula (.env); con clave, la de la empresa. */
+    public function __construct(?string $clave = null, ?string $url = null, ?string $modelos = null)
+    {
+        $this->clave   = (string) ($clave ?? config('services.cobranza_ia.key'));
+        $this->url     = (string) ($url ?? config('services.cobranza_ia.url'));
+        $this->modelos = (string) ($modelos ?? config('services.cobranza_ia.modelo'));
+    }
+
+    /** Cada clave tiene su propio cupo: lo agotado se anota por clave. */
+    private function claveCache(): string
+    {
+        return 'cobranza:ia:agotados:' . substr(sha1($this->clave), 0, 12);
+    }
     /**
      * COBRANZA_IA_MODELO puede ser una lista separada por comas: si un modelo
      * llegó a su cupo del día (429 de cuota), se pasa al siguiente. En el plan
@@ -24,7 +41,7 @@ class IaCompatible extends Ia
      */
     public function mensaje(string $sistema, array $mensajes, array $herramientas = [], int $maxTokens = 700): array
     {
-        $modelos = array_values(array_filter(array_map('trim', explode(',', (string) config('services.cobranza_ia.modelo')))));
+        $modelos = array_values(array_filter(array_map('trim', explode(',', $this->modelos))));
         $ultimo = null;
 
         // Dos pasadas por la cadena: si todos estaban en su límite por minuto,
@@ -32,7 +49,7 @@ class IaCompatible extends Ia
         // rápido; el del día no).
         for ($pasada = 0; $pasada < 2; $pasada++) {
             $porMinuto = false;
-            $agotados = (array) \Illuminate\Support\Facades\Cache::get('cobranza:ia:agotados', []);
+            $agotados = (array) \Illuminate\Support\Facades\Cache::get($this->claveCache(), []);
 
             foreach ($modelos as $modelo) {
                 // Un modelo que ya dio "cuota agotada" hoy no se vuelve a probar.
@@ -48,7 +65,7 @@ class IaCompatible extends Ia
                     if (str_contains($e->getMessage(), 'cuota')) {
                         // Los cupos del plan gratis se reinician a medianoche del Pacífico.
                         $agotados[$modelo] = now('America/Los_Angeles')->toDateString();
-                        \Illuminate\Support\Facades\Cache::put('cobranza:ia:agotados', $agotados, now()->addDay());
+                        \Illuminate\Support\Facades\Cache::put($this->claveCache(), $agotados, now()->addDay());
                     } elseif (str_contains($e->getMessage(), 'minuto')) {
                         $porMinuto = true;
                     }
@@ -67,13 +84,13 @@ class IaCompatible extends Ia
 
     private function conModelo(string $modelo, string $sistema, array $mensajes, array $herramientas, int $maxTokens): array
     {
-        $clave = (string) config('services.cobranza_ia.key');
+        $clave = $this->clave;
 
         if ($clave === '') {
-            throw new \RuntimeException('Falta COBRANZA_IA_KEY en el servidor.');
+            throw new \RuntimeException('Falta la clave de la IA.');
         }
 
-        $url = (string) config('services.cobranza_ia.url');
+        $url = $this->url;
 
         $cuerpo = [
             'model'      => $modelo,

@@ -48,11 +48,11 @@ class Cobranza
 
         // Lo que el cliente escribió y quedó sin respuesta (la IA estaba
         // ocupada) se contesta aunque sea fuera de horario: él escribió.
-        if (Ia::disponible()) {
+        if (Ia::disponible($this->companyId)) {
             $hecho['respondidos'] = $this->responderPendientes();
         }
 
-        if ($this->cfg->enHorario() && Ia::disponible()) {
+        if ($this->cfg->enHorario() && Ia::disponible($this->companyId)) {
             $hecho['contactados'] = $this->contactarAutorizados();
             $hecho['recordados'] = $this->recordar();
         }
@@ -73,7 +73,7 @@ class Cobranza
                 $conversando = in_array($caso->estado, CobranzaCaso::CONVERSANDO, true);
                 $caso->fill(['estado' => 'pagado', 'resultado' => 'pagado', 'deuda' => 0, 'descuentos' => null, 'descuento_vence' => null, 'visto' => false])->save();
 
-                if ($conversando && Ia::disponible()) {
+                if ($conversando && Ia::disponible($this->companyId)) {
                     try {
                         (new Asistente($caso))->agradecer();
                     } catch (\Throwable $e) {
@@ -201,6 +201,11 @@ class Cobranza
         $hoy = CobranzaCaso::where('company_id', $this->companyId)
             ->where('contactado_en', '>=', now('America/Bogota')->startOfDay()->utc())->count();
         $cupo = max(0, (int) $this->cfg->max_contactos_dia - $hoy);
+
+        // Con la clave de Netvula, además, lo que queda de las de prueba.
+        if (UsoIa::clave($this->companyId) === 'netvula') {
+            $cupo = min($cupo, max(0, Ia::LIMITE_PRUEBA - UsoIa::conversacionesDePruebaHoy($this->companyId)));
+        }
         $n = 0;
 
         foreach (CobranzaCaso::where('company_id', $this->companyId)->where('estado', 'autorizado')
@@ -216,6 +221,15 @@ class Cobranza
     /** El asistente abre la conversación. */
     public function contactar(CobranzaCaso $caso): bool
     {
+        // Con la clave de Netvula: 10 conversaciones nuevas por día para
+        // probar. Las que ya empezaron siguen sin límite.
+        if (!UsoIa::puedeEmpezar($this->companyId)) {
+            $caso->fill(['motivo' => 'Llegaste a las ' . Ia::LIMITE_PRUEBA . ' conversaciones de prueba de hoy con la IA de Netvula. '
+                . 'Mañana sigue solo, o conectá tu propia clave de Google en Cobranza inteligente para no tener este límite.'])->save();
+
+            return false;
+        }
+
         if (!$caso->telefono) {
             $caso->fill(['estado' => 'escalado', 'motivo' => 'El cliente no tiene un teléfono válido en su ficha.'])->save();
 
@@ -245,7 +259,8 @@ class Cobranza
         $caso->refresh();
 
         if ($caso->estado === 'autorizado') {
-            $caso->fill(['estado' => 'contactado', 'contactado_en' => now()])->save();
+            $caso->fill(['estado' => 'contactado', 'contactado_en' => now(), 'clave_ia' => UsoIa::clave($this->companyId)])->save();
+            UsoIa::conversacion($this->companyId);
         }
 
         // Un intento anterior que falló dejó su error: ya no aplica.

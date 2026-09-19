@@ -26,7 +26,7 @@ class CobranzaCaso extends Model
         'company_id', 'user_id', 'estado', 'resultado', 'motivo', 'deuda', 'facturas', 'dias_mora',
         'telefono', 'conversation_id', 'wa_linea_id', 'autorizado_por', 'autorizado_en', 'contactado_en',
         'ultimo_mensaje_en', 'ultima_respuesta_en', 'recordatorios', 'compromisos', 'descuentos',
-        'descuento_vence', 'resumen', 'historial', 'visto',
+        'descuento_vence', 'resumen', 'historial', 'visto', 'consultas_ia', 'clave_ia',
     ];
 
     protected $casts = [

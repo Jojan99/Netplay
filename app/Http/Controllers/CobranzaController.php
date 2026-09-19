@@ -30,8 +30,17 @@ class CobranzaController extends Controller
 
         return standardApiReponse('OK', [
             'config'        => array_merge((new CobranzaConfig())->getAttributes(), $this->valoresPorDefecto(), $cfg->exists ? $cfg->toArray() : []),
-            'ia_disponible' => Ia::disponible(),
+            'ia_disponible' => Ia::disponible($companyId),
             'pasarela'      => (bool) ($empresa?->pg_active) && !empty($empresa?->pg_gateway),
+            // La clave nunca se devuelve: sólo si hay una.
+            'ia' => [
+                'propia'        => $cfg->tieneClavePropia(),
+                'modelos'       => $cfg->ia_modelos,
+                'limite_prueba' => Ia::LIMITE_PRUEBA,
+                'usadas_hoy'    => \App\Services\Cobranza\UsoIa::conversacionesDePruebaHoy($companyId),
+                'url_clave'     => Ia::URL_CLAVE,
+                'url_limites'   => Ia::URL_LIMITES,
+            ],
             'lineas'        => DB::table('wa_lineas')->where('company_id', $companyId)->where('activa', 1)->orderByDesc('principal')->get(['id', 'nombre', 'telefono', 'principal']),
         ], 0, JsonResponse::HTTP_OK);
     }
@@ -67,9 +76,66 @@ class CobranzaController extends Controller
         ]);
 
         $cfg = CobranzaConfig::deEmpresa($companyId);
-        $cfg->fill($datos + ['company_id' => $companyId])->save();
+        $cfg->fill($datos + ['company_id' => $companyId]);
+
+        // La clave de Google: vacía = se conserva; se prueba antes de guardarla.
+        $clave = trim((string) $request->input('ia_clave', ''));
+
+        if ($request->boolean('quitar_clave')) {
+            $cfg->ia_clave = null;
+        } elseif ($clave !== '') {
+            $prueba = self::probarClave($clave, $request->input('ia_modelos') ?: $cfg->ia_modelos);
+
+            if (!$prueba['ok']) {
+                return standardApiReponse('No se guardó: ' . $prueba['mensaje'], null, 1, JsonResponse::HTTP_OK);
+            }
+
+            $cfg->ia_clave = $clave;
+        }
+
+        if ($request->has('ia_modelos')) {
+            $modelos = trim((string) $request->input('ia_modelos'));
+            $cfg->ia_modelos = preg_match('/^[\w.\-]+(,[\w.\-]+)*$/', $modelos) ? $modelos : null;
+        }
+
+        $cfg->save();
 
         return standardApiReponse('Cobranza guardada.', $cfg->fresh(), 0, JsonResponse::HTTP_OK);
+    }
+
+    /** Prueba una clave (la que escribió, o la guardada) sin guardarla. */
+    public function probarIa(Request $request): JsonResponse
+    {
+        $cfg = CobranzaConfig::deEmpresa($this->empresa());
+        $clave = trim((string) $request->input('ia_clave', '')) ?: (string) $cfg->ia_clave;
+
+        if ($clave === '') {
+            return standardApiReponse('Escribí la clave de Google para probarla.', null, 1, JsonResponse::HTTP_OK);
+        }
+
+        $r = self::probarClave($clave, $cfg->ia_modelos);
+
+        return standardApiReponse($r['mensaje'], null, $r['ok'] ? 0 : 1, JsonResponse::HTTP_OK);
+    }
+
+    /** @return array{ok:bool, mensaje:string} */
+    private static function probarClave(string $clave, ?string $modelos): array
+    {
+        try {
+            $r = (new \App\Services\Cobranza\IaCompatible($clave, null, $modelos))
+                ->mensaje('Responde solamente: OK', [['role' => 'user', 'content' => 'Prueba de conexión']], [], 20);
+
+            return ['ok' => true, 'mensaje' => 'La clave funciona: el asistente ya puede usar tu cuenta de Google.'];
+        } catch (\App\Services\Cobranza\IaOcupada) {
+            // La clave es válida; sólo está en su límite ahora.
+            return ['ok' => true, 'mensaje' => 'La clave es válida (ahora está en su límite de uso, se libera sola).'];
+        } catch (\Throwable $e) {
+            $texto = $e->getMessage();
+
+            return ['ok' => false, 'mensaje' => preg_match('/valid API key|API key not valid|API_KEY_INVALID|respondió (400|401|403)|PERMISSION_DENIED/i', $texto)
+                ? 'Google no reconoce esa clave. Copiala de nuevo desde ' . Ia::URL_CLAVE
+                : 'No se pudo probar la clave: ' . mb_substr($texto, 0, 160)];
+        }
     }
 
     private function valoresPorDefecto(): array
@@ -94,7 +160,7 @@ class CobranzaController extends Controller
         return standardApiReponse('OK', [
             'activa'        => (bool) ($cfg->exists && $cfg->activa),
             'modo'          => $cfg->modo ?? 'manual',
-            'ia_disponible' => Ia::disponible(),
+            'ia_disponible' => Ia::disponible($companyId),
             'detectados'    => (int) ($cuenta['detectado'] ?? 0),
             'escalados'     => (int) ($cuenta['escalado'] ?? 0),
             'en_curso'      => (int) collect(['autorizado', 'contactado', 'negociando', 'acuerdo'])->sum(fn ($e) => $cuenta[$e] ?? 0),
@@ -165,12 +231,17 @@ class CobranzaController extends Controller
             return standardApiReponse('Este caso ya no está esperando autorización.', null, 1, JsonResponse::HTTP_OK);
         }
 
-        if (!Ia::disponible()) {
+        if (!Ia::disponible($this->empresa())) {
             return standardApiReponse('El asistente todavía no está conectado (falta la clave de la IA en el servidor).', null, 1, JsonResponse::HTTP_OK);
         }
 
         $caso->fill(['estado' => 'autorizado', 'autorizado_por' => getSessionUserId(), 'autorizado_en' => now(), 'visto' => true])->save();
         $cfg = CobranzaConfig::deEmpresa($this->empresa());
+
+        if (!\App\Services\Cobranza\UsoIa::puedeEmpezar($this->empresa())) {
+            return standardApiReponse('Autorizado, pero hoy ya se usaron las ' . Ia::LIMITE_PRUEBA . ' conversaciones de prueba con la IA de Netvula: '
+                . 'le escribe mañana. Para no tener límite, conectá tu propia clave de Google en Cobranza inteligente.', $caso, 0, JsonResponse::HTTP_OK);
+        }
 
         // En horario se le escribe ya (después de contestarle al panel); si
         // no, en la próxima revisión dentro del horario.

@@ -15,13 +15,24 @@ class CobranzaConfig extends Model
         'descuento_max_pct', 'descuento_dias', 'cuotas_max', 'plazo_max_dias', 'compromiso_suspende',
         'hora_desde', 'hora_hasta', 'dias', 'max_contactos_dia', 'recordatorios', 'horas_entre_recordatorios',
         'nombre_asistente', 'instrucciones', 'wa_linea_id',
+        'ia_clave', 'ia_modelos',
     ];
 
+    /** La clave de Google de la empresa nunca sale en una respuesta. */
+    protected $hidden = ['ia_clave'];
+
     protected $casts = [
+        'ia_clave'            => 'encrypted',
         'activa'              => 'boolean',
         'compromiso_suspende' => 'boolean',
         'min_monto'           => 'float',
     ];
+
+    /** ¿La empresa usa su propia clave de Google? */
+    public function tieneClavePropia(): bool
+    {
+        return trim((string) $this->ia_clave) !== '';
+    }
 
     public static function deEmpresa(int $companyId): self
     {

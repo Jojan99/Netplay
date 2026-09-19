@@ -30,12 +30,35 @@ abstract class Ia
         return (string) config('services.cobranza_ia.proveedor', 'compatible') === 'anthropic' ? 'anthropic' : 'compatible';
     }
 
-    public static function disponible(): bool
+    /** Sin empresa: la de Netvula. Con empresa: la suya si la conectó, o la de Netvula. */
+    public static function disponible(?int $companyId = null): bool
     {
+        if ($companyId && \App\Models\CobranzaConfig::deEmpresa($companyId)->tieneClavePropia()) {
+            return true;
+        }
+
         return self::proveedor() === 'anthropic'
             ? (string) config('services.anthropic.key') !== ''
             : (string) config('services.cobranza_ia.key') !== '';
     }
+
+    /** La IA que usa esa empresa: su propia clave de Google, o la de Netvula. */
+    public static function para(int $companyId): self
+    {
+        $cfg = \App\Models\CobranzaConfig::deEmpresa($companyId);
+
+        if ($cfg->tieneClavePropia()) {
+            return new IaCompatible((string) $cfg->ia_clave, null, $cfg->ia_modelos ?: null);
+        }
+
+        return self::crear();
+    }
+
+    /** Las 10 conversaciones diarias de prueba con la clave de Netvula. */
+    public const LIMITE_PRUEBA = 10;
+
+    public const URL_CLAVE = 'https://aistudio.google.com/apikey';
+    public const URL_LIMITES = 'https://aistudio.google.com/rate-limit';
 
     /**
      * Límite o demanda alta (429, 5xx, sin conexión): se espera y se reintenta
