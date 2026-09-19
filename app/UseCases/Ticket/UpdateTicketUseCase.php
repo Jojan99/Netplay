@@ -11,7 +11,7 @@ use App\Repositories\Interfaces\FacturationRepositoryInterface;
 use App\Repositories\Interfaces\TicketRepositoryInterface;
 use App\Repositories\Interfaces\UserRepositoryInterface;
 use App\Resources\TemplatesEmail\TemplateEmailPay;
-use App\Services\NotificationRouterService;
+use App\Services\Avisos\MensajeDeAviso;
 use App\Services\WhatsAppService;
 use App\UseCases\Facturation\Interfaces\CreatePaidFacturationUseCaseInterface;
 use App\UseCases\GeneratePdf\Interfaces\GeneratePdfReceiptByIdUseCaseInterface;
@@ -59,28 +59,25 @@ class UpdateTicketUseCase implements UpdateTicketUseCaseInterface
                 // $dataUser = $this->userRepositoryInterface->getUserById($data['']);
                 // $data['log_id'] = getSessionUserId();
 
-                $hora = now()->format('H:i');
+                $aviso = null;
+
                 if ($data['status'] == 1) {
-                    $message =
-                        "🟡 *TICKET EN CURSO*\n\n" .
-                        "🆔 *ID Ticket:* {$data['id']} - {$data['tech_names']}\n\n" .
-                        "⏰ *Hora de inicio:* {$hora}\n\n" .
-                        "⚙️ El técnico ha *iniciado* el ticket";
+                    $aviso = MensajeDeAviso::nuevo('Ticket en curso', getSessionCompanyId(), '🟡')
+                        ->dato('Ticket', "#{$data['id']}")
+                        ->dato('Cliente', $data['names_client'] ?? null)
+                        ->dato('Técnico', $data['tech_names'] ?? null)
+                        ->fecha('Inicio', $data['started_at'] ?? now())
+                        ->cierre('El técnico ya está atendiendo el ticket.');
                 } elseif ($data['status'] == 2) {
-                    $message =
-                        "🟢 *TICKET FINALIZADO*\n\n" .
-                        "🆔 *ID Ticket:* {$data['id']} - {$data['tech_names']}\n\n" .
-                        "⏰ *Hora de cierre:* {$hora}\n\n" .
-                        "⚙️ El técnico ha *finalizado* el ticket";
+                    $aviso = MensajeDeAviso::nuevo('Ticket finalizado', getSessionCompanyId(), '🟢')
+                        ->dato('Ticket', "#{$data['id']}")
+                        ->dato('Cliente', $data['names_client'] ?? null)
+                        ->dato('Técnico', $data['tech_names'] ?? null)
+                        ->fecha('Cierre', $data['finished_at'] ?? now())
+                        ->cierre('El técnico dio el ticket por finalizado.');
                 }
 
-                if (!empty($message)) {
-                    NotificationRouterService::dispatch(
-                        getSessionCompanyId(),
-                        'ticket_status_change',
-                        $message
-                    );
-                }
+                $aviso?->enviar('ticket_status_change');
 
                 $this->ticketRepositoryInterface->updateTicket($data);
                 // $this->TemplateEmailPay->EmailPay($dataUser,$data['price_total'],$data['number_facture']);

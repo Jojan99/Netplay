@@ -20,6 +20,48 @@ class EmployeeController extends Controller
         return response()->json(['status' => 1, 'message' => $msg, 'data' => null]);
     }
 
+    /**
+     * Traduce el error técnico a algo que se pueda mostrar en pantalla: antes
+     * salía el texto crudo de MySQL, en inglés y con la consulta adentro.
+     */
+    private function enCristiano(\Throwable $e): string
+    {
+        if ($e instanceof \Illuminate\Validation\ValidationException) {
+            return (string) collect($e->errors())->flatten()->first();
+        }
+
+        if ($e instanceof \Illuminate\Database\QueryException) {
+            $texto  = $e->getMessage();
+            $codigo = (string) ($e->errorInfo[1] ?? '');
+
+            if ($codigo === '1062') {
+                if (str_contains($texto, 'dni'))   return 'Ya hay un empleado con esa cédula en la empresa.';
+                if (str_contains($texto, 'email')) return 'Ya hay un empleado con ese correo en la empresa.';
+                return 'Ese dato ya está registrado en otro empleado.';
+            }
+
+            if ($codigo === '1048') {
+                return 'Faltan datos obligatorios: revisá nombre, apellido y cédula.';
+            }
+
+            if ($codigo === '1452') {
+                return 'El dato que elegiste ya no existe (usuario, cargo o empleado). Recargá la pantalla e intentá de nuevo.';
+            }
+
+            \Illuminate\Support\Facades\Log::error('Empleados: ' . $texto);
+
+            return 'No se pudo guardar. Revisá los datos e intentá de nuevo.';
+        }
+
+        if ($e instanceof \Illuminate\Database\Eloquent\ModelNotFoundException) {
+            return 'No se encontró el registro: puede que otra persona lo haya borrado.';
+        }
+
+        \Illuminate\Support\Facades\Log::error('Empleados: ' . $e->getMessage());
+
+        return 'Ocurrió un error al procesar la solicitud. Intentá de nuevo; si sigue igual, avisale al soporte de Netvula.';
+    }
+
     // ── Empleados ─────────────────────────────────────────────────────────────
 
     public function index(Request $request): JsonResponse
@@ -27,7 +69,7 @@ class EmployeeController extends Controller
         try {
             return $this->ok($this->repo->getAll($request->only('search', 'active')));
         } catch (\Throwable $e) {
-            return $this->err($e->getMessage());
+            return $this->err($this->enCristiano($e));
         }
     }
 
@@ -36,7 +78,7 @@ class EmployeeController extends Controller
         try {
             return $this->ok($this->repo->getAvailableStaff());
         } catch (\Throwable $e) {
-            return $this->err($e->getMessage());
+            return $this->err($this->enCristiano($e));
         }
     }
 
@@ -45,7 +87,7 @@ class EmployeeController extends Controller
         try {
             return $this->ok($this->repo->getById($id));
         } catch (\Throwable $e) {
-            return $this->err($e->getMessage());
+            return $this->err($this->enCristiano($e));
         }
     }
 
@@ -67,7 +109,7 @@ class EmployeeController extends Controller
                 'user_id','first_name','last_name','dni','email','phone','address','job_title','start_date','birthday','active'
             )), 'Empleado creado.');
         } catch (\Throwable $e) {
-            return $this->err($e->getMessage());
+            return $this->err($this->enCristiano($e));
         }
     }
 
@@ -78,7 +120,7 @@ class EmployeeController extends Controller
                 'first_name','last_name','dni','email','phone','address','job_title','start_date','birthday','active'
             )), 'Empleado actualizado.');
         } catch (\Throwable $e) {
-            return $this->err($e->getMessage());
+            return $this->err($this->enCristiano($e));
         }
     }
 
@@ -88,7 +130,7 @@ class EmployeeController extends Controller
             $this->repo->delete($id);
             return $this->ok(null, 'Empleado eliminado.');
         } catch (\Throwable $e) {
-            return $this->err($e->getMessage());
+            return $this->err($this->enCristiano($e));
         }
     }
 
@@ -101,7 +143,7 @@ class EmployeeController extends Controller
                 'type','duration_months','salary','start_date','end_date'
             )), 'Contrato guardado.');
         } catch (\Throwable $e) {
-            return $this->err($e->getMessage());
+            return $this->err($this->enCristiano($e));
         }
     }
 
@@ -114,7 +156,7 @@ class EmployeeController extends Controller
                 'arl','eps','pension_fund','compensation_fund'
             )), 'Afiliaciones guardadas.');
         } catch (\Throwable $e) {
-            return $this->err($e->getMessage());
+            return $this->err($this->enCristiano($e));
         }
     }
 
@@ -127,7 +169,7 @@ class EmployeeController extends Controller
                 'bank_name','account_type','account_number'
             )), 'Cuenta bancaria guardada.');
         } catch (\Throwable $e) {
-            return $this->err($e->getMessage());
+            return $this->err($this->enCristiano($e));
         }
     }
 
@@ -136,7 +178,7 @@ class EmployeeController extends Controller
     public function getEquipment($id): JsonResponse
     {
         try { return $this->ok($this->repo->getEquipment($id)); }
-        catch (\Throwable $e) { return $this->err($e->getMessage()); }
+        catch (\Throwable $e) { return $this->err($this->enCristiano($e)); }
     }
 
     public function createEquipment($id, Request $request): JsonResponse
@@ -145,7 +187,7 @@ class EmployeeController extends Controller
             return $this->ok($this->repo->createEquipment($id, $request->only(
                 'name','description','serial','condition','assigned_at','returned_at'
             )), 'Dotación registrada.');
-        } catch (\Throwable $e) { return $this->err($e->getMessage()); }
+        } catch (\Throwable $e) { return $this->err($this->enCristiano($e)); }
     }
 
     public function updateEquipment($id, $eqId, Request $request): JsonResponse
@@ -154,13 +196,13 @@ class EmployeeController extends Controller
             return $this->ok($this->repo->updateEquipment($id, $eqId, $request->only(
                 'name','description','serial','condition','assigned_at','returned_at'
             )), 'Dotación actualizada.');
-        } catch (\Throwable $e) { return $this->err($e->getMessage()); }
+        } catch (\Throwable $e) { return $this->err($this->enCristiano($e)); }
     }
 
     public function deleteEquipment($id, $eqId): JsonResponse
     {
         try { $this->repo->deleteEquipment($id, $eqId); return $this->ok(null, 'Dotación eliminada.'); }
-        catch (\Throwable $e) { return $this->err($e->getMessage()); }
+        catch (\Throwable $e) { return $this->err($this->enCristiano($e)); }
     }
 
     // ── Descargos ─────────────────────────────────────────────────────────────
@@ -168,7 +210,7 @@ class EmployeeController extends Controller
     public function getDisciplinary($id): JsonResponse
     {
         try { return $this->ok($this->repo->getDisciplinary($id)); }
-        catch (\Throwable $e) { return $this->err($e->getMessage()); }
+        catch (\Throwable $e) { return $this->err($this->enCristiano($e)); }
     }
 
     public function createDisciplinary($id, Request $request): JsonResponse
@@ -177,7 +219,7 @@ class EmployeeController extends Controller
             return $this->ok($this->repo->createDisciplinary($id, $request->only(
                 'incident_date','reason','description','resolution'
             )), 'Descargo registrado.');
-        } catch (\Throwable $e) { return $this->err($e->getMessage()); }
+        } catch (\Throwable $e) { return $this->err($this->enCristiano($e)); }
     }
 
     public function updateDisciplinary($id, $recId, Request $request): JsonResponse
@@ -186,13 +228,13 @@ class EmployeeController extends Controller
             return $this->ok($this->repo->updateDisciplinary($id, $recId, $request->only(
                 'incident_date','reason','description','resolution'
             )), 'Descargo actualizado.');
-        } catch (\Throwable $e) { return $this->err($e->getMessage()); }
+        } catch (\Throwable $e) { return $this->err($this->enCristiano($e)); }
     }
 
     public function deleteDisciplinary($id, $recId): JsonResponse
     {
         try { $this->repo->deleteDisciplinary($id, $recId); return $this->ok(null, 'Descargo eliminado.'); }
-        catch (\Throwable $e) { return $this->err($e->getMessage()); }
+        catch (\Throwable $e) { return $this->err($this->enCristiano($e)); }
     }
 
     // ── Nómina ────────────────────────────────────────────────────────────────
@@ -200,7 +242,7 @@ class EmployeeController extends Controller
     public function getPayrolls($id): JsonResponse
     {
         try { return $this->ok($this->repo->getPayrolls($id)); }
-        catch (\Throwable $e) { return $this->err($e->getMessage()); }
+        catch (\Throwable $e) { return $this->err($this->enCristiano($e)); }
     }
 
     public function createPayroll($id, Request $request): JsonResponse
@@ -209,7 +251,7 @@ class EmployeeController extends Controller
             return $this->ok($this->repo->createPayroll($id, $request->only(
                 'period','base_salary','bonuses','deductions','total_paid','payment_date','payment_method','notes'
             )), 'Pago de nómina registrado.');
-        } catch (\Throwable $e) { return $this->err($e->getMessage()); }
+        } catch (\Throwable $e) { return $this->err($this->enCristiano($e)); }
     }
 
     public function updatePayroll($id, $payId, Request $request): JsonResponse
@@ -218,13 +260,13 @@ class EmployeeController extends Controller
             return $this->ok($this->repo->updatePayroll($id, $payId, $request->only(
                 'period','base_salary','bonuses','deductions','total_paid','payment_date','payment_method','notes'
             )), 'Nómina actualizada.');
-        } catch (\Throwable $e) { return $this->err($e->getMessage()); }
+        } catch (\Throwable $e) { return $this->err($this->enCristiano($e)); }
     }
 
     public function deletePayroll($id, $payId): JsonResponse
     {
         try { $this->repo->deletePayroll($id, $payId); return $this->ok(null, 'Nómina eliminada.'); }
-        catch (\Throwable $e) { return $this->err($e->getMessage()); }
+        catch (\Throwable $e) { return $this->err($this->enCristiano($e)); }
     }
 
     // ── Ubicación en tiempo real ───────────────────────────────────────
@@ -235,6 +277,13 @@ class EmployeeController extends Controller
             $request->validate([
                 'latitude'  => 'required|numeric|between:-90,90',
                 'longitude' => 'required|numeric|between:-180,180',
+            ], [
+                'latitude.required'  => 'Falta la latitud de la ubicación.',
+                'longitude.required' => 'Falta la longitud de la ubicación.',
+                'latitude.numeric'   => 'La latitud no es válida.',
+                'longitude.numeric'  => 'La longitud no es válida.',
+                'latitude.between'   => 'La latitud está fuera de rango.',
+                'longitude.between'  => 'La longitud está fuera de rango.',
             ]);
 
             return $this->ok(
@@ -242,7 +291,7 @@ class EmployeeController extends Controller
                 'Ubicación actualizada.'
             );
         } catch (\Throwable $e) {
-            return $this->err($e->getMessage());
+            return $this->err($this->enCristiano($e));
         }
     }
 
@@ -253,7 +302,7 @@ class EmployeeController extends Controller
                 $request->only('job_title', 'last_update_minutes')
             ));
         } catch (\Throwable $e) {
-            return $this->err($e->getMessage());
+            return $this->err($this->enCristiano($e));
         }
     }
 
@@ -279,6 +328,13 @@ class EmployeeController extends Controller
             $request->validate([
                 'latitude'  => 'required|numeric|between:-90,90',
                 'longitude' => 'required|numeric|between:-180,180',
+            ], [
+                'latitude.required'  => 'Falta la latitud de la ubicación.',
+                'longitude.required' => 'Falta la longitud de la ubicación.',
+                'latitude.numeric'   => 'La latitud no es válida.',
+                'longitude.numeric'  => 'La longitud no es válida.',
+                'latitude.between'   => 'La latitud está fuera de rango.',
+                'longitude.between'  => 'La longitud está fuera de rango.',
             ]);
 
             $lat = (float) $request->input('latitude');
@@ -298,7 +354,7 @@ class EmployeeController extends Controller
 
             return $this->ok($result, 'Ubicación actualizada.');
         } catch (\Throwable $e) {
-            return $this->err($e->getMessage());
+            return $this->err($this->enCristiano($e));
         }
     }
 }

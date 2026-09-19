@@ -12,7 +12,7 @@ use App\Http\Requests\Facturation\GetDateFacturePendingnRequest;
 use App\Models\UserData;
 use App\Repositories\Interfaces\FacturationRepositoryInterface;
 use App\Services\WhatsAppService;
-use App\Services\NotificationRouterService;
+use App\Services\Avisos\MensajeDeAviso;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
@@ -541,12 +541,16 @@ class FacturationRepository implements FacturationRepositoryInterface
         ]);
 
        // $this->notifyPayment($det->cab_id, $clientName, $det->number_facture, $amount, $isPaid ? 'completo' : 'abono');
-        $typeLabel = $isPaid ? 'Pago completo' : 'Abono';
-        NotificationRouterService::dispatch(
-            getSessionCompanyId(),
-            'payment',
-            "💰 *{$typeLabel} registrado*\n\nCliente: *{$clientName}*\nFactura: *{$det->number_facture}*\nValor: *$" . number_format($amount, 0, ',', '.') . " COP*"
-        );
+        $saldoNuevo = max(0, ($det->price_total - $det->price_discount) - $newAbone);
+
+        MensajeDeAviso::nuevo($isPaid ? 'Pago registrado' : 'Abono registrado', getSessionCompanyId(), '💰')
+            ->dato('Cliente', $clientName)
+            ->dato('Factura', $det->number_facture)
+            ->dinero('Valor recibido', $amount)
+            ->dinero($isPaid ? 'Total de la factura' : 'Saldo pendiente', $isPaid ? ($det->price_total - $det->price_discount) : $saldoNuevo)
+            ->dato('Estado', $isPaid ? 'Factura al día' : 'Factura con saldo')
+            ->fecha('Registrado', now())
+            ->enviar('payment');
 
         return true;
     }

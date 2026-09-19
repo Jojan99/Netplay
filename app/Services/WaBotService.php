@@ -1128,6 +1128,14 @@ class WaBotService
             throw $exception;
         }
 
+        // Aviso interno: al destino que la empresa eligió en Avisos y destinos.
+        \App\Services\Crm\ComprobanteWhatsAppWeb::avisar(
+            (int) $company->id,
+            trim(($client->names ?? '') . ' ' . ($client->lastname ?? '')) ?: ('Cliente #' . $client->id),
+            $proofRecord,
+            'bot de WhatsApp'
+        );
+
         if (!$details['payment_date'] || !$reference) {
             $missingFields = [];
             if (!$details['payment_date']) {

@@ -31,6 +31,13 @@ class OltTelnetWorker extends Command
 
     private const IDLE_TIMEOUT  = 300; // segundos — cierra la sesión tras 5 min sin comandos
     private const HEARTBEAT_TTL = 15;  // TTL del heartbeat en Redis
+
+    /**
+     * Lo máximo que puede tardar un comando antes de darlo por colgado. Pasado
+     * ese tiempo se corta y se cierra la sesión: la OLT sólo admite unas pocas
+     * y una sesión colgada las va agotando.
+     */
+    private const LIMITE_COMANDO = 200;
     // Más largo que el comando más lento: con 30 s, un comando de un minuto
     // dejaba vencer el lock y arrancaba un segundo worker con su propia
     // sesión, hasta agotar los cupos de la OLT.
@@ -156,7 +163,18 @@ class OltTelnetWorker extends Command
 
             try {
                 $this->ensureConnected($oltId, $factory);
+
+                // Mientras dura el comando no se puede publicar el latido: si
+                // uno se colgaba, el latido vencía a los 15 s, el dispatcher
+                // creía que no había worker y arrancaba otro, que abría otra
+                // sesión. Con dos o tres así la OLT se queda sin cupos. Se
+                // alarga el latido a lo que puede tardar el comando y se corta
+                // por tiempo, para soltar la sesión en vez de quedar colgado.
+                Redis::setex("olt:{$oltId}:worker_alive", self::LIMITE_COMANDO + 30, '1');
+                $this->armarCorte($oltId, $command['method']);
+
                 $data = $this->executeCommand($command);
+                $this->desarmarCorte();
                 Redis::rpush($resultKey, json_encode(['success' => true, 'data' => $data]));
 
                 // Si la lectura terminó sin llegar al prompt, la sesión quedó
@@ -172,6 +190,7 @@ class OltTelnetWorker extends Command
                     $this->lastWriteAt = microtime(true);
                 }
             } catch (\Throwable $e) {
+                $this->desarmarCorte();
                 Log::error("OLT Worker #{$oltId}: error en {$command['method']}", ['error' => $e->getMessage()]);
                 $this->disconnect($oltId); // resetear estado para forzar reconexión
                 Redis::rpush($resultKey, json_encode(['success' => false, 'error' => $e->getMessage()]));
@@ -194,7 +213,16 @@ class OltTelnetWorker extends Command
 
         $this->connection = $factory->connect($olt);
 
-        $this->driver = FabricaDeDrivers::para($olt, $this->connection);
+        // Si la OLT rechaza la sesión (sin cupos, o pidiendo usuario otra vez),
+        // el driver lanza en su constructor. Sin cerrar acá, el socket quedaba
+        // abierto ocupando uno de los pocos cupos que tiene el equipo.
+        try {
+            $this->driver = FabricaDeDrivers::para($olt, $this->connection);
+        } catch (\Throwable $e) {
+            $this->disconnect($oltId);
+
+            throw $e;
+        }
 
         Log::info("OLT Worker #{$oltId}: sesión Telnet establecida");
         $this->info("OLT #{$oltId}: sesión abierta");
@@ -236,6 +264,33 @@ class OltTelnetWorker extends Command
     private function publishHeartbeat(int $oltId): void
     {
         Redis::setex("olt:{$oltId}:worker_alive", self::HEARTBEAT_TTL, '1');
+    }
+
+    /**
+     * Corta un comando que se quedó colgado (la OLT dejó de responder, o pidió
+     * algo que nadie contesta). Sin esto el worker se quedaba esperando para
+     * siempre con la sesión tomada.
+     */
+    private function armarCorte(int $oltId, string $metodo): void
+    {
+        if (!function_exists('pcntl_alarm')) {
+            return;
+        }
+
+        pcntl_signal(SIGALRM, function () use ($oltId, $metodo) {
+            Log::warning("OLT Worker #{$oltId}: {$metodo} pasó de " . self::LIMITE_COMANDO . 's, se corta y se cierra la sesión');
+
+            throw new \RuntimeException('La OLT no respondió a tiempo: se cerró la sesión para no dejarla tomada.');
+        });
+
+        pcntl_alarm(self::LIMITE_COMANDO);
+    }
+
+    private function desarmarCorte(): void
+    {
+        if (function_exists('pcntl_alarm')) {
+            pcntl_alarm(0);
+        }
     }
 
     /** Mantiene el lock mientras este worker sigue vivo. */
@@ -321,6 +376,11 @@ class OltTelnetWorker extends Command
         $method = $command['method'];
         $p      = $command['params'] ?? [];
 
+        // ZTE: el tipo de ONU elegido en el alta (el modelo real).
+        if ($method === 'registerONT' && !empty($p['onu_type']) && method_exists($this->driver, 'usarTipoOnu')) {
+            $this->driver->usarTipoOnu((string) $p['onu_type']);
+        }
+
         return match ($method) {
             'getVersion'        => $this->driver->getVersion(),
             'getUnauthONTs'     => $this->driver->getUnauthONTs(),
@@ -385,7 +445,8 @@ class OltTelnetWorker extends Command
                                        ? $this->driver->darGestionAOnt($p['fsp'], (int) $p['ont_id'], (int) $p['vlan'], (int) $p['service_port'],
                                            // Igual que en OltTelnetDispatcher (conexión directa): sin esto
                                            // la opción de pisar conexiones ajenas no llegaba al driver.
-                                           array_map('intval', (array) ($p['vlans_cliente'] ?? [])), (bool) ($p['pisar_ajenas'] ?? false)) : null,
+                                           array_map('intval', (array) ($p['vlans_cliente'] ?? [])), (bool) ($p['pisar_ajenas'] ?? false),
+                                           (bool) ($p['aunque_tenga_tr069'] ?? false)) : null,
             'perfilDeOnt'       => method_exists($this->driver, 'perfilDeOnt')
                                        ? $this->driver->perfilDeOnt((string) $p['fsp'], (int) $p['ont_id']) : null,
             'perfilesDeLinea'   => method_exists($this->driver, 'perfilesDeLinea')
@@ -400,6 +461,10 @@ class OltTelnetWorker extends Command
                                        ? $this->driver->asignarServidorTr069((string) $p['fsp'], (int) $p['ont_id'], (int) $p['perfil'], $p['url'] ?? null, $p['usuario'] ?? null, $p['clave'] ?? null) : null,
             'reiniciarOnt'      => method_exists($this->driver, 'reiniciarOnt')
                                        ? $this->driver->reiniciarOnt((string) $p['fsp'], (int) $p['ont_id']) : null,
+            'opticaDeOnt'       => method_exists($this->driver, 'opticaDeOnt')
+                                       ? $this->driver->opticaDeOnt((string) $p['fsp'], (int) $p['ont_id']) : [],
+            'potenciasDelPuerto' => method_exists($this->driver, 'potenciasDelPuerto')
+                                       ? $this->driver->potenciasDelPuerto((string) $p['fsp']) : [],
             'equipoDeOnt'       => method_exists($this->driver, 'equipoDeOnt')
                                        ? $this->driver->equipoDeOnt($p['fsp'], (int) $p['ont_id']) : [],
             'autoAutorizacion'  => method_exists($this->driver, 'autoAutorizacion')

@@ -28,7 +28,18 @@ class RouteServiceProvider extends ServiceProvider
         $this->configureRateLimiting();
        
         $this->routes(function () {
-            Route::middleware('api', 'jwt.verify')
+            // La consola de Netvula: su propio dominio, su propio ingreso y su
+            // propio token. Va primero y aparte: no pasa por jwt.verify, que es
+            // el del panel de las empresas.
+            Route::middleware('api')
+                ->prefix('api')
+                ->group(function () {
+                    require base_path('routes/api/consolaRoutes.php');
+                });
+
+            // Todo lo demás es el panel de empresas, su portal y sus páginas
+            // públicas: en la dirección de la consola no existe (404).
+            Route::middleware('api', 'fuera.consola', 'jwt.verify')
                 ->prefix('api')
                 ->namespace('App\Http\Controllers')
                 ->group(function () {
@@ -45,6 +56,7 @@ class RouteServiceProvider extends ServiceProvider
                     require base_path('routes/api/managementRouterRoutes.php');
                     require base_path('routes/api/egresosRoutes.php');
                     require base_path('routes/api/carteraRoutes.php');
+                    require base_path('routes/api/cobranzaRoutes.php');
                     require base_path('routes/api/atajosRoutes.php');
                     require base_path('routes/api/ticketRoutes.php');
                     require base_path('routes/api/broadcastingRoutes.php');
@@ -63,14 +75,14 @@ class RouteServiceProvider extends ServiceProvider
                 });
 
             // Pasarela de pago: config (jwt.verify+role) + webhooks + checkout ePayco (públicos)
-            Route::middleware('api')
+            Route::middleware('api', 'fuera.consola')
                 ->prefix('api')
                 ->group(function () {
                     require base_path('routes/api/paymentGatewayRoutes.php');
                 });
 
             // Contratos: sign-token es público (sin JWT), el resto usa jwt.verify interno
-            Route::middleware('api')
+            Route::middleware('api', 'fuera.consola')
                 ->prefix('api')
                 ->namespace('App\Http\Controllers')
                 ->group(function () {
@@ -79,7 +91,7 @@ class RouteServiceProvider extends ServiceProvider
 
             // Portal de cliente: rutas públicas (login) y protegidas (jwt.client)
             // El middleware jwt.client se aplica internamente por grupo en clientRoutes.php
-            Route::middleware('api')
+            Route::middleware('api', 'fuera.consola')
                 ->prefix('api')
                 ->group(function () {
                     require base_path('routes/api/clientRoutes.php');
@@ -88,13 +100,13 @@ class RouteServiceProvider extends ServiceProvider
             // Landing page pública: GET /api/landing/{slug} sin JWT.
             // Las rutas /api/landing-admin/* tienen jwt.verify via el grupo principal arriba
             // y role:admin aplicado internamente en landingRoutes.php.
-            Route::middleware('api')
+            Route::middleware('api', 'fuera.consola')
                 ->prefix('api')
                 ->group(function () {
                     require base_path('routes/api/landingRoutes.php');
                 });
 
-            Route::middleware('web')
+            Route::middleware('web', 'fuera.consola')
                 ->group(base_path('routes/web.php'));
         });
     }

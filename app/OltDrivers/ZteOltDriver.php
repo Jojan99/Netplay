@@ -27,10 +27,16 @@ class ZteOltDriver extends DriverBase
     /** Perfil de tráfico (tcont) que se aplica al activar el servicio. */
     private string $perfilDba;
 
+    private int $oltId;
+
+    /** Tipo de ONU elegido para la próxima alta (se usa una vez). */
+    private ?string $tipoPedido = null;
+
     public function __construct(object $ssh, array $config)
     {
         $this->tipoOnu   = ($config['zte_onu_type'] ?? '') ?: 'ALL';
         $this->perfilDba = (string) ($config['zte_dba_profile'] ?? '');
+        $this->oltId     = (int) ($config['id'] ?? 0);
 
         parent::__construct($ssh, $config);
     }
@@ -78,7 +84,7 @@ class ZteOltDriver extends DriverBase
     /** De "gpon-onu_1/2/1:4" saca ["1/2/1", 4]. */
     private function leerNombre(string $nombre): array
     {
-        if (preg_match('#_(\d+/\d+/\d+)(?::(\d+))?#', $nombre, $m)) {
+        if (preg_match('#(?:_|^)(\d+/\d+/\d+)(?::(\d+))?#', trim($nombre), $m)) {
             return [$m[1], isset($m[2]) ? (int) $m[2] : 0];
         }
 
@@ -144,18 +150,27 @@ class ZteOltDriver extends DriverBase
         $salida = $this->cmd('show gpon onu state', 60);
         $onts   = $this->leerEstado($salida);
 
-        // El estado no trae el serial; se completa con la tabla de baseinfo,
-        // que sí lo lista, cuando el firmware la soporta.
+        // El estado no trae el serial; se completa con la tabla de baseinfo.
+        // Unos firmware la dan entera; otros (C320 de skartelecon) responden
+        // «Incomplete command» y hay que pedirla puerto por puerto.
         $base = $this->cmd('show gpon onu baseinfo', 60);
+        $seriales = $this->fallo($base) ? [] : $this->leerSeriales($base);
 
-        if (!$this->fallo($base)) {
-            $seriales = $this->leerSeriales($base);
+        if (!$seriales) {
+            foreach (array_unique(array_column($onts, 'fsp')) as $puerto) {
+                $dePuerto = $this->cmd("show gpon onu baseinfo gpon-olt_{$puerto}", 60);
 
-            foreach ($onts as &$ont) {
-                $clave = $ont['fsp'] . ':' . $ont['ont_id'];
-                $ont['serial'] = $seriales[$clave] ?? $ont['serial'];
+                if (!$this->fallo($dePuerto)) {
+                    $seriales += $this->leerSeriales($dePuerto);
+                }
             }
         }
+
+        foreach ($onts as &$ont) {
+            $clave = $ont['fsp'] . ':' . $ont['ont_id'];
+            $ont['serial'] = $seriales[$clave] ?? $ont['serial'];
+        }
+        unset($ont);
 
         return $onts;
     }
@@ -163,13 +178,16 @@ class ZteOltDriver extends DriverBase
     /**
      *   OnuIndex            Admin State    OMCC State   Phase State
      *   gpon-onu_1/1/1:1    enable         enable       working
+     *
+     * La C320 de skartelecon lo da sin prefijo:
+     *   1/1/1:1     enable       enable      working      1(GPON)
      */
     private function leerEstado(string $salida): array
     {
         $onts = [];
 
         foreach (preg_split('/\r?\n/', $salida) as $linea) {
-            if (!preg_match('/^\s*(gpon-onu_\S+)\s+(\S+)\s+(\S+)\s+(\S+)/i', $linea, $m)) {
+            if (!preg_match('#^\s*((?:gpon-onu_)?\d+/\d+/\d+:\d+)\s+(\S+)\s+(\S+)\s+(\S+)#i', $linea, $m)) {
                 continue;
             }
 
@@ -201,12 +219,14 @@ class ZteOltDriver extends DriverBase
         $seriales = [];
 
         foreach (preg_split('/\r?\n/', $salida) as $linea) {
-            if (!preg_match('/^\s*(gpon-onu_\S+)\s+(\S+)/i', $linea, $m)) {
+            if (!preg_match('#^\s*((?:gpon-onu_)?\d+/\d+/\d+:\d+)\s+(\S+)#i', $linea, $m)) {
                 continue;
             }
 
             [$fsp, $ontId] = $this->leerNombre($m[1]);
-            $serial = strtoupper(trim($m[2]));
+            // Con columna AuthInfo el serial es el que va después de «SN:»; el
+            // segundo campo ahí es el tipo de ONU («ALL», «F601»…).
+            $serial = strtoupper(trim(preg_match('/\bSN:(\S+)/i', $linea, $sn) ? $sn[1] : $m[2]));
 
             if ($fsp !== '' && preg_match('/^[A-Z0-9]{8,20}$/', $serial)) {
                 $seriales["{$fsp}:{$ontId}"] = $serial;
@@ -214,6 +234,99 @@ class ZteOltDriver extends DriverBase
         }
 
         return $seriales;
+    }
+
+    /**
+     * Potencia que recibe cada ONU de un puerto, en un solo comando (1,7 s por
+     * puerto en la C320 de skartelecon, contra ~0,5 s por ONU una por una):
+     *   Onu                 Rx power
+     *   gpon-onu_1/1/1:1    -21.192(dbm)
+     * Una ONU apagada sale sin número ("N/A"): queda sin potencia.
+     *
+     * @return list<array{fsp:string, ont_id:int, potencia:?float}>
+     */
+    public function potenciasDelPuerto(string $fsp): array
+    {
+        $salida = $this->cmd('show pon power onu-rx ' . $this->puerto($fsp), 60);
+        $filas = [];
+
+        foreach (preg_split('/\r?\n/', $salida) as $linea) {
+            if (!preg_match('#^\s*((?:gpon-onu_)?\d+/\d+/\d+:\d+)\s+(\S+)#i', $linea, $m)) {
+                continue;
+            }
+
+            [$puerto, $ontId] = $this->leerNombre($m[1]);
+            $valor = preg_match('/^(-?\d+(?:\.\d+)?)/', $m[2], $n) ? (float) $n[1] : null;
+
+            $filas[] = ['fsp' => $puerto, 'ont_id' => $ontId, 'potencia' => $valor];
+        }
+
+        return $filas;
+    }
+
+    /**
+     * El módulo óptico de una ONU (C320: «show gpon remote-onu interface pon»):
+     *   Rx optical level:            -21.136(dBm)
+     *   Tx optical level:            2.778(dBm)
+     *   Power feed voltage:          3.28(V)
+     *   Laser bias current:          16.116(mA)
+     *   Temperature:                 62.895(C)
+     * Uno por ONU (~1,3 s): para la ficha, no para medir la OLT entera.
+     *
+     * @return array{potencia:?float, tx:?float, voltaje:?float, corriente:?float, temperatura:?float}
+     */
+    public function opticaDeOnt(string $fsp, int $ontId): array
+    {
+        $salida = $this->cmd('show gpon remote-onu interface pon ' . $this->onu($fsp, $ontId), 30);
+        $leer = fn (string $etiqueta) => preg_match('/' . $etiqueta . '\s*:\s*(-?\d+(?:\.\d+)?)/i', $salida, $m) ? round((float) $m[1], 2) : null;
+
+        return [
+            'potencia'    => $leer('Rx optical level'),
+            'tx'          => $leer('Tx optical level'),
+            'voltaje'     => $leer('Power feed voltage'),
+            'corriente'   => $leer('Laser bias current'),
+            'temperatura' => $leer('Temperature'),
+        ];
+    }
+
+    /**
+     * Marca, modelo y versión de la ONU, para la tarjeta «Equipo ONT» de la
+     * ficha del cliente («show gpon remote-onu equip»):
+     *   Vendor ID:     SKYW
+     *   Version:       V1.0
+     *   Equipment ID:  GN630V
+     *   Model:         GN630V
+     * El WiFi no se lee desde aquí en ZTE.
+     */
+    public function equipoDeOnt(string $fsp, int $ontId): array
+    {
+        $salida = $this->cmd('show gpon remote-onu equip ' . $this->onu($fsp, $ontId), 30);
+
+        if ($this->fallo($salida)) {
+            return [];
+        }
+
+        $dato = fn (string $etiqueta) => preg_match('/^\s*' . $etiqueta . '\s*:\s*(.+?)\s*$/im', $salida, $m) && !in_array(strtoupper($m[1]), ['N/A', ''], true) ? $m[1] : null;
+        $modelo = $dato('Model') ?? $dato('Equipment ID');
+
+        if (!$modelo && !$dato('Vendor ID')) {
+            return [];
+        }
+
+        return [
+            'version' => [
+                'fabricante_id' => $dato('Vendor ID'),
+                'modelo'        => $modelo,
+                'modelo_ext'    => $dato('Equipment ID'),
+                'hardware'      => $dato('Version'),
+                'software'      => null,
+                'firmware'      => null,
+                'chipset'       => null,
+                'oui'           => null,
+            ],
+            'wifi_soportado' => false,
+            'wifi'           => null,
+        ];
     }
 
     public function getOntInfo(string $fsp, int $ontId): array
@@ -229,19 +342,29 @@ class ZteOltDriver extends DriverBase
             'status'       => str_contains(strtolower($detalle), 'working') ? 'online' : 'offline',
             'description'  => $this->dato($detalle, '/Name\s*:?\s*(.+)/i'),
             'distancia_m'  => $this->numero($detalle, '/Distance\s*:?\s*(-?[\d.]+)/i'),
-            'ont_rx'       => $this->numero($potencia, '/down\s*Rx\s*:?\s*(-?[\d.]+)/i')
+            // C320:  up    Rx :-24.437(dbm)   Tx:2.777(dbm)    (OLT recibe / ONU transmite)
+            //        down  Tx :6.450(dbm)     Rx:-21.192(dbm)  (OLT transmite / ONU recibe)
+            // En la línea "down" el Tx viene antes que el Rx: por eso se busca el
+            // Rx en cualquier parte de esa línea y no pegado a "down".
+            'ont_rx'       => $this->numero($potencia, '/^\s*down\b[^\n]*?\bRx\s*:?\s*(-?[\d.]+)/im')
                               ?? $this->numero($potencia, '/ONU\s*Rx\s*:?\s*(-?[\d.]+)/i'),
-            'olt_rx'       => $this->numero($potencia, '/up\s*Rx\s*:?\s*(-?[\d.]+)/i')
+            'olt_rx'       => $this->numero($potencia, '/^\s*up\b[^\n]*?\bRx\s*:?\s*(-?[\d.]+)/im')
                               ?? $this->numero($potencia, '/OLT\s*Rx\s*:?\s*(-?[\d.]+)/i'),
-            'ont_tx'       => $this->numero($potencia, '/up\s*Tx\s*:?\s*(-?[\d.]+)/i'),
+            'ont_tx'       => $this->numero($potencia, '/^\s*up\b[^\n]*?\bTx\s*:?\s*(-?[\d.]+)/im'),
             'raw'          => $detalle . "\n" . $potencia,
         ];
     }
 
     public function getServicePorts(?string $fsp = null, ?int $ontId = null): array
     {
-        if ($fsp === null) {
-            return [];
+        // Todos, o los de un puerto: en ZTE viven dentro de la configuración de
+        // cada ONU y no hay comando por puerto (la C320 de skartelecon rechaza
+        // «show service-port interface gpon-olt_…»). Se lee la configuración
+        // entera una vez: 620 ONT en ~20 s.
+        if ($ontId === null) {
+            $todos = $this->todosLosServicePorts();
+
+            return $fsp === null ? $todos : array_values(array_filter($todos, fn ($sp) => $sp['fsp'] === $fsp));
         }
 
         // En ZTE el service-port vive dentro de la interfaz de la ONU, así que
@@ -269,6 +392,49 @@ class ZteOltDriver extends DriverBase
         return $puertos;
     }
 
+    /**
+     * Los service-port de todas las ONU, de «show running-config»:
+     *   interface gpon-onu_1/1/1:1
+     *     service-port 1 vport 1 user-vlan 100 vlan 100
+     *   !
+     *
+     * @return list<array<string,mixed>>
+     */
+    private function todosLosServicePorts(): array
+    {
+        $salida = $this->cmd('show running-config', 150);
+        $puertos = [];
+        $onu = null;
+
+        foreach (preg_split('/\r?\n/', $salida) as $linea) {
+            if (preg_match('#^\s*interface\s+gpon-onu_(\d+/\d+/\d+):(\d+)#i', $linea, $m)) {
+                $onu = [$m[1], (int) $m[2]];
+                continue;
+            }
+
+            if (preg_match('/^\s*(!|interface\s)/i', $linea)) {
+                $onu = null;
+                continue;
+            }
+
+            if ($onu && preg_match('/service-port\s+(\d+)\s+vport\s+(\d+).*?(?:user-)?vlan\s+(\d+)(?:.*?\bvlan\s+(\d+))?/i', $linea, $m)) {
+                $puertos[] = [
+                    'index'   => (int) $m[1],
+                    'vport'   => (int) $m[2],
+                    // "user-vlan 100 vlan 100": la que cuenta en la red es la
+                    // segunda (la de la OLT); si sólo hay una, esa.
+                    'vlan'    => (int) ($m[4] ?? $m[3]),
+                    'fsp'     => $onu[0],
+                    'port'    => $onu[0],
+                    'ont_id'  => $onu[1],
+                    'gemport' => null,
+                ];
+            }
+        }
+
+        return $puertos;
+    }
+
     // ── Altas y bajas ─────────────────────────────────────────────────────
 
     public function registerONT(
@@ -289,7 +455,7 @@ class ZteOltDriver extends DriverBase
         $salida = $this->cmds([
             'configure terminal',
             'interface ' . $this->puerto($fsp),
-            sprintf('onu %d type %s sn %s', $ontId, $this->tipoOnu, strtoupper($serial)),
+            sprintf('onu %d type %s sn %s', $ontId, $this->tipoDeEstaAlta(), strtoupper($serial)),
         ], 20);
 
         if ($this->fallo($salida)) {
@@ -302,34 +468,21 @@ class ZteOltDriver extends DriverBase
             return ['success' => false, 'ont_id' => 0, 'message' => $this->mensaje($salida)];
         }
 
-        // Nombre y servicio se configuran en la interfaz de la ONU.
-        $pasos = ['exit', 'interface ' . $this->onu($fsp, $ontId)];
-
-        if ($description !== '') {
-            $pasos[] = 'name ' . substr(preg_replace('/\s+/', '-', $description), 0, 32);
-        }
-
-        if ($vlan) {
-            if ($this->perfilDba !== '') {
-                $pasos[] = "tcont 1 profile {$this->perfilDba}";
-                $pasos[] = 'gemport 1 name internet unicast tcont 1 dir both';
-            }
-
-            $pasos[] = sprintf(
-                'service-port %d vport 1 user-vlan %d vlan %d',
-                $servicePort ?: 1, $vlan, $vlan
-            );
-        }
-
-        $servicio = $this->cmds($pasos, 20);
         $this->volverAlPrompt();
+
+        $servicio = $this->configurarServicio($fsp, $ontId, $description, $vlan, $lineProfileId, $srvProfileId);
 
         return [
             'success' => true,
             'ont_id'  => $ontId,
             'port_id' => $this->partirFsp($fsp)['port'],
             'message' => "ONU registrada en {$fsp} con ONT ID {$ontId}",
-            'servicio_ok' => !$this->fallo($servicio),
+            // Los nombres que lee la plataforma (antes era "servicio_ok" y el
+            // paso salía siempre como fallido).
+            'service_port_created' => $servicio['ok'],
+            'service_port_error'   => $servicio['error'],
+            // En ZTE el service-port es de la ONU: siempre el 2 (internet).
+            'service_port_index'   => $servicio['ok'] ? 2 : null,
         ];
     }
 
@@ -377,23 +530,87 @@ class ZteOltDriver extends DriverBase
 
     public function assignToClient(string $fsp, int $ontId, int $vlan, int $servicePort, string $description): bool
     {
-        $pasos = ['configure terminal', 'interface ' . $this->onu($fsp, $ontId)];
+        return $this->configurarServicio($fsp, $ontId, $description, $vlan)['ok'];
+    }
+
+    /**
+     * El servicio de internet de una ONU, igual que las que ya andan en la
+     * C320 de skartelecon:
+     *   interface gpon-onu_1/1/7:100
+     *     tcont 2 profile <subida>
+     *     gemport 2 tcont 2
+     *     gemport 2 traffic-limit downstream <bajada>      (si se eligió)
+     *     service-port 2 vport 2 user-vlan 20 vlan 20
+     *   pon-onu-mng gpon-onu_1/1/7:100
+     *     service internet gemport 2 vlan 20
+     * Antes se mandaba «gemport 1 name internet unicast tcont 1 dir both» (de
+     * otro firmware), el índice global de service-port de Huawei y nada dentro
+     * de la ONU; sin perfil de subida ni siquiera se creaba el tcont.
+     *
+     * @return array{ok:bool, error:?string}
+     */
+    private function configurarServicio(string $fsp, int $ontId, string $description, ?int $vlan, ?int $perfilSubida = null, ?int $perfilBajada = null): array
+    {
+        $onu = $this->onu($fsp, $ontId);
+        $pasos = ['configure terminal', 'interface ' . $onu];
 
         if ($description !== '') {
-            $pasos[] = 'name ' . substr(preg_replace('/\s+/', '-', $description), 0, 32);
+            $pasos[] = 'name ' . substr(preg_replace('/\s+/', '_', $description), 0, 32);
         }
 
-        if ($this->perfilDba !== '') {
-            $pasos[] = "tcont 1 profile {$this->perfilDba}";
-            $pasos[] = 'gemport 1 name internet unicast tcont 1 dir both';
+        if (!$vlan) {
+            $salida = $this->cmds($pasos, 20);
+            $this->volverAlPrompt();
+
+            return ['ok' => false, 'error' => null];
         }
 
-        $pasos[] = sprintf('service-port %d vport 1 user-vlan %d vlan %d', $servicePort, $vlan, $vlan);
+        $subida = $this->nombreDePerfil('line', $perfilSubida) ?: $this->perfilDba;
+        $bajada = $this->nombreDePerfil('srv', $perfilBajada);
 
-        $salida = $this->cmds($pasos, 20);
+        if ($subida === '') {
+            $this->cmds($pasos, 20);
+            $this->volverAlPrompt();
+
+            return ['ok' => false, 'error' => 'falta el perfil de subida (tcont). Elegí uno por defecto en los perfiles de la OLT, o en el formulario, y volvé a vincular.'];
+        }
+
+        // Internet va en el 2, como en las ONT que ya tiene la OLT (SmartOLT
+        // dejaba el 1 para gestión y el 3 para IPTV).
+        array_push($pasos, "tcont 2 profile {$subida}", 'gemport 2 tcont 2');
+
+        if ($bajada) {
+            $pasos[] = "gemport 2 traffic-limit downstream {$bajada}";
+        }
+
+        array_push($pasos,
+            sprintf('service-port 2 vport 2 user-vlan %d vlan %d', $vlan, $vlan),
+            'exit',
+            'pon-onu-mng ' . $onu,
+            sprintf('service internet gemport 2 vlan %d', $vlan),
+            'exit'
+        );
+
+        $salida = $this->cmds($pasos, 30);
         $this->volverAlPrompt();
 
-        return !$this->fallo($salida);
+        if ($this->fallo($salida)) {
+            Log::error('[OLT ZTE] No se pudo configurar el servicio', ['onu' => $onu, 'vlan' => $vlan, 'salida' => $salida]);
+
+            return ['ok' => false, 'error' => $this->mensaje($salida)];
+        }
+
+        return ['ok' => true, 'error' => null];
+    }
+
+    /** El nombre del perfil (en ZTE la OLT los pide por nombre). */
+    private function nombreDePerfil(string $tipo, ?int $id): string
+    {
+        if (!$id || !$this->oltId) {
+            return '';
+        }
+
+        return (string) \App\Models\OltProfile::where('olt_id', $this->oltId)->where('type', $tipo)->where('profile_id', $id)->value('profile_name');
     }
 
     public function transferONT(string $fromFsp, int $ontId, string $toFsp): array
@@ -443,6 +660,51 @@ class ZteOltDriver extends DriverBase
         return !$this->fallo($salida);
     }
 
+    /** El tipo de ONU para la próxima alta (el modelo real, p. ej. F680V6.0.06). */
+    public function usarTipoOnu(?string $tipo): void
+    {
+        $tipo = trim((string) $tipo);
+        $this->tipoPedido = preg_match('/^[\w.\-]{1,40}$/', $tipo) ? $tipo : null;
+    }
+
+    private function tipoDeEstaAlta(): string
+    {
+        $tipo = $this->tipoPedido ?: $this->tipoOnu;
+        $this->tipoPedido = null;
+
+        return $tipo;
+    }
+
+    /**
+     * Los tipos de ONU cargados en la OLT («show onu-type gpon»):
+     *   ONU type name:          F680V6.0.06
+     *
+     * @return list<string>
+     */
+    public function tiposDeOnu(): array
+    {
+        preg_match_all('/ONU\s+type\s+name\s*:\s*(\S+)/i', $this->cmd('show onu-type gpon', 60), $m);
+
+        return array_values(array_unique($m[1] ?? []));
+    }
+
+    /** Para la pantalla de alta: en ZTE los perfiles son de subida y de bajada, y hay tipo de ONU. */
+    public function capacidades(): array
+    {
+        return [
+            'tecnologia'              => 'gpon',
+            'identificador'           => 'serial',
+            'service_port'            => true,
+            'perfil_servicio_en_alta' => true,
+            'vlan'                    => 'service-port',
+            'explicacion_vlan'        => null,
+            'etiqueta_perfil_linea'   => 'Perfil de subida (tcont)',
+            'etiqueta_perfil_servicio' => 'Perfil de bajada (traffic)',
+            'tipos_onu'               => $this->tiposDeOnu(),
+            'tipo_onu_defecto'        => $this->tipoOnu,
+        ];
+    }
+
     /** En ZTE los perfiles de tráfico son los tcont profile. */
     public function getLineProfiles(): array
     {
@@ -454,18 +716,34 @@ class ZteOltDriver extends DriverBase
         return $this->leerPerfiles($this->cmd('show gpon profile traffic', 30));
     }
 
-    /** @return array<int,string> */
+    /**
+     * En ZTE los perfiles tienen nombre, no número:
+     *   Profile name :100-up
+     *    Type   FBW(kbps)   ABW(kbps)   MBW(kbps) …
+     *    4      0           0           102400 …
+     * Antes se tomaban las filas de valores como si fueran perfiles. El número
+     * que se guarda sale del nombre (siempre el mismo para el mismo nombre),
+     * así no cambia si se agregan o borran perfiles; lo que usa la OLT al
+     * autorizar es el nombre.
+     *
+     * @return list<array{id:int, name:string}>
+     */
     private function leerPerfiles(string $salida): array
     {
         $perfiles = [];
 
         foreach (preg_split('/\r?\n/', $salida) as $linea) {
-            if (preg_match('/^\s*(\d+)\s+(\S+)/', $linea, $m)) {
-                $perfiles[(int) $m[1]] = $m[2];
+            if (preg_match('/^\s*Profile\s+name\s*:\s*(\S+)/i', $linea, $m)) {
+                $perfiles[] = ['id' => self::idDePerfil($m[1]), 'name' => $m[1]];
             }
         }
 
         return $perfiles;
+    }
+
+    public static function idDePerfil(string $nombre): int
+    {
+        return crc32($nombre) & 0x7FFFFFFF;
     }
 
     private function dato(string $raw, string $patron): ?string

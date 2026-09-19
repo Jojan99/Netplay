@@ -13,6 +13,189 @@ use App\Services\WhatsAppService;
 
 class ContractController extends Controller
 {
+    // ── Parametrización de la plantilla ───────────────────────────────────────
+
+    /**
+     * GET /api/contracts/variables
+     * Catálogo de variables con su explicación y un ejemplo. El panel lo usa para
+     * el buscador de variables y para la leyenda; antes la lista estaba copiada a
+     * mano en el frontend y ya no coincidía con la que reemplaza el backend.
+     */
+    public function variables(): JsonResponse
+    {
+        return response()->json([
+            'status' => 0,
+            'data'   => \App\Support\VariablesContrato::catalogo(),
+        ]);
+    }
+
+    /**
+     * POST /api/contracts/vista-previa
+     * Devuelve el contrato como lo verá el cliente, con los datos reales de un
+     * cliente de la empresa, y avisa qué variables saldrían en blanco. Acepta el
+     * contenido sin guardar para poder previsualizar mientras se escribe.
+     */
+    public function vistaPrevia(Request $request, ContractRepositoryInterface $repo): JsonResponse
+    {
+        $empresa = getSessionCompanyId();
+        $contenido = (string) $request->input('content', '');
+        $contratoId = (int) $request->input('contract_id', 0);
+
+        if ($contenido === '' && $contratoId) {
+            $contenido = (string) DB::table('contracts')
+                ->where('id', $contratoId)->where('company_id', $empresa)->value('content');
+        }
+
+        $userId = (int) $request->input('user_id', 0);
+        if ($userId && !DB::table('users')->where('id', $userId)->where('company_id', $empresa)->exists()) {
+            return response()->json(['status' => 1, 'message' => 'Cliente no encontrado.']);
+        }
+
+        $valores = $userId
+            ? (new \App\UseCases\Contract\ClientContractUseCase($repo))->buildFieldValues(
+                $userId,
+                0,
+                $request->filled('installation_value') ? (float) $request->input('installation_value') : null,
+                (int) $request->input('plazo', 0) ?: null
+              )
+            : \App\Support\VariablesContrato::ejemplos();
+
+        // En el modo "PDF con coordenadas" no hay texto que revisar: las variables
+        // son los campos colocados sobre el documento, y llegan en 'variables'.
+        $usadas = $request->has('variables')
+            ? array_values(array_unique(array_map('strval', (array) $request->input('variables'))))
+            : \App\Support\VariablesContrato::usadas($contenido);
+
+        $conocidas = \App\Support\VariablesContrato::claves();
+
+        $vacias = [];
+        $desconocidas = [];
+        foreach ($usadas as $clave) {
+            if (!in_array($clave, $conocidas, true)) {
+                $desconocidas[] = $clave;
+            } elseif (trim((string) ($valores[$clave] ?? '')) === '') {
+                $vacias[] = $clave;
+            }
+        }
+
+        // El mismo helper que la página de firma: lo que se ve acá es literalmente
+        // lo que verá el cliente.
+        $html = \App\Support\VariablesContrato::pintar($contenido, $valores);
+
+        return response()->json([
+            'status' => 0,
+            'data'   => [
+                'html'         => $html,
+                'usadas'       => $usadas,
+                'vacias'       => $vacias,
+                'desconocidas' => $desconocidas,
+            ],
+        ]);
+    }
+
+    /**
+     * GET /api/contracts/{id}/hoja/{pagina}
+     * Una hoja del PDF base dibujada en el servidor, para el editor de
+     * posiciones. Antes el panel dibujaba el PDF en el navegador con pdf.js:
+     * bajaba un megabyte de librería desde un CDN y, desde la mudanza de los
+     * archivos, ni siquiera lo encontraba. Ahora sale nítida y es el documento
+     * exacto, el mismo que se estampa.
+     */
+    public function hojaPlantilla(int $id, int $pagina)
+    {
+        $empresa = (int) getSessionCompanyId();
+        $contract = \App\Models\Contract::where('id', $id)->where('company_id', $empresa)->first();
+        $base = $contract ? \App\Support\ArchivosContrato::plantilla($contract->pdf_path) : null;
+
+        if (!$base) {
+            abort(404);
+        }
+
+        $destino = \App\Support\ArchivosContrato::dirHojasPlantilla($empresa, $id);
+        $firma = sha1(\App\Services\RasterizadorPdf::firmaDeArchivo($base) . '-' . \App\Services\RasterizadorPdf::ANCHO_PANEL);
+
+        $hojas = \App\Services\RasterizadorPdf::hojas($base, $destino, $firma, \App\Services\RasterizadorPdf::ANCHO_PANEL);
+        if (!isset($hojas[$pagina])) {
+            abort(404);
+        }
+
+        return response()->file($hojas[$pagina], [
+            'Content-Type'  => 'image/png',
+            'Cache-Control' => 'private, max-age=3600',
+        ]);
+    }
+
+    /**
+     * POST /api/contracts/{id}/pdf-prueba
+     * El PDF estampado de verdad, con los datos de un cliente real y con las
+     * posiciones que el operador tiene en pantalla (aunque todavía no las haya
+     * guardado). Es la prueba antes de dejar la plantilla activa: no una
+     * aproximación dibujada, sino el archivo que le va a llegar al cliente.
+     */
+    public function pdfPrueba(int $id, Request $request, ContractRepositoryInterface $repo)
+    {
+        $empresa = getSessionCompanyId();
+        $contract = \App\Models\Contract::where('id', $id)->where('company_id', $empresa)->first();
+
+        if (!$contract || !\App\Support\ArchivosContrato::plantilla($contract->pdf_path)) {
+            return response()->json(['status' => 1, 'message' => 'Esta plantilla no tiene PDF base.'], 404);
+        }
+
+        $userId = (int) $request->input('user_id', 0);
+        if ($userId && !DB::table('users')->where('id', $userId)->where('company_id', $empresa)->exists()) {
+            return response()->json(['status' => 1, 'message' => 'Cliente no encontrado.'], 404);
+        }
+
+        $valores = $userId
+            ? (new \App\UseCases\Contract\ClientContractUseCase($repo))->buildFieldValues(
+                $userId,
+                0,
+                $contract->installation_value,
+                isset($contract->plazo) ? (int) $contract->plazo : null
+              )
+            : \App\Support\VariablesContrato::ejemplos();
+
+        // Los campos de la pantalla si vienen; si no, los guardados.
+        $campos = $request->input('fields');
+        if (!is_array($campos) || !count($campos)) {
+            $campos = \App\Models\ContractPdfField::where('contract_id', $id)
+                ->orderBy('page')->orderBy('id')->get()->toArray();
+        }
+
+        try {
+            $salida = (new \App\Services\ContractPdfService())->fillPdfBase($contract->pdf_path, $valores, $campos);
+        } catch (\Throwable $e) {
+            return response()->json(['status' => 1, 'message' => 'No se pudo generar la prueba: ' . $e->getMessage()]);
+        }
+
+        return response($salida, 200, [
+            'Content-Type'        => 'application/pdf',
+            'Content-Disposition' => 'inline; filename="prueba-contrato-' . $id . '.pdf"',
+            'Cache-Control'       => 'private, no-store',
+        ]);
+    }
+
+    /**
+     * GET /api/contracts/{id}/pdf-base-archivo
+     * Entrega el PDF base para el editor de posiciones. Antes el panel lo pedía a
+     * /storage/, que ya no lo sirve desde que los archivos pasaron a privado: el
+     * editor quedaba en blanco y por eso "no se veía dónde caían" las variables.
+     */
+    public function pdfBaseArchivo(int $id)
+    {
+        $contract = \App\Models\Contract::where('id', $id)->where('company_id', getSessionCompanyId())->first();
+        $ruta = $contract ? \App\Support\ArchivosContrato::plantilla($contract->pdf_path) : null;
+
+        if (!$ruta) {
+            abort(404);
+        }
+
+        return response()->file($ruta, [
+            'Content-Type'  => 'application/pdf',
+            'Cache-Control' => 'private, no-store',
+        ]);
+    }
+
     // ── Plantillas ────────────────────────────────────────────────────────────
 
     public function index(GetContractsUseCaseInterface $uc): JsonResponse
@@ -148,19 +331,25 @@ class ContractController extends Controller
                 ->join('users', 'users.id', '=', 'cc.user_id')
                 ->leftJoin('user_data as ud', 'ud.user_id', '=', 'cc.user_id')
                 ->where('cc.company_id', getSessionCompanyId())
-                ->select('cc.id', 'cc.status', 'cc.token', 'cc.signed_at',
-                         'cc.require_documents', 'cc.document_front_path', 'cc.document_back_path',
-                         'cc.document_number_front', 'cc.document_number_back',
-                         'c.id as contract_id', 'c.title as contract_title',
-                         'users.id as user_id', 'users.username',
-                         'ud.names', 'ud.lastname', 'ud.phone', 'ud.email', 'ud.dni')
+                ->select(array_merge([
+                    'cc.id', 'cc.status', 'cc.token', 'cc.signed_at', 'cc.created_at',
+                    'cc.require_documents', 'cc.document_front_path', 'cc.document_back_path',
+                    'cc.document_number_front', 'cc.document_number_back',
+                    'c.id as contract_id', 'c.title as contract_title',
+                    'users.id as user_id', 'users.username',
+                    'ud.names', 'ud.lastname', 'ud.phone', 'ud.email', 'ud.dni',
+                ], $this->columnasSeguimiento()))
                 ->orderByDesc('cc.created_at')
                 ->get()
                 ->map(fn($r) => [
-                    'id'        => $r->id,
-                    'status'    => $r->status,
-                    'token'     => $r->token,
-                    'signed_at' => $r->signed_at,
+                    'id'           => $r->id,
+                    'status'       => $r->status,
+                    'token'        => $r->token,
+                    'signed_at'    => $r->signed_at,
+                    'created_at'   => $r->created_at,
+                    'sent_at'      => $r->sent_at      ?? null,
+                    'sent_channel' => $r->sent_channel ?? null,
+                    'opened_at'    => $r->opened_at    ?? null,
                     'require_documents'      => (bool) $r->require_documents,
                     // El panel arma rootUrl + "storage/" + ruta: se le da la ruta protegida.
                     'document_front_path'    => $r->document_front_path ? \App\Support\ArchivosContrato::rutaParaPanel((int) $r->id, 'frente') : null,
@@ -198,6 +387,42 @@ class ContractController extends Controller
         return response()->json($res);
     }
 
+    /**
+     * Columnas de seguimiento que puede que todavía no existan (la migración va
+     * aparte). Se piden sólo si están; si no, el panel las recibe en null.
+     */
+    private function columnasSeguimiento(): array
+    {
+        return array_values(array_filter(
+            ['cc.sent_at', 'cc.sent_channel', 'cc.opened_at'],
+            fn ($col) => \Illuminate\Support\Facades\Schema::hasColumn('client_contracts', substr($col, 3))
+        ));
+    }
+
+    /** Deja constancia de por dónde y cuándo se le mandó el link al cliente. */
+    private function registrarEnvio($cc, string $canal): void
+    {
+        if (!\Illuminate\Support\Facades\Schema::hasColumn('client_contracts', 'sent_at')) {
+            return;
+        }
+
+        try {
+            $cc->forceFill(['sent_at' => now(), 'sent_channel' => $canal])->save();
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('[Contratos] No se pudo registrar el envío: ' . $e->getMessage());
+        }
+    }
+
+    /** Estado de envío/apertura para refrescar la fila del panel sin recargar. */
+    private function seguimientoDe($cc): array
+    {
+        return [
+            'sent_at'      => $cc->sent_at      ?? null,
+            'sent_channel' => $cc->sent_channel ?? null,
+            'opened_at'    => $cc->opened_at    ?? null,
+        ];
+    }
+
     /** URL temporal (firmada) de una foto de cédula, o null si no hay archivo. */
     private function urlDocumento($cc, string $tipo): ?string
     {
@@ -226,9 +451,13 @@ class ContractController extends Controller
                 "Hola, le compartimos el link para firmar su contrato \"{$cc->contract->title}\":\n\n{$signUrl}\n\nAbra el link desde su teléfono para firmar.",
             );
 
-            return $resultado['ok']
-                ? response()->json(['status' => 0, 'message' => 'Correo enviado exitosamente.'])
-                : response()->json(['status' => 1, 'message' => 'Error al enviar correo: ' . $resultado['detalle']]);
+            if (!$resultado['ok']) {
+                return response()->json(['status' => 1, 'message' => 'Error al enviar correo: ' . $resultado['detalle']]);
+            }
+
+            $this->registrarEnvio($cc, 'email');
+
+            return response()->json(['status' => 0, 'message' => 'Correo enviado exitosamente.', 'data' => $this->seguimientoDe($cc)]);
         } catch (\Throwable $e) {
             return response()->json(['status' => 1, 'message' => 'Error al enviar correo: ' . $e->getMessage()]);
         }
@@ -285,9 +514,12 @@ class ContractController extends Controller
                 ]);
             }
 
+            $this->registrarEnvio($cc, 'whatsapp');
+
             return response()->json([
                 'status'   => 0,
                 'message'  => 'Mensaje enviado por WhatsApp.',
+                'data'     => $this->seguimientoDe($cc),
                 'wa_debug' => $waResponse,
             ]);
         } catch (\RuntimeException $e) {
@@ -347,14 +579,17 @@ class ContractController extends Controller
             $pdf = $parser->parseFile($file->getPathname());
             $text = $pdf->getText();
 
-            // Guardar PDF temporalmente para que el frontend lo muestre como guía
-            $tempName = uniqid('contract_pdf_') . '.pdf';
-            $tempPath = storage_path('app/public/temp/' . $tempName);
-            if (!is_dir(dirname($tempPath))) {
-                mkdir(dirname($tempPath), 0755, true);
+            // El PDF se guarda para mostrarlo al lado como guía mientras se
+            // redacta. Va a la carpeta privada de la empresa y se sirve por una
+            // ruta con JWT: antes quedaba en storage/app/public/temp, que nginx
+            // publica sin pedir nada y sin borrarse nunca.
+            $tempName = uniqid('guia_') . '.pdf';
+            $dir = storage_path('app/' . \App\Support\ArchivosContrato::dirPlantillas((int) getSessionCompanyId()) . '/guias');
+            if (!is_dir($dir)) {
+                mkdir($dir, 0750, true);
             }
-            copy($file->getPathname(), $tempPath);
-            $pdfUrl = url('storage/temp/' . $tempName);
+            copy($file->getPathname(), $dir . '/' . $tempName);
+            $pdfUrl = null; // el panel lo pide por /api/contracts/guia/{nombre}
 
             // Extraer HTML estructurado intentando detectar títulos, tablas, etc.
             $html = $this->pdfTextToStructuredHtml($text);
@@ -365,6 +600,7 @@ class ContractController extends Controller
                 'data'    => [
                     'html'   => $html,
                     'pdfUrl' => $pdfUrl,
+                    'guia'   => $tempName,
                 ],
             ]);
         } catch (\Throwable $e) {
@@ -468,13 +704,11 @@ class ContractController extends Controller
         // Convertir líneas que son solo _____ o ----- a <hr>
         $allHtml = preg_replace('/<p[^>]*>\s*[_-]{5,}\s*<\/p>/i', '<hr>', $allHtml);
 
-        // HTML limpio con clases semánticas, SIN inline styles
-        $wrapper = '<div class="contract-body">';
-        $wrapper .= '<p class="contract-guide"><strong>Guía:</strong> Reemplace los textos entre corchetes o use las variables rápidas ({{nombre}}, {{dni}}, etc.).</p>';
-        $wrapper .= $allHtml;
-        $wrapper .= '</div>';
-
-        return $wrapper;
+        // HTML limpio con clases semánticas, SIN inline styles. La nota de ayuda
+        // que se metía acá terminaba impresa en la página de firma, con las
+        // variables del ejemplo reemplazadas por los datos del cliente: la ayuda
+        // va en la pantalla del panel, nunca dentro del contrato.
+        return '<div class="contract-body">' . $allHtml . '</div>';
     }
 
     private function buildTableHtml(array $rows): string
@@ -493,6 +727,25 @@ class ContractController extends Controller
     }
 
     /**
+     * GET /api/contracts/guia/{nombre}
+     * PDF que se subió para transcribir el contrato, de la carpeta de la empresa
+     * del operador. El nombre se valida para que no pueda salir de esa carpeta.
+     */
+    public function guiaPdf(string $nombre)
+    {
+        if (!preg_match('/^guia_[a-z0-9.]+\\.pdf$/i', $nombre)) {
+            abort(404);
+        }
+
+        $ruta = storage_path('app/' . \App\Support\ArchivosContrato::dirPlantillas((int) getSessionCompanyId()) . '/guias/' . $nombre);
+        if (!is_file($ruta)) {
+            abort(404);
+        }
+
+        return response()->file($ruta, ['Content-Type' => 'application/pdf', 'Cache-Control' => 'private, no-store']);
+    }
+
+    /**
      * POST /api/contracts/{id}/pdf-base
      * Sube el PDF original como base del contrato (para mantener diseño exacto).
      */
@@ -507,19 +760,21 @@ class ContractController extends Controller
             $companyId = getSessionCompanyId();
             $file = $request->file('pdf');
 
-            $dir = "contracts/{$companyId}";
+            // A la carpeta privada, como el resto: /storage/ lo servía sin pedir
+            // nada. En pdf_path se guarda la ruta relativa de siempre para que
+            // las plantillas anteriores se sigan resolviendo igual.
+            $dir = \App\Support\ArchivosContrato::dirPlantillas((int) $companyId);
             $filename = "contract_{$id}_base.pdf";
-            $path = $file->storeAs($dir, $filename, 'public');
+            $file->storeAs($dir, $filename, 'local');
+            $path = "contracts/{$companyId}/{$filename}";
 
             $contract->pdf_path = $path;
             $contract->save();
 
-            $pdfUrl = url('storage/' . $path);
-
             return response()->json([
                 'status'  => 0,
                 'message' => 'PDF base guardado. Se usará como fondo exacto del contrato.',
-                'data'    => ['pdf_path' => $path, 'pdf_url' => $pdfUrl],
+                'data'    => ['pdf_path' => $path],
             ]);
         } catch (\Throwable $e) {
             return response()->json([
@@ -663,14 +918,16 @@ class ContractController extends Controller
                 ]);
             }
 
-            $fullPath = storage_path('app/public/' . $contract->pdf_path);
-            if (!file_exists($fullPath)) {
+            $fullPath = \App\Support\ArchivosContrato::plantilla($contract->pdf_path);
+            if (!$fullPath) {
                 return response()->json([
                     'status'  => 1,
                     'message' => 'Archivo PDF no encontrado en servidor.',
                 ]);
             }
 
+            // Fpdi sin argumentos trabaja en MILÍMETROS: width/height van en mm,
+            // igual que las coordenadas que guarda el editor de posiciones.
             $pdf = new \setasign\Fpdi\Fpdi();
             $pageCount = $pdf->setSourceFile($fullPath);
             $pages = [];
@@ -687,7 +944,7 @@ class ContractController extends Controller
 
             return response()->json([
                 'status' => 0,
-                'data'   => ['pageCount' => $pageCount, 'pages' => $pages],
+                'data'   => ['pageCount' => $pageCount, 'pages' => $pages, 'unidad' => 'mm'],
             ]);
         } catch (\Throwable $e) {
             return response()->json([
@@ -716,43 +973,9 @@ class ContractController extends Controller
                 ->orderBy('page')->orderBy('id')
                 ->get();
 
-            $dummyValues = [
-                '{{nombre}}'          => 'JUAN PEREZ',
-                '{{apellido}}'        => 'GOMEZ',
-                '{{nombre_completo}}' => 'JUAN PEREZ GOMEZ',
-                '{{dni}}'             => '12345678',
-                '{{telefono}}'        => '3001234567',
-                '{{email}}'           => 'juan@ejemplo.com',
-                '{{direccion}}'       => 'Calle 123 # 45-67',
-                '{{fecha}}'           => now()->format('d/m/Y'),
-                '{{fecha_hora}}'      => now()->format('d/m/Y H:i'),
-                '{{contrato_id}}'     => '999',
-                // Fecha separada
-                '{{dia}}'             => now()->format('d'),
-                '{{mes}}'             => now()->format('m'),
-                '{{anio}}'            => now()->format('Y'),
-                // Plan
-                '{{plan_nombre}}'     => 'INTERNET 200MG PLUS',
-                '{{plan_velocidad}}'  => '200 Mb',
-                '{{plan_precio}}'     => '$70.000',
-                '{{plan_instalacion}}'=> '$60.000',
-                '{{promocion_nombre}}'=> 'Promoción verano 200Mb',
-                // Checks
-                '{{check_200mb}}'     => 'X',
-                '{{check_300mb}}'     => '',
-                '{{check_400mb}}'     => '',
-                '{{check_otra}}'      => '',
-                '{{check_os_nuevo}}'  => 'X',
-                '{{check_os_mod}}'    => '',
-                // Check simple
-                '{{check}}'           => 'X',
-                // Tipo documento
-                '{{tipo_documento}}'  => 'CC',
-                // Valor instalación
-                '{{valor_instalacion}}' => '$60.000',
-                // Firma placeholder
-                '{{firma}}'           => '',
-            ];
+            // Ejemplos del catálogo: una sola lista para el panel, el preview y
+            // la página de firma.
+            $dummyValues = \App\Support\VariablesContrato::ejemplos();
 
             $service = new \App\Services\ContractPdfService();
             $output = $service->fillPdfBase(

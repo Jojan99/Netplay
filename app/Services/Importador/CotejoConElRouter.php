@@ -4,6 +4,7 @@ namespace App\Services\Importador;
 
 use App\Managers\Interfaces\ConectionRouterManagerInterface;
 use App\Models\Importacion;
+use App\Services\Red\IdentidadEnElRouter;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use RouterOS\Query;
@@ -15,6 +16,10 @@ use RouterOS\Query;
  * ARP (IP fija) y las credenciales PPPoE, y cuenta cuántos clientes calzan y
  * cuántos no. Con eso el dueño decide si los "amarra" —que es sólo anotar el
  * router en la ficha, del lado de la plataforma—.
+ *
+ * Reconoce al cliente con el mismo criterio que el resto del sistema
+ * (IdentidadEnElRouter): su documento, el nombre que tenía en la plataforma de
+ * origen —que es lo que WispHub deja en el comment— o su IP.
  */
 class CotejoConElRouter
 {
@@ -49,6 +54,7 @@ class CotejoConElRouter
             'total'         => count($clientes),
             'por_ip'        => 0,
             'por_documento' => 0,
+            'por_nombre'    => 0,
             'por_pppoe'     => 0,
             'sin_encontrar' => 0,
             'otra_ip'       => 0,
@@ -79,33 +85,27 @@ class CotejoConElRouter
                     continue;
                 }
 
-                $como = null;
-                $ipEnRouter = null;
+                $identidad = IdentidadEnElRouter::deUsuario((int) $c->user_id, $this->companyId);
 
-                if ($c->connection_type === 'pppoe' && $c->pppoe_user) {
-                    if (isset($lectura['pppoe'][mb_strtolower($c->pppoe_user)])) {
-                        $como = 'pppoe';
-                    }
-                } else {
-                    $doc = preg_replace('/\D/', '', (string) $c->dni);
-
-                    if ($c->ip && isset($lectura['arp'][$c->ip])) {
-                        $como = 'ip';
-                    } elseif ($doc !== '' && isset($lectura['porDocumento'][$doc])) {
-                        $como = 'documento';
-                        $ipEnRouter = $lectura['porDocumento'][$doc];
-                    }
+                if (!$identidad) {
+                    continue;
                 }
 
-                if (!$como) {
+                $suyas = IdentidadEnElRouter::suyas(
+                    $identidad['connection_type'] === 'pppoe' ? array_merge($lectura['pppoe'], $lectura['arp']) : $lectura['arp'],
+                    $identidad,
+                    $this->companyId
+                );
+
+                if (!$suyas) {
                     continue;
                 }
 
                 $encontrado[$c->user_id] = [
-                    'router_id'   => (int) $router->id,
-                    'router'      => $router->name,
-                    'como'        => $como,
-                    'ip_router'   => $ipEnRouter,
+                    'router_id' => (int) $router->id,
+                    'router'    => $router->name,
+                    'como'      => $suyas[0]['via'],
+                    'ip_router' => $suyas[0]['address'] ?? null,
                 ];
             }
         }
@@ -118,9 +118,11 @@ class CotejoConElRouter
                 continue;
             }
 
-            $resultado['por_' . ($e['como'] === 'documento' ? 'documento' : ($e['como'] === 'ip' ? 'ip' : 'pppoe'))]++;
+            $clave = 'por_' . (in_array($e['como'], ['documento', 'nombre', 'ip', 'pppoe'], true) ? $e['como'] : 'pppoe');
+            $resultado[$clave]++;
 
-            $otraIp = $e['como'] === 'documento' && $e['ip_router'] && $c->ip && $e['ip_router'] !== $c->ip;
+            // Si se lo reconoció por la IP, es la misma por definición.
+            $otraIp = $e['como'] !== 'ip' && $e['ip_router'] && $c->ip && $e['ip_router'] !== $c->ip;
             $resultado['otra_ip'] += $otraIp ? 1 : 0;
 
             if (!$c->router_id) {
@@ -144,7 +146,10 @@ class CotejoConElRouter
             }
         }
 
-        $resultado['encontrados'] = $resultado['por_ip'] + $resultado['por_documento'] + $resultado['por_pppoe'];
+        $resultado['encontrados'] = $resultado['por_ip'] + $resultado['por_documento'] + $resultado['por_nombre'] + $resultado['por_pppoe'];
+        // Los que sólo se reconocen por el nombre que traían de la otra
+        // plataforma: es lo que hay que explicarle al dueño.
+        $resultado['identificados_por_nombre'] = $resultado['por_nombre'];
 
         return $resultado;
     }
@@ -196,7 +201,7 @@ class CotejoConElRouter
     /**
      * Lo que hay en el router, de sólo lectura.
      *
-     * @return array{arp: array<string,string>, porDocumento: array<string,string>, pppoe: array<string,bool>}|null
+     * @return array{arp: array<int,array<string,mixed>>, pppoe: array<int,array<string,mixed>>}|null
      */
     private function leer(object $router): ?array
     {
@@ -204,31 +209,22 @@ class CotejoConElRouter
             $api = $this->conexion->conection($router->token);
 
             $arp = [];
-            $porDocumento = [];
 
             foreach ($api->query(new Query('/ip/arp/print'))->read() as $fila) {
-                $ip = trim((string) ($fila['address'] ?? ''));
-                $comment = preg_replace('/\D/', '', trim((string) ($fila['comment'] ?? '')));
-
-                if ($ip !== '') {
-                    $arp[$ip] = $comment;
-                }
-                if ($comment !== '' && !isset($porDocumento[$comment])) {
-                    $porDocumento[$comment] = $ip;
+                if (trim((string) ($fila['address'] ?? '')) !== '') {
+                    $arp[] = $fila;
                 }
             }
 
             $pppoe = [];
 
             foreach ($api->query(new Query('/ppp/secret/print'))->read() as $fila) {
-                $nombre = trim((string) ($fila['name'] ?? ''));
-
-                if ($nombre !== '') {
-                    $pppoe[mb_strtolower($nombre)] = true;
+                if (trim((string) ($fila['name'] ?? '')) !== '') {
+                    $pppoe[] = $fila;
                 }
             }
 
-            return ['arp' => $arp, 'porDocumento' => $porDocumento, 'pppoe' => $pppoe];
+            return ['arp' => $arp, 'pppoe' => $pppoe];
         } catch (\Throwable $e) {
             Log::warning('[Importador] No se pudo leer el router para cotejar', [
                 'router' => $router->id, 'error' => $e->getMessage(),
@@ -242,7 +238,8 @@ class CotejoConElRouter
     private function vacio(string $motivo): array
     {
         return [
-            'routers' => [], 'total' => 0, 'encontrados' => 0, 'por_ip' => 0, 'por_documento' => 0, 'por_pppoe' => 0,
+            'routers' => [], 'total' => 0, 'encontrados' => 0, 'por_ip' => 0, 'por_documento' => 0, 'por_nombre' => 0, 'por_pppoe' => 0,
+            'identificados_por_nombre' => 0,
             'sin_encontrar' => 0, 'otra_ip' => 0, 'sin_router' => 0, 'para_amarrar' => 0,
             'hallazgos' => [], 'errores' => [$motivo],
         ];

@@ -32,6 +32,20 @@ class AprovisionamientoDeOnt
     /** Si en este tiempo el equipo no aparece en el TR-069, se deja de esperar. */
     public const ESPERA_MINUTOS = 90;
 
+    /**
+     * Con una marca que no está probada en esa OLT (CompatibilidadDeOnt dice
+     * "no se sabe"): el acceso remoto tarda uno o dos minutos y el reinicio
+     * otros tantos, así que en 15 ya se sabe si va a aparecer.
+     */
+    public const ESPERA_SIN_CONFIRMAR_MINUTOS = 15;
+
+    /**
+     * Los que no se pueden configurar solos (estado no_aplica) no muestran
+     * espera, pero se siguen mirando estos días: si el técnico le activa el
+     * TR-069 en el equipo, el aprovisionamiento sigue solo.
+     */
+    public const VIGILAR_A_MANO_DIAS = 3;
+
     private const DNS = '8.8.8.8,8.8.4.4';
     private const WAN = 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice';
     private const WLAN = 'InternetGatewayDevice.LANDevice.1.WLANConfiguration';
@@ -138,11 +152,16 @@ class AprovisionamientoDeOnt
             }
         }
 
+        $enCurso = CambioDeConexion::enCurso($this->companyId, $userId);
+
         return [
             'habilitado' => (bool) ($g?->aprovisionar && $g->aprov_wan),
             'tiene_ont'  => $tieneOnt,
             'ultimo'     => $ultimo ? $this->fila($ultimo) : null,
             'arp'        => $arp,
+            // Mientras dura, la ficha sigue con el tipo de antes (es el que
+            // anda); esto es lo que se muestra como "Cambiando a …".
+            'cambio_en_curso' => $enCurso ? $this->fila($enCurso) : null,
         ];
     }
 
@@ -163,14 +182,28 @@ class AprovisionamientoDeOnt
                 'ont'        => "{$a->fsp}:{$a->ont_id}",
                 'serial'     => $a->serial,
                 'cliente'    => $a->datos['cliente'] ?? null,
-                'wan'        => $a->datos['wan'] ?? null,
+                // La clave PPPoE de un cambio en curso viaja cifrada: no sale.
+                'wan'        => isset($a->datos['wan']) ? \Illuminate\Support\Arr::except((array) $a->datos['wan'], ['clave_cifrada']) : null,
                 'wifi_ssid'  => $a->datos['wifi']['ssid'] ?? null,
                 'wifi_clave' => $a->wifi_clave,
                 'estado'     => $a->estado,
                 'detalle'    => $a->detalle,
+                // Por qué no se configura solo y qué hacer (estado no_aplica).
+                'puede'      => $a->datos['compatibilidad']['puede'] ?? null,
+                'motivo'     => $a->datos['compatibilidad']['motivo'] ?? null,
+                'que_hacer'  => $a->datos['compatibilidad']['que_hacer'] ?? null,
                 'pasos'      => $a->pasos ?? [],
                 'creado'     => $a->created_at,
                 'listo_en'   => $a->listo_en,
+                // Cambio de conexión desde la ficha: de qué a qué y en qué va.
+                'cambio'     => !empty($a->datos['cambio']) ? [
+                    'de'   => CambioDeConexion::texto($a->datos['cambio']['de']),
+                    'a'    => CambioDeConexion::texto($a->datos['cambio']['a']),
+                    'tipo_nuevo' => $a->datos['cambio']['a']['tipo'],
+                    'modo' => $a->datos['cambio']['modo'],
+                    'fase' => $a->datos['cambio']['fase'],
+                    'cancelando' => !empty($a->datos['cambio']['cancelar']),
+                ] : null,
         ];
     }
 
@@ -183,8 +216,32 @@ class AprovisionamientoDeOnt
     {
         $a = Aprovisionamiento::where('company_id', $this->companyId)->findOrFail($id);
 
-        if (!in_array($a->estado, ['con_errores', 'error', 'vencido'], true)) {
+        if (!in_array($a->estado, ['con_errores', 'error', 'vencido', 'no_aplica'], true)) {
             throw new \InvalidArgumentException('Sólo se reintenta uno que terminó con fallas.');
+        }
+
+        // Un cambio de conexión sólo se retoma si ya estaba confirmado y faltó
+        // quitar la gestión temporal; si no, se pide de nuevo desde la ficha
+        // (reintentarlo a ciegas podría volver a tocar el router).
+        if (!empty($a->datos['cambio'])) {
+            $c = $a->datos['cambio'];
+
+            if (empty($c['ficha_actualizada']) || $c['modo'] !== 'gestion_temporal') {
+                throw new \InvalidArgumentException('Este cambio de conexión no se completó y quedó como estaba: volvé a pedirlo desde la ficha del cliente.');
+            }
+
+            $c['fase'] = 'tr069';
+            $c['fase_desde'] = now()->toIso8601String();
+            $a->datos = array_merge($a->datos, ['cambio' => $c]);
+            $a->fill(['estado' => 'aplicando', 'listo_en' => null, 'detalle' => 'Reintentando quitar la gestión temporal…'])->save();
+
+            return $this->ultimos();
+        }
+
+        // Pedido a pesar de que la plataforma dijo que no se configura solo:
+        // se lo espera el tiempo completo, sin volver a decidir.
+        if ($a->estado === 'no_aplica') {
+            $a->datos = array_merge($a->datos, ['forzado' => true]);
         }
 
         if ($a->acs_id) {
@@ -201,6 +258,60 @@ class AprovisionamientoDeOnt
         $a->save();
 
         return $this->ultimos();
+    }
+
+    /**
+     * Lo cancela el operador (desde la ventana de tareas o la lista): queda
+     * "cancelado" y la tarea de cada minuto no le aplica nada más. Lo que ya
+     * se le aplicó al equipo queda aplicado.
+     */
+    public function cancelar(int $id): array
+    {
+        $a = Aprovisionamiento::where('company_id', $this->companyId)->findOrFail($id);
+
+        if (!in_array($a->estado, ['esperando', 'aplicando', 'no_aplica'], true)) {
+            throw new \InvalidArgumentException('Ya había terminado: no hay nada que cancelar.');
+        }
+
+        // Un cambio de conexión no se corta en el aire: se deshace (la ONT
+        // vuelve a lo de antes y lo nuevo sale del router) en la próxima vuelta.
+        if (!empty($a->datos['cambio'])) {
+            $fase = $a->datos['cambio']['fase'] ?? '';
+
+            if (!in_array($fase, ['gestion', 'wan', 'confirmar'], true)) {
+                throw new \InvalidArgumentException(str_starts_with($fase, 'deshacer')
+                    ? 'Ya se está dejando como estaba.'
+                    : 'La conexión nueva ya está confirmada y andando: no se puede cancelar.');
+            }
+
+            $a->datos = array_merge($a->datos, ['cambio' => array_merge($a->datos['cambio'], ['cancelar' => true])]);
+            $a->fill(['detalle' => 'Cancelando: se deja como estaba…'])->save();
+
+            return $this->fila($a);
+        }
+
+        $hechos = collect($a->pasos ?? [])->filter(fn ($p) => ($p['ok'] ?? false) && isset($p['clave']))->count();
+
+        $a->fill([
+            'estado'   => 'cancelado',
+            'detalle'  => 'Cancelado por el usuario a las ' . now()->format('H:i') . '.'
+                . ($hechos ? " Lo que ya se le aplicó al equipo ({$hechos} " . ($hechos === 1 ? 'paso' : 'pasos') . ') queda aplicado.' : ' No se le aplicó nada al equipo.'),
+            'listo_en' => now(),
+        ])->save();
+
+        return $this->fila($a);
+    }
+
+    /** Los pasos hechos de uno cancelado, sin pisarle el estado. */
+    private static function anotarPasosSinEstado(Aprovisionamiento $a, array $pasos): void
+    {
+        Aprovisionamiento::whereKey($a->id)->update(['pasos' => json_encode(array_values($pasos), JSON_UNESCAPED_UNICODE)]);
+    }
+
+    /** Si el operador lo canceló mientras la tarea de cada minuto lo trabajaba. */
+    private static function fueCancelado(Aprovisionamiento $a): bool
+    {
+        return Aprovisionamiento::whereKey($a->id)->value('estado') === 'cancelado';
     }
 
     // ── Al autorizar ──────────────────────────────────────────────────────
@@ -257,11 +368,21 @@ class AprovisionamientoDeOnt
                 : null;
         }
 
+        // Antes de esperar: ¿este equipo puede llegar solo al TR-069? Con el
+        // serial / la MAC alcanza y es instantáneo (el alta no espera a la OLT);
+        // la tarea de cada minuto lo confirma por SNMP si no se sabe.
+        $compatible = self::compatibilidad($g, (int) $oltId, $fsp, $ontId, $serial, false);
+        $noAplica = $compatible['puede'] === CompatibilidadDeOnt::NO;
+
         // Si la misma ONT se había programado (se volvió a autorizar), vale la última.
+        // Un cambio de conexión en curso no se pisa: lleva el router y se
+        // deshace solo si no se confirma.
         Aprovisionamiento::where('company_id', $companyId)->where('serial', $serial)
-            ->whereIn('estado', ['esperando', 'aplicando'])
+            ->whereIn('estado', ['esperando', 'aplicando', 'no_aplica'])
+            ->whereRaw("JSON_EXTRACT(datos, '$.cambio') IS NULL")
             ->update(['estado' => 'reemplazado', 'detalle' => 'Se volvió a autorizar la ONT.']);
 
+        // Con "no" no se crea una espera: queda el motivo, como estado final.
         $a = Aprovisionamiento::create([
             'company_id' => $companyId,
             'olt_id'     => $oltId,
@@ -269,12 +390,23 @@ class AprovisionamientoDeOnt
             'ont_id'     => $ontId,
             'serial'     => $serial,
             'user_id'    => $cliente['id'] ?? null,
-            'datos'      => $datos + ['avisos' => $avisos],
+            'datos'      => $datos + ['avisos' => $avisos, 'compatibilidad' => $compatible],
             'wifi_clave' => $clave,
-            'estado'     => 'esperando',
+            'estado'     => $noAplica ? 'no_aplica' : 'esperando',
             'pasos'      => [],
-            'detalle'    => 'Esperando que el equipo aparezca en el TR-069…',
+            'detalle'    => $noAplica ? $compatible['motivo'] : self::textoDeEspera($compatible),
         ]);
+
+        if ($noAplica) {
+            return [
+                'paso'      => 'Aprovisionamiento del equipo',
+                'ok'        => false,
+                'omitido'   => true,
+                'no_aplica' => true,
+                'detalle'   => 'No se puede aprovisionar solo: ' . $compatible['motivo'] . ' ' . $compatible['que_hacer'],
+                'aprovisionamiento' => $a->id,
+            ];
+        }
 
         $partes = [];
         if (!empty($datos['wan'])) {
@@ -291,6 +423,7 @@ class AprovisionamientoDeOnt
             'paso'    => 'Aprovisionamiento del equipo',
             'ok'      => true,
             'detalle' => 'Programado: ' . implode(' · ', $partes) . '. Se aplica solo cuando el equipo aparezca en el TR-069; el resultado queda en Acceso remoto.'
+                . ($compatible['puede'] === CompatibilidadDeOnt::NO_SE_SABE ? ' ' . $compatible['motivo'] . ' Se espera ' . self::ESPERA_SIN_CONFIRMAR_MINUTOS . ' minutos.' : '')
                 . ($avisos ? ' ' . implode(' ', $avisos) : ''),
             'aprovisionamiento' => $a->id,
         ];
@@ -350,6 +483,10 @@ class AprovisionamientoDeOnt
             return ['texto' => 'El servidor TR-069 no tiene leída la conexión de internet del equipo: pedí leerla y volvé a intentar.', 'id' => null];
         }
 
+        if (CambioDeConexion::enCurso($companyId, (int) $ont->user_data_id)) {
+            return ['texto' => 'Hay un cambio de conexión en curso en este equipo: esperá a que termine.', 'id' => null];
+        }
+
         Aprovisionamiento::where('company_id', $companyId)->where('serial', $ont->serial)
             ->whereIn('estado', ['esperando', 'aplicando'])
             ->update(['estado' => 'reemplazado', 'detalle' => 'Se pasó el TR-069 a la conexión de internet.']);
@@ -404,6 +541,11 @@ class AprovisionamientoDeOnt
             return null;
         }
 
+        // Un cambio de conexión en curso lleva también el router: no se pisa.
+        if ($curso = CambioDeConexion::enCurso($companyId, $userId)) {
+            return ['texto' => "Hay un cambio de conexión en curso: {$curso->detalle} Esperá a que termine.", 'id' => null];
+        }
+
         $yo = new self($companyId);
         $cliente = $yo->cliente($userId);
         $vlanGestion = (int) ($g->vlan ?: 0);
@@ -435,10 +577,6 @@ class AprovisionamientoDeOnt
             return $aviso ? ['texto' => "La ONT no se reconfiguró sola: {$aviso}", 'id' => null] : null;
         }
 
-        Aprovisionamiento::where('company_id', $companyId)->where('serial', $ont->serial)
-            ->whereIn('estado', ['esperando', 'aplicando'])
-            ->update(['estado' => 'reemplazado', 'detalle' => 'Se cambió la conexión del cliente.']);
-
         try {
             $crudo = strtoupper((string) preg_replace('/[^0-9A-Za-z]/', '', $ont->serial));
             $enAcs = GenieAcs::deEmpresa($companyId)->dispositivos(
@@ -448,6 +586,17 @@ class AprovisionamientoDeOnt
             $enAcs = null;
         }
 
+        // Fuera del TR-069 y sin forma de llegar solo: no se deja esperando.
+        $compatible = $enAcs ? null : self::compatibilidad($g, (int) $ont->olt_id, (string) $ont->fsp, (int) $ont->ont_id, (string) $ont->serial, false);
+
+        if (($compatible['puede'] ?? null) === CompatibilidadDeOnt::NO) {
+            return ['texto' => 'La ONT no se reconfigura sola: ' . $compatible['motivo'] . ' ' . $compatible['que_hacer'], 'id' => null];
+        }
+
+        Aprovisionamiento::where('company_id', $companyId)->where('serial', $ont->serial)
+            ->whereIn('estado', ['esperando', 'aplicando', 'no_aplica'])
+            ->update(['estado' => 'reemplazado', 'detalle' => 'Se cambió la conexión del cliente.']);
+
         $nuevo = Aprovisionamiento::create([
             'company_id' => $companyId,
             'olt_id'     => $ont->olt_id,
@@ -455,18 +604,19 @@ class AprovisionamientoDeOnt
             'ont_id'     => $ont->ont_id,
             'serial'     => $ont->serial,
             'user_id'    => $userId,
-            'datos'      => ['cliente' => $cliente['nombre'] ?? null, 'wan' => $wan, 'avisos' => [], 'origen' => 'cambio_de_conexion'],
+            'datos'      => ['cliente' => $cliente['nombre'] ?? null, 'wan' => $wan, 'avisos' => [], 'origen' => 'cambio_de_conexion']
+                + ($compatible ? ['compatibilidad' => $compatible] : []),
             'estado'     => $enAcs ? 'aplicando' : 'esperando',
             'acs_id'     => $enAcs,
             'pasos'      => $enAcs ? [['paso' => 'Cambio de conexión desde la ficha del cliente', 'ok' => true, 'detalle' => $enAcs]] : [],
-            'detalle'    => $enAcs ? 'Aplicando la conexión nueva…' : 'Esperando que el equipo aparezca en el TR-069…',
+            'detalle'    => $enAcs ? 'Aplicando la conexión nueva…' : self::textoDeEspera($compatible),
         ]);
 
         return ['texto' => 'La ONT se reconfigura sola en uno o dos minutos: ' . self::resumenWan($wan) . '.', 'id' => $nuevo->id];
     }
 
     /** @return array{id:int, nombre:string, nombres:string, apellidos:string, tipo:string, pppoe_usuario:?string, ip:?string}|null */
-    private function cliente(int $userId): ?array
+    public function cliente(int $userId): ?array
     {
         $c = DB::table('users as u')
             ->join('user_data as ud', 'ud.user_id', '=', 'u.id')
@@ -487,7 +637,7 @@ class AprovisionamientoDeOnt
     }
 
     /** @return array{0:?array, 1:?string} la WAN a configurar, o por qué no */
-    private function wanDelCliente(?array $c, ?int $vlan, array $pedido): array
+    public function wanDelCliente(?array $c, ?int $vlan, array $pedido): array
     {
         if (!$c) {
             return [null, 'Sin cliente vinculado no se configura la conexión a internet.'];
@@ -573,7 +723,7 @@ class AprovisionamientoDeOnt
         return $clave;
     }
 
-    private static function resumenWan(array $wan): string
+    public static function resumenWan(array $wan): string
     {
         return $wan['tipo'] === 'pppoe'
             ? "PPPoE ({$wan['usuario']}) en la VLAN {$wan['vlan']}"
@@ -587,11 +737,29 @@ class AprovisionamientoDeOnt
     {
         $revisados = 0;
 
+        // Cada uno con su propio candado: antes la pasada entera tenía uno solo
+        // (withoutOverlapping) y un equipo lento —esperando a la OLT o al ACS—
+        // frenaba a todos los demás. El 18-09 un cambio de conexión quedó 11
+        // minutos sin moverse detrás de otro. Ahora las pasadas pueden correr a
+        // la vez y cada registro lo trabaja una sola a la vez.
         Aprovisionamiento::whereIn('estado', ['esperando', 'aplicando'])->orderBy('id')->limit(20)->get()
             ->each(function (Aprovisionamiento $a) use (&$revisados) {
+                $candado = \Illuminate\Support\Facades\Cache::lock("aprovisionamiento:{$a->id}", 900);
+
+                if (!$candado->get()) {
+                    return; // lo está trabajando otra pasada
+                }
+
                 $revisados++;
 
                 try {
+                    // Pudo cambiar mientras esperaba el candado (lo canceló el operador).
+                    $a->refresh();
+
+                    if (!in_array($a->estado, ['esperando', 'aplicando'], true)) {
+                        return;
+                    }
+
                     (new self((int) $a->company_id))->trabajar($a);
                 } catch (\Throwable $e) {
                     Log::warning('[Aprovisionamiento] No se pudo avanzar', ['id' => $a->id, 'error' => $e->getMessage()]);
@@ -603,40 +771,158 @@ class AprovisionamientoDeOnt
                     }
 
                     $a->save();
+                } finally {
+                    $candado->release();
+                }
+            });
+
+        // Los que no se configuran solos: si el técnico le activó el TR-069 en
+        // el equipo y ya se reportó, se sigue como con cualquier otro.
+        Aprovisionamiento::where('estado', 'no_aplica')
+            ->where('created_at', '>=', now()->subDays(self::VIGILAR_A_MANO_DIAS))
+            ->orderBy('id')->limit(20)->get()
+            ->each(function (Aprovisionamiento $a) use (&$revisados) {
+                $revisados++;
+
+                try {
+                    (new self((int) $a->company_id))->retomarSiAparecio($a);
+                } catch (\Throwable $e) {
+                    Log::info('[Aprovisionamiento] No se pudo mirar si apareció', ['id' => $a->id, 'error' => $e->getMessage()]);
                 }
             });
 
         return $revisados;
     }
 
-    public function trabajar(Aprovisionamiento $a): void
+    /** Un no_aplica que igual apareció en el TR-069 (se lo configuraron a mano): se aplica. */
+    public function retomarSiAparecio(Aprovisionamiento $a): bool
     {
         $acs = GenieAcs::deEmpresa($this->companyId);
+        $id = $this->buscarEnElAcs($acs, $a);
 
+        if (!$id) {
+            return false;
+        }
+
+        $this->empezarAAplicar($acs, $a, $id);
+        $this->anotarTareas($a, $acs);
+
+        return true;
+    }
+
+    private function empezarAAplicar(GenieAcs $acs, Aprovisionamiento $a, string $id): void
+    {
+        $a->fill([
+            'acs_id'  => $id,
+            'estado'  => 'aplicando',
+            'pasos'   => [['paso' => 'El equipo apareció en el TR-069', 'ok' => true, 'detalle' => $id]],
+            'detalle' => 'Leyendo la configuración del equipo…',
+        ])->save();
+
+        $this->refrescar($acs, $a, $id, true);
+    }
+
+    // ── Si el equipo puede llegar solo al TR-069 ──────────────────────────
+
+    /**
+     * CompatibilidadDeOnt más lo que depende de la empresa: sin el acceso
+     * remoto encendido nadie le da al equipo la dirección del TR-069.
+     *
+     * @return array<string,mixed>
+     */
+    private static function compatibilidad(?GestionRemota $g, int $oltId, string $fsp, int $ontId, string $serial, bool $leerOlt): array
+    {
+        $olt = OltAdmin::find($oltId);
+
+        if (!$olt) {
+            return ['puede' => CompatibilidadDeOnt::NO_SE_SABE, 'motivo' => 'No se encontró la OLT.', 'que_hacer' => null, 'con_olt' => false];
+        }
+
+        $c = CompatibilidadDeOnt::evaluar($olt, $fsp, $ontId, $serial, $leerOlt);
+
+        if ($c['puede'] !== CompatibilidadDeOnt::NO && (!$g?->activa || !$g->vlan)) {
+            $c = array_merge($c, [
+                'puede'     => CompatibilidadDeOnt::NO,
+                'motivo'    => 'El acceso remoto de la empresa está apagado: nadie le da al equipo la dirección del TR-069.',
+                'que_hacer' => 'Encendelo en Acceso remoto → Configuración y volvé a autorizar el equipo, o ' . lcfirst(CompatibilidadDeOnt::queHacerAMano()),
+            ]);
+        }
+
+        return $c + ['evaluado_en' => now()->toDateTimeString()];
+    }
+
+    /** Lo que se ve mientras se espera al equipo. */
+    private static function textoDeEspera(?array $compatible): string
+    {
+        return ($compatible['puede'] ?? null) === CompatibilidadDeOnt::NO_SE_SABE
+            ? 'Esperando que el equipo aparezca en el TR-069 (marca sin probar: hasta ' . self::ESPERA_SIN_CONFIRMAR_MINUTOS . ' min)…'
+            : 'Esperando que el equipo aparezca en el TR-069…';
+    }
+
+    public function trabajar(Aprovisionamiento $a): void
+    {
+        // Cancelado entre que se leyó la lista y ahora: no se toca.
+        if (self::fueCancelado($a)) {
+            return;
+        }
+
+        // Un cambio de conexión desde la ficha del cliente (PPPoE ↔ IP fija,
+        // IP nueva): lleva también el router y se deshace si no se confirma.
+        if (!empty($a->datos['cambio'])) {
+            (new CambioDeConexion($this->companyId))->avanzar($a);
+
+            return;
+        }
+
+        $acs = GenieAcs::deEmpresa($this->companyId);
+
+        try {
+            $this->unaVuelta($a, $acs);
+        } finally {
+            $this->anotarTareas($a, $acs);
+        }
+    }
+
+    private function unaVuelta(Aprovisionamiento $a, GenieAcs $acs): void
+    {
         if ($a->estado === 'esperando') {
-            if ($a->created_at->lt(now()->subMinutes(self::ESPERA_MINUTOS))) {
-                $a->fill([
-                    'estado'  => 'vencido',
-                    'detalle' => 'El equipo no apareció en el TR-069 en ' . self::ESPERA_MINUTOS . ' minutos. Revisá su acceso remoto y volvé a autorizarlo, o configuralo a mano.',
-                ])->save();
+            $forzado = !empty($a->datos['forzado']);
+            $compatible = $forzado ? null : $this->compatibilidadDe($a);
 
-                return;
+            // No puede llegar solo: no se espera. Una sola mirada al ACS por si
+            // ya se reporta por su cuenta (se lo configuraron a mano).
+            if (($compatible['puede'] ?? null) === CompatibilidadDeOnt::NO) {
+                if ($id = $this->buscarEnElAcs($acs, $a)) {
+                    $this->empezarAAplicar($acs, $a, $id);
+                } else {
+                    $a->fill(['estado' => 'no_aplica', 'detalle' => $compatible['motivo']])->save();
+
+                    return;
+                }
+            } else {
+                $sinConfirmar = ($compatible['puede'] ?? null) === CompatibilidadDeOnt::NO_SE_SABE;
+                $espera = $sinConfirmar ? self::ESPERA_SIN_CONFIRMAR_MINUTOS : self::ESPERA_MINUTOS;
+
+                if ($a->created_at->lt(now()->subMinutes($espera))) {
+                    $a->fill([
+                        'estado'  => 'vencido',
+                        'detalle' => $sinConfirmar
+                            ? "El equipo no apareció en el TR-069 en {$espera} minutos: {$compatible['equipo']} no toma la configuración que le manda la OLT {$compatible['olt']}. "
+                                . CompatibilidadDeOnt::queHacerAMano() . ' Después tocá «Reintentar».'
+                            : 'El equipo no apareció en el TR-069 en ' . self::ESPERA_MINUTOS . ' minutos. Revisá su acceso remoto y volvé a autorizarlo, o configuralo a mano.',
+                    ])->save();
+
+                    return;
+                }
+
+                $id = $this->buscarEnElAcs($acs, $a);
+
+                if (!$id) {
+                    return;
+                }
+
+                $this->empezarAAplicar($acs, $a, $id);
             }
-
-            $id = $this->buscarEnElAcs($acs, $a);
-
-            if (!$id) {
-                return;
-            }
-
-            $a->fill([
-                'acs_id'  => $id,
-                'estado'  => 'aplicando',
-                'pasos'   => [['paso' => 'El equipo apareció en el TR-069', 'ok' => true, 'detalle' => $id]],
-                'detalle' => 'Leyendo la configuración del equipo…',
-            ])->save();
-
-            $this->refrescar($acs, $id, true);
         }
 
         $d = $acs->dispositivo((string) $a->acs_id);
@@ -658,7 +944,7 @@ class AprovisionamientoDeOnt
             // Rotando: primero las conexiones, después el WiFi y las cuentas.
             if ($a->intentos % 3 === 0) {
                 $ramas = $igd ? [self::WAN, self::WLAN, 'InternetGatewayDevice.UserInterface'] : ['Device.WiFi'];
-                $this->refrescar($acs, (string) $a->acs_id, $igd, $ramas[intdiv($a->intentos, 3) % count($ramas)]);
+                $this->refrescar($acs, $a, (string) $a->acs_id, $igd, $ramas[intdiv($a->intentos, 3) % count($ramas)]);
             }
 
             if ($a->intentos >= 15) {
@@ -712,6 +998,14 @@ class AprovisionamientoDeOnt
                 continue;
             }
 
+            // Cancelado a mitad de camino: lo hecho queda (y anotado), lo demás
+            // no se aplica.
+            if (self::fueCancelado($a)) {
+                self::anotarPasosSinEstado($a, array_merge($base, array_values($resultados)));
+
+                return;
+            }
+
             // El TR-069 pasa a la conexión de internet sólo si ésta ya anda
             // (con IP fija, también su MAC en el MikroTik): si no, el equipo
             // quedaría fuera del servidor.
@@ -727,12 +1021,18 @@ class AprovisionamientoDeOnt
         $datos['resultados'] = $resultados;
         $lista = array_merge($base, array_values($resultados));
 
+        if (self::fueCancelado($a)) {
+            self::anotarPasosSinEstado($a, $lista);
+
+            return;
+        }
+
         // Contador propio: el de "esperando su configuración" es otro.
         $vuelta = (int) ($datos['reintentos'] ?? 0);
 
         if ($pendienteDe && $vuelta < self::REINTENTOS) {
             $datos['reintentos'] = ++$vuelta;
-            $this->refrescar($acs, (string) $a->acs_id, $igd, $pendienteDe);
+            $this->refrescar($acs, $a, (string) $a->acs_id, $igd, $pendienteDe);
 
             $a->fill([
                 'datos'   => $datos,
@@ -752,6 +1052,36 @@ class AprovisionamientoDeOnt
             'detalle'  => $mal->isEmpty() ? 'Equipo aprovisionado.' : ($mal->count() === 1 ? 'Un paso no se aplicó.' : "{$mal->count()} pasos no se aplicaron."),
             'listo_en' => now(),
         ])->save();
+    }
+
+    /**
+     * Lo que se decidió de este equipo, guardado en el aprovisionamiento. Se
+     * decide una vez; si en el alta "no se sabía" (sólo con el serial), se
+     * vuelve a decidir una vez preguntándole a la OLT. Los que se programaron
+     * antes de existir esta revisión se deciden en su primera vuelta.
+     *
+     * @return array<string,mixed>
+     */
+    private function compatibilidadDe(Aprovisionamiento $a): array
+    {
+        $guardada = $a->datos['compatibilidad'] ?? null;
+
+        if (is_array($guardada) && ($guardada['puede'] !== CompatibilidadDeOnt::NO_SE_SABE || !empty($guardada['con_olt']) || !empty($guardada['releida']))) {
+            return $guardada;
+        }
+
+        $g = GestionRemota::where('company_id', $a->company_id)->first();
+        $nueva = self::compatibilidad($g, (int) $a->olt_id, (string) $a->fsp, (int) $a->ont_id, (string) $a->serial, true) + ['releida' => true];
+
+        $a->datos = array_merge($a->datos ?? [], ['compatibilidad' => $nueva]);
+
+        if ($nueva['puede'] !== CompatibilidadDeOnt::NO) {
+            $a->detalle = self::textoDeEspera($nueva);
+        }
+
+        $a->save();
+
+        return $nueva;
     }
 
     /** El equipo en el ACS, sólo si reportó después de autorizarse. */
@@ -779,15 +1109,21 @@ class AprovisionamientoDeOnt
      * Una sola por vez: pedir tres juntas hacía sesiones largas que el equipo
      * no alcanzaba a terminar («session timeout»), la tarea fallaba y quedaba
      * en cola. Con cada reporte se repetía y se acumulaban (PRUEBA_TR llegó a
-     * nueve). Por eso también se limpia lo que haya quedado colgado antes.
+     * nueve). Por eso también se limpia lo que haya quedado colgado antes,
+     * pero sólo lo que encoló este aprovisionamiento: antes se borraba toda la
+     * cola del equipo, también lo que había pedido otra pantalla o el operador.
      */
-    private function refrescar(GenieAcs $acs, string $id, bool $igd, ?string $rama = null): void
+    private function refrescar(GenieAcs $acs, Aprovisionamiento $a, string $id, bool $igd, ?string $rama = null): void
     {
         $rama ??= $igd ? self::WAN : 'Device.WiFi';
 
         try {
+            $propias = array_merge((array) ($a->datos['tareas_acs'] ?? []), $acs->creadas());
+
             foreach ($acs->tareasPendientes($id) as $vieja) {
-                $acs->borrarTarea((string) $vieja['_id']);
+                if (self::esPropia($vieja, $propias)) {
+                    $acs->borrarTarea((string) $vieja['_id']);
+                }
             }
         } catch (\Throwable $e) {
             Log::info('[Aprovisionamiento] No se pudo limpiar la cola del equipo', ['equipo' => $id, 'error' => $e->getMessage()]);
@@ -800,11 +1136,77 @@ class AprovisionamientoDeOnt
         }
     }
 
+    /**
+     * ¿La tarea de la cola la encoló este aprovisionamiento? Por su _id o, si
+     * la espera se cortó antes de tenerlo, por nombre, objeto y hora.
+     *
+     * @param array<string,mixed> $tarea la de la cola
+     * @param list<array<string,mixed>> $propias
+     */
+    public static function esPropia(array $tarea, array $propias): bool
+    {
+        $id = (string) ($tarea['_id'] ?? '');
+        $objeto = $tarea['objectName'] ?? (isset($tarea['parameterValues'])
+            ? implode(',', array_map(fn ($p) => (string) ($p[0] ?? ''), (array) $tarea['parameterValues']))
+            : (isset($tarea['parameterNames']) ? implode(',', (array) $tarea['parameterNames']) : null));
+        $cuando = isset($tarea['timestamp']) ? strtotime((string) $tarea['timestamp']) : null;
+
+        foreach ($propias as $p) {
+            if (!empty($p['id'])) {
+                if ((string) $p['id'] === $id) {
+                    return true;
+                }
+
+                continue;
+            }
+
+            if (($p['name'] ?? null) === ($tarea['name'] ?? null) && ($p['objeto'] ?? null) === $objeto
+                && (!$cuando || $cuando >= strtotime((string) ($p['en'] ?? '')))) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Guarda las tareas que encoló esta vuelta, para poder limpiar después
+     * sólo las propias.
+     */
+    public function anotarTareas(Aprovisionamiento $a, GenieAcs $acs): void
+    {
+        if (!$acs->creadas() || !$a->exists) {
+            return;
+        }
+
+        try {
+            $datos = $a->datos;
+            $datos['tareas_acs'] = array_slice(array_merge((array) ($datos['tareas_acs'] ?? []), $acs->creadas()), -40);
+            $a->datos = $datos;
+            $a->save();
+        } catch (\Throwable $e) {
+            Log::info('[Aprovisionamiento] No se pudieron anotar las tareas', ['id' => $a->id, 'error' => $e->getMessage()]);
+        }
+    }
+
     // ── Los pasos ─────────────────────────────────────────────────────────
 
-    private function aplicarWan(GenieAcs $acs, Aprovisionamiento $a, array $d, bool $soportado): array
+    /**
+     * Deja en el equipo la conexión a internet de $wan (por defecto, la del
+     * aprovisionamiento).
+     *
+     * Todo lo que toca las conexiones se hace en el momento o no se hace:
+     * borrar una conexión, crearla o cambiarla quedaba en la cola del ACS si el
+     * equipo no atendía el aviso, y la hacía en su próximo reporte sin nadie
+     * mirando (DOUGLAS_MENDEZ, 18-09: el borrado de su única conexión quedó
+     * esperando 8 horas). Si no se puede ya, se saca de la cola y el paso
+     * falla con «reintentar»: la tarea de cada minuto lo vuelve a probar.
+     *
+     * @param array<string,mixed>|null $wan
+     */
+    public function aplicarWan(GenieAcs $acs, Aprovisionamiento $a, array $d, bool $soportado, ?array $wan = null): array
     {
-        $wan = $a->datos['wan'];
+        $wan ??= $a->datos['wan'];
         $titulo = 'Conexión a internet';
 
         if (!$soportado) {
@@ -814,12 +1216,13 @@ class AprovisionamientoDeOnt
 
         $vlanGestion = (int) (GestionRemota::where('company_id', $this->companyId)->value('vlan') ?: 0);
         $objeto = $wan['tipo'] === 'pppoe' ? 'WANPPPConnection' : 'WANIPConnection';
+        $equipo = (string) $a->acs_id;
 
         // Las conexiones de adentro de cada grupo muchas veces no están leídas
         // (se ven los grupos 1 y 2 pero no lo que tienen): se piden de nuevo.
         try {
-            $acs->tarea((string) $a->acs_id, ['name' => 'refreshObject', 'objectName' => self::WAN]);
-            $d = $acs->dispositivo((string) $a->acs_id) ?? $d;
+            $acs->tarea($equipo, ['name' => 'refreshObject', 'objectName' => self::WAN]);
+            $d = $acs->dispositivo($equipo) ?? $d;
         } catch (\Throwable) {
         }
 
@@ -839,13 +1242,9 @@ class AprovisionamientoDeOnt
                 continue; // comparte grupo con la de gestión o con la del cliente
             }
 
-            try {
-                $r = $acs->tarea((string) $a->acs_id, ['name' => 'deleteObject', 'objectName' => self::WAN . ".{$grupo}"]);
-            } catch (\Throwable $e) {
-                $r = ['hecha' => false];
-            }
+            $r = $this->alMomento($acs, $equipo, ['name' => 'deleteObject', 'objectName' => self::WAN . ".{$grupo}"]);
 
-            if ($r['hecha'] ?? false) {
+            if ($r['hecha']) {
                 $quitados[] = (string) $grupo;
                 $borradas = array_merge($borradas, $delGrupo->pluck('nombre')->all());
             }
@@ -854,8 +1253,11 @@ class AprovisionamientoDeOnt
         $conexiones = $conexiones->reject(fn ($c) => in_array((string) $c['dispositivo'], $quitados, true));
         $nota = $borradas ? ' Se borraron las conexiones ajenas: ' . implode(', ', $borradas) . '.' : '';
 
+        // Una del mismo tipo recién creada en una vuelta anterior que no se
+        // alcanzó a configurar (sin VLAN ni servicio) se usa en vez de crear otra.
         $existente = $conexiones->first(fn ($c) => $c['objeto'] === $objeto && $c['vlan'] === (int) $wan['vlan'])
-            ?? $conexiones->first(fn ($c) => $c['objeto'] === $objeto && str_contains($c['servicios'], 'INTERNET'));
+            ?? $conexiones->first(fn ($c) => $c['objeto'] === $objeto && str_contains($c['servicios'], 'INTERNET'))
+            ?? $conexiones->first(fn ($c) => $c['objeto'] === $objeto && $c['vlan'] === null && $c['servicios'] === '');
 
         if ($existente) {
             $ruta = $existente['ruta'];
@@ -872,15 +1274,11 @@ class AprovisionamientoDeOnt
                 $grupo = (string) $choca['dispositivo'];
                 $soloEsa = $todas->where('dispositivo', $grupo)->count() === 1;
 
-                try {
-                    $r = $acs->tarea((string) $a->acs_id, ['name' => 'deleteObject', 'objectName' => $soloEsa ? self::WAN . ".{$grupo}" : $choca['ruta']]);
-                } catch (\Throwable $e) {
-                    $r = ['hecha' => false];
-                }
+                $r = $this->alMomento($acs, $equipo, ['name' => 'deleteObject', 'objectName' => $soloEsa ? self::WAN . ".{$grupo}" : $choca['ruta']]);
 
-                if (!($r['hecha'] ?? false)) {
+                if (!$r['hecha']) {
                     return ['paso' => $titulo, 'ok' => false,
-                        'detalle' => "No se pudo borrar la conexión anterior {$choca['nombre']} para crear la nueva.", 'reintentar' => self::WAN];
+                        'detalle' => "No se pudo borrar la conexión anterior {$choca['nombre']} para crear la nueva: {$r['motivo']}", 'reintentar' => self::WAN];
                 }
 
                 if ($soloEsa) {
@@ -897,8 +1295,8 @@ class AprovisionamientoDeOnt
                 ->reject(fn ($g) => $todas->contains('dispositivo', (string) $g) || in_array((string) $g, $quitados, true))
                 ->first();
 
-            $nueva = $vacio !== null ? (string) $vacio : $this->crearObjeto($acs, (string) $a->acs_id, self::WAN);
-            $conexion = $nueva ? $this->crearObjeto($acs, (string) $a->acs_id, self::WAN . ".{$nueva}.{$objeto}") : null;
+            $nueva = $vacio !== null ? (string) $vacio : $this->crearObjeto($acs, $equipo, self::WAN);
+            $conexion = $nueva ? $this->crearObjeto($acs, $equipo, self::WAN . ".{$nueva}.{$objeto}") : null;
 
             if (!$conexion) {
                 return ['paso' => $titulo, 'ok' => false,
@@ -912,6 +1310,27 @@ class AprovisionamientoDeOnt
             $servicios = '';
         }
 
+        $valores = $this->valoresWan($a, $ruta, $wan, $servicios);
+
+        $r = $this->alMomento($acs, $equipo, ['name' => 'setParameterValues', 'parameterValues' => $valores]);
+
+        if (!$r['hecha']) {
+            return ['paso' => $titulo, 'ok' => false, 'detalle' => "{$como}, pero no se le pudieron cargar los datos: {$r['motivo']}{$nota}",
+                // Rechazada por el equipo no se insiste; si no contestó, sí.
+                'reintentar' => $r['rechazada'] ? null : self::WAN];
+        }
+
+        return ['paso' => $titulo, 'ok' => true, 'detalle' => "{$como}: " . self::resumenWan($wan) . '.' . $nota];
+    }
+
+    /**
+     * Lo que se le carga a una conexión para que quede como $wan. $servicios
+     * es lo que ya lleva: si trae el TR-069 no se le cambia.
+     *
+     * @return list<array{0:string,1:string,2:string}>
+     */
+    public function valoresWan(Aprovisionamiento $a, string $ruta, array $wan, string $servicios = ''): array
+    {
         $valores = [
             ["{$ruta}.Enable", 'true', 'xsd:boolean'],
             ["{$ruta}.ConnectionType", 'IP_Routed', 'xsd:string'],
@@ -926,7 +1345,9 @@ class AprovisionamientoDeOnt
         }
 
         if ($wan['tipo'] === 'pppoe') {
-            $clave = (string) (UserData::where('user_id', $a->user_id)->value('pppoe_password') ?? '');
+            // En un cambio de conexión la clave nueva todavía no está en la
+            // ficha (se guarda cuando anda): viaja cifrada en la WAN pedida.
+            $clave = (string) ($wan['clave_cifrada'] ?? (UserData::where('user_id', $a->user_id)->value('pppoe_password') ?? ''));
             $clave = $clave !== '' ? self::descifrar($clave) : '';
 
             $valores[] = ["{$ruta}.Username", $wan['usuario'], 'xsd:string'];
@@ -941,9 +1362,47 @@ class AprovisionamientoDeOnt
             $valores[] = ["{$ruta}.DNSServers", $wan['dns'] ?? self::DNS, 'xsd:string'];
         }
 
-        $r = $acs->tarea((string) $a->acs_id, ['name' => 'setParameterValues', 'parameterValues' => $valores]);
+        return $valores;
+    }
 
-        return $this->resultado($acs, (string) $a->acs_id, $r, $titulo, "{$como}: " . self::resumenWan($wan) . ($nota ? ".{$nota}" : ''));
+    /**
+     * Una tarea sobre las conexiones, hecha en el momento o sacada de la cola.
+     *
+     * @return array{hecha:bool, rechazada:bool, motivo:string, instancia:mixed}
+     */
+    private function alMomento(GenieAcs $acs, string $equipo, array $tarea): array
+    {
+        try {
+            $r = $acs->tareaInmediata($equipo, $tarea);
+        } catch (\Throwable $e) {
+            // Ni siquiera se encoló (el ACS la rechazó o no contestó): se mira
+            // que no haya quedado nada de todas formas.
+            try {
+                $acs->sacarDeLaCola($equipo, $tarea, null, now()->subMinutes(3));
+            } catch (\Throwable) {
+            }
+
+            return ['hecha' => false, 'rechazada' => false, 'motivo' => 'el servidor TR-069 no respondió (' . mb_substr($e->getMessage(), 0, 80) . ').', 'instancia' => null];
+        }
+
+        if ($r['hecha']) {
+            return ['hecha' => true, 'rechazada' => false, 'motivo' => '', 'instancia' => $r['instancia']];
+        }
+
+        if ($r['incierta']) {
+            Log::warning('[Aprovisionamiento] Tarea de conexión sin confirmar: el equipo estaba en sesión', ['equipo' => $equipo, 'tarea' => $tarea['name'] ?? null]);
+        }
+
+        return [
+            'hecha'     => false,
+            'rechazada' => (bool) $r['falla'],
+            'motivo'    => $r['falla']
+                ? "el equipo la rechazó ({$r['falla']})."
+                : ($r['incierta']
+                    ? 'el equipo estaba ocupado y no se pudo confirmar ni sacar de la cola: revisá el equipo antes de reintentar.'
+                    : 'el equipo no respondió al momento y no se le dejó el cambio en cola (lo haría horas después, sin nadie mirando).'),
+            'instancia' => null,
+        ];
     }
 
     /**
@@ -955,10 +1414,10 @@ class AprovisionamientoDeOnt
      * Pasó el 17-09 cuando se reinició la OLT Huawei (DOUGLAS_MENDEZ y
      * LILIANA_COROMOTO). Con una sola conexión, como JULIO_VALLEJO, no pasa.
      */
-    private function tr069PorInternet(GenieAcs $acs, Aprovisionamiento $a, array $d): array
+    public function tr069PorInternet(GenieAcs $acs, Aprovisionamiento $a, array $d, ?array $wan = null): array
     {
         $titulo = 'TR-069 por la conexión de internet';
-        $wan = $a->datos['wan'];
+        $wan ??= $a->datos['wan'];
         $g = GestionRemota::where('company_id', $this->companyId)->first();
 
         $conexion = collect($this->conexiones($d))
@@ -969,22 +1428,20 @@ class AprovisionamientoDeOnt
         }
 
         if (!str_contains($conexion['servicios'], 'TR069')) {
-            $r = $acs->tarea((string) $a->acs_id, ['name' => 'setParameterValues', 'parameterValues' => [
+            // Cambia la conexión por la que va a llegar el TR-069: en el momento
+            // o nada, igual que borrar una conexión.
+            $r = $this->alMomento($acs, (string) $a->acs_id, ['name' => 'setParameterValues', 'parameterValues' => [
                 ["{$conexion['ruta']}.X_HW_SERVICELIST", 'TR069_INTERNET', 'xsd:string'],
             ]]);
 
-            if (!($r['hecha'] ?? false)) {
-                $falla = ($r['id'] ?? null) ? $acs->fallaDeTarea((string) $a->acs_id, (string) $r['id']) : null;
-
-                if ($falla) {
-                    $acs->borrarTarea((string) $r['id']);
-
-                    return ['paso' => $titulo, 'ok' => false, 'omitido' => true,
-                        'detalle' => "El equipo no aceptó el TR-069 en su conexión de internet ({$falla}): sigue por la de gestión."];
-                }
+            if ($r['rechazada']) {
+                return ['paso' => $titulo, 'ok' => false, 'omitido' => true,
+                    'detalle' => "El equipo no aceptó el TR-069 en su conexión de internet ({$r['motivo']}): sigue por la de gestión."];
             }
 
-            return ['paso' => $titulo, 'ok' => false, 'detalle' => 'Pasando el TR-069 a la conexión de internet…', 'reintentar' => self::WAN];
+            return ['paso' => $titulo, 'ok' => false,
+                'detalle' => $r['hecha'] ? 'Pasando el TR-069 a la conexión de internet…' : 'No se pudo pasar el TR-069 a la conexión de internet: ' . $r['motivo'],
+                'reintentar' => self::WAN];
         }
 
         // Mientras la OLT le tenga creada la de gestión, la ONT sigue reportando
@@ -1005,6 +1462,16 @@ class AprovisionamientoDeOnt
 
         if (!$vlanGestion || !$olt) {
             return ['paso' => $titulo, 'ok' => true, 'detalle' => "El TR-069 va por la conexión de internet ({$ip})."];
+        }
+
+        // La gestión de la OLT ya no se quita. El Huawei sigue reportando por
+        // ella hasta reiniciarse aunque la OLT la borre, y al perder su IP deja
+        // de reportar del todo: el 17-09 quedaron así 16 equipos (PRUEBA_TR,
+        // LILIANA_GIL, KEYLA_DE_AVILA…). Con la de internet en el lugar 1 y la
+        // de gestión en el 2, un reinicio de la OLT no pisa nada; si la de
+        // internet está en el 2, darGestionAOnt no crea la de gestión.
+        if (!config('services.genieacs.quitar_gestion_olt', false)) {
+            return ['paso' => $titulo, 'ok' => true, 'detalle' => "El TR-069 también va por la conexión de internet ({$ip}); se le deja la gestión de la OLT."];
         }
 
         try {
@@ -1035,7 +1502,7 @@ class AprovisionamientoDeOnt
             'detalle' => $q['ok'] ? "El TR-069 va por la conexión de internet ({$ip}). {$q['detalle']}." : $q['detalle']];
     }
 
-    private static function enRed(string $ip, string $cidr): bool
+    public static function enRed(string $ip, string $cidr): bool
     {
         [$red, $bits] = array_pad(explode('/', $cidr), 2, 32);
         $mascara = -1 << (32 - (int) $bits);
@@ -1133,10 +1600,10 @@ class AprovisionamientoDeOnt
      * los cambios de conexión la dejaban en 00:00:00:00:00:00 y el cliente
      * nunca respondía.
      */
-    private function registrarMac(Aprovisionamiento $a, array $d): array
+    public function registrarMac(Aprovisionamiento $a, array $d, ?array $wan = null): array
     {
         $titulo = 'MAC en el MikroTik';
-        $wan = $a->datos['wan'];
+        $wan ??= $a->datos['wan'];
 
         $conexion = collect($this->conexiones($d))
             ->first(fn ($c) => $c['objeto'] === 'WANIPConnection' && $c['vlan'] === (int) $wan['vlan']);
@@ -1178,7 +1645,7 @@ class AprovisionamientoDeOnt
     }
 
     /** La conexión al router del cliente, o null si no hay. */
-    private function routerDelCliente(int $userId)
+    public function routerDelCliente(int $userId)
     {
         try {
             $routerId = UserData::where('user_id', $userId)->where('company_id', $this->companyId)->value('router_id');
@@ -1194,7 +1661,7 @@ class AprovisionamientoDeOnt
     }
 
     /** La red del router que contiene la IP: gateway, máscara e interfaz. @return array{gateway:string,bits:int,interfaz:string}|null */
-    private function redEnElRouter($api, string $ip): ?array
+    public function redEnElRouter($api, string $ip): ?array
     {
         foreach ($api->query(new \RouterOS\Query('/ip/address/print'))->read() as $fila) {
             if (($fila['disabled'] ?? 'false') === 'true' || !preg_match('#^(\d+\.\d+\.\d+\.\d+)/(\d+)$#', (string) ($fila['address'] ?? ''), $m)) {
@@ -1227,7 +1694,14 @@ class AprovisionamientoDeOnt
         $this->motivo = '';
         $antes = self::hijos($acs->dispositivo($id) ?? [], $objeto);
 
-        $r = $acs->tarea($id, ['name' => 'addObject', 'objectName' => $objeto]);
+        // En el momento o se saca de la cola: si quedara, aparecería vacío después.
+        try {
+            $r = $acs->tareaInmediata($id, ['name' => 'addObject', 'objectName' => $objeto]);
+        } catch (\Throwable $e) {
+            $this->motivo = self::SIN_RESPUESTA;
+
+            return null;
+        }
 
         if ($r['instancia'] ?? null) {
             return (string) $r['instancia'];
@@ -1245,10 +1719,7 @@ class AprovisionamientoDeOnt
             return null;
         }
 
-        if ($r['id'] ?? null) {
-            $this->motivo = $acs->fallaDeTarea($id, (string) $r['id']) ?? self::SIN_RESPUESTA;
-            $acs->borrarTarea((string) $r['id']);
-        }
+        $this->motivo = $r['falla'] ?? self::SIN_RESPUESTA;
 
         return null;
     }
@@ -1272,7 +1743,7 @@ class AprovisionamientoDeOnt
     }
 
     /** @return list<array{ruta:string, objeto:string, vlan:?int, servicios:string, nombre:string}> */
-    private function conexiones(array $d): array
+    public function conexiones(array $d): array
     {
         $lista = [];
 
@@ -1298,7 +1769,7 @@ class AprovisionamientoDeOnt
     }
 
     /** La clave PPPoE se guarda cifrada; si la columna trae texto plano se usa tal cual. */
-    private static function descifrar(string $valor): string
+    public static function descifrar(string $valor): string
     {
         try {
             return (string) decrypt($valor, false);
@@ -1307,7 +1778,7 @@ class AprovisionamientoDeOnt
         }
     }
 
-    private static function v(array $d, string $ruta): mixed
+    public static function v(array $d, string $ruta): mixed
     {
         $x = $d;
 
@@ -1322,7 +1793,7 @@ class AprovisionamientoDeOnt
     }
 
     /** @return list<string> los números de instancia bajo un objeto */
-    private static function hijos(array $d, string $ruta): array
+    public static function hijos(array $d, string $ruta): array
     {
         $x = $d;
 

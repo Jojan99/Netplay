@@ -114,17 +114,21 @@ class OltAdminUseCase
             return ['status' => 1, 'message' => 'OLT no encontrada', 'data' => null];
         }
 
-        // Nunca espera el barrido: devuelve la última medición y, si hace
-        // falta, mide en segundo plano (tarda más que el límite de la web).
+        // Nunca espera el barrido: devuelve la última medición guardada. Sólo
+        // mide (en segundo plano) si se pidió con «Medir ahora».
         $r = \App\Services\Olt\SenalDeLaOlt::de($olt, $refrescar);
         $sinDatos = $r['onts'] === [];
+        // Nunca se midió (o la medición guardada venció): no es una falla.
+        $sinMedicion = $sinDatos && !$r['midiendo'] && empty($r['medido_en']);
+        $r['sin_medicion'] = $sinMedicion;
 
         return [
-            'status'  => $sinDatos && !$r['midiendo'] ? 1 : 0,
+            'status'  => $sinDatos && !$r['midiendo'] && !$sinMedicion ? 1 : 0,
             'message' => match (true) {
-                !$sinDatos   => 'OK',
+                !$sinDatos     => 'OK',
                 $r['midiendo'] => 'Midiendo la señal de todas las ONT en segundo plano: tarda cerca de un minuto.',
-                default      => $r['error'] ?: 'La OLT no devolvió mediciones ópticas',
+                $sinMedicion   => 'Todavía no hay una medición de señal guardada: tocá «Medir ahora».',
+                default        => $r['error'] ?: 'La OLT no devolvió mediciones ópticas',
             },
             'data'    => $r,
         ];
@@ -174,6 +178,13 @@ class OltAdminUseCase
 
         if ($cambios === []) {
             return ['status' => 1, 'message' => 'No se indicó ningún perfil', 'data' => null];
+        }
+
+        // En ZTE el perfil "de línea" es el tcont (DBA) y al autorizar la OLT
+        // lo pide por su nombre: se guarda también ahí.
+        if (strtolower((string) $olt->brand) === 'zte' && isset($cambios['ont_lineprofile_id'])) {
+            $cambios['zte_dba_profile'] = OltProfile::where('olt_id', $oltId)->where('type', 'line')
+                ->where('profile_id', $cambios['ont_lineprofile_id'])->value('profile_name');
         }
 
         $olt->forceFill($cambios)->save();
@@ -260,7 +271,7 @@ class OltAdminUseCase
     {
         // Versión en la clave: cambiarla invalida lo guardado desde un deploy,
         // sin depender de poder borrar archivos de caché que creó la web.
-        $clave = "olt:{$oltId}:capacidades:v2";
+        $clave = "olt:{$oltId}:capacidades:v3";
 
         $capacidades = Cache::get($clave);
 
@@ -786,7 +797,13 @@ class OltAdminUseCase
                 'srv_profile_id'  => isset($data['srv_profile_id'])  ? (int) $data['srv_profile_id']  : null,
                 'vlan'            => $vlan,
                 'service_port'    => $spIndex,
+                'onu_type'        => $data['onu_type'] ?? null,
             ]);
+
+            // El driver puede decir qué número usó (ZTE: el 2, por ONU).
+            if (!empty($result['service_port_index'])) {
+                $spIndex = (int) $result['service_port_index'];
+            }
 
             // Un alta son varios pasos contra la OLT y cualquiera puede
             // fallar por su cuenta. Se informa uno por uno: si se corta a
@@ -1130,6 +1147,11 @@ class OltAdminUseCase
         ]);
 
         if ($r['status'] === 0 && $ont) {
+            // ZTE: el service-port de internet es el 2 de la ONU, no un índice global.
+            if (strtolower((string) OltAdmin::find($oltId)?->brand) === 'zte') {
+                $spIndex = 2;
+            }
+
             $ont->update(['service_ports' => [['index' => $spIndex, 'vlan' => $vlan]]]);
             Cache::forget("olt:{$oltId}:all_service_ports");
         }
@@ -1229,11 +1251,27 @@ class OltAdminUseCase
      */
     private function ontsPorSnmp(OltAdmin $olt, HuaweiSnmpReader $reader): array
     {
+        // ZTE (C320/C300): su propia MIB, con el nombre de cada ONT.
+        if (strtolower((string) $olt->brand) === 'zte') {
+            $zte = new \App\Services\Olt\SnmpZte($reader);
+
+            if ($zte->esCompatible()) {
+                return $zte->onts();
+            }
+        }
+
         if (strtolower((string) $olt->brand) !== 'huawei') {
             $epon = new \App\Services\Olt\SnmpEponNscrtv($reader);
 
             if ($epon->esCompatible()) {
                 return $epon->onts();
+            }
+
+            // Las GPON C-Data publican su propia MIB (enterprise 17409).
+            $cdata = new \App\Services\Olt\SnmpGponCdata($reader);
+
+            if ($cdata->esCompatible()) {
+                return $cdata->onts();
             }
         }
 
@@ -1312,7 +1350,29 @@ class OltAdminUseCase
         try {
             $olt    = $this->getOltModel($oltId);
             $reader = $this->snmpReader($olt);
-            $info   = $reader->getOntInfo($fsp, $ontId);
+            // En una ZTE la MIB de Huawei no existe: devolvía la ficha vacía.
+            $info   = (strtolower((string) $olt->brand) === 'zte' ? (new \App\Services\Olt\SnmpZte($reader))->una($fsp, $ontId) : null)
+                ?? $reader->getOntInfo($fsp, $ontId);
+
+            // Lo leído en vivo corrige la lista: una ONT recién autorizada queda
+            // guardada como "offline" porque todavía estaba arrancando.
+            if (!empty($info['status'])) {
+                OltOnt::where('olt_id', $oltId)->where('fsp', $fsp)->where('ont_id', $ontId)
+                    ->where('status', '!=', $info['status'])->update(['status' => $info['status']]);
+            }
+
+            if (isset($info['potencia']) && !isset($info['estado'])) {
+                $info['estado'] = \App\Services\Olt\SenalDeLaOlt::clasificar($info['potencia']);
+            }
+
+            // La ZTE no da temperatura, voltaje ni láser por SNMP: por consola,
+            // sólo de la ONT que se está mirando (~1,3 s).
+            if (strtolower((string) $olt->brand) === 'zte' && ($info['status'] ?? null) === 'online') {
+                try {
+                    $info = array_merge($info, array_filter((array) $this->dispatcher->dispatch($oltId, 'opticaDeOnt', ['fsp' => $fsp, 'ont_id' => $ontId]), fn ($v) => $v !== null));
+                } catch (\Throwable) {
+                }
+            }
             Cache::put($cacheKey, $info, now()->addMinutes(1));
             return ['status' => 0, 'message' => 'Info ONT obtenida', 'data' => $info];
         } catch (\Throwable $e) {
@@ -1617,6 +1677,25 @@ class OltAdminUseCase
         $todos    = Cache::get($cacheKey);
 
         if (is_array($todos) && $todos !== []) {
+            return $todos;
+        }
+
+        // ZTE: una sola lectura de la configuración trae todos (por puerto no
+        // hay comando y serían 12 lecturas completas).
+        $olt = OltAdmin::find($oltId);
+
+        if ($olt && strtolower((string) $olt->brand) === 'zte') {
+            try {
+                $todos = (array) $this->dispatcher->dispatch($oltId, 'getServicePorts', []);
+            } catch (\Throwable $e) {
+                \Log::warning('OLT getAllServicePorts ZTE falló', ['olt_id' => $oltId, 'error' => $e->getMessage()]);
+                $todos = [];
+            }
+
+            if ($todos !== []) {
+                Cache::put($cacheKey, $todos, now()->addMinutes(10));
+            }
+
             return $todos;
         }
 

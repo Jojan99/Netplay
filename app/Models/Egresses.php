@@ -17,6 +17,14 @@ class Egresses extends Model
         'value',
         'user_id',
         'payment_method_id',
+        // Egresos profesionales (columnas nuevas; ver 2026_09_17_000004)
+        'expense_date',
+        'supplier',
+        'document_number',
+        'notes',
+        'attachment_path',
+        'attachment_name',
+        'recurrence',
         'created_at',
         'updated_at',
     ];

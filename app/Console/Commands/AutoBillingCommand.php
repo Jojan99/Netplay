@@ -19,9 +19,14 @@ class AutoBillingCommand extends Command
         $day  = $now->day;
         $hour = $now->hour;
 
-        // Buscar schedules activos cuyo día y hora coincidan con ahora
+        // Buscar schedules activos cuyo día y hora coincidan con ahora.
+        // En el último día del mes entran también los grupos con un día que ese
+        // mes no existe (29, 30 o 31 en febrero): si no, se saltarían el mes.
+        $ultimo = $now->daysInMonth;
+
         $schedules = CompanyBillingSchedule::with('company')
-            ->where('billing_day', $day)
+            ->where(fn ($q) => $q->where('billing_day', $day)
+                ->when($day === $ultimo, fn ($q2) => $q2->orWhere('billing_day', '>', $ultimo)))
             ->where('billing_hour', $hour)
             ->where('active', true)
             ->whereHas('company', fn($q) => $q->where('active', true))

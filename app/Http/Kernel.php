@@ -76,5 +76,11 @@ class Kernel extends HttpKernel
         'empresa.propia' => \App\Http\Middleware\EmpresaPropiaMiddleware::class,
         'module'       => \App\Http\Middleware\ModuleMiddleware::class,
         'clave.maestra'=> \App\Http\Middleware\ClaveMaestraMiddleware::class,
+        // La consola de Netvula: su propia dirección y sus propios usuarios.
+        // Nada que ver con los usuarios ni los perfiles de las empresas.
+        'consola'      => \App\Http\Middleware\ConsolaMiddleware::class,
+        // Lo contrario: en la dirección de la consola no se sirve el panel de
+        // empresas ni el portal de clientes.
+        'fuera.consola'=> \App\Http\Middleware\SoloFueraDeLaConsolaMiddleware::class,
     ];
 }

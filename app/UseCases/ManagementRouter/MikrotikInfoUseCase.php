@@ -9,6 +9,7 @@ use App\Models\UserData;
 use App\Repositories\Interfaces\RouterRepositoryInterface;
 use App\Services\WhatsAppService;
 use App\UseCases\ManagementRouter\Interfaces\MikrotikInfoUseCaseInterface;
+use App\Services\Red\IdentidadEnElRouter;
 use RouterOS\Query;
 
 class MikrotikInfoUseCase implements MikrotikInfoUseCaseInterface
@@ -280,24 +281,15 @@ class MikrotikInfoUseCase implements MikrotikInfoUseCaseInterface
             $arpQuery->add('=.proplist=.id,address,mac-address,interface,comment,disabled');
             $arpList = $api->query($arpQuery)->read();
 
-            $users = UserData::select(
-                    'user_data.user_id',
-                    'user_data.dni',
-                    'user_data.names',
-                    'user_data.lastname',
-                    'users.username',
-                    'user_data.status_internet_id'
-                )
-                ->join('users', 'users.id', '=', 'user_data.user_id')
-                ->where('users.company_id', getSessionCompanyId())
-                ->get()
-                ->keyBy('dni')
-                ->map(fn($u) => $u->toArray())
-                ->toArray();
+            // De quién es cada entrada, con el criterio común: el comment puede
+            // ser el documento o el nombre que el cliente tenía en la
+            // plataforma de la que se importó.
+            $companyId = (int) getSessionCompanyId();
 
-            $clients = array_map(function ($arp) use ($users) {
+            $clients = array_map(function ($arp) use ($companyId) {
                 $comment  = $arp['comment'] ?? '';
-                $userData = $users[$comment] ?? null;
+                $cliente  = IdentidadEnElRouter::clienteDeEntrada($companyId, $arp);
+
                 return [
                     'id'        => $arp['.id'] ?? '',
                     'ip'        => $arp['address'] ?? '',
@@ -305,10 +297,10 @@ class MikrotikInfoUseCase implements MikrotikInfoUseCaseInterface
                     'interface' => $arp['interface'] ?? '',
                     'comment'   => $comment,
                     'disabled'  => ($arp['disabled'] ?? 'false') === 'true',
-                    'user_name' => isset($userData['names']) ? trim($userData['names'] . ' ' . ($userData['lastname'] ?? '')) : null,
-                    'username'  => $userData['username'] ?? null,
-                    'user_id'   => $userData['user_id'] ?? null,
-                    'status_id' => $userData['status_internet_id'] ?? null,
+                    'user_name' => $cliente['nombre'] ?? null,
+                    'username'  => $cliente['username'] ?? null,
+                    'user_id'   => $cliente['user_id'] ?? null,
+                    'status_id' => $cliente['status_internet_id'] ?? null,
                 ];
             }, $arpList);
 
@@ -507,11 +499,14 @@ class MikrotikInfoUseCase implements MikrotikInfoUseCaseInterface
             if (!$userData) { $errors[] = "User $userId: no encontrado"; return; }
 
             $dni = $userData->dni;
+            $companyId = (int) getSessionCompanyId();
+            $identidad = IdentidadEnElRouter::deUsuario($userId, $companyId);
 
             $arpQuery = new Query('/ip/arp/print');
-            $arpQuery->where('comment', $dni);
-            $arpQuery->add('=.proplist=.id,address');
-            $arpEntries = $api->query($arpQuery)->read();
+            $arpQuery->add('=.proplist=.id,address,comment');
+            $arpEntries = $identidad
+                ? IdentidadEnElRouter::suyas($api->query($arpQuery)->read(), $identidad, $companyId)
+                : [];
 
             if (empty($arpEntries)) { $errors[] = "User $userId ($dni): sin ARP"; return; }
 

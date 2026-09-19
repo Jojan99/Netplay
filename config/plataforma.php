@@ -12,12 +12,39 @@ return [
     'nombre' => env('PLATAFORMA_NOMBRE', 'Netvula'),
 
     /**
+     * La consola de Netvula vive en su propia dirección.
+     *
+     * No es el panel de ninguna empresa: tiene sus propios usuarios, su propio
+     * ingreso y su propio token. Fuera de este host sus rutas no existen (404),
+     * y en este host no se sirve ni el panel de empresas ni el portal de
+     * clientes. 'admin' ya está en la lista de reservados, así que ninguna
+     * empresa lo puede tomar.
+     *
+     * Con CONSOLA_HOST vacío la consola queda apagada por completo.
+     */
+    'consola_host' => env('CONSOLA_HOST', 'admin.' . env('PLATAFORMA_DOMINIO', 'netvula.com')),
+
+    /** Cuánto dura la sesión de la consola, en minutos. */
+    'consola_minutos' => (int) env('CONSOLA_MINUTOS', 480),
+
+    /**
      * Mientras el DNS comodín (*.netvula.com) y su certificado no estén listos,
      * nadie se manda a un subdominio: el login sigue entrando en la raíz y los
      * enlaces salen con APP_URL. Con esto en false lo único que cambia es que
      * cada empresa ya tiene reservado su subdominio.
      */
     'subdominios_activos' => (bool) env('SUBDOMINIOS_ACTIVOS', false),
+
+    /**
+     * Dominios propios de empresas: dominio => subdominio de la empresa.
+     *
+     * La empresa que entra por su propio dominio queda identificada igual que
+     * por su subdominio, así su portal sólo recibe a sus clientes y muestra su
+     * marca. El "www." se ignora.
+     */
+    'dominios_propios' => [
+        'netplay.com.co' => 'netplay',
+    ],
 
     /** Los que no puede tomar ninguna empresa: son de la plataforma o se prestan a engaño. */
     'reservados' => [

@@ -158,7 +158,14 @@ class ServicioPppoe
         return array_values(array_map(function ($s) use ($activas, $porDocumento, $porUsuario, $onts) {
             $usuario = $s['name'] ?? '';
             $documento = trim((string) ($s['comment'] ?? ''));
+            // Por usuario, por documento y —si vino importado— por el nombre
+            // que tenía en la plataforma anterior.
             $cliente = $porUsuario[$usuario] ?? ($porDocumento[preg_replace('/\D/', '', $documento)] ?? null);
+
+            if (!$cliente) {
+                $deOrigen = IdentidadEnElRouter::clienteDeEntrada($this->companyId(), ['name' => $usuario, 'comment' => $documento], false);
+                $cliente = $deOrigen ? ($porDocumento[$deOrigen['documento']] ?? null) : null;
+            }
             $ont = $cliente ? ($onts[$cliente->user_id] ?? null) : null;
 
             return [
@@ -309,6 +316,66 @@ class ServicioPppoe
 
         $q = new Query('/ppp/secret/remove');
         $q->equal('.id', $id);
+        $api->query($q)->read();
+    }
+
+    /**
+     * El secret tal como está en el router (con su clave), o null si no existe.
+     *
+     * @return array<string,string>|null
+     */
+    public function secret(string $usuario): ?array
+    {
+        $q = new Query('/ppp/secret/print');
+        $q->where('name', $usuario);
+
+        return $this->api()->query($q)->read()[0] ?? null;
+    }
+
+    /**
+     * La sesión PPPoE activa de ese usuario, o null si no está conectado.
+     *
+     * @return array<string,string>|null
+     */
+    public function sesionActiva(string $usuario): ?array
+    {
+        $q = new Query('/ppp/active/print');
+        $q->where('name', $usuario);
+
+        foreach ($this->api()->query($q)->read() as $s) {
+            if (($s['service'] ?? 'pppoe') === 'pppoe') {
+                return $s;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Deja el secret como estaba antes de un cambio que no se confirmó: su
+     * clave, su perfil, su comentario y si estaba deshabilitado.
+     *
+     * @param array<string,string> $antes lo que devolvió secret()
+     */
+    public function restaurar(array $antes): void
+    {
+        $api = $this->api();
+        $id = $this->idDe($api, (string) ($antes['name'] ?? ''));
+
+        if (!$id) {
+            return;
+        }
+
+        $q = new Query('/ppp/secret/set');
+        $q->equal('.id', $id);
+
+        foreach (['password', 'profile', 'comment'] as $campo) {
+            if (array_key_exists($campo, $antes)) {
+                $q->equal($campo, (string) $antes[$campo]);
+            }
+        }
+
+        $q->equal('disabled', ($antes['disabled'] ?? 'false') === 'true' ? 'yes' : 'no');
         $api->query($q)->read();
     }
 

@@ -15,16 +15,28 @@ Route::get('/contracts/archivo/{clientContract}/{tipo}', [ContractSignController
     ->middleware('signed:relative')
     ->name('contratos.archivo');
 Route::get('/contracts/archivo-token/{token}/{tipo}', [ContractSignController::class, 'archivoPorToken'])
-    ->whereIn('tipo', [...\App\Support\ArchivosContrato::TIPOS, 'preview']);
+    ->whereIn('tipo', [...\App\Support\ArchivosContrato::TIPOS, 'preview', 'logo']);
 
-// Pre-detección de cara de documento (sin JWT, usado en vista de firma)
-Route::post('/contracts/detect-document-side', [ContractSignController::class, 'detectDocumentSide']);
+// Hojas del contrato dibujadas del PDF real, protegidas por el token del link.
+Route::get('/contracts/hoja-token/{token}/{pagina}', [ContractSignController::class, 'hojaPorToken'])
+    ->whereNumber('pagina');
+
+// Cara del documento (sin JWT: lo llama la página de firma). Con límite de
+// peticiones porque decodifica y analiza una imagen en cada llamada.
+Route::post('/contracts/detect-document-side', [ContractSignController::class, 'detectDocumentSide'])
+    ->middleware('throttle:20,1');
 
 Route::prefix('contracts')->middleware(['jwt.verify', 'module:contratos'])->group(function () {
 
+    // Parametrización: catálogo de variables y vista previa con datos reales.
+    // Van antes de /{id} para que 'variables' no se lea como un id.
+    Route::get('/variables',      [ContractController::class, 'variables']);
+    Route::post('/vista-previa',  [ContractController::class, 'vistaPrevia']);
+    Route::get('/guia/{nombre}',  [ContractController::class, 'guiaPdf']);
+
     // Plantillas de contrato (ADMIN / CONTADOR)
     Route::get('/',              [ContractController::class, 'index']);
-    Route::get('/{id}',          [ContractController::class, 'show']);
+    Route::get('/{id}',          [ContractController::class, 'show'])->whereNumber('id');
     Route::post('/',             [ContractController::class, 'store']);
     Route::put('/{id}',          [ContractController::class, 'update']);
     Route::delete('/{id}',       [ContractController::class, 'destroy']);
@@ -55,6 +67,9 @@ Route::prefix('contracts')->middleware(['jwt.verify', 'module:contratos'])->grou
     Route::post('/{id}/logo',                           [ContractController::class, 'uploadLogo']);
 
     // Campos / coordenadas sobre PDF base
+    Route::get('/{id}/pdf-base-archivo',                 [ContractController::class, 'pdfBaseArchivo']);
+    Route::post('/{id}/pdf-prueba',                      [ContractController::class, 'pdfPrueba']);
+    Route::get('/{id}/hoja/{pagina}',                    [ContractController::class, 'hojaPlantilla'])->whereNumber('pagina');
     Route::get('/{id}/pdf-fields',                      [ContractController::class, 'getPdfFields']);
     Route::post('/{id}/pdf-fields',                      [ContractController::class, 'savePdfFields']);
     Route::get('/{id}/pdf-dimensions',                   [ContractController::class, 'getPdfDimensions']);

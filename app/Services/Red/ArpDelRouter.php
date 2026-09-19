@@ -10,9 +10,10 @@ use RouterOS\Query;
 /**
  * Qué IP tiene cada cliente según el MikroTik.
  *
- * En el router el cliente se identifica por su número de documento, guardado
- * en el comment de la entrada ARP. El comment puede venir con puntos, espacios
- * o guiones, así que se compara sólo por los dígitos.
+ * Se reconoce a cada cliente con el criterio común (IdentidadEnElRouter): el
+ * documento en el comment, el nombre que traía de la plataforma de la que se
+ * importó, o su IP. La clave del arreglo sigue siendo el documento en dígitos,
+ * que es lo que esperan quienes lo usan.
  */
 class ArpDelRouter
 {
@@ -43,14 +44,26 @@ class ArpDelRouter
                 $query->add('=.proplist=address,comment');
 
                 foreach ($api->query($query)->read() as $fila) {
-                    $documento = preg_replace('/\D/', '', trim((string) ($fila['comment'] ?? '')));
-                    $ip        = trim((string) ($fila['address'] ?? ''));
+                    $ip = trim((string) ($fila['address'] ?? ''));
 
-                    if ($documento === '' || $ip === '') {
+                    if ($ip === '') {
                         continue;
                     }
 
-                    $porDocumento[$documento][] = $ip;
+                    // De quién es la entrada, con el criterio común: documento,
+                    // nombre en la plataforma de origen o su IP. Sin esto, los
+                    // clientes importados (que en el router llevan el nombre de
+                    // servicio de WispHub) no tenían ninguna IP "de verdad".
+                    $cliente = IdentidadEnElRouter::clienteDeEntrada($companyId, [
+                        'address' => $ip,
+                        'comment' => trim((string) ($fila['comment'] ?? '')),
+                    ]);
+
+                    if (!$cliente || $cliente['documento'] === '') {
+                        continue;
+                    }
+
+                    $porDocumento[$cliente['documento']][] = $ip;
                 }
 
                 $algunoRespondio = true;

@@ -80,7 +80,7 @@ class SendMessageUseCase implements SendMessageUseCaseInterface
         $target = $this->conversationRepository->findMessageForQuote((int)($extra['target_message_id'] ?? 0), $conversation->id);
         if (!$target || $target['message_type'] !== 'poll' || !$target['external_id']) return ['status' => 'error', 'message' => 'Encuesta no encontrada'];
         $options = array_values(array_filter((array)($extra['options'] ?? []), 'is_string'));
-        $whatsAppService = new WhatsAppService($conversation->company_id, false, $conversation->provider ?? 'netplay');
+        $whatsAppService = WhatsAppService::paraConversacion($conversation);
         $r = $whatsAppService->sendPollVote($conversation->phone, (string)$target['external_id'], $options);
         if (!is_array($r) || ($r['status'] ?? null) !== 'ok') return ['status' => 'error', 'message' => $r['message'] ?? $r['error'] ?? 'No se pudo votar'];
         $this->conversationRepository->upsertPollVote($target['id'], 'agent', 'agent', null, $options);
@@ -146,13 +146,11 @@ class SendMessageUseCase implements SendMessageUseCaseInterface
         // );
 
     //WhatsApp
-    // Misma empresa, dos mecanismos posibles (Meta API o Netplay WhatsApp): se debe usar
-    // el provider real de ESTA conversación, nunca un valor global de la empresa.
-    $whatsAppService = new WhatsAppService(
-        $conversation->company_id,
-        false,
-        $conversation->provider ?? 'netplay'
-    );
+    // Misma empresa, dos mecanismos posibles (Meta API o Netplay WhatsApp) y varias
+    // líneas de WhatsApp Web: se usa el provider y la LÍNEA reales de ESTA
+    // conversación, nunca un valor global de la empresa. Responder desde otro
+    // número de la empresa le abre al cliente un chat distinto.
+    $whatsAppService = WhatsAppService::paraConversacion($conversation);
 
     $quotedArg = $quoted ? ['id' => $quoted['external_id'], 'fromMe' => $quoted['sender_type'] !== 'customer', 'text' => $quoted['content']] : null;
     $whats = match ($messageType) {

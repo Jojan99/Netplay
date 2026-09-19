@@ -125,11 +125,36 @@ class ComprobanteWhatsAppWeb
             'referencia' => $proof->reference_number,
         ]);
 
+        self::avisar($companyId, trim($cliente->names . ' ' . $cliente->lastname), $proof, 'WhatsApp Web');
+
         return [
             'ok'       => true,
             'proof_id' => (int) $proof->id,
             'cliente'  => trim($cliente->names . ' ' . $cliente->lastname),
         ];
+    }
+
+    /**
+     * Avisa que entró un comprobante, al destino que la empresa eligió en
+     * Avisos y destinos. El comprobante queda esperando revisión: si nadie se
+     * entera, el cliente pagó y nadie lo aplica.
+     */
+    public static function avisar(int $companyId, string $cliente, PaymentProof $proof, string $origen): void
+    {
+        try {
+            \App\Services\Avisos\MensajeDeAviso::nuevo('Comprobante de pago recibido', $companyId, '🧾')
+                ->dato('Cliente', $cliente)
+                ->dinero('Valor', $proof->reported_amount)
+                ->dato('Banco', $proof->bank_name)
+                ->dato('Referencia', $proof->reference_number)
+                ->fecha('Fecha del pago', $proof->payment_date, false)
+                ->dato('Llegó por', $origen)
+                ->fecha('Recibido', now())
+                ->cierre('Queda pendiente de revisión en Comprobantes.')
+                ->enviar('comprobante_pago');
+        } catch (\Throwable $e) {
+            Log::warning('[Comprobante] No se pudo avisar', ['empresa' => $companyId, 'error' => $e->getMessage()]);
+        }
     }
 
     /* ── Cliente ─────────────────────────────────────────────────────────── */

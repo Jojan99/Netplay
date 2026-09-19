@@ -42,7 +42,15 @@ class Kernel extends ConsoleKernel
 
         // Aprovisionamiento de ONT recién autorizadas: les aplica WAN, WiFi y
         // cuenta de administración en cuanto aparecen en el TR-069.
-        $schedule->command('aprovisionamiento:trabajar')->everyMinute()->user('www-data')->withoutOverlapping();
+        // Sin withoutOverlapping: cada aprovisionamiento lleva su propio candado
+        // (AprovisionamientoDeOnt::trabajarPendientes). Con uno solo para toda la
+        // pasada, un equipo lento dejaba a los demás esperando. En segundo plano
+        // para no demorar al resto de las tareas programadas.
+        $schedule->command('aprovisionamiento:trabajar')->everyMinute()->user('www-data')->runInBackground();
+
+        // Cobranza inteligente: detecta deudores, cierra lo pagado y, en el
+        // horario de cada empresa, el asistente escribe y recuerda.
+        $schedule->command('cobranza:revisar')->everyFiveMinutes()->user('www-data')->withoutOverlapping(20)->runInBackground();
 
         // Sincroniza ARP MikroTik con STATUS de plataforma — corrige desyncs diariamente
         $schedule->command('arp:sync')->dailyAt('06:00')->user('www-data');

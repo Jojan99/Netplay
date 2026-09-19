@@ -59,9 +59,25 @@ class EstadoDeUnaOnt
 
             // Las EPON publican la ONU en la MIB NSCRTV; si la OLT no la tiene,
             // una() no encuentra la ONU y se prueba la de Huawei.
-            if (strtolower((string) $olt->brand) !== 'huawei') {
+            if (strtolower((string) $olt->brand) === 'zte') {
+                $fila = (new SnmpZte($snmp))->una($fsp, $ontId);
+
+                // Temperatura, voltaje y láser: sólo por consola en la ZTE.
+                if ($fila && $fila['status'] === 'online') {
+                    try {
+                        $fila = array_merge($fila, array_filter((array) app(\App\Services\OltTelnetDispatcher::class)
+                            ->dispatch((int) $olt->id, 'opticaDeOnt', ['fsp' => $fsp, 'ont_id' => $ontId]), fn ($v) => $v !== null));
+                    } catch (\Throwable) {
+                    }
+                }
+            }
+
+            if ($fila === null && strtolower((string) $olt->brand) !== 'huawei') {
                 $epon = new SnmpEponNscrtv($snmp);
                 $fila = $epon->una($fsp, $ontId, self::ifIndex($olt, $epon, "{$fsp}:{$ontId}"));
+
+                // Las GPON C-Data no tienen esa MIB: publican la suya.
+                $fila ??= (new SnmpGponCdata($snmp))->una($fsp, $ontId);
             }
 
             if ($fila === null) {
@@ -175,6 +191,14 @@ class EstadoDeUnaOnt
         return $n >= $min && $n <= $max ? $n : null;
     }
 
+    /** "00 00 00 00" (la GPON C-Data con la ONT caída) no es un fabricante. */
+    private static function fabricante(?string $v): ?string
+    {
+        $v = trim((string) $v);
+
+        return $v === '' || preg_match('/^(00\s*)+$/', $v) ? null : $v;
+    }
+
     /** @return array<string,mixed> */
     private static function normalizar(array $f, ?string $error = null): array
     {
@@ -189,6 +213,8 @@ class EstadoDeUnaOnt
             'status'      => $f['status'] ?? null,
             'modelo'      => $f['modelo'] ?? null,
             'firmware'    => $f['firmware'] ?? null,
+            // Vendor ID que la ONT le informó a la OLT (EPON NSCRTV / GPON C-Data).
+            'fabricante'  => self::fabricante($f['fabricante'] ?? $f['marca'] ?? null),
             'distancia_m' => $f['distancia_m'] ?? null,
             // Apagada no mide nada: lo que venga son restos de la OLT.
             'potencia'    => $apagada ? null : $potencia,

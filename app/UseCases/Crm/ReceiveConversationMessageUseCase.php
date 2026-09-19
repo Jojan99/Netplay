@@ -10,7 +10,7 @@ use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 use App\Services\WhatsAppService;
 use Illuminate\Support\Facades\DB;
-use App\Models\Company;
+use App\Services\WhatsApp\LineasDeWhatsApp as Lineas;
 
 class ReceiveConversationMessageUseCase
     implements ReceiveConversationMessageUseCaseInterface
@@ -51,16 +51,27 @@ public function execute(array $payload): array
         : 'netplay';
     $companyId = isset($payload['company_id']) ? (int) $payload['company_id'] : null;
 
-    // Netplay envía instanceId, no company_id. Resolver la empresa por la instancia
-    // evita crear clientes/conversaciones sin compañía y no altera el flujo de Meta.
-    if ($provider === 'netplay' && !$companyId && !empty($payload['instanceId'])) {
-        $companyId = Company::where('wa_instance_id', $payload['instanceId'])->value('id');
+    // Netplay envía instanceId, no company_id. La empresa se resuelve por el
+    // CATÁLOGO de líneas y no por companies.wa_instance_id: esa columna guarda
+    // una sola instancia, así que un mensaje entrado por la segunda línea de la
+    // empresa no resolvía nada y se perdía sin llegar a ninguna bandeja.
+    // Mientras la migración no corra, la búsqueda cae en la columna vieja.
+    $instanceId = $provider === 'netplay' ? ($payload['instanceId'] ?? null) : null;
+
+    if ($instanceId && !$companyId) {
+        $companyId = Lineas::empresaDeInstancia((string) $instanceId);
 
         if ($payload['event'] === 'message.received') Log::info('[Netplay Webhook] Empresa resuelta por instancia', [
-            'instance_id' => $payload['instanceId'],
-            'company_id' => $companyId,
+            'instance_id' => $instanceId,
+            'company_id'  => $companyId,
         ]);
     }
+
+    // La línea concreta por la que entró. Se guarda en la conversación para que
+    // la respuesta salga por el MISMO número: contestar desde otra línea parte
+    // el hilo del cliente y es lo que hacía que dos líneas se mezclaran.
+    $linea   = $instanceId && $companyId ? Lineas::porInstancia((string) $instanceId, (int) $companyId) : null;
+    $lineaId = $linea ? (int) $linea->id : null;
 
     // Acks de entrega / lectura de mensajes enviados por el agente
     if ($payload['event'] === 'message.status') {
@@ -244,7 +255,8 @@ public function execute(array $payload): array
     $mensajesPrevios = [];
 
     if (!$esGrupo && !($payload['_saltar_identificacion'] ?? false)) {
-        $decision = $puerta->evaluar($companyId, $provider, $phone, $data['content'] ?? null, $payload);
+        // La pregunta sale por la línea por la que escribió el cliente.
+        $decision = $puerta->evaluar($companyId, $provider, $phone, $data['content'] ?? null, $payload, $instanceId);
 
         if ($decision['accion'] === \App\Services\Crm\PuertaIdentificacion::RETIENE) {
             return ['status' => 'retenido_identificacion', 'phone' => $phone];
@@ -262,9 +274,10 @@ public function execute(array $payload): array
         ? $this->repository->getOrCreateGroupConversation(
             $grupoJid,
             $data['groupName'] ?? ($seguido->nombre ?? 'Grupo'),
-            (int) $companyId
+            (int) $companyId,
+            $lineaId
           )
-        : $this->repository->getOrCreateConversationByPhone($phone, $names, $companyId, $provider);
+        : $this->repository->getOrCreateConversationByPhone($phone, $names, $companyId, $provider, $lineaId);
 
     // Vincular el cliente real a la ficha del CRM, que hasta ahora solo tenía
     // el teléfono. Es lo que permite abrir la ficha del cliente desde el chat.
@@ -450,6 +463,7 @@ public function execute(array $payload): array
 
     $message = $this->repository->storeMessage([
         'conversation_id' => $conversationId,
+        'wa_linea_id'     => $lineaId,
         'sender_type'     => 'customer',
         'message_type'    => $type,
         'content'         => $content,
@@ -463,6 +477,32 @@ public function execute(array $payload): array
         'participant_name'  => $esGrupo ? ($data['participantName'] ?? null) : null,
         'created_at'      => now(),
     ]);
+
+    // ─── Cobranza: si el asistente le está cobrando a este número, contesta él ───
+    //
+    // Sin bienvenida, sin aviso de fuera de horario y sin asignar agente: la
+    // conversación la lleva el asistente hasta que la pase a una persona. La
+    // respuesta se arma después de contestarle al webhook (la IA tarda).
+    if (!$esGrupo && $provider === 'netplay') {
+        try {
+            $caso = \App\Models\CobranzaCaso::conversandoCon((int) $companyId, (string) $phone);
+
+            if ($caso) {
+                if ((int) $caso->conversation_id !== (int) $conversationId) {
+                    $caso->fill(['conversation_id' => $conversationId])->save();
+                }
+
+                \App\Jobs\ResponderCobranza::dispatchAfterResponse((int) $caso->id, (int) $message->id);
+
+                broadcast(new NewMessageEvent($message, $conversationId));
+                broadcast(new InboxUpdatedEvent($conversationId, (string) DB::table('crm_conversations')->where('id', $conversationId)->value('status'), 'customer', $provider));
+
+                return ['conversation_id' => $conversationId, 'status' => 'processed', 'cobranza' => $caso->id];
+            }
+        } catch (\Throwable $e) {
+            Log::warning('[Cobranza] No se pudo pasar el mensaje al asistente', ['phone' => $phone, 'error' => $e->getMessage()]);
+        }
+    }
 
     $settings = \App\Support\CrmSettings::for((int)$companyId);
     $isFirst  = $this->repository->isFirstMessage($conversationId);
@@ -481,9 +521,10 @@ public function execute(array $payload): array
         if (!$recent) {
             try {
                 $text = $settings['off_hours_message'] ?: \App\Support\CrmSettings::DEFAULT_OFF_HOURS;
-                (new WhatsAppService($companyId, false, $provider))->mensajeInformativo($phone, $text);
+                // Por la misma línea por la que escribió, no por la principal.
+                (new WhatsAppService($companyId, false, $provider, $instanceId))->mensajeInformativo($phone, $text);
                 $sys = $this->repository->storeMessage([
-                    'conversation_id' => $conversationId, 'sender_type' => 'system', 'message_type' => 'text',
+                    'conversation_id' => $conversationId, 'wa_linea_id' => $lineaId, 'sender_type' => 'system', 'message_type' => 'text',
                     'content' => $text, 'status' => 'sent', 'created_at' => now(),
                 ]);
                 broadcast(new NewMessageEvent($sys, $conversationId));
@@ -497,8 +538,9 @@ public function execute(array $payload): array
     if ($isFirst) {
         try {
             // Misma empresa, dos mecanismos posibles: responder siempre por el provider
-            // real de este webhook (meta o netplay), nunca por un valor global de la empresa.
-            (new WhatsAppService($companyId, false, $provider))->mensajeInformativo(
+            // real de este webhook (meta o netplay) y por la línea real por la que
+            // entró, nunca por un valor global de la empresa.
+            (new WhatsAppService($companyId, false, $provider, $instanceId))->mensajeInformativo(
                 $phone,
                 \App\Support\CrmSettings::withCompany(
                     $settings['welcome_message'] ?: \App\Support\CrmSettings::DEFAULT_WELCOME,

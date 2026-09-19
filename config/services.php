@@ -104,4 +104,26 @@ return [
 
 
 
+
+    /*
+     * IA del asistente de cobranza. COBRANZA_IA elige el proveedor:
+     *   compatible (por defecto): API con formato OpenAI. Sirve Google Gemini
+     *     (plan gratis), Groq (gratis con límites), OpenRouter u OpenAI.
+     *   anthropic: Claude (de pago), con ANTHROPIC_API_KEY.
+     * Sin la clave del proveedor elegido el asistente queda apagado.
+     */
+    'cobranza_ia' => [
+        'proveedor' => env('COBRANZA_IA', 'compatible'),
+        'key'       => env('COBRANZA_IA_KEY'),
+        'url'       => env('COBRANZA_IA_URL', 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'),
+        // Lista: si uno agota su cupo del día se usa el siguiente.
+        'modelo'    => env('COBRANZA_IA_MODELO', 'gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-flash-lite-latest,gemini-3.5-flash,gemini-3.6-flash'),
+    ],
+
+    'anthropic' => [
+        'key'    => env('ANTHROPIC_API_KEY'),
+        'modelo' => env('COBRANZA_MODELO', 'claude-sonnet-5'),
+        'url'    => env('ANTHROPIC_URL', 'https://api.anthropic.com/v1/messages'),
+    ],
+
 ];

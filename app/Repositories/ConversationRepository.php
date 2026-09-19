@@ -12,6 +12,7 @@ use App\Models\CrmSticker;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
+use App\Services\WhatsApp\LineasDeWhatsApp as Lineas;
 
 
 
@@ -27,6 +28,9 @@ class ConversationRepository implements ConversationRepositoryInterface
         $limit   = (int)($filters['limit'] ?? 50);
         $provider = $filters['provider'] ?? null;
         $labelId  = !empty($filters['label']) ? (int)$filters['label'] : null;
+        // Filtrar por línea de WhatsApp Web (empresas con más de un número).
+        $lineaId  = !empty($filters['linea']) ? (int)$filters['linea'] : null;
+        $hayLinea = Lineas::enConversaciones();
 
         // Los grupos viven en su propia sección: por defecto la bandeja de
         // atención no los muestra, para no mezclarlos con los clientes.
@@ -60,6 +64,11 @@ class ConversationRepository implements ConversationRepositoryInterface
             })
             // Datos de agente (si quieres mostrar nombre del agente desde user_data)
             ->leftJoin('user_data as ud', 'ud.user_id', '=', 'c.assigned_user_id')
+            // La línea siempre se une por empresa además de por id: una línea de
+            // otra empresa no puede aparecer como etiqueta de este chat.
+            ->when($hayLinea, fn ($qq) => $qq->leftJoin('wa_lineas as wl', function ($j) {
+                $j->on('wl.id', '=', 'c.wa_linea_id')->on('wl.company_id', '=', 'c.company_id');
+            }))
             ->where('c.company_id', getSessionCompanyId())
             ->where('cu.is_group', $grupos ? 1 : 0)
             ->select([
@@ -95,6 +104,24 @@ class ConversationRepository implements ConversationRepositoryInterface
                 'ud.names as assigned_names',
                 'ud.lastname as assigned_lastname',
             ])
+
+            ->when($hayLinea, fn ($qq) => $qq->addSelect([
+                'c.wa_linea_id',
+                'wl.nombre as linea_nombre',
+                'wl.telefono as linea_telefono',
+            ]))
+
+            // Los chats de antes de tener varias líneas no la tienen anotada:
+            // son de la línea principal, así que entran cuando se filtra por
+            // ella. Sin esto, filtrar por la línea de siempre dejaba la bandeja
+            // vacía y parecía que se habían perdido los chats.
+            ->when($hayLinea && $lineaId, function ($qq) use ($lineaId) {
+                $principal = (int) (Lineas::principal((int) getSessionCompanyId())->id ?? 0);
+
+                $lineaId === $principal
+                    ? $qq->where(fn ($q2) => $q2->where('c.wa_linea_id', $lineaId)->orWhereNull('c.wa_linea_id'))
+                    : $qq->where('c.wa_linea_id', $lineaId);
+            })
 
             ->when($status && $status !== 'all', function ($qq) use ($status) {
                 $qq->where('c.status', $status);
@@ -145,6 +172,14 @@ class ConversationRepository implements ConversationRepositoryInterface
                 'provider' => $row->provider,
                 'assigned_user_id' => $row->assigned_user_id ? (int)$row->assigned_user_id : null,
 
+                // Línea de WhatsApp Web del chat. null en empresas de una sola
+                // línea y en Meta: el panel no muestra el badge en ese caso.
+                'linea' => isset($row->wa_linea_id) && $row->wa_linea_id ? [
+                    'id'       => (int) $row->wa_linea_id,
+                    'nombre'   => $row->linea_nombre ?? 'Línea',
+                    'telefono' => $row->linea_telefono ?? null,
+                ] : null,
+
                 'customer' => [
                     'id' => (int)$row->customer_id,
                     'name' => $row->customer_name,
@@ -185,6 +220,7 @@ class ConversationRepository implements ConversationRepositoryInterface
                 'c.status',
                 'c.priority',
             ])
+            ->when(Lineas::enConversaciones(), fn ($q) => $q->addSelect('c.wa_linea_id'))
             ->first();
 
 
@@ -278,6 +314,10 @@ class ConversationRepository implements ConversationRepositoryInterface
                 'status' => $conversation->status,
                 'priority' => $conversation->priority,
                 'provider' => $conversation->provider,
+                // Por qué línea de la empresa va este chat (null = la principal).
+                'linea' => isset($conversation->wa_linea_id) && $conversation->wa_linea_id
+                    ? Lineas::porId((int) $conversation->wa_linea_id, (int) $conversation->company_id)
+                    : null,
                 'bot_paused' => $botPaused,
                 'meta_window_open' => $metaWindowOpen,
                 'meta_window_until' => $metaWindowUntil,
@@ -325,16 +365,29 @@ public function getPhoneByConversationId(int $conversationId): ?string
      * teléfono lleva el jid y queda marcado con is_group, para que la bandeja
      * pueda mostrarlos en su propia sección y no mezclados con la atención.
      */
-    public function getOrCreateGroupConversation(string $jid, string $nombre, int $companyId): int
+    public function getOrCreateGroupConversation(string $jid, string $nombre, int $companyId, ?int $lineaId = null): int
     {
+        $porLinea = $lineaId && Lineas::enConversaciones();
+
         $activa = DB::table('crm_conversations as c')
             ->join('crm_customers as cu', 'cu.id', '=', 'c.customer_id')
             ->where('c.company_id', $companyId)
             ->where('cu.phone', $jid)
             ->where('cu.is_group', 1)
             ->whereIn('c.status', ['new', 'in_progress'])
+            // El mismo grupo puede estar en dos líneas de la empresa: cada una
+            // lleva su hilo. Los hilos viejos (sin línea) se adoptan.
+            ->when($porLinea, fn ($q) => $q
+                ->where(fn ($w) => $w->where('c.wa_linea_id', $lineaId)->orWhereNull('c.wa_linea_id'))
+                // Primero el hilo que ya es de esta línea; el sin línea solo si no hay otro.
+                ->orderByRaw('(c.wa_linea_id IS NULL) ASC'))
             ->orderByDesc('c.id')
             ->value('c.id');
+
+        if ($activa && $porLinea) {
+            DB::table('crm_conversations')->where('id', $activa)->whereNull('wa_linea_id')
+                ->update(['wa_linea_id' => $lineaId, 'updated_at' => now()]);
+        }
 
         if ($activa) {
             // El nombre del grupo puede cambiar; se refresca sin tocar el resto.
@@ -360,7 +413,7 @@ public function getPhoneByConversationId(int $conversationId): ?string
             ]);
         }
 
-        return (int) DB::table('crm_conversations')->insertGetId([
+        $fila = [
             'company_id'      => $companyId,
             'provider'        => 'netplay',   // Meta no soporta grupos
             'customer_id'     => $customerId,
@@ -369,21 +422,35 @@ public function getPhoneByConversationId(int $conversationId): ?string
             'last_message_at' => now(),
             'created_at'      => now(),
             'updated_at'      => now(),
-        ]);
+        ];
+
+        if ($porLinea) $fila['wa_linea_id'] = $lineaId;
+
+        return (int) DB::table('crm_conversations')->insertGetId($fila);
     }
 
-    public function getOrCreateConversationByPhone(string $phone, string $names, ?int $companyId = null, string $provider = 'netplay'): int
+    public function getOrCreateConversationByPhone(string $phone, string $names, ?int $companyId = null, string $provider = 'netplay', ?int $lineaId = null): int
     {
         $companyId = $companyId ?? getSessionCompanyId();
         $provider = in_array($provider, ['meta', 'netplay'], true) ? $provider : 'netplay';
+        $porLinea = $lineaId && Lineas::enConversaciones();
 
-        // 1) Buscar conversación ACTIVA (no cerrada) para ese teléfono
+        // 1) Buscar conversación ACTIVA (no cerrada) para ese teléfono.
+        //
+        // Con varias líneas el mismo cliente puede estar escribiéndole a dos
+        // números de la empresa: cada línea lleva su propio hilo. Sin esto los
+        // dos se mezclaban en uno y la respuesta salía por la línea equivocada.
+        // Los hilos anteriores al catálogo (sin línea) se adoptan.
         $activeConversation = DB::table('crm_conversations as c')
             ->join('crm_customers as cu', 'cu.id', '=', 'c.customer_id')
             ->where('c.company_id', $companyId)
             ->where('c.provider', $provider)
             ->where('cu.phone', $phone)
             ->whereIn('c.status', ['new', 'in_progress'])
+            ->when($porLinea, fn ($q) => $q
+                ->where(fn ($w) => $w->where('c.wa_linea_id', $lineaId)->orWhereNull('c.wa_linea_id'))
+                // Primero el hilo que ya es de esta línea; el sin línea solo si no hay otro.
+                ->orderByRaw('(c.wa_linea_id IS NULL) ASC'))
             ->orderByDesc('c.id')
             ->select('c.id', 'cu.id as customer_id')
             ->first();
@@ -392,6 +459,11 @@ public function getPhoneByConversationId(int $conversationId): ?string
 
 
         if ($activeConversation) {
+            if ($porLinea) {
+                DB::table('crm_conversations')->where('id', $activeConversation->id)->whereNull('wa_linea_id')
+                    ->update(['wa_linea_id' => $lineaId, 'updated_at' => now()]);
+            }
+
             return (int) $activeConversation->id;
         }
 
@@ -426,7 +498,7 @@ Log::info('Intentando insertar cliente', [
         
 
         // 3) Crear nueva conversación (porque la anterior estaba cerrada o no existía)
-        return (int) DB::table('crm_conversations')->insertGetId([
+        $fila = [
             'company_id'       => $companyId,
             'provider'         => $provider,
             'customer_id'      => $customerId,
@@ -435,7 +507,11 @@ Log::info('Intentando insertar cliente', [
             'last_message_at'  => now(),
             'created_at'       => now(),
             'updated_at'       => now(),
-        ]);
+        ];
+
+        if ($porLinea) $fila['wa_linea_id'] = $lineaId;
+
+        return (int) DB::table('crm_conversations')->insertGetId($fila);
 
     }
 
@@ -453,7 +529,17 @@ Log::info('Intentando insertar cliente', [
 
         error_log(">>>>>>>>" . json_encode($data));
 
+        // Estado y línea de la conversación en una sola consulta: la línea se
+        // copia al mensaje para que el historial diga por qué número salió
+        // aunque después la conversación se mueva.
+        $conv = DB::table('crm_conversations')->where('id', $data['conversation_id'])
+            ->first(Lineas::enConversaciones() ? ['status', 'wa_linea_id'] : ['status']);
+
         $message = new CrmMessage();
+
+        if (Lineas::enMensajes()) {
+            $message->wa_linea_id = $data['wa_linea_id'] ?? ($conv->wa_linea_id ?? null);
+        }
 
         $message->conversation_id = $data['conversation_id'];
         $message->sender_user_id  = null;
@@ -475,9 +561,7 @@ Log::info('Intentando insertar cliente', [
         $message->save();
 
         // 🔄 estado automático
-        $currentStatus = DB::table('crm_conversations')
-    ->where('id', $data['conversation_id'])
-    ->value('status');
+        $currentStatus = $conv->status ?? null;
 
 $newStatus = $currentStatus;
 
@@ -515,22 +599,27 @@ DB::table('crm_conversations')
 
     public function find(int $id)
     {
+        $columnas = [
+            'c.id',
+            'c.status',
+            'c.priority',
+            'c.assigned_user_id',
+            'c.created_at',
+            'c.company_id',
+            'c.provider',
+
+            // 🔥 datos del cliente
+            'cu.phone',
+            'cu.name as customer_name',
+        ];
+
+        // La línea por la que entró: por ahí tiene que salir la respuesta.
+        if (Lineas::enConversaciones()) $columnas[] = 'c.wa_linea_id';
+
         return DB::table('crm_conversations as c')
             ->join('crm_customers as cu', 'cu.id', '=', 'c.customer_id')
             ->where('c.id', $id)
-            ->select([
-                'c.id',
-                'c.status',
-                'c.priority',
-                'c.assigned_user_id',
-                'c.created_at',
-                'c.company_id',
-                'c.provider',
-
-                // 🔥 datos del cliente
-                'cu.phone',
-                'cu.name as customer_name',
-            ])
+            ->select($columnas)
             ->first();
     }
 
@@ -547,7 +636,7 @@ DB::table('crm_conversations')
 
     public function createMessage(array $data): CrmMessage
     {
-        return CrmMessage::create([
+        $fila = [
             'conversation_id'   => $data['conversation_id'],
             'sender_user_id'    => $data['sender_user_id'] ?? null,
             'sender_type'       => $data['sender_type'],
@@ -555,7 +644,15 @@ DB::table('crm_conversations')
             'message_type'      => $data['message_type'] ?? 'text',
             'quoted_message_id' => $data['quoted_message_id'] ?? null,
             'status'            => $data['status'] ?? 'pending',
-        ]);
+        ];
+
+        // La línea por la que sale, para el historial.
+        if (Lineas::enMensajes()) {
+            $fila['wa_linea_id'] = $data['wa_linea_id']
+                ?? DB::table('crm_conversations')->where('id', $data['conversation_id'])->value('wa_linea_id');
+        }
+
+        return CrmMessage::create($fila);
     }
 
     /** Guarda el id de WhatsApp del mensaje enviado (para seguir los acks). */
@@ -1010,7 +1107,7 @@ DB::table('crm_conversations')
     /* =====================================================================
      * NUEVA CONVERSACIÓN DESDE TELÉFONO
      * =================================================================== */
-    public function createConversationFromPhone(string $phone, string $name, int $companyId, string $provider = 'netplay'): int
+    public function createConversationFromPhone(string $phone, string $name, int $companyId, string $provider = 'netplay', ?int $lineaId = null): int
     {
         // limpiar teléfono
         $phone = preg_replace('/[^0-9+]/', '', $phone);
@@ -1034,7 +1131,7 @@ DB::table('crm_conversations')
         }
 
         // crear conversación nueva
-        return (int) DB::table('crm_conversations')->insertGetId([
+        $fila = [
             'company_id'     => $companyId,
             'provider'       => $provider,
             'customer_id'    => $customerId,
@@ -1043,7 +1140,12 @@ DB::table('crm_conversations')
             'last_message_at'=> now(),
             'created_at'     => now(),
             'updated_at'     => now(),
-        ]);
+        ];
+
+        // La línea elegida al iniciar el chat: por ahí sale todo el hilo.
+        if ($lineaId && Lineas::enConversaciones()) $fila['wa_linea_id'] = $lineaId;
+
+        return (int) DB::table('crm_conversations')->insertGetId($fila);
     }
 
     /* =====================================================================

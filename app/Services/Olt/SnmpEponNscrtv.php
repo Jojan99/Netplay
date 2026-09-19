@@ -166,6 +166,9 @@ class SnmpEponNscrtv
             'status'      => $estado === null || $estado === 1 ? 'online' : 'offline',
             'modelo'      => self::texto($onu(26)),
             'firmware'    => self::texto($onu(13)),
+            // El vendor ID que la ONU le informó a la OLT: dice la marca aunque
+            // la MAC sea de un OUI que no conocemos.
+            'fabricante'  => self::fabricante($onu(25)),
             'distancia_m' => self::entero($onu(15)),
             'potencia'    => self::escalar($opt(4), 100),
             'tx'          => self::escalar($opt(5), 100),
@@ -295,6 +298,31 @@ class SnmpEponNscrtv
         $texto = trim($texto, " \t\r\n\"");
 
         return $texto === '' ? null : $texto;
+    }
+
+    /**
+     * Vendor ID de la ONU (columna 25): 'STRING: "HWTC"' o, cuando trae un
+     * byte nulo, 'Hex-STRING: 43 44 54 00' ("CDT" de C-Data).
+     */
+    private static function fabricante(?string $crudo): ?string
+    {
+        if ($crudo === null) {
+            return null;
+        }
+
+        if (preg_match('/^\s*Hex-STRING:\s*(.*)$/is', $crudo, $m)) {
+            $texto = '';
+
+            foreach (preg_split('/\s+/', trim($m[1])) as $b) {
+                $texto .= ctype_xdigit($b) ? chr(hexdec($b)) : '';
+            }
+        } else {
+            $texto = (string) self::texto($crudo);
+        }
+
+        $texto = trim(str_replace("\0", '', $texto));
+
+        return $texto !== '' && ctype_print($texto) ? strtoupper($texto) : null;
     }
 
     private static function entero(?string $crudo): ?int

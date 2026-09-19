@@ -48,10 +48,18 @@ class OltAdminRepository implements OltAdminRepositoryInterface
 
     public function update(int $id, array $data): bool
     {
+        // Todo lo que el formulario de la OLT deja editar. Faltaban el SNMP
+        // (comunidad, versión, puerto, host y su salto), la clave enable y los
+        // perfiles ZTE/VSOL: se aceptaba el cambio y se descartaba sin avisar
+        // (skartelecon no podía cambiar la comunidad de «Rebolo»). Las claves
+        // vacías no llegan: el panel las quita cuando no se cambian.
         $allowed = [
-            'name', 'brand', 'host', 'port', 'username', 'password',
+            'name', 'brand', 'host', 'port', 'username', 'password', 'enable_password',
             'access_mode', 'jump_host', 'jump_port', 'jump_user', 'jump_pass',
             'ont_lineprofile_id', 'ont_srvprofile_id', 'default_vlan',
+            'snmp_community', 'snmp_version', 'snmp_port', 'snmp_host',
+            'snmp_jump_host', 'snmp_jump_port', 'snmp_jump_user', 'snmp_jump_pass',
+            'zte_onu_type', 'zte_dba_profile', 'vsol_onu_profile',
         ];
 
         return (bool) OltAdmin::where('id', $id)

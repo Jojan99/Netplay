@@ -23,6 +23,9 @@ class DetalleDePuerto
     public function __construct(
         private ConectionRouterManagerInterface $conexion,
         private string $token,
+        // Para poder decir de qué cliente es cada entrada del ARP. Es opcional:
+        // sin empresa se muestra el comentario tal cual, como antes.
+        private ?int $companyId = null,
     ) {}
 
     /** @return array<string,mixed> */
@@ -269,12 +272,19 @@ class DetalleDePuerto
                 'total'  => count($arp),
                 'activos'=> count(array_filter($arp, fn ($a) => ($a['disabled'] ?? 'false') !== 'true')),
                 // Una muestra alcanza: la lista completa vive en Clientes ARP.
-                'muestra'=> array_values(array_map(fn ($a) => [
-                    'ip'        => $a['address'] ?? '',
-                    'mac'       => $a['mac-address'] ?? '',
-                    'documento' => $a['comment'] ?? '',
-                    'interfaz'  => $a['interface'] ?? '',
-                ], array_slice($arp, 0, 8))),
+                'muestra'=> array_values(array_map(function ($a) {
+                    $cliente = $this->companyId
+                        ? IdentidadEnElRouter::clienteDeEntrada($this->companyId, $a)
+                        : null;
+
+                    return [
+                        'ip'        => $a['address'] ?? '',
+                        'mac'       => $a['mac-address'] ?? '',
+                        'documento' => $cliente['dni'] ?? ($a['comment'] ?? ''),
+                        'cliente'   => $cliente['nombre'] ?? null,
+                        'interfaz'  => $a['interface'] ?? '',
+                    ];
+                }, array_slice($arp, 0, 8))),
             ];
         } catch (\Throwable $e) {
             return ['total' => 0, 'activos' => 0, 'muestra' => []];

@@ -42,11 +42,10 @@ class CloseConversationUseCase implements CloseConversationUseCaseInterface
             // mensaje por la API de Meta, a un número que nunca escribió por
             // ese canal: eso cae fuera de la ventana de 24 h y es motivo de
             // bloqueo de la cuenta de WhatsApp Business.
-            (new WhatsAppService(
-                (int) $conversation->company_id,
-                false,
-                $conversation->provider
-            ))->mensajeInformativo($phone, $closingMessage);
+            // Y por la MISMA línea: el cliente escribió a un número de la
+            // empresa, la despedida no puede llegarle desde otro.
+            WhatsAppService::paraConversacion($conversation)
+                ->mensajeInformativo($phone, $closingMessage);
         } catch (\Throwable $e) {
             // El cierre ya quedó guardado. Si el envío falla, la conversación
             // igual queda cerrada en vez de dejar el pedido a medias y que el

@@ -71,7 +71,9 @@ class PlataformaController extends Controller
                 'prueba_dias'   => (int) config('plataforma.prueba_dias', 0),
                 'nota_precios'  => config('plataforma.nota_precios', ''),
                 'incluye_todos' => config('plataforma.incluye_todos', []),
-                'planes'        => config('plataforma.planes', []),
+                // Los planes salen de la base cuando existe la tabla; si no,
+                // del config de siempre. La página pública no se entera.
+                'planes'        => \App\Services\Plataforma\PlanesDeLaPlataforma::publicos(),
                 'modulos' => $modulos,
             ],
         ]);
@@ -187,6 +189,96 @@ class PlataformaController extends Controller
             'error'   => 0,
             'data'    => ['subdominio' => $sub, 'direccion' => $sub . '.' . $this->dominio->dominioBase()],
         ]);
+    }
+
+    /**
+     * GET /api/plataforma/codigo?c=LANZAMIENTO25
+     *
+     * Revisa, antes de registrarse, si un código sirve: puede ser un cupón de
+     * descuento o el código de referido de otra empresa. Público a propósito
+     * (el formulario de alta todavía no tiene sesión), con tope de intentos.
+     */
+    public function codigo(Request $request): JsonResponse
+    {
+        $request->validate(['c' => 'required|string|max:40']);
+
+        $codigo    = strtoupper(trim((string) $request->query('c')));
+        $referidor = \App\Services\Plataforma\Referidos::empresaDelCodigo($codigo);
+
+        if ($referidor) {
+            $empresa = Company::find($referidor);
+
+            return response()->json(['message' => 'Código de referido válido', 'error' => 0, 'data' => [
+                'tipo'    => 'referido',
+                'valido'  => true,
+                'detalle' => 'Te invita ' . ($empresa->name ?? 'otra empresa') . '.',
+            ]]);
+        }
+
+        $revision = \App\Services\Plataforma\Cupones::revisar($codigo);
+
+        if ($revision['ok']) {
+            $c = $revision['cupon'];
+
+            return response()->json(['message' => 'Código válido', 'error' => 0, 'data' => [
+                'tipo'    => 'cupon',
+                'valido'  => true,
+                'detalle' => $c->tipo === 'porcentaje'
+                    ? rtrim(rtrim(number_format((float) $c->valor, 2, '.', ''), '0'), '.') . '% de descuento'
+                    : 'Descuento de $' . number_format((float) $c->valor, 0, ',', '.'),
+            ]]);
+        }
+
+        return response()->json(['message' => $revision['motivo'], 'error' => 0, 'data' => [
+            'tipo'    => null,
+            'valido'  => false,
+            'detalle' => $revision['motivo'],
+        ]]);
+    }
+
+    /**
+     * GET /api/plataforma/mi-referido
+     *
+     * Lo que ve la empresa en SU panel: su código, el enlace para compartir y
+     * cuánto crédito lleva ganado. Es lo que hace que el programa funcione.
+     */
+    public function miReferido(): JsonResponse
+    {
+        $companyId   = (int) getSessionCompanyId();
+        $suscripcion = \App\Services\Plataforma\SuscripcionDeEmpresa::asegurar($companyId);
+
+        if (!$suscripcion) {
+            return response()->json([
+                'message' => 'El programa de referidos todavía no está disponible.',
+                'error'   => 0,
+                'data'    => ['activo' => false],
+            ]);
+        }
+
+        $ajustes = \App\Services\Plataforma\Referidos::ajustes();
+        $base    = rtrim((string) config('app.url'), '/');
+
+        $referidos = \Illuminate\Support\Facades\Schema::hasTable('plataforma_referidos')
+            ? \Illuminate\Support\Facades\DB::table('plataforma_referidos as r')
+                ->join('companies as e', 'e.id', '=', 'r.referida_company_id')
+                ->where('r.referidor_company_id', $companyId)
+                ->orderByDesc('r.id')
+                ->get(['r.estado', 'r.credito_otorgado', 'r.created_at', 'e.name as empresa'])
+            : collect();
+
+        return response()->json(['message' => 'OK', 'error' => 0, 'data' => [
+            'activo'       => (bool) ($ajustes['activo'] ?? false),
+            'codigo'       => $suscripcion->codigo_referido,
+            'enlace'       => $base . '/register?ref=' . urlencode((string) $suscripcion->codigo_referido),
+            'credito'      => \App\Services\Plataforma\SuscripcionDeEmpresa::credito($companyId),
+            'moneda'       => config('plataforma.moneda', 'COP'),
+            'referidos'    => $referidos,
+            'total'        => $referidos->count(),
+            'activos'      => $referidos->where('estado', 'activo')->count(),
+            'beneficio'    => $ajustes['beneficio_referidor'] ?? null,
+            'para_el_otro' => $ajustes['beneficio_referido'] ?? null,
+            'acreditar_en' => $ajustes['acreditar_en'] ?? 'primer_pago',
+        ]]);
     }
 
     /** Lo que cualquiera puede ver de una empresa en su página de acceso. */

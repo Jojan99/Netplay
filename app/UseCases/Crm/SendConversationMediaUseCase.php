@@ -32,13 +32,10 @@ class SendConversationMediaUseCase implements SendConversationMediaUseCaseInterf
             throw new \Exception('Conversación no encontrada');
         }
 
-        // Misma empresa, dos mecanismos posibles (Meta API o Netplay WhatsApp): usar
-        // siempre el provider real de ESTA conversación, nunca un valor global de la empresa.
-        $this->whatsAppService = new WhatsAppService(
-            $conversation->company_id,
-            false,
-            $conversation->provider ?? 'netplay'
-        );
+        // Misma empresa, dos mecanismos posibles (Meta API o Netplay WhatsApp) y varias
+        // líneas de WhatsApp Web: se usa siempre el provider y la LÍNEA reales de
+        // ESTA conversación, nunca un valor global de la empresa.
+        $this->whatsAppService = WhatsAppService::paraConversacion($conversation);
 
         $originalName = $file->getClientOriginalName();
         $extension    = strtolower($file->getClientOriginalExtension());

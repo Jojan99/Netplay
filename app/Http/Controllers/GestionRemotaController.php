@@ -64,6 +64,20 @@ class GestionRemotaController extends Controller
         return standardApiReponse($r['texto'], ['aprovisionamiento' => $r['id']], $r['id'] ? 0 : 1, JsonResponse::HTTP_OK);
     }
 
+    /** Lo cancela: queda "cancelado" y la tarea de cada minuto no le aplica nada más. */
+    public function cancelarAprovisionamiento(int $id): JsonResponse
+    {
+        try {
+            $fila = (new \App\Services\Red\AprovisionamientoDeOnt((int) getSessionCompanyId()))->cancelar($id);
+        } catch (\InvalidArgumentException $e) {
+            return standardApiReponse($e->getMessage(), null, 1, JsonResponse::HTTP_UNPROCESSABLE_ENTITY);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
+            return standardApiReponse('No existe ese aprovisionamiento', null, 1, JsonResponse::HTTP_NOT_FOUND);
+        }
+
+        return standardApiReponse('Aprovisionamiento cancelado', $fila, 0, JsonResponse::HTTP_OK);
+    }
+
     public function reintentarAprovisionamiento(int $id): JsonResponse
     {
         try {

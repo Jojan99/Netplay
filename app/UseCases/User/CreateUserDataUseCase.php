@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\Log;
 use App\Repositories\Interfaces\InternetInfoRepositoryInterface;
 use Illuminate\Support\Facades\DB;
 use App\UseCases\ManagementRouter\Interfaces\GetIpAvaliblesUseCaseInterface;
-use App\Services\NotificationRouterService;
+use App\Services\Avisos\MensajeDeAviso;
 
 /**
  * Clase del caso de uso signin
@@ -96,20 +96,25 @@ class CreateUserDataUseCase implements CreateUserDataUseCaseInterface
                             'dni' => $data['dni'] ?? 'N/A'
                         ]);
 
-                        $pasa = $this->getIpAvaliblesUseCaseInterface->registerIpInArp(
-                            ip: $data['ip_assignment_id'],
-                            mac: '',
-                            vlan: $data['vlan'] ?? '',
-                            comment: $data['dni']
+                        // En el router del cliente, no en el primero de la empresa.
+                        // Si la IP ya está en el ARP sin cliente, se reutiliza esa
+                        // entrada; si otro cliente la tomó mientras tanto, no se crea.
+                        $arp = $this->getIpAvaliblesUseCaseInterface->asegurarIpEnArp(
+                            ip: (string) $data['ip_assignment_id'],
+                            vlan: (string) ($data['vlan'] ?? ''),
+                            documento: (string) $data['dni'],
+                            userId: null,
+                            routerId: !empty($data['router_id']) ? (int) $data['router_id'] : null,
                         );
 
-                        if(!$pasa){
+                        if (!$arp['ok']) {
                             \Log::error('FAILED TO REGISTER IP IN MIKROTIK', [
                                 'ip' => $data['ip_assignment_id'],
                                 'vlan' => $data['vlan'] ?? '',
-                                'dni' => $data['dni']
+                                'dni' => $data['dni'],
+                                'motivo' => $arp['mensaje'],
                             ]);
-                            return ['message' => 'Error registrando usuario en Mikrotik. Contacte al administrador.', 'status' => 1, 'data' => 'MIKROTIK_SYNC_ERROR'];
+                            return ['message' => $arp['mensaje'], 'status' => 1, 'data' => 'MIKROTIK_SYNC_ERROR'];
                         }
 
                         \Log::info('USER MIKROTIK REGISTRATION SUCCESSFUL', [
@@ -128,7 +133,13 @@ class CreateUserDataUseCase implements CreateUserDataUseCaseInterface
                     // del cliente.
                     $data['ip_assignment_id'] = $esPppoe
                         ? null
-                        : $this->internetInfoRepository->AssignemetIpUser($data['ip_assignment_id'], $user['id']);
+                        : $this->internetInfoRepository->AssignemetIpUser($data['ip_assignment_id'], $user['id'], (string) ($arp['mac'] ?? ''));
+
+                    // Tomó una entrada del router que tenía otro nombre: queda
+                    // como su nombre de origen, para reconocerlo por ese también.
+                    if (!$esPppoe && ($arp['accion'] ?? null) === 'reutilizada') {
+                        \App\Services\Red\IpFijaEnElRouter::recordarNombreAnterior((int) getSessionCompanyId(), (int) $user['id'], $arp['comment_anterior'], (string) $data['dni']);
+                    }
                
                     $this->userRepository->createUserData($data);
     
@@ -160,18 +171,22 @@ class CreateUserDataUseCase implements CreateUserDataUseCaseInterface
             return ['message' => 'An error occurred while creating the user: ' . $err->getMessage(), 'data' => ApiResponseConstants::DATA_NULL, 'status' => 1];
         }
                 try {
-            NotificationRouterService::dispatch(
-                getSessionCompanyId(),
-                'new_user',
-                "👤 *Nuevo usuario registrado*\n\n" .
-                "Nombre: *{$data['names']} {$data['lastname']}*\n" .
-                "Cédula: *{$data['dni']}*\n" .
-                "Teléfono: *{$data['phone']}*\n" .
-                "Dirección: *{$data['address']}*\n" .
-                (($esPppoe ?? false)
-                    ? "Conexión: *PPPoE* (usuario {$data['pppoe_user']})\n"
-                    : "IP: *{$ipReal}*\n" . "VLAN: *{$data['vlan']}*\n")
-            );
+            $aviso = MensajeDeAviso::nuevo('Cliente nuevo registrado', getSessionCompanyId(), '👤')
+                ->dato('Cliente', trim("{$data['names']} {$data['lastname']}"))
+                ->dato('Cédula', $data['dni'] ?? null)
+                ->telefono('Teléfono', $data['phone'] ?? null)
+                ->dato('Dirección', $data['address'] ?? null);
+
+            if ($esPppoe ?? false) {
+                $aviso->dato('Conexión', 'PPPoE')
+                      ->dato('Usuario PPPoE', $data['pppoe_user'] ?? null);
+            } else {
+                $aviso->dato('Conexión', 'IP fija')
+                      ->dato('IP', $ipReal ?? null)
+                      ->dato('VLAN', $data['vlan'] ?? null);
+            }
+
+            $aviso->fecha('Registrado', now())->enviar('new_user');
         } catch (\Throwable $e) {
             \Log::error('Error enviando notificación new_user', [
                 'error' => $e->getMessage(),

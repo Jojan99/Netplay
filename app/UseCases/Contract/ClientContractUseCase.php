@@ -102,8 +102,9 @@ class ClientContractUseCase implements ClientContractUseCaseInterface
                 ]);
             }
 
-            $pdfBasePath = storage_path('app/public/' . ($cc->contract->pdf_path ?? ''));
-            $hasPdfBase = $cc->contract->pdf_path && file_exists($pdfBasePath);
+            // El PDF base vive en privado desde la mudanza; ArchivosContrato lo
+            // resuelve ahí y deja public de respaldo.
+            $hasPdfBase = (bool) \App\Support\ArchivosContrato::plantilla($cc->contract->pdf_path ?? null);
 
             if ($hasPdfBase) {
                 try {
@@ -118,7 +119,7 @@ class ClientContractUseCase implements ClientContractUseCaseInterface
                         $cc->user_id,
                         $cc->id,
                         $cc->contract->installation_value ?? null,
-                        $cc->plazo->plazo ?? 12
+                        (int) ($cc->contract->plazo ?? 12)
                     );
 
                     $output = $service->combineWithSignature(
@@ -167,8 +168,9 @@ class ClientContractUseCase implements ClientContractUseCaseInterface
      * Construye el array completo de valores de variables incluyendo
      * datos del cliente, plan de internet e instalación.
      */
-    public function buildFieldValues(int $userId, int $clientContractId, ?float $installationValue = null,?int $plazo = 12): array
+    public function buildFieldValues(int $userId, int $clientContractId, ?float $installationValue = null, ?int $plazo = null): array
     {
+        $plazo = $plazo && $plazo > 0 ? $plazo : 12;
         $ud = DB::table('user_data')->where('user_id', $userId)->first();
         $now = now();
 

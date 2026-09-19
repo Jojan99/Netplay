@@ -33,7 +33,9 @@ class CrmCustomerController extends Controller
         return DB::table('crm_conversations as c')
             ->join('crm_customers as cu', 'cu.id', '=', 'c.customer_id')
             ->where('c.id', $conversationId)
-            ->first(['c.id', 'c.company_id', 'c.provider', 'c.customer_id', 'c.status', 'cu.phone', 'cu.name as customer_name']);
+            ->select(['c.id', 'c.company_id', 'c.provider', 'c.customer_id', 'c.status', 'cu.phone', 'cu.name as customer_name'])
+            ->when(\App\Services\WhatsApp\LineasDeWhatsApp::enConversaciones(), fn ($q) => $q->addSelect('c.wa_linea_id'))
+            ->first();
     }
 
     private function ispUser(string $phone, int $companyId): ?object
@@ -194,7 +196,9 @@ class CrmCustomerController extends Controller
             $total    = number_format(($data['price_total'] ?? 0) - ($data['price_discount'] ?? 0), 0, '.', ',');
             $caption  = "Factura #{$data['number_facture']} · Total: \${$total} · Vence: {$data['date_facturation']}";
 
-            $wa = new WhatsAppService((int)$conv->company_id, false, $conv->provider ?? 'netplay');
+            // Por la línea de la conversación: la factura tiene que llegar desde
+            // el mismo número con el que el cliente viene hablando.
+            $wa = WhatsAppService::paraConversacion($conv);
             $result = $wa->sendDocumentData($conv->phone, $base64Pdf, $filename, $caption);
             $failed = !is_array($result) || (($result['status'] ?? null) === 'error') || (isset($result['success']) && $result['success'] === false);
             if ($failed) {

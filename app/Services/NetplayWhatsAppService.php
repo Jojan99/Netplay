@@ -16,18 +16,34 @@ class NetplayWhatsAppService
     private string $instanceId;
     private string $baseUrl;
 
-    public function __construct(?int $companyId = null, bool $ignoreEnabledFlag = false)
+    /**
+     * $instanceId fuerza la línea por la que sale el envío. Se usa para
+     * responder por la MISMA línea por la que entró la conversación: la empresa
+     * puede tener varias y contestarle a un cliente desde otro número lo
+     * confunde y parte el hilo. Sin él se usa la línea principal, como siempre.
+     *
+     * La api_key es de la empresa, no de la línea: en el servicio Node todas
+     * sus instancias comparten credencial.
+     */
+    public function __construct(?int $companyId = null, bool $ignoreEnabledFlag = false, ?string $instanceId = null)
     {
         $id = $companyId ?? getSessionCompanyId();
 
         $company = $id ? Company::find($id) : null;
 
-        if ($company && $company->wa_api_key && $company->wa_instance_id) {
+        // Una línea que no es de esta empresa no se usa nunca, venga de donde venga.
+        if ($instanceId && $id && !\App\Services\WhatsApp\LineasDeWhatsApp::porInstancia($instanceId, (int) $id)) {
+            $instanceId = null;
+        }
+
+        $linea = $instanceId ?: ($company->wa_instance_id ?? null);
+
+        if ($company && $company->wa_api_key && $linea) {
             // Si ignoreEnabledFlag es true, solo verificamos credenciales (útil para envío de facturas
             // cuando invoice_whatsapp_enabled está activo pero whatsapp_enabled global no lo está)
             $this->enabled    = $ignoreEnabledFlag ? true : (bool) $company->whatsapp_enabled;
             $this->apiKey     = $company->wa_api_key;
-            $this->instanceId = $company->wa_instance_id;
+            $this->instanceId = $linea;
         } else {
             // Sin empresa o sin credenciales propias no se envía. Antes caía en la
             // línea global del .env (la de Netplay) y otra empresa terminaba

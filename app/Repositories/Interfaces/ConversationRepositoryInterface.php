@@ -17,10 +17,10 @@ interface ConversationRepositoryInterface
      */
     public function getInbox(array $filters = []): array;
     public function getByConversation(int $conversationId): array;
-    public function getOrCreateConversationByPhone(string $phone, string $names, ?int $companyId = null, string $provider = 'netplay'): int;
+    public function getOrCreateConversationByPhone(string $phone, string $names, ?int $companyId = null, string $provider = 'netplay', ?int $lineaId = null): int;
 
     /** Conversación de un grupo de WhatsApp (solo WhatsApp Web; Meta no soporta grupos). */
-    public function getOrCreateGroupConversation(string $jid, string $nombre, int $companyId): int;
+    public function getOrCreateGroupConversation(string $jid, string $nombre, int $companyId, ?int $lineaId = null): int;
     public function getConversationStatus(string $phone): bool;
     public function storeMessage(array $data): CrmMessage;
     public function find(int $id);
@@ -68,7 +68,7 @@ public function isFirstMessage(int $conversationId): bool;
     public function getCustomersForBroadcast(int $companyId): array;
 
     // ── Contacto / nueva conversación ─────────────────────────────────────
-    public function createConversationFromPhone(string $phone, string $name, int $companyId): int;
+    public function createConversationFromPhone(string $phone, string $name, int $companyId, string $provider = 'netplay', ?int $lineaId = null): int;
 
     // ── Estado de servicio del cliente ────────────────────────────────────
     public function getServiceStatusByPhone(string $phone, ?int $companyId = null): ?array;

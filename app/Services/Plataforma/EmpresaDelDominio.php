@@ -60,10 +60,30 @@ class EmpresaDelDominio
         return $this->subdominioDe($request->getHost());
     }
 
-    /** La empresa del subdominio de la petición; null en la raíz o si no existe. */
+    /**
+     * El subdominio de la empresa dueña de un dominio propio (netplay.com.co),
+     * según el mapa de config/plataforma.php. Null si el dominio no es de nadie.
+     */
+    public function porDominioPropio(string $host): ?string
+    {
+        $host = strtolower(preg_replace('/:\d+$/', '', trim($host)));
+        $host = str_starts_with($host, 'www.') ? substr($host, 4) : $host;
+        $sub  = config('plataforma.dominios_propios', [])[$host] ?? null;
+
+        return is_string($sub) && $sub !== '' ? strtolower($sub) : null;
+    }
+
+    /**
+     * La empresa de la petición: por su subdominio o por su dominio propio.
+     * Null en la raíz de la plataforma o si no existe.
+     *
+     * Sin el dominio propio, el portal abierto en netplay.com.co no sabía de
+     * qué empresa era, y un cliente de otra empresa podía entrar ahí: veía sus
+     * propios datos, pero con la marca que no era.
+     */
     public function empresa(Request $request): ?Company
     {
-        $sub = $this->subdominioPedido($request);
+        $sub = $this->subdominioPedido($request) ?? $this->porDominioPropio($request->getHost());
 
         if ($sub === null) {
             return null;

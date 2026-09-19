@@ -86,6 +86,17 @@ class SignInController extends Controller
             // daban el mismo mensaje y parecía que la contraseña estaba mal.
             $pendiente = $equipo->firstWhere('active', 0);
 
+            // La cuenta dada de baja también queda en active = 0, pero decirle
+            // "confirmá tu correo" la manda a buscar un correo que no existe.
+            if ($pendiente && (int) $pendiente->status === 1) {
+                return standardApiReponse(
+                    'Esta cuenta fue dada de baja por un administrador de la empresa. Si es un error, pedile que la reactive desde Equipo de trabajo.',
+                    ApiResponseConstants::DATA_NULL,
+                    ApiResponseConstants::ERROR,
+                    JsonResponse::HTTP_OK
+                );
+            }
+
             if ($pendiente) {
                 $empresa = DB::table('companies')->where('id', $pendiente->company_id)->first(['name', 'active', 'email']);
                 return standardApiReponse(
@@ -125,6 +136,31 @@ class SignInController extends Controller
         }
 
         $authenticatedUser = $activos->first();
+
+        // Empresa suspendida por Netvula: su equipo no entra al panel.
+        //
+        // Es un corte comercial, no de servicio: los clientes de la empresa
+        // siguen con internet, su portal sigue abierto y las tareas
+        // automáticas (cortes por mora, facturación a sus clientes) siguen
+        // corriendo. Sólo se cierra el panel del operador.
+        if (self::empresaSuspendida((int) $authenticatedUser->company_id)) {
+            return standardApiReponse(
+                'El acceso de tu empresa a la plataforma está suspendido. Escribinos para reactivarlo.',
+                ApiResponseConstants::DATA_NULL,
+                ApiResponseConstants::ERROR,
+                JsonResponse::HTTP_OK
+            );
+        }
+
+        // Último ingreso: la consola necesita saber qué empresa dejó de usar
+        // la plataforma. Si falta la columna todavía, no pasa nada.
+        try {
+            if (\Illuminate\Support\Facades\Schema::hasColumn('users', 'ultimo_ingreso')) {
+                DB::table('users')->where('id', $authenticatedUser->id)->update(['ultimo_ingreso' => now()]);
+            }
+        } catch (\Throwable $e) {
+            \Log::warning('[Login] no se pudo anotar el último ingreso', ['user_id' => $authenticatedUser->id]);
+        }
 
         // Entrando desde la raíz, la sesión se abre en el subdominio de la
         // empresa: el navegador guarda la sesión por dominio, así que se pasa
@@ -199,6 +235,19 @@ class SignInController extends Controller
         );
     }
     
+    /** ¿Netvula le suspendió el acceso a esta empresa? */
+    public static function empresaSuspendida(int $companyId): bool
+    {
+        static $hayColumna = null;
+        $hayColumna ??= \Illuminate\Support\Facades\Schema::hasColumn('companies', 'plataforma_suspendida');
+
+        if (!$hayColumna || !$companyId) {
+            return false;
+        }
+
+        return (bool) DB::table('companies')->where('id', $companyId)->value('plataforma_suspendida');
+    }
+
     /**
      * POST /api/oauth/changePassword
      * Cambia la contraseña del usuario autenticado.

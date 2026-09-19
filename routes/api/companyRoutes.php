@@ -35,6 +35,9 @@ Route::prefix('company')->group(function () {
         // Staff y facturación
         Route::post('staff/create',  [CompanyController::class, 'createStaff']);
         Route::get('staff',          [CompanyController::class, 'getStaff']);
+        // Baja de una cuenta del equipo y su vuelta atrás.
+        Route::delete('staff/{id}',         [CompanyController::class, 'deleteStaff'])->whereNumber('id');
+        Route::post('staff/{id}/reactivar', [CompanyController::class, 'reactivateStaff'])->whereNumber('id');
 
         // Roles de la empresa
         Route::get('profiles',                             [CompanyController::class, 'getProfiles']);
@@ -69,8 +72,9 @@ Route::prefix('company')->group(function () {
         // Notification routes
         Route::get('notification-routes',         [CompanyController::class, 'listNotificationRoutes']);
         Route::post('notification-routes',        [CompanyController::class, 'createNotificationRoute']);
-        Route::put('notification-routes/{id}',    [CompanyController::class, 'updateNotificationRoute']);
-        Route::delete('notification-routes/{id}', [CompanyController::class, 'deleteNotificationRoute']);
+        Route::put('notification-routes/{id}',    [CompanyController::class, 'updateNotificationRoute'])->whereNumber('id');
+        Route::post('notification-routes/probar', [CompanyController::class, 'probarNotificationRoute']);
+        Route::delete('notification-routes/{id}', [CompanyController::class, 'deleteNotificationRoute'])->whereNumber('id');
 
         // ── WhatsApp dinámico ───────────────────────────────────────────────
         Route::prefix('whatsapp')->group(function () {
@@ -84,6 +88,12 @@ Route::prefix('company')->group(function () {
             Route::delete('instances/{instanceId}',              [CompanyController::class, 'deleteWhatsAppInstance']);
             Route::get('instances/{instanceId}/status',          [CompanyController::class, 'getWhatsAppInstanceStatus']);
             Route::get('instances/{instanceId}/qr',              [CompanyController::class, 'getWhatsAppInstanceQr']);
+
+            // Catálogo de líneas: la empresa puede tener varias y una es la
+            // principal (la que usan facturas, avisos y todo lo que no cuelga
+            // de una conversación del CRM).
+            Route::get('lineas',                     [CompanyController::class, 'getWhatsAppLineas']);
+            Route::put('lineas/{lineaId}/principal', [CompanyController::class, 'setWhatsAppLineaPrincipal'])->whereNumber('lineaId');
 
             // Suscripción WA
             Route::post('subscribe',  [CompanyController::class, 'subscribeWhatsApp']);

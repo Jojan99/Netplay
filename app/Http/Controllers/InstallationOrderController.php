@@ -94,7 +94,9 @@ class InstallationOrderController extends Controller
             'notes' => "Cliente: {$validated['client_name']}, Dirección: {$validated['address']}",
             'created_by' => Auth::id(),
         ]);
-        
+
+        $this->avisarInstalacionAgendada($installation, $validated);
+
         return response()->json([
             'message' => 'Orden de instalación creada exitosamente',
             'data' => $installation
@@ -460,5 +462,54 @@ class InstallationOrderController extends Controller
     private function deLaEmpresa(string $tabla)
     {
         return Rule::exists($tabla, 'id')->where('company_id', getSessionCompanyId());
+    }
+
+    /**
+     * Avisa por WhatsApp que se agendó una instalación, al destino que la
+     * empresa haya elegido en Avisos y destinos.
+     *
+     * Antes esto no avisaba nada: el único aviso de instalación salía cuando se
+     * abría un ticket con tipo de servicio "instalación", que es otro camino.
+     */
+    private function avisarInstalacionAgendada(InstallationOrder $orden, array $datos): void
+    {
+        try {
+            $plan = !empty($datos['internet_plan_id'])
+                ? InternetPlan::where('id', $datos['internet_plan_id'])
+                    ->where('company_id', getSessionCompanyId())
+                    ->value('plan_name')
+                : null;
+
+            $tecnicos = !empty($datos['technician_ids'])
+                ? Employee::whereIn('id', $datos['technician_ids'])
+                    ->where('company_id', getSessionCompanyId())
+                    ->get(['first_name', 'last_name'])
+                    ->map(fn ($e) => trim("{$e->first_name} {$e->last_name}"))
+                    ->implode(', ')
+                : null;
+
+            $fecha = trim(($datos['scheduled_date'] ?? '') . ' ' . ($datos['scheduled_time'] ?? ''));
+
+            $direccion = ($datos['address'] ?? '')
+                . (!empty($datos['neighborhood']) ? " ({$datos['neighborhood']})" : '');
+
+            \App\Services\Avisos\MensajeDeAviso::nuevo('Instalación agendada', getSessionCompanyId(), '🗓')
+                ->dato('Orden', "#{$orden->id}")
+                ->dato('Cliente', $datos['client_name'] ?? null)
+                ->dato('Cédula', $datos['client_dni'] ?? null)
+                ->telefono('Teléfono', $datos['client_phone'] ?? null)
+                ->dato('Dirección', $direccion)
+                ->dato('Plan', $plan)
+                ->dato('Técnicos', $tecnicos)
+                ->fecha('Programada', $fecha, !empty($datos['scheduled_time']))
+                ->bloque('Observación', $datos['observations'] ?? null)
+                ->enviar('instalacion_creada');
+        } catch (\Throwable $e) {
+            // El aviso nunca puede tumbar el agendamiento.
+            \Log::warning('[Instalaciones] No se pudo avisar la instalación agendada', [
+                'orden' => $orden->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 }

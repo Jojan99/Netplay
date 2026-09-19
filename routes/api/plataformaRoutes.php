@@ -11,6 +11,8 @@ use Illuminate\Support\Facades\Route;
 |   GET  /api/plataforma/planes                 → planes de la página pública
 |   GET  /api/plataforma/logo/{slug}            → logo de la empresa (imagen)
 |   GET  /api/plataforma/subdominio/disponible  → ?s=netplay o ?nombre=Netplay SAS
+|   GET  /api/plataforma/codigo                 → ¿sirve este cupón o código de referido?
+|   GET  /api/plataforma/mi-referido            → el código de referido de la empresa y su crédito
 |   GET  /api/plataforma/mi-subdominio          → admin: el de su empresa
 |   PUT  /api/plataforma/mi-subdominio          → admin: cambiarlo
 */
@@ -29,6 +31,14 @@ Route::prefix('plataforma')->group(function () {
     Route::get('subdominio/disponible', [PlataformaController::class, 'disponible'])
         ->withoutMiddleware('jwt.verify')
         ->middleware('throttle:40,1');
+
+    // Cupón o código de referido, para el formulario de alta (sin sesión).
+    Route::get('codigo', [PlataformaController::class, 'codigo'])
+        ->withoutMiddleware('jwt.verify')
+        ->middleware('throttle:30,1');
+
+    // El código de referido de la propia empresa y su crédito.
+    Route::get('mi-referido', [PlataformaController::class, 'miReferido']);
 
     Route::middleware('role:admin')->group(function () {
         Route::get('mi-subdominio', [PlataformaController::class, 'miSubdominio']);

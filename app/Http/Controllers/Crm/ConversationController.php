@@ -17,6 +17,7 @@ use App\UseCases\Crm\Interfaces\TransferConversationUseCaseInterface;
 use App\Events\NewMessageEvent;
 use App\Events\InboxUpdatedEvent;
 use App\Services\WhatsAppService;
+use App\Services\WhatsApp\LineasDeWhatsApp as Lineas;
 use FFMpeg\FFMpeg;
 use App\Support\OpusAudioFormat;
 use Illuminate\Http\Request;
@@ -36,8 +37,15 @@ public function inbox(
         'status',
         'search',
         'provider',
+        'linea',    // id de wa_lineas: ver solo los chats de una línea
         'grupos',   // 1 => la sección de grupos, en vez de la atención a clientes
     ]);
+
+    // La línea pedida tiene que ser de la empresa en sesión: con un id ajeno en
+    // la URL se estaría filtrando (y viendo) la bandeja de otra empresa.
+    if (!empty($filters['linea']) && !Lineas::porId((int) $filters['linea'], (int) getSessionCompanyId())) {
+        unset($filters['linea']);
+    }
 
     // 🔥 SIEMPRE usar el usuario autenticado REAL
     $filters['user_id'] = getSessionUserId();
@@ -45,6 +53,19 @@ public function inbox(
     return response()->json([
         'ok'   => true,
         'data' => $useCase->execute($filters),
+    ]);
+}
+
+/**
+ * GET api/management/crm/lineas
+ * Las líneas de WhatsApp Web de la empresa, para el badge, el filtro de la
+ * bandeja y el selector al iniciar un chat nuevo.
+ */
+public function lineas(): JsonResponse
+{
+    return response()->json([
+        'ok'   => true,
+        'data' => Lineas::deEmpresa((int) getSessionCompanyId()),
     ]);
 }
 
@@ -373,6 +394,7 @@ public function toggleBotPause(int $conversationId, Request $request): JsonRespo
         ->where('c.id', $conversationId)
         ->where('c.company_id', getSessionCompanyId())
         ->select('c.company_id', 'c.provider', 'cu.phone')
+        ->when(Lineas::enConversaciones(), fn ($q) => $q->addSelect('c.wa_linea_id'))
         ->first();
     if (!$conversation) return response()->json(['ok' => false, 'error' => 'Conversación no encontrada'], 404);
     $paused   = $request->boolean('paused');
@@ -390,7 +412,12 @@ public function toggleBotPause(int $conversationId, Request $request): JsonRespo
     // El bot de WhatsApp Web corre en el servicio Node: avisarle para que deje de responder a este número
     if ($provider === 'netplay') {
         try {
-            $r = (new \App\Services\NetplayWhatsAppService($conversation->company_id))->setBotPaused($conversation->phone, $paused);
+            // La pausa es de la línea, no de la empresa: el bot corre por instancia.
+            $r = (new \App\Services\NetplayWhatsAppService(
+                $conversation->company_id,
+                false,
+                Lineas::instanciaDeConversacion($conversation->wa_linea_id ?? null, (int) $conversation->company_id)
+            ))->setBotPaused($conversation->phone, $paused);
             if (!is_array($r) || ($r['status'] ?? null) !== 'ok') {
                 Log::warning('[Bot pause] el servicio Node no confirmó', ['phone' => $conversation->phone, 'r' => $r]);
             }
@@ -482,11 +509,21 @@ public function createConversation(Request $request, ConversationRepositoryInter
 
     $companyId      = getSessionCompanyId();
     $provider       = in_array($request->input('provider'), ['meta', 'netplay'], true) ? $request->input('provider') : 'netplay';
+
+    // Línea elegida por el agente. Si no eligió (o eligió una que no es de su
+    // empresa) va la principal, que es lo que pasaba siempre hasta ahora.
+    $linea = $provider === 'netplay' && $request->filled('linea')
+        ? Lineas::porId((int) $request->input('linea'), (int) $companyId)
+        : null;
+
+    if (!$linea && $provider === 'netplay') $linea = Lineas::principal((int) $companyId);
+
     $conversationId = $repo->createConversationFromPhone(
         $request->phone,
         $request->name ?? '',
         $companyId,
-        $provider
+        $provider,
+        $linea->id ?? null
     );
 
     return response()->json(['ok' => true, 'conversation_id' => $conversationId], 201);
@@ -551,14 +588,16 @@ public function forwardMessage(Request $request, ConversationRepositoryInterface
             ->where('c.id', (int)$targetConvId)
             ->where('c.company_id', $empresa)
             ->select('cu.phone', 'c.company_id', 'c.provider')
+            ->when(Lineas::enConversaciones(), fn ($q) => $q->addSelect('c.wa_linea_id'))
             ->first();
 
         if (!$target || !$target->phone) continue;
         $phone = $target->phone;
 
-        // Cada conversación puede pertenecer a un provider distinto (Meta API o Netplay
-        // WhatsApp) dentro de la misma empresa; se reenvía siempre por su provider real.
-        $wa = new WhatsAppService($target->company_id, false, $target->provider ?? 'netplay');
+        // Cada conversación puede tener su propio provider (Meta API o Netplay
+        // WhatsApp) y su propia línea dentro de la misma empresa; se reenvía
+        // siempre por los de la conversación DESTINO.
+        $wa = WhatsAppService::paraConversacion($target);
 
         // Reenviar según tipo
         if ($source->message_type === 'text') {
@@ -858,15 +897,17 @@ public function createTicketFromConversation(int $conversationId, Request $reque
     if ($request->boolean('notify_group', true)) {
     // Notificación WhatsApp (no bloqueante)
     try {
-        $message =
-            "🆕 *NUEVO TICKET CRM*\n\n" .
-            "🆔 *ID:* {$ticketId}\n" .
-            "👤 *Cliente:* {$clientName}\n" .
-            "📞 *Teléfono:* {$phone}\n" .
-            "📍 *Dirección:* {$address}\n" .
-            "📝 *Observación:* {$request->observation}";
-
-        \App\Services\NotificationRouterService::dispatch(getSessionCompanyId(), 'ticket_support', $message);
+        \App\Services\Avisos\MensajeDeAviso::nuevo('Nuevo ticket de soporte', getSessionCompanyId(), '🔧')
+            ->dato('Ticket', "#{$ticketId}")
+            ->dato('Cliente', $clientName)
+            ->dato('Cédula', $cedula)
+            ->telefono('Teléfono', $phone)
+            ->dato('Dirección', $address)
+            ->dato('Técnico', $techName)
+            ->dato('Origen', 'CRM')
+            ->fecha('Registrado', now())
+            ->bloque('Observación', $request->observation)
+            ->enviar('ticket_support');
     } catch (\Throwable) {}
     }
 
@@ -895,7 +936,9 @@ public function deleteMessage(int $conversationId, int $messageId): JsonResponse
         ->where('m.id', $messageId)
         ->where('m.conversation_id', $conversationId)
         ->where('c.company_id', $companyId)
-        ->first(['m.id', 'm.external_id', 'm.sender_type', 'c.provider', 'cu.phone']);
+        ->select(['m.id', 'm.external_id', 'm.sender_type', 'c.provider', 'cu.phone'])
+        ->when(Lineas::enConversaciones(), fn ($q) => $q->addSelect('c.wa_linea_id'))
+        ->first();
 
     if (!$msg) {
         return response()->json(['ok' => false, 'error' => 'Mensaje no encontrado.'], 404);
@@ -917,7 +960,9 @@ public function deleteMessage(int $conversationId, int $messageId): JsonResponse
     // {status:"ok"}; no trae una clave 'success'. Comprobarla daba siempre
     // por fallido un borrado que en realidad había funcionado.
     try {
-        $r = (new \App\Services\NetplayWhatsAppService($companyId, true))
+        // Por la misma línea por la que salió: WhatsApp solo deja revocar desde
+        // el número que lo envió.
+        $r = (new \App\Services\NetplayWhatsAppService($companyId, true, Lineas::instanciaDeConversacion($msg->wa_linea_id ?? null, (int) $companyId)))
             ->borrarMensaje($msg->phone, $msg->external_id);
 
         if (($r['status'] ?? null) !== 'ok') {
@@ -956,8 +1001,10 @@ public function editMessage(Request $request, int $conversationId, int $messageI
         ->where('m.id', $messageId)
         ->where('m.conversation_id', $conversationId)
         ->where('c.company_id', $companyId)
-        ->first(['m.id', 'm.external_id', 'm.sender_type', 'm.message_type', 'm.content',
-                 'm.content_original', 'm.created_at', 'c.provider', 'cu.phone']);
+        ->select(['m.id', 'm.external_id', 'm.sender_type', 'm.message_type', 'm.content',
+                  'm.content_original', 'm.created_at', 'c.provider', 'cu.phone'])
+        ->when(Lineas::enConversaciones(), fn ($q) => $q->addSelect('c.wa_linea_id'))
+        ->first();
 
     if (!$msg) {
         return response()->json(['ok' => false, 'error' => 'Mensaje no encontrado.'], 404);
@@ -981,7 +1028,8 @@ public function editMessage(Request $request, int $conversationId, int $messageI
     }
 
     try {
-        $r = (new \App\Services\NetplayWhatsAppService($companyId, true))
+        // Por la misma línea por la que salió: solo ese número puede editarlo.
+        $r = (new \App\Services\NetplayWhatsAppService($companyId, true, Lineas::instanciaDeConversacion($msg->wa_linea_id ?? null, (int) $companyId)))
             ->editarMensaje($msg->phone, $msg->external_id, $request->input('content'));
 
         if (($r['status'] ?? null) !== 'ok') {

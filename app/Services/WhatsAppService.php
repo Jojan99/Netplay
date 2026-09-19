@@ -17,7 +17,12 @@ class WhatsAppService
     private MetaWhatsAppService|null    $metaService    = null;
     private string                      $provider       = 'netplay';
 
-    public function __construct(?int $companyId = null, bool $ignoreEnabledFlag = false, ?string $forceProvider = null)
+    /**
+     * $instanceId: la línea de WhatsApp Web por la que tiene que salir el envío
+     * (la de la conversación). Solo aplica al provider netplay; con Meta la
+     * empresa tiene un único número. Sin él se usa la línea principal.
+     */
+    public function __construct(?int $companyId = null, bool $ignoreEnabledFlag = false, ?string $forceProvider = null, ?string $instanceId = null)
     {
         $id = $companyId ?? getSessionCompanyId();
         $company = $id ? Company::find($id) : null;
@@ -37,8 +42,30 @@ class WhatsAppService
         if ($this->provider === 'meta') {
             $this->metaService = new MetaWhatsAppService($companyId);
         } else {
-            $this->netplayService = new NetplayWhatsAppService($companyId, $ignoreEnabledFlag);
+            $this->netplayService = new NetplayWhatsAppService($companyId, $ignoreEnabledFlag, $instanceId);
         }
+    }
+
+    /**
+     * El servicio listo para responderle a una conversación del CRM: mismo
+     * provider y misma LÍNEA por la que entró.
+     *
+     * $conversation necesita company_id, provider y wa_linea_id (esta última
+     * puede no venir: las conversaciones viejas salen por la línea principal).
+     */
+    public static function paraConversacion(object $conversation, bool $ignoreEnabledFlag = false): self
+    {
+        $companyId = (int) $conversation->company_id;
+
+        return new self(
+            $companyId,
+            $ignoreEnabledFlag,
+            $conversation->provider ?? 'netplay',
+            \App\Services\WhatsApp\LineasDeWhatsApp::instanciaDeConversacion(
+                isset($conversation->wa_linea_id) ? (int) $conversation->wa_linea_id : null,
+                $companyId
+            )
+        );
     }
 
     // ── TEXTO ────────────────────────────────────────

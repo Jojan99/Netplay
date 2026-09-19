@@ -36,6 +36,9 @@ class PuertaIdentificacion
 
     private const TABLA = 'crm_identificaciones';
 
+    /** La línea de WhatsApp Web por la que entró el mensaje que se está evaluando. */
+    private ?string $instanceId = null;
+
     public const PREGUNTA_POR_DEFECTO =
         "¡Hola! 👋 Para atenderte y ver tu cuenta necesito identificarte.\n\n" .
         "Respondé este mensaje con tu *número de cédula* y tu *nombre*.\n" .
@@ -51,8 +54,12 @@ class PuertaIdentificacion
      * @param  array  $payload  El webhook completo, para poder reprocesarlo al soltarlo.
      * @return array{accion: string, dni?: ?string, user_id?: ?int, nombre?: ?string, retenidos?: array}
      */
-    public function evaluar(int $companyId, string $provider, string $phone, ?string $texto, array $payload): array
+    public function evaluar(int $companyId, string $provider, string $phone, ?string $texto, array $payload, ?string $instanceId = null): array
     {
+        // La empresa puede tener varias líneas: se pregunta y se confirma por la
+        // MISMA por la que escribió el cliente, no por la principal.
+        $this->instanceId = $instanceId;
+
         $ajustes = $this->ajustes($companyId);
 
         if (!$ajustes['identificacion_enabled']) {
@@ -259,7 +266,7 @@ class PuertaIdentificacion
     private function enviar(int $companyId, string $provider, string $phone, string $texto): void
     {
         try {
-            (new WhatsAppService($companyId, false, $provider))->mensajeInformativo($phone, $texto);
+            (new WhatsAppService($companyId, false, $provider, $this->instanceId))->mensajeInformativo($phone, $texto);
         } catch (\Throwable $e) {
             // Que no se caiga el webhook si el envío falla: el mensaje del
             // cliente igual quedó guardado y se suelta cuando corresponda.

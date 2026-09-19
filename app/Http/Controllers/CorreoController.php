@@ -171,7 +171,9 @@ class CorreoController extends Controller
             'usando'            => $remitente['origen'],
             'usando_texto'      => $remitente['origen'] === Correo::PROPIA
                 ? 'propia: ' . $remitente['email']
-                : 'plataforma: ' . Correo::remitentePlataforma(),
+                : 'sin cuenta: la empresa todavía no puede enviar correos',
+            'puede_enviar'      => $remitente['origen'] === Correo::PROPIA,
+            'falta_cuenta'      => Correo::FALTA_CUENTA,
             'remitente_actual'  => $remitente,
             'correo_empresa'    => $company->email,
             'remitente_plataforma' => Correo::remitentePlataforma(),

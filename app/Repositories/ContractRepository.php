@@ -24,20 +24,42 @@ class ContractRepository implements ContractRepositoryInterface
 
     public function create(array $data): mixed
     {
-        return Contract::create([
+        return Contract::create($this->conColumnasOpcionales([
             'company_id'          => getSessionCompanyId(),
             'title'               => $data['title'],
-            'content'             => $data['content'],
+            'content'             => $data['content'] ?? '',
             'active'              => $data['active'] ?? true,
             'installation_value'  => $data['installation_value'] ?? null,
-        ]);
+        ], $data));
     }
 
     public function update(int $id, array $data): mixed
     {
         $contract = $this->getById($id);
-        $contract->update($data);
+        $contract->update($this->conColumnasOpcionales($data, $data));
         return $contract->fresh();
+    }
+
+    /**
+     * El plazo y el texto de los términos tienen columnas que puede que aún no
+     * existan (la migración va aparte). Si no están, se descarta el valor en vez
+     * de tumbar el guardado de la plantilla entera.
+     */
+    private function conColumnasOpcionales(array $destino, array $origen): array
+    {
+        unset($destino['plazo'], $destino['terminos']);
+
+        if (array_key_exists('plazo', $origen) && \Illuminate\Support\Facades\Schema::hasColumn('contracts', 'plazo')) {
+            $plazo = (int) $origen['plazo'];
+            $destino['plazo'] = $plazo > 0 ? $plazo : null;
+        }
+
+        if (array_key_exists('terminos', $origen) && \Illuminate\Support\Facades\Schema::hasColumn('contracts', 'terminos')) {
+            $texto = trim((string) $origen['terminos']);
+            $destino['terminos'] = $texto !== '' ? $texto : null;
+        }
+
+        return $destino;
     }
 
     public function delete(int $id): mixed

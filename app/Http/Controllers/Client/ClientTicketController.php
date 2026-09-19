@@ -4,7 +4,7 @@ namespace App\Http\Controllers\Client;
 
 use App\Constants\ApiResponseConstants;
 use App\Http\Controllers\Controller;
-use App\Services\NotificationRouterService;
+use App\Services\Avisos\MensajeDeAviso;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -23,6 +23,15 @@ class ClientTicketController extends Controller
         'intermitencia',
         'wifi',
         'otro',
+    ];
+
+    /** Cómo se lee cada categoría en el aviso al grupo. */
+    const CATEGORIAS = [
+        'sin_internet'  => 'Sin internet',
+        'lentitud'      => 'Lentitud',
+        'intermitencia' => 'Intermitencia',
+        'wifi'          => 'WiFi',
+        'otro'          => 'Otro',
     ];
 
     /**
@@ -110,17 +119,16 @@ class ClientTicketController extends Controller
         // Notificar a admins vía WhatsApp
         $userData = DB::table('user_data')->where('user_id', $user->id)->first(['names', 'lastname', 'phone', 'address']);
         $clientName = trim(($userData->names ?? '') . ' ' . ($userData->lastname ?? '')) ?: $user->username;
-        $hora = now()->toDateTimeString();
-        $message =
-            "🆕 *NUEVO REPORTE DE CLIENTE*\n\n" .
-            "🆔 *ID:* {$ticketId}\n" .
-            "👤 *Cliente:* {$clientName}\n" .
-            "📞 *Teléfono:* " . ($userData->phone ?? 'N/A') . "\n" .
-            "📍 *Dirección:* " . ($userData->address ?? 'N/A') . "\n" .
-            "📂 *Categoría:* {$request->category}\n\n" .
-            "📝 *Descripción:*\n{$request->description}\n\n" .
-            "⏰ *Fecha:* {$hora}";
-        NotificationRouterService::dispatch($user->company_id, 'ticket_support', $message);
+        MensajeDeAviso::nuevo('Reporte del portal del cliente', $user->company_id, '🔧')
+            ->dato('Ticket', "#{$ticketId}")
+            ->dato('Cliente', $clientName)
+            ->telefono('Teléfono', $userData->phone ?? null)
+            ->dato('Dirección', $userData->address ?? null)
+            ->dato('Categoría', self::CATEGORIAS[$request->category] ?? $request->category)
+            ->dato('Origen', 'Portal del cliente')
+            ->fecha('Registrado', now())
+            ->bloque('Descripción', $request->description)
+            ->enviar('ticket_support');
 
         return response()->json([
             'message' => 'Reporte enviado correctamente. Nuestro equipo lo atenderá pronto.',

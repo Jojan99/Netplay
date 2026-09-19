@@ -11,7 +11,7 @@ use App\Repositories\Interfaces\TicketRepositoryInterface;
 use App\Repositories\Interfaces\UserRepositoryInterface;
 use App\Resources\TemplatesEmail\TemplateEmailPay;
 use App\Services\WhatsAppService;
-use App\Services\NotificationRouterService;
+use App\Services\Avisos\MensajeDeAviso;
 use App\UseCases\Facturation\Interfaces\CreatePaidFacturationUseCaseInterface;
 use App\UseCases\GeneratePdf\Interfaces\GeneratePdfReceiptByIdUseCaseInterface;
 use App\UseCases\Ticket\Interfaces\CreateTicketUseCaseInterface;
@@ -63,25 +63,43 @@ class CreateTicketUseCase implements CreateTicketUseCaseInterface
               
               $id =  $this->ticketRepositoryInterface->createTicket($data);
 
-                $hora    = Carbon::now()->toDateTimeString();
-                $isInstall = isset($data['type_service']) && stripos($data['type_service'], 'instala') !== false;
-                $eventType = $isInstall ? 'ticket_install' : 'ticket_support';
-
-                $message =
-                "🆕 *NUEVO TICKET*\n\n".
-                "🆔 *ID:* {$id}\n".
-                "👤 *Cliente:* {$data['client_name']}\n".
-                "📄 *Cédula:* {$data['cedula']}\n".
-                "📞 *Teléfono:* {$data['phone']}\n".
-                "📍 *Dirección:* {$data['address']}\n".
-                "👨‍🔧 *Técnico:* {$data['technician_name']}\n\n".
-                "📝 *Observación:*\n{$data['observation']}\n\n".
-                "⏰ *Fecha:* {$hora}";
-
                 // El aviso al grupo lo decide quien crea el ticket. Antes salía
-                // siempre y no había forma de crear uno sin avisar.
+                // siempre y no había forma de crear uno sin avisar. Y nunca puede
+                // tumbar el alta: el ticket ya quedó guardado.
                 if ($data->boolean('notify_group', true)) {
-                    NotificationRouterService::dispatch(getSessionCompanyId(), $eventType, $message);
+                    try {
+                        // type_service y priority llegan como id: sin el nombre el
+                        // aviso mostraría un número y "instalación" nunca se
+                        // detectaría.
+                        $servicio  = \Illuminate\Support\Facades\DB::table('ticket_type_services')
+                            ->where('id', $data['type_service'] ?? 0)->value('name');
+                        $prioridad = \Illuminate\Support\Facades\DB::table('ticket_type_prioritys')
+                            ->where('id', $data['priority'] ?? 0)->value('name');
+
+                        $isInstall = $servicio !== null && stripos((string) $servicio, 'instala') !== false;
+
+                        MensajeDeAviso::nuevo(
+                                $isInstall ? 'Nuevo ticket de instalación' : 'Nuevo ticket de soporte',
+                                getSessionCompanyId(),
+                                $isInstall ? '📦' : '🔧'
+                            )
+                            ->dato('Ticket', "#{$id}")
+                            ->dato('Cliente', $data['client_name'] ?? null)
+                            ->dato('Cédula', $data['cedula'] ?? null)
+                            ->telefono('Teléfono', $data['phone'] ?? null)
+                            ->dato('Dirección', $data['address'] ?? null)
+                            ->dato('Servicio', $servicio)
+                            ->dato('Prioridad', $prioridad)
+                            ->dato('Técnico', $data['technician_name'] ?? null)
+                            ->fecha('Registrado', Carbon::now())
+                            ->bloque('Observación', $data['observation'] ?? null)
+                            ->enviar($isInstall ? 'ticket_install' : 'ticket_support');
+                    } catch (\Throwable $e) {
+                        \Log::warning('[Tickets] No se pudo avisar el ticket nuevo', [
+                            'ticket' => $id,
+                            'error'  => $e->getMessage(),
+                        ]);
+                    }
                 }
 
                 // $this->TemplateEmailPay->EmailPay($dataUser,$data['price_total'],$data['number_facture']);

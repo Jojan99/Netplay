@@ -29,6 +29,39 @@ class ArchivosContrato
         return self::PRIVADO . "/{$companyId}/documents";
     }
 
+    /** Carpeta (relativa a storage/app) para los PDF base de las plantillas. */
+    public static function dirPlantillas(int $companyId): string
+    {
+        return self::PRIVADO . "/{$companyId}";
+    }
+
+    /**
+     * Carpeta absoluta donde quedan las hojas dibujadas del contrato de UN
+     * cliente. Van por cliente porque cada uno lleva sus datos estampados.
+     */
+    public static function dirHojas(int $companyId, int $clientContractId): string
+    {
+        return storage_path('app/' . self::PRIVADO . "/{$companyId}/render/{$clientContractId}");
+    }
+
+    /** Carpeta absoluta de las hojas dibujadas del PDF base de una plantilla. */
+    public static function dirHojasPlantilla(int $companyId, int $contractId): string
+    {
+        return storage_path('app/' . self::PRIVADO . "/{$companyId}/render/plantilla-{$contractId}");
+    }
+
+    /**
+     * PDF base de una plantilla (contracts.pdf_path). Se mudó a privado junto con
+     * el resto, pero el código seguía leyéndolo de storage/app/public: el sellado
+     * de variables y la vista previa del contrato se caían con "PDF base no
+     * encontrado". Se resuelve igual que los demás: privado primero, public de
+     * respaldo mientras queden plantillas viejas sin mover.
+     */
+    public static function plantilla(?string $relativa): ?string
+    {
+        return self::absoluta($relativa);
+    }
+
     /**
      * Ruta absoluta de un documento guardado en BD. Los nuevos empiezan por
      * "privado/" (relativos a storage/app); los viejos son relativos a public.
@@ -40,11 +73,21 @@ class ArchivosContrato
             return null;
         }
 
-        $abs = str_starts_with($relativa, 'privado/')
-            ? storage_path('app/' . $relativa)
-            : storage_path('app/public/' . $relativa);
+        // Los archivos que estaban en public (contratos firmados y fotos de
+        // cédula, que cualquiera podía bajar adivinando el nombre) se copiaron a
+        // privado con la misma estructura: se busca ahí primero y public queda
+        // sólo de respaldo mientras termina la mudanza.
+        $rutas = str_starts_with($relativa, 'privado/')
+            ? [storage_path('app/' . $relativa)]
+            : [storage_path('app/privado/' . $relativa), storage_path('app/public/' . $relativa)];
 
-        return is_file($abs) ? $abs : null;
+        foreach ($rutas as $abs) {
+            if (is_file($abs)) {
+                return $abs;
+            }
+        }
+
+        return null;
     }
 
     /** PDF firmado: el privado o, si es de antes, el que quedó en public. */

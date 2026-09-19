@@ -35,9 +35,20 @@ interface EgresosRepositoryInterface
     public function getIngresosDetailed(?string $from, ?string $to): mixed;
 
     // ── Egresos v2 ──────────────────────────────────────────────────────────
-    public function getEgresosPaginated(?string $search, ?string $from, ?string $to, ?string $category, int $page, int $perPage): object;
+    public function getEgresosPaginated(array $filtros): object;
     public function createEgresoV2(array $data): mixed;
     public function updateEgreso(int $id, array $data): bool;
     public function deleteEgreso(int $id): bool;
-    public function exportEgresos(?string $from, ?string $to): array;
+    public function exportEgresos(array $filtros): array;
+    public function buscarEgreso(int $id): ?object;
+    public function rutaAdjunto(int $id): ?object;
+    public function repetirEgreso(int $id): array;
+
+    // ── Tablero y categorías por empresa ────────────────────────────────────
+    public function getTablero(array $filtros): array;
+    public function getCategorias(): array;
+    public function crearCategoria(string $nombre, ?string $color): array;
+    public function actualizarCategoria(int $id, ?string $nombre, ?string $color): array;
+    public function alternarCategoria(int $id): array;
+    public function eliminarCategoria(int $id): array;
 }

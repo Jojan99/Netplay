@@ -83,14 +83,12 @@ public function GetIpAvalibles(GestionUserRequest $gestionUserRequest, ?int $rou
         $vlan = $gestionUserRequest['vlan'];
         $api  = $this->connection->conection($this->resolveToken($routerId));
 
-        /** 1️⃣ RED DE LA VLAN */
-        $query = new Query('/ip/address/print');
-        $query->add('=.proplist=address');
-        $query->where('interface', $vlan);
+        /** 1️⃣ REDES DE LA VLAN */
+        // Una VLAN puede tener varias redes (vlan10 con la .10 y la .11). Antes
+        // se usaba sólo la primera y las IP de las demás no se ofrecían nunca.
+        $redes = \App\Services\Red\IpFijaEnElRouter::redesDe($api, (string) $vlan);
 
-        $address = $api->query($query)->read();
-
-        if (empty($address)) {
+        if (empty($redes)) {
             return [
                 'message' => 'La VLAN no tiene red asignada',
                 'status'  => 1,
@@ -98,27 +96,15 @@ public function GetIpAvalibles(GestionUserRequest $gestionUserRequest, ?int $rou
             ];
         }
 
-        // Se recorre el segmento con su máscara real. Antes se asumía /24 y se
-        // cortaba en las primeras 20 libres: para usar una IP puntual había que
-        // ir a buscarla al router.
-        [$gateway, $bits] = array_pad(explode('/', $address[0]['address']), 2, '24');
-        $bits = (int) $bits;
-        if ($bits < 20 || $bits > 30) {
-            $bits = 24;
-        }
-        $mascara  = -1 << (32 - $bits);
-        $red      = ip2long($gateway) & $mascara;
-        $difusion = $red | (~$mascara & 0xFFFFFFFF);
-
         /** 2️⃣ LO QUE HAY EN EL ROUTER */
         $query = new Query('/ip/arp/print');
-        $query->add('=.proplist=address,mac-address,comment');
+        $query->add('=.proplist=address,mac-address,comment,disabled,dynamic');
         $query->where('interface', $vlan);
 
         $enArp = [];
         foreach ($api->query($query)->read() as $fila) {
             if (!empty($fila['address'])) {
-                $enArp[$fila['address']] = $fila;
+                $enArp[$fila['address']] ??= $fila;
             }
         }
 
@@ -127,7 +113,7 @@ public function GetIpAvalibles(GestionUserRequest $gestionUserRequest, ?int $rou
         // misma IP a varios clientes. Se descuentan también las que la
         // plataforma ya tiene registradas para esta empresa.
         $enPlataforma = [];
-        $companyId = getSessionCompanyId();
+        $companyId = (int) getSessionCompanyId();
 
         if ($companyId) {
             $filas = \Illuminate\Support\Facades\DB::table('tabla_ips as t')
@@ -142,52 +128,44 @@ public function GetIpAvalibles(GestionUserRequest $gestionUserRequest, ?int $rou
             }
         }
 
-        /** 3️⃣ LIBRES Y OCUPADAS (con quién las tiene) */
-        $libres   = [];
-        $ocupadas = [];
-
-        for ($n = $red + 1; $n < $difusion; $n++) {
-            $ip = long2ip($n);
-
-            if ($ip === $gateway) {
-                $ocupadas[] = ['ip' => $ip, 'estado' => 'gateway', 'detalle' => 'Puerta de enlace del router'];
-                continue;
-            }
-
-            if (isset($enPlataforma[$ip])) {
-                $c = $enPlataforma[$ip];
-                $nombre = trim(($c->names ?? '') . ' ' . ($c->lastname ?? '')) ?: 'Cliente #' . $c->user_id;
-                $ocupadas[] = [
-                    'ip'      => $ip,
-                    'estado'  => 'cliente',
-                    'detalle' => $nombre . ((int) $c->active === 1 ? '' : ' (retirado)'),
-                    'user_id' => (int) $c->user_id,
-                ];
-                continue;
-            }
-
-            if (isset($enArp[$ip])) {
-                $a = $enArp[$ip];
-                $ocupadas[] = [
-                    'ip'      => $ip,
-                    'estado'  => 'arp',
-                    'detalle' => 'En el router sin cliente' . (!empty($a['comment']) ? ' · ' . $a['comment'] : (!empty($a['mac-address']) ? ' · ' . $a['mac-address'] : '')),
-                ];
-                continue;
-            }
-
-            $libres[] = ['ip' => $ip];
+        /** 3️⃣ LIBRES Y OCUPADAS DE CADA RED (con quién las tiene) */
+        foreach ($redes as &$r) {
+            [$r['libres'], $r['ocupadas']] = $this->clasificarRed($r, $enPlataforma, $enArp, $companyId);
         }
+        unset($r);
+
+        // La red que se muestra: la pedida; si no, la de la IP que el cliente
+        // ya tiene; si no, la primera con IP libres.
+        $pedida = trim((string) ($gestionUserRequest['segment'] ?? ''));
+        $elegida = ($pedida !== '' ? \App\Services\Red\IpFijaEnElRouter::redDe($redes, $pedida) : null)
+            ?? \App\Services\Red\IpFijaEnElRouter::redDe($redes, (string) ($gestionUserRequest['ip_actual'] ?? ''))
+            ?? (collect($redes)->first(fn ($r) => count($r['libres']) > 0) ?? $redes[0]);
+
+        $resumen = array_map(fn ($r) => [
+            'network'     => $r['network'],
+            'gateway'     => $r['gateway'],
+            'mask'        => $r['mask'],
+            'netmask'     => $r['netmask'],
+            'libres'      => count($r['libres']),
+            'clientes'    => count(array_filter($r['ocupadas'], fn ($o) => $o['estado'] === 'cliente')),
+            'sin_cliente' => count(array_filter($r['ocupadas'], fn ($o) => $o['estado'] === 'arp')),
+            'elegida'     => $r['network'] === $elegida['network'],
+        ], $redes);
 
         return [
             'message' => 'IPs disponibles encontradas',
             'status'  => 0,
             'data'    => [
+                // Los mismos campos de siempre, de la red elegida.
                 'vlan'     => $vlan,
-                'gateway'  => $gateway,
-                'network'  => long2ip($red) . '/' . $bits,
-                'ips'      => $libres,
-                'ocupadas' => $ocupadas,
+                'gateway'  => $elegida['gateway'],
+                'network'  => $elegida['network'],
+                'mask'     => $elegida['mask'],
+                'netmask'  => $elegida['netmask'],
+                'ips'      => $elegida['libres'],
+                'ocupadas' => $elegida['ocupadas'],
+                // Todas las redes de la VLAN, para elegir entre ellas.
+                'redes'    => $resumen,
             ]
         ];
 
@@ -210,6 +188,76 @@ public function GetIpAvalibles(GestionUserRequest $gestionUserRequest, ?int $rou
     }
 }
 
+
+
+/**
+ * Las IP de una red: libres, y ocupadas con quién las tiene. Las que están en
+ * el router sin cliente de la plataforma van como 'arp', con su MAC y su
+ * comment: se pueden asignar reutilizando esa entrada.
+ *
+ * @return array{0: list<array>, 1: list<array>}
+ */
+private function clasificarRed(array $r, array $enPlataforma, array $enArp, int $companyId): array
+{
+    $libres   = [];
+    $ocupadas = [];
+
+    for ($n = $r['red'] + 1; $n < $r['difusion']; $n++) {
+        $ip = long2ip($n);
+
+        if ($ip === $r['gateway']) {
+            $ocupadas[] = ['ip' => $ip, 'estado' => 'gateway', 'detalle' => 'Puerta de enlace del router'];
+            continue;
+        }
+
+        if (isset($enPlataforma[$ip])) {
+            $c = $enPlataforma[$ip];
+            $nombre = trim(($c->names ?? '') . ' ' . ($c->lastname ?? '')) ?: 'Cliente #' . $c->user_id;
+            $ocupadas[] = [
+                'ip'      => $ip,
+                'estado'  => 'cliente',
+                'detalle' => $nombre . ((int) $c->active === 1 ? '' : ' (retirado)'),
+                'user_id' => (int) $c->user_id,
+            ];
+            continue;
+        }
+
+        if (isset($enArp[$ip])) {
+            $a = $enArp[$ip];
+            // La entrada puede ser de un cliente aunque la plataforma tenga
+            // otra IP en su ficha: el comment puede traer el nombre que
+            // tenía en la plataforma de la que se importó.
+            $dueno = \App\Services\Red\IdentidadEnElRouter::clienteDeEntrada($companyId, $a, false);
+
+            if ($dueno) {
+                $ocupadas[] = [
+                    'ip'      => $ip,
+                    'estado'  => 'cliente',
+                    'detalle' => $dueno['nombre'] . ' (en el router, la ficha tiene otra IP)',
+                    'user_id' => $dueno['user_id'],
+                ];
+                continue;
+            }
+
+            $comment = trim((string) ($a['comment'] ?? ''));
+            $mac     = trim((string) ($a['mac-address'] ?? ''));
+            $ocupadas[] = [
+                'ip'      => $ip,
+                'estado'  => 'arp',
+                'detalle' => 'En el router sin cliente' . ($comment !== '' ? ' · ' . $comment : ($mac !== '' ? ' · ' . $mac : '')),
+                'user_id' => null,
+                'mac'     => $mac !== '' ? $mac : null,
+                'comment' => $comment !== '' ? $comment : null,
+                'desactivada' => ($a['disabled'] ?? 'false') === 'true',
+            ];
+            continue;
+        }
+
+        $libres[] = ['ip' => $ip];
+    }
+
+    return [$libres, $ocupadas];
+}
 
 
 public function getLanSegments(?int $routerId = null, bool $todas = false): mixed
@@ -280,12 +328,17 @@ public function autorizarServicio(GestionUserRequest $request, ?int $routerId = 
 
         $api = $this->connection->conection($this->resolveToken($routerId));
 
-        // 🔹 Buscar ARP existente
-        $query = new Query('/ip/arp/print');
-        $query->where('comment', $dataUser['dni']);
-        $query->add('=.proplist=.id');
+        // 🔹 Buscar ARP existente (por documento, por el nombre que traía de la
+        // plataforma de origen o por su IP).
+        $companyId = (int) getSessionCompanyId();
+        $identidad = \App\Services\Red\IdentidadEnElRouter::deDocumento((string) $dataUser['dni'], $companyId);
 
-        $exists = $api->query($query)->read();
+        $query = new Query('/ip/arp/print');
+        $query->add('=.proplist=.id,address,comment');
+
+        $exists = $identidad
+            ? \App\Services\Red\IdentidadEnElRouter::suyas($api->query($query)->read(), $identidad, $companyId)
+            : [];
 
         // ❌ NO existe → mensaje
         if (empty($exists)) {
@@ -335,47 +388,30 @@ public function autorizarServicio(GestionUserRequest $request, ?int $routerId = 
 
 public function registerIpInArp(string $ip, string $mac, string $vlan, string $comment, ?int $routerId = null): bool
 {
+    return $this->asegurarIpEnArp($ip, $vlan, $comment, null, $routerId, $mac)['ok'];
+}
+
+/**
+ * Deja la IP fija del cliente en el ARP del router. Si la IP ya está en el
+ * router sin cliente de la plataforma, se reutiliza esa entrada (con su MAC)
+ * en vez de crear otra; si la tiene otro cliente, se rechaza.
+ *
+ * @return array{ok:bool, mensaje:string, accion:?string, comment_anterior:?string, mac:?string}
+ */
+public function asegurarIpEnArp(string $ip, string $vlan, string $documento, ?int $userId = null, ?int $routerId = null, string $mac = ''): array
+{
     try {
         $api = $this->connection->conection($this->resolveToken($routerId));
+        $ipFija = new \App\Services\Red\IpFijaEnElRouter($api, (int) getSessionCompanyId());
 
-        /**
-         * 🔹 VALIDAR SI YA EXISTE EN ARP
-         */
-        $query = new Query('/ip/arp/print');
-        $query->where('address', $ip);
-        $query->add('=.proplist=.id');
-
-        $exists = $api->query($query)->read();
-
-        \Log::info("exists", ["exists" => $exists]);
-
-        if (!empty($exists)) {
-            // Ya existe, no volver a crear
-            return true;
+        $revision = $ipFija->revisar($ip, $vlan, $userId);
+        if (!$revision['ok']) {
+            return ['ok' => false, 'mensaje' => $revision['mensaje'], 'accion' => null, 'comment_anterior' => null, 'mac' => null];
         }
 
-        if($mac == ''){
-          $mac = '00:00:00:00:00:00';
-        }
+        return ['ok' => true] + $ipFija->aplicar($revision, $ip, $vlan, $documento, $mac);
 
-        /**
-         * 🔹 CREAR REGISTRO ARP
-         */
-        $query = new Query('/ip/arp/add');
-        $query->equal('address', $ip);
-        $query->equal('mac-address', $mac);
-        $query->equal('interface', $vlan);
-        $query->equal('comment', $comment);
-        //$query->equal('published', 'yes'); // opcional, recomendado ISP
-
-        $api->query($query)->read();
-
-        \Log::info("api ABAJO", ["api" => $api]);
-
-
-        return true;
-
-    } catch (QueryException $e) {
+    } catch (\Throwable $e) {
 
         \Log::error('MIKROTIK ARP ERROR', [
             'ip' => $ip,
@@ -384,7 +420,7 @@ public function registerIpInArp(string $ip, string $mac, string $vlan, string $c
             'error' => $e->getMessage()
         ]);
 
-        return false;
+        return ['ok' => false, 'mensaje' => 'Error registrando el cliente en el MikroTik. Contacte al administrador.', 'accion' => null, 'comment_anterior' => null, 'mac' => null];
     }
 }
 
@@ -408,11 +444,29 @@ public function registerIpInArp(string $ip, string $mac, string $vlan, string $c
             $dni = $dataUser['dni'];
             $api = $this->connection->conection($this->resolveToken($routerId));
 
-            // 1️⃣ Eliminar ARP anterior del cliente (busca por comment = DNI)
+            $companyId = (int) getSessionCompanyId();
+            $identidad = \App\Services\Red\IdentidadEnElRouter::deUsuario((int) $userId, $companyId);
+            if (!$identidad) {
+                return ['message' => 'Cliente no encontrado en esta empresa', 'status' => 1, 'data' => null];
+            }
+
+            // 0️⃣ Antes de tocar nada: la IP no puede ser de otro cliente y tiene
+            // que ser de alguna red de esa VLAN (puede tener varias).
+            $ipFija   = new \App\Services\Red\IpFijaEnElRouter($api, $companyId);
+            $revision = $ipFija->revisar($newIp, $vlan, $userId);
+            if (!$revision['ok']) {
+                return ['message' => $revision['mensaje'], 'status' => 1, 'data' => null];
+            }
+
+            // 1️⃣ Eliminar ARP anterior del cliente. Se lo reconoce por su
+            // documento, por el nombre que traía de la plataforma de origen o
+            // por la IP de su ficha. La entrada de la IP nueva no se toca.
             $query = new Query('/ip/arp/print');
-            $query->where('comment', $dni);
-            $query->add('=.proplist=.id,mac-address');
-            $existing = $api->query($query)->read();
+            $query->add('=.proplist=.id,address,comment,mac-address');
+            $existing = array_values(array_filter(
+                \App\Services\Red\IdentidadEnElRouter::suyas($api->query($query)->read(), $identidad, $companyId),
+                fn ($e) => ($e['address'] ?? '') !== $newIp
+            ));
 
             // El equipo es el mismo: su MAC también. Con 00:00:00:00:00:00 y el
             // ARP en reply-only el router deja de contestarle.
@@ -425,20 +479,29 @@ public function registerIpInArp(string $ip, string $mac, string $vlan, string $c
                 $api->query($del)->read();
             }
 
-            // 2️⃣ Crear nuevo ARP con la nueva IP
-            $query = new Query('/ip/arp/add');
-            $query->equal('address', $newIp);
-            $query->equal('mac-address', $macAnterior);
-            $query->equal('interface', $vlan);
-            $query->equal('comment', $dni);
-            $api->query($query)->read();
+            // 2️⃣ La entrada de la IP nueva: se crea, o se reutiliza la que ya
+            // estaba en el router sin cliente (con su MAC).
+            $arp = $ipFija->aplicar($revision, $newIp, $vlan, (string) $dni, $macAnterior);
+            if ($arp['accion'] === 'reutilizada') {
+                \App\Services\Red\IpFijaEnElRouter::recordarNombreAnterior($companyId, $userId, $arp['comment_anterior'], (string) $dni);
+            }
 
             // 3️⃣ Actualizar IP en base de datos
             $this->internetInfoRepositoryInterface->updateUserIp($userId, $newIp);
 
-            \Log::info('IP MIGRADA', ['user_id' => $userId, 'new_ip' => $newIp, 'vlan' => $vlan]);
+            if (!empty($arp['mac'])) {
+                $this->internetInfoRepositoryInterface->updateIpMac($newIp, $arp['mac']);
+            }
 
-            return ['message' => 'IP migrada correctamente', 'status' => 0, 'data' => ['ip' => $newIp, 'vlan' => $vlan]];
+            \Log::info('IP MIGRADA', ['user_id' => $userId, 'new_ip' => $newIp, 'vlan' => $vlan, 'arp' => $arp['accion']]);
+
+            $red = $revision['red'];
+
+            return [
+                'message' => 'IP migrada correctamente' . ($arp['accion'] === 'reutilizada' ? '. ' . $arp['mensaje'] : ''),
+                'status'  => 0,
+                'data'    => ['ip' => $newIp, 'vlan' => $vlan, 'gateway' => $red['gateway'] ?? null, 'network' => $red['network'] ?? null, 'arp' => $arp['accion']],
+            ];
 
         } catch (\Throwable $e) {
             \Log::error('ERROR MIGRACION IP', ['error' => $e->getMessage()]);

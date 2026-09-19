@@ -191,17 +191,23 @@ class ClienteEnElRouter
      */
     private function buscar($api, UserData $cliente): array
     {
-        $documento = trim((string) $cliente->dni);
-        $usuario   = trim((string) ($cliente->pppoe_user ?? ''));
+        $identidad = IdentidadEnElRouter::deUsuario((int) $cliente->user_id, $this->companyId);
+
+        if (!$identidad) {
+            return ['secrets' => [], 'sesiones' => [], 'arp' => [], 'listas' => []];
+        }
 
         // Las credenciales de las VPN del ISP viven en la misma tabla: sólo
-        // cuentan las de PPPoE, y sólo las del usuario o el documento del cliente.
-        $secrets = array_values(array_filter(
-            $this->leer($api, '/ppp/secret/print'),
-            fn ($s) => in_array($s['service'] ?? '', ['pppoe', 'any', ''], true)
-                && (($usuario !== '' && ($s['name'] ?? '') === $usuario)
-                    || ($documento !== '' && trim((string) ($s['comment'] ?? '')) === $documento))
-        ));
+        // cuentan las de PPPoE, y sólo las de este cliente (por su usuario, su
+        // documento o el nombre que tenía en la plataforma de la que vino).
+        $secrets = IdentidadEnElRouter::suyas(
+            array_values(array_filter(
+                $this->leer($api, '/ppp/secret/print'),
+                fn ($s) => in_array($s['service'] ?? '', ['pppoe', 'any', ''], true)
+            )),
+            $identidad,
+            $this->companyId
+        );
 
         $sesiones = [];
 
@@ -215,8 +221,11 @@ class ClienteEnElRouter
             }
         }
 
-        $arp = $documento === '' ? [] : $this->donde($api, '/ip/arp/print', 'comment', $documento);
-        $listas = $documento === '' ? [] : $this->donde($api, '/ip/firewall/address-list/print', 'comment', $documento);
+        // El ARP y las listas se leen enteros y se filtran acá: el cliente
+        // puede estar con su documento, con el nombre que traía de la otra
+        // plataforma o, en última instancia, por su IP fija.
+        $arp = IdentidadEnElRouter::suyas($this->leer($api, '/ip/arp/print'), $identidad, $this->companyId);
+        $listas = IdentidadEnElRouter::suyas($this->leer($api, '/ip/firewall/address-list/print'), $identidad, $this->companyId);
 
         return compact('secrets', 'sesiones', 'arp', 'listas');
     }

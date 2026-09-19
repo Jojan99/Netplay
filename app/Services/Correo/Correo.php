@@ -10,10 +10,9 @@ use Mailjet\Resources;
 /**
  * Único punto de salida de correos (Mailjet).
  *
- * - Correo::deEmpresa($empresa): si la empresa conectó su propia cuenta de
- *   Mailjet (activa, con llaves y remitente) se usa esa cuenta y su remitente.
- *   Si no, sale por la cuenta de la plataforma desde no-reply@netvula.com con
- *   el nombre de la empresa, y las respuestas llegan al correo de la empresa.
+ * - Correo::deEmpresa($empresa): la cuenta de Mailjet de esa empresa. Si no la
+ *   tiene cargada, no envía: la cuenta de la plataforma no se presta para que
+ *   un ISP le mande facturas a sus clientes desde el correo de Netvula.
  * - Correo::plataforma(): siempre la cuenta de la plataforma, a nombre de
  *   Netvula (confirmación de empresas, verificación, avisos de la plataforma).
  *
@@ -23,6 +22,12 @@ class Correo
 {
     public const PROPIA = 'propia';
     public const PLATAFORMA = 'plataforma';
+
+    /** La empresa todavía no cargó su cuenta de Mailjet: no puede enviar. */
+    public const SIN_CUENTA = 'sin_cuenta';
+
+    public const FALTA_CUENTA = 'La empresa todavía no tiene su cuenta de correo (Mailjet). '
+        . 'Cargala en Configuración → Correo (Mailjet) para poder enviarle correos a los clientes.';
 
     private function __construct(
         private string $apiKey,
@@ -60,12 +65,11 @@ class Correo
             );
         }
 
-        $plataforma = self::plataforma();
-        $plataforma->desdeNombre = $nombre ?: $plataforma->desdeNombre;
-        $plataforma->responderA = $correoEmpresa;
-        $plataforma->responderANombre = $nombre ?: null;
-        $plataforma->empresaId = (int) $company->id;
-        return $plataforma;
+        // Sin cuenta propia la empresa no envía. La cuenta de la plataforma es
+        // sólo para los correos de Netvula (confirmar una empresa nueva, avisos
+        // del producto), no para que cada ISP le mande facturas a sus clientes
+        // desde el correo de Netvula.
+        return new self('', '', '', $nombre, $correoEmpresa, $nombre ?: null, self::SIN_CUENTA, (int) $company->id);
     }
 
     /** Cuenta de la plataforma, a nombre de Netvula. */
@@ -137,7 +141,12 @@ class Correo
     ): array {
         if (!$this->configurado()) {
             Log::warning('[Correo] servicio no configurado', ['origen' => $this->origen, 'company_id' => $this->empresaId]);
-            return ['ok' => false, 'detalle' => 'Servicio de correo no configurado', 'message_id' => null];
+
+            return [
+                'ok'      => false,
+                'detalle' => $this->origen === self::SIN_CUENTA ? self::FALTA_CUENTA : 'Servicio de correo no configurado',
+                'message_id' => null,
+            ];
         }
 
         $destinos = $this->destinos($para);

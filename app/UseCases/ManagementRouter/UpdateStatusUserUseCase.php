@@ -150,13 +150,23 @@ public function UpdateStatus(GestionUserRequest $gestionUserRequest): array
         }
 
         if (empty($yaAplicado)) {
-            // BUSCAR ARP POR USERNAME
-            $query = (new Query('/ip/arp/print'))
-                ->where('comment', $routerResponse['username']);
+            // Buscar al cliente en el ARP con el criterio común: su documento,
+            // el nombre que traía de la plataforma de la que se importó, o su
+            // IP. Antes sólo se lo buscaba por el documento y los clientes
+            // importados no aparecían: no se los podía suspender.
+            $identidad = \App\Services\Red\IdentidadEnElRouter::deUsuario(
+                (int) $gestionUserRequest['id_user'],
+                (int) $companyId
+            );
 
-            $user = $client->query($query)->read();
+            $query = new Query('/ip/arp/print');
+            $query->add('=.proplist=.id,address,comment');
 
-            if (empty($user) || !isset($user[0]['.id'])) {
+            $entradas = $identidad
+                ? \App\Services\Red\IdentidadEnElRouter::suyas($client->query($query)->read(), $identidad, (int) $companyId)
+                : [];
+
+            if (empty($entradas)) {
                 return [
                     'message' => 'Usuario no encontrado en ARP',
                     'status'  => 1,
@@ -164,11 +174,14 @@ public function UpdateStatus(GestionUserRequest $gestionUserRequest): array
                 ];
             }
 
-            // ENABLE / DISABLE ARP
-            $query = (new Query($statusCmd))
-                ->equal('.id', $user[0]['.id']);
+            // ENABLE / DISABLE ARP (todas sus entradas, no sólo la primera)
+            foreach ($entradas as $entrada) {
+                if (empty($entrada['.id'])) {
+                    continue;
+                }
 
-            $client->query($query)->read();
+                $client->query((new Query($statusCmd))->equal('.id', $entrada['.id']))->read();
+            }
         }
 
         // Send WhatsApp notification on suspension

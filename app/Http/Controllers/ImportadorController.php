@@ -558,12 +558,12 @@ class ImportadorController extends Controller
 
         $datos = $request->validate([
             'grupo'        => 'nullable|integer|min:1|max:4',
-            'billing_day'  => 'required|integer|min:1|max:28',
+            'billing_day'  => 'required|integer|min:1|max:30',
             'billing_hour' => 'nullable|integer|min:0|max:23',
             'nombre'       => 'nullable|string|max:60',
         ], [
             'billing_day.required' => 'Elegí el día del mes en que se factura.',
-            'billing_day.max'      => 'El día tiene que ser del 1 al 28 (para que exista en todos los meses).',
+            'billing_day.max'      => 'El día tiene que ser del 1 al 30. En los meses más cortos se factura el último día.',
         ]);
 
         $c = $this->companyId();
@@ -631,6 +631,39 @@ class ImportadorController extends Controller
         $huboError = $datos['errores'] !== [] && ($datos['encontrados'] ?? 0) === 0;
 
         return $this->ok($datos, $huboError ? implode(' ', $datos['errores']) : 'Comparación lista.');
+    }
+
+    /**
+     * POST /api/importador/comentarios  { router_id?, aplicar? }
+     *
+     * Deja los comentarios del ARP con la cédula del cliente. Es opcional: el
+     * sistema ya reconoce a los importados por su nombre de origen. Sin
+     * `aplicar` sólo muestra qué cambiaría; con `aplicar` escribe en el router
+     * después de guardar un respaldo para poder volver atrás.
+     */
+    public function comentarios(Request $request, \App\Managers\Interfaces\ConectionRouterManagerInterface $conexion): JsonResponse
+    {
+        if (!$this->permitido()) {
+            return $this->err('Sólo un administrador puede hacer esto.', JsonResponse::HTTP_FORBIDDEN);
+        }
+
+        $c = $this->companyId();
+        $routerId = $request->input('router_id') ? (int) $request->input('router_id') : null;
+
+        if ($routerId && !DB::table('conection_routers')->where('company_id', $c)->where('id', $routerId)->exists()) {
+            return $this->err('El router no es de la empresa.');
+        }
+
+        $servicio = new \App\Services\Red\ComentariosDelRouter($conexion, $c);
+        $aplicar = $request->boolean('aplicar');
+
+        $datos = $aplicar ? $servicio->aplicar($routerId) : $servicio->revisar($routerId);
+
+        $mensaje = $aplicar
+            ? "{$datos['cambiados']} comentario(s) actualizados en el router."
+            : "{$datos['para_cambiar']} entrada(s) quedarían con la cédula del cliente.";
+
+        return $this->ok($datos, $datos['errores'] && !$datos['cambiados'] ? implode(' ', $datos['errores']) : $mensaje);
     }
 
     /** @param  \Illuminate\Database\Eloquent\Builder $q */

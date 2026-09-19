@@ -7,6 +7,7 @@ use App\Models\ConectionRouter;
 use App\Models\GestionRemota;
 use App\Models\OltAdmin;
 use App\Models\OltOnt;
+use App\Services\Acs\GenieAcs;
 use App\Services\OltTelnetDispatcher;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -975,7 +976,10 @@ class GestionRemotaDeOnt
         }
 
         if (!self::admiteGestion((string) $olt->brand)) {
-            return ['ok' => false, 'detalle' => 'Esta OLT no admite dar la gestión desde acá: hay que configurarla en la OLT.'];
+            return self::noAplica(
+                'Esta OLT no admite dar la gestión desde acá: hay que configurarla en la OLT.',
+                CompatibilidadDeOnt::queHacerAMano()
+            );
         }
 
         // Si el equipo ya reporta al TR-069 por su propia conexión (lo trae
@@ -1012,6 +1016,21 @@ class GestionRemotaDeOnt
             ];
         }
 
+        if ($pisaria = $this->pisariaSuInternet($registrada?->serial)) {
+            return self::noAplica($pisaria, 'Se arregla solo: al reiniciarse (un corte de luz, o reinicialo cuando no moleste) vuelve a reportar por su conexión de internet.');
+        }
+
+        // Antes de tocar la OLT: si este equipo no puede recibir la gestión
+        // desde ella (un Huawei en una C-Data, por ejemplo), se dice ya y no se
+        // intenta. Antes se quedaba "dando acceso" para terminar en un error
+        // que no explicaba nada.
+        $avance('Revisando que el equipo se pueda configurar desde la OLT…');
+        $compatible = CompatibilidadDeOnt::evaluar($olt, $fsp, $ontId, $registrada?->serial);
+
+        if ($compatible['puede'] === CompatibilidadDeOnt::NO) {
+            return self::noAplica($compatible['motivo'], $compatible['que_hacer'], $compatible);
+        }
+
         $avance('Configurando el acceso en la OLT…');
 
         // El número de service-port puede estar tomado por otro equipo sin que
@@ -1023,26 +1042,62 @@ class GestionRemotaDeOnt
 
         // Dos intentos y no más: cada uno son ocho comandos contra la OLT y
         // del otro lado hay alguien esperando la respuesta en el navegador.
-        for ($intento = 0; $intento < 2; $intento++) {
-            $numero = $this->servicePortLibre($oltId, $evitar);
+        // Una vuelta más si la consola la dio por "no en línea" pero por SNMP
+        // está en línea: recién autorizada, la OLT tarda en dejarla configurar.
+        for ($vuelta = 0; $vuelta < 2; $vuelta++) {
+            for ($intento = 0; $intento < 2; $intento++) {
+                $numero = $this->servicePortLibre($oltId, $evitar);
 
-            try {
-                $r = app(OltTelnetDispatcher::class)->dispatch($oltId, 'darGestionAOnt', [
-                    'fsp' => $fsp, 'ont_id' => $ontId, 'vlan' => (int) $g->vlan,
-                    'service_port' => $numero,
-                    // Recién autorizada: las conexiones de otra VLAN se reemplazan.
-                    'vlans_cliente' => $limpiarAjenas ? self::vlansDeServicio($registrada, (int) $g->vlan) : [],
-                    'pisar_ajenas'  => $limpiarAjenas,
-                ]);
-            } catch (\Throwable $e) {
-                return ['ok' => false, 'detalle' => \App\Services\Olt\EstadoDeUnaOnt::explicar($e->getMessage())];
+                try {
+                    $r = app(OltTelnetDispatcher::class)->dispatch($oltId, 'darGestionAOnt', [
+                        'fsp' => $fsp, 'ont_id' => $ontId, 'vlan' => (int) $g->vlan,
+                        'service_port' => $numero,
+                        // Recién autorizada: las conexiones de otra VLAN se reemplazan.
+                        'vlans_cliente' => $limpiarAjenas ? self::vlansDeServicio($registrada, (int) $g->vlan) : [],
+                        'pisar_ajenas'  => $limpiarAjenas,
+                    ]);
+                } catch (\Throwable $e) {
+                    return ['ok' => false, 'detalle' => \App\Services\Olt\EstadoDeUnaOnt::explicar($e->getMessage())];
+                }
+
+                if ($r['sp_ok'] ?? false) {
+                    break;
+                }
+
+                $evitar[] = $numero;
             }
 
-            if ($r['sp_ok'] ?? false) {
+            if (($r['omitido'] ?? null) !== 'apagada') {
                 break;
             }
 
-            $evitar[] = $numero;
+            // "La ONT no está en línea (o se está registrando)" se decía aunque
+            // la ONT estuviera navegando: se mira el estado real por SNMP.
+            $vivo = $this->estadoReal($olt, $fsp, $ontId);
+
+            if (($vivo['status'] ?? null) !== 'online') {
+                $r['detalle'] = ($vivo['status'] ?? null) === 'offline'
+                    ? 'La ONT está apagada o sin señal: se le da el acceso cuando vuelva a conectarse.'
+                    : $r['detalle'];
+
+                break;
+            }
+
+            if ($vuelta === 0) {
+                $avance('La OLT todavía la está registrando: se vuelve a intentar en unos segundos…');
+                sleep(20);
+
+                continue;
+            }
+
+            $r['detalle'] = 'La ONT está en línea' . (isset($vivo['potencia']) ? " ({$vivo['potencia']} dBm)" : '')
+                . ', pero la OLT todavía no la deja configurar (recién autorizada, se está registrando). Volvé a darle acceso remoto en un par de minutos.';
+        }
+
+        // La OLT probó y el equipo no creó la conexión (el driver lo anota para
+        // no insistir con los iguales): no es una falla, es que así no se puede.
+        if (($r['omitido'] ?? null) === 'modelo_sin_wan') {
+            return self::noAplica($r['detalle'] ?? 'Este equipo no acepta que la OLT le cree la conexión de gestión.', CompatibilidadDeOnt::queHacerAMano());
         }
 
         // EPON: la OLT tarda en mostrar la IP de una WAN por DHCP. Se confirma
@@ -1212,6 +1267,117 @@ class GestionRemotaDeOnt
     }
 
     /**
+     * Gestión temporal para un cambio de conexión (CambioDeConexion): la ONT
+     * lleva el TR-069 en su conexión de internet, que es justo la que hay que
+     * reemplazar, y por esa IP el ACS no le puede avisar al momento. Se le
+     * crea desde la OLT la conexión de gestión (ont ipconfig + service-port en
+     * la VLAN de gestión) aunque ya tenga TR-069; nunca en el lugar 2 si ahí
+     * está su internet (lo borraría). Terminado el cambio se quita con
+     * quitarGestionDeOnt, para que un reinicio de la OLT no la vuelva a crear
+     * encima de su internet.
+     *
+     * Sólo OLT Huawei.
+     *
+     * @return array{ok:bool, detalle:string, sp?:?int, creo_algo?:bool}
+     */
+    public function darGestionTemporal(int $oltId, string $fsp, int $ontId): array
+    {
+        $g = $this->config();
+
+        if (!$g->activa || !$g->vlan) {
+            return ['ok' => false, 'detalle' => 'El acceso remoto de la empresa está apagado.'];
+        }
+
+        $olt = OltAdmin::where('id', $oltId)->where('company_id', $this->companyId)->first();
+
+        if (!$olt || strtolower((string) $olt->brand) !== 'huawei') {
+            return ['ok' => false, 'detalle' => 'La gestión temporal sólo se da en OLT Huawei.'];
+        }
+
+        $serial = OltOnt::where('olt_id', $oltId)->where('fsp', $fsp)->where('ont_id', $ontId)->value('serial');
+
+        if ($pisaria = $this->pisariaSuInternet($serial)) {
+            return ['ok' => false, 'detalle' => $pisaria];
+        }
+
+        $r = null;
+        $evitar = [];
+
+        // Si el número de service-port estaba tomado por otro, se prueba el siguiente.
+        for ($intento = 0; $intento < 2; $intento++) {
+            $numero = $this->servicePortLibre($oltId, $evitar);
+
+            try {
+                $r = app(OltTelnetDispatcher::class)->dispatch($oltId, 'darGestionAOnt', [
+                    'fsp' => $fsp, 'ont_id' => $ontId, 'vlan' => (int) $g->vlan, 'service_port' => $numero,
+                    'vlans_cliente' => [], 'pisar_ajenas' => false, 'aunque_tenga_tr069' => true,
+                ]);
+            } catch (\Throwable $e) {
+                return ['ok' => false, 'detalle' => \App\Services\Olt\EstadoDeUnaOnt::explicar($e->getMessage()), 'creo_algo' => true];
+            }
+
+            if (($r['sp_ok'] ?? false) || !empty($r['omitido'])) {
+                break;
+            }
+
+            $evitar[] = $numero;
+        }
+
+        // El proceso de la OLT con el código anterior no conoce la opción y
+        // contesta que no hace falta: no se creó nada.
+        if (($r['omitido'] ?? null) === 'tr069_en_internet') {
+            return ['ok' => false, 'detalle' => 'La OLT no creó la gestión temporal (su proceso de conexión es de antes de esta versión: hay que reiniciarlo).'];
+        }
+
+        if (!($r['ok'] ?? false)) {
+            return ['ok' => false, 'detalle' => $r['detalle'] ?? 'La OLT no aceptó la conexión de gestión.',
+                // "lugar_ocupado" y compañía: la OLT no tocó nada.
+                'creo_algo' => empty($r['omitido']) && ($r['sp_ok'] ?? false)];
+        }
+
+        $ont = OltOnt::where('olt_id', $oltId)->where('fsp', $fsp)->where('ont_id', $ontId)->first();
+
+        if ($ont && !empty($r['sp'])) {
+            $puertos = collect($ont->service_ports ?? [])
+                ->reject(fn ($p) => (int) ($p['index'] ?? 0) === (int) $r['sp'] || (int) ($p['vlan'] ?? 0) === (int) $g->vlan)
+                ->values()->all();
+            $puertos[] = ['index' => (int) $r['sp'], 'vlan' => (int) $g->vlan];
+            $ont->update(['service_ports' => $puertos]);
+        }
+
+        return ['ok' => true, 'sp' => $r['sp'] ?? null, 'detalle' => 'Gestión temporal creada en la OLT: ' . ($r['detalle'] ?? "VLAN {$g->vlan}")];
+    }
+
+    /**
+     * El equipo no se puede configurar desde la OLT: estado final, con el
+     * motivo y qué hacer, para que la pantalla no quede "dando acceso".
+     *
+     * @return array{ok:false, no_aplica:true, detalle:string, motivo:string, que_hacer:?string}
+     */
+    private static function noAplica(string $motivo, ?string $queHacer, array $compatibilidad = []): array
+    {
+        return [
+            'ok'        => false,
+            'no_aplica' => true,
+            'detalle'   => trim($motivo . ($queHacer ? ' ' . $queHacer : '')),
+            'motivo'    => $motivo,
+            'que_hacer' => $queHacer,
+        ] + ($compatibilidad ? ['compatibilidad' => $compatibilidad] : []);
+    }
+
+    /** Cómo está la ONT ahora por SNMP; vacío si no se pudo leer. */
+    private function estadoReal(OltAdmin $olt, string $fsp, int $ontId): array
+    {
+        try {
+            $vivo = \App\Services\Olt\EstadoDeUnaOnt::de($olt, $fsp, $ontId, true);
+
+            return empty($vivo['error']) ? $vivo : [];
+        } catch (\Throwable) {
+            return [];
+        }
+    }
+
+    /**
      * La red de gestión, agregada a las rutas de la VPN.
      *
      * Sin esto el equipo se presenta al servidor, pero el servidor no sabe
@@ -1371,43 +1537,21 @@ class GestionRemotaDeOnt
     /** Cómo se le dice a la marca en pantalla. */
     public static function nombreDeMarca(string $marca): string
     {
-        return [
-            'huawei' => 'Huawei', 'cdata' => 'C-Data', 'zte' => 'ZTE', 'vsol' => 'V-SOL',
-            'sdmc' => 'SDMC', 'oemt' => 'OEM genérico', 'sagemcom' => 'Sagemcom', 'fiberhome' => 'FiberHome',
-        ][$marca] ?? (strtoupper($marca) ?: 'de otra marca');
+        return CompatibilidadDeOnt::nombreDeMarca($marca);
     }
 
     // ── Marca del equipo ──────────────────────────────────────────────────
 
-    /** La marca del equipo por el prefijo de su serial GPON (HWTC, CDTC…). */
+    /**
+     * La marca del equipo por el prefijo de su serial GPON (HWTC, CDTC…). La
+     * tabla de prefijos está en CompatibilidadDeOnt; lo que no está ahí vuelve
+     * en minúsculas, como antes.
+     */
     public static function marcaDelEquipo(string $serial): string
     {
-        $s = strtoupper(trim($serial));
-        $vendor = ctype_xdigit(substr($s, 0, 8)) && strlen($s) >= 16 ? (string) @hex2bin(substr($s, 0, 8)) : substr($s, 0, 4);
+        $vendor = CompatibilidadDeOnt::prefijo($serial);
 
-        // C-Data también vende GPON con otros vendor ID: "DF1D" reporta al
-        // TR-069 como fabricante CDTC / OUI 80F7A6 (FD512XW), y en la OLT hay
-        // DC80, DC90, DC91, DF18 y DF1E de la misma familia (ERICK_ZAPATA, DC90,
-        // es C-Data). Sin esto quedaban como "otra marca" y no se les mandaba el
-        // TR-069 por la OLT, que con los C-Data funciona.
-        if (preg_match('/^D[CF][0-9A-F]{2}$/', $vendor)) {
-            return 'cdata';
-        }
-
-        return match ($vendor) {
-            'HWTC', 'HUAW' => 'huawei',
-            'CDTC', 'CDT'  => 'cdata',
-            'ZTEG', 'ZXIC' => 'zte',
-            'VSOL'         => 'vsol',
-            // En la OLT Huawei de Netplay: SDMC (YEILER_CARRILLO_GARCIA) y
-            // OEMT (ONU genérica de varios revendedores). SMBS es Sagemcom:
-            // el Fast5670 ya reporta solo al ACS como SagemCom / OUI CC00F1.
-            'SDMC'         => 'sdmc',
-            'OEMT'         => 'oemt',
-            'SMBS'         => 'sagemcom',
-            'FHTT'         => 'fiberhome',
-            default        => strtolower($vendor),
-        };
+        return CompatibilidadDeOnt::marcaPorPrefijo($vendor) ?? strtolower($vendor);
     }
 
     /**
@@ -1416,6 +1560,44 @@ class GestionRemotaDeOnt
      *
      * @return array{ok:bool, detalle:string}
      */
+    /**
+     * Si darle la gestión desde la OLT le borraría la conexión de internet,
+     * el motivo; si no, null.
+     *
+     * Un Huawei al que la OLT le vuelve a poner la gestión ("ont ipconfig")
+     * borra las conexiones que se le crearon por TR-069, esté donde esté la
+     * de internet: el 18-09 PRUEBA_TR (lugar 1, PPPoE) y LILIANA_GIL (lugar
+     * 1, IP fija) quedaron sin internet hasta que se les volvió a crear. Se
+     * mira lo último que el equipo informó al ACS, aunque haga días que no
+     * reporta: justamente a los que no reportan es a los que se les quiere dar.
+     */
+    private function pisariaSuInternet(?string $serial): ?string
+    {
+        if (!$serial) {
+            return null;
+        }
+
+        try {
+            $acs = GenieAcs::deEmpresa($this->companyId);
+            $id = \App\Services\Red\CambioDeConexion::buscarEnElAcs($acs, $serial);
+            $d = $id ? $acs->dispositivo($id) : null;
+        } catch (\Throwable) {
+            return null;
+        }
+
+        if (!$d || ($d['_deviceId']['_OUI'] ?? '') !== '00259E') {
+            return null;
+        }
+
+        $vlanGestion = (int) ($this->config()->vlan ?: 0);
+        $internet = collect((new AprovisionamientoDeOnt($this->companyId))->conexiones($d))
+            ->first(fn ($c) => $c['vlan'] !== $vlanGestion && str_contains($c['servicios'], 'INTERNET'));
+
+        return $internet
+            ? "No se le da la gestión desde la OLT: este Huawei tiene su conexión de internet configurada en el propio equipo ({$internet['nombre']}) y al recibir la gestión de la OLT la borra: el cliente quedaría sin servicio."
+            : null;
+    }
+
     public function reiniciarEquipo(int $oltId, string $fsp, int $ontId): array
     {
         $olt = OltAdmin::where('id', $oltId)->where('company_id', $this->companyId)->first();

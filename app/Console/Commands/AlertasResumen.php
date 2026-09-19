@@ -2,7 +2,6 @@
 
 namespace App\Console\Commands;
 
-use App\Models\Company;
 use App\Services\Alertas\AvisosAlGrupo;
 use Illuminate\Console\Command;
 
@@ -17,7 +16,7 @@ class AlertasResumen extends Command
     {
         $empresas = $this->argument('empresa')
             ? [(int) $this->argument('empresa')]
-            : Company::whereNotNull('alertas_grupo_jid')->pluck('id')->all();
+            : AvisosAlGrupo::empresasConAlertas();
 
         foreach ($empresas as $companyId) {
             $enviado = (new AvisosAlGrupo((int) $companyId))->enviarResumen();

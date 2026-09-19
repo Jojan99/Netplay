@@ -8,6 +8,31 @@ use App\Models\ContractPdfField;
 class ContractPdfService
 {
     /**
+     * El documento se crea con `new Fpdi()`, o sea en milímetros, pero el tamaño
+     * de fuente de FPDF siempre va en puntos. Las dos unidades se mezclaban sin
+     * decirlo y el ajuste de la línea base era un 0.25 mágico.
+     */
+    private const PT_A_MM = 25.4 / 72;
+
+    /**
+     * Altura de las mayúsculas de Helvetica, en fracción del tamaño de fuente.
+     * El punto que el operador marca en el panel es la ESQUINA SUPERIOR IZQUIERDA
+     * del texto (el borde de arriba de las mayúsculas), así que la línea base se
+     * dibuja esta distancia más abajo. Con 10 pt son 2.53 mm, prácticamente lo
+     * mismo que el 0.25 anterior: las plantillas ya configuradas no se mueven.
+     */
+    private const ALTURA_MAYUSCULAS = 0.717;
+
+    /** Cuánto se puede achicar la fuente para que un valor largo entre en su ancho. */
+    private const FUENTE_MINIMA = 0.6;
+
+    /** Milímetros que baja la línea base respecto del punto marcado. */
+    public static function desplazamientoLineaBase(float $tamanoPt): float
+    {
+        return $tamanoPt * self::ALTURA_MAYUSCULAS * self::PT_A_MM;
+    }
+
+    /**
      * Combina el PDF base original con los datos del cliente, la firma y los documentos.
      *
      * @param string $pdfBasePath Ruta del PDF original (storage/public)
@@ -26,36 +51,59 @@ class ContractPdfService
         array $fieldValues = [],
         array $pdfFields = [],
         ?string $documentFrontPath = null,
-        ?string $documentBackPath = null
+        ?string $documentBackPath = null,
+        array $constancia = []
     ): string {
         $pdf = $this->buildFilledPdf($pdfBasePath, $fieldValues, $pdfFields, $signatureBase64);
 
-        // Página de firma al final
+        // Página de constancia al final
         $pdf->AddPage();
-        $pdf->SetFont('Helvetica', 'B', 16);
-        $pdf->Cell(0, 20, 'CONSTANCIA DE FIRMA', 0, 1, 'C');
-        $pdf->Ln(5);
+        $pdf->SetFont('Helvetica', 'B', 15);
+        $pdf->Cell(0, 14, 'CONSTANCIA DE FIRMA ELECTRONICA', 0, 1, 'C');
 
-        $pdf->SetFont('Helvetica', '', 12);
-        $pdf->Cell(0, 10, 'El suscrito declara haber leido y aceptado el contrato.', 0, 1, 'C');
-        $pdf->Cell(0, 10, 'Cliente: ' . $this->toIso($clientName), 0, 1, 'C');
-        $pdf->Cell(0, 10, 'Fecha: ' . now()->format('d/m/Y H:i'), 0, 1, 'C');
-        $pdf->Ln(15);
+        $pdf->SetFont('Helvetica', '', 11);
+        $pdf->Cell(0, 7, 'Cliente: ' . $this->toIso($clientName), 0, 1, 'C');
+        $pdf->Cell(0, 7, 'Fecha de firma: ' . now()->format('d/m/Y H:i'), 0, 1, 'C');
+        $pdf->Ln(4);
+
+        // Aceptación de los términos, con el texto que aceptó y desde dónde.
+        if (!empty($constancia['texto'])) {
+            $pdf->SetFont('Helvetica', 'B', 10);
+            $pdf->Cell(0, 6, 'ACEPTACION DE TERMINOS', 0, 1, 'L');
+            $pdf->SetFont('Helvetica', '', 9.5);
+            $pdf->MultiCell(0, 5, $this->toIso('"' . $constancia['texto'] . '"'), 0, 'J');
+            $pdf->Ln(2);
+
+            $pdf->SetFont('Helvetica', '', 9);
+            $momento = $constancia['momento'] ?? now();
+            $pdf->MultiCell(0, 5, $this->toIso(
+                'Aceptado el ' . (is_string($momento) ? $momento : $momento->format('d/m/Y H:i:s'))
+                . ' desde la direccion IP ' . ($constancia['ip'] ?? '-')
+                . '. Dispositivo: ' . substr((string) ($constancia['dispositivo'] ?? '-'), 0, 160)
+            ), 0, 'L');
+            $pdf->Ln(6);
+        }
+
+        $pdf->SetFont('Helvetica', '', 10);
+        $pdf->Cell(0, 6, 'Firma del cliente:', 0, 1, 'C');
 
         if ($signatureBase64) {
             $imageData = $this->extractImageFromBase64($signatureBase64);
             if ($imageData) {
-                $tmpFile = tempnam(sys_get_temp_dir(), 'sig_') . '.png';
+                // tempnam() YA crea el archivo: pegarle ".png" dejaba el
+                // original de 0 bytes en /tmp para siempre, uno por firma.
+                $tmpFile = tempnam(sys_get_temp_dir(), 'sig_');
                 file_put_contents($tmpFile, $imageData);
-                $pdf->Image($tmpFile, 65, 120, 80, 0, 'PNG');
-                unlink($tmpFile);
+                $pdf->Image($tmpFile, 65, $pdf->GetY() + 3, 80, 0, 'PNG');
+                @unlink($tmpFile);
             }
         }
 
-        $pdf->Ln(60);
-        $pdf->Line(60, 180, 150, 180);
-        $pdf->SetY(182);
-        $pdf->Cell(0, 8, 'Firma del cliente', 0, 1, 'C');
+        $pdf->SetY($pdf->GetY() + 42);
+        $pdf->Line(60, $pdf->GetY(), 150, $pdf->GetY());
+        $pdf->SetY($pdf->GetY() + 2);
+        $pdf->SetFont('Helvetica', '', 9);
+        $pdf->Cell(0, 6, $this->toIso($clientName), 0, 1, 'C');
 
         // Página de documentos de identidad
         if ($documentFrontPath || $documentBackPath) {
@@ -108,9 +156,10 @@ class ContractPdfService
         array $pdfFields,
         string $signatureBase64 = ''
     ): Fpdi {
-        $fullPath = storage_path('app/public/' . $pdfBasePath);
+        // Privado primero (ahí viven desde la mudanza), public de respaldo.
+        $fullPath = \App\Support\ArchivosContrato::plantilla($pdfBasePath);
 
-        if (!file_exists($fullPath)) {
+        if (!$fullPath) {
             throw new \RuntimeException('PDF base no encontrado: ' . $pdfBasePath);
         }
 
@@ -151,24 +200,26 @@ class ContractPdfService
         $y     = is_object($field) ? (float)$field->y : (float)($field['y'] ?? 0);
         $size  = is_object($field) ? (int)$field->font_size : (int)($field['font_size'] ?? 10);
         $color = is_object($field) ? $field->color : ($field['color'] ?? '000000');
+        $ancho = is_object($field) ? (float)($field->max_width ?? 0) : (float)($field['max_width'] ?? 0);
 
         // ── Campo especial: firma del cliente ───────────────────────────
         if ($var === '{{firma}}') {
             if ($signatureBase64) {
                 $imageData = $this->extractImageFromBase64($signatureBase64);
                 if ($imageData) {
-                    $tmpFile = tempnam(sys_get_temp_dir(), 'sig_') . '.png';
+                    $tmpFile = tempnam(sys_get_temp_dir(), 'sig_');
                     file_put_contents($tmpFile, $imageData);
-                    // Ancho fijo 80 pts, altura proporcional
-                    $pdf->Image($tmpFile, $x, $y, 80, 0, 'PNG');
-                    unlink($tmpFile);
+                    // Ancho en MILÍMETROS (la unidad del documento), altura
+                    // proporcional. El ancho configurado manda si es razonable;
+                    // los 200 mm que ponía el panel por defecto ocupaban la hoja.
+                    $pdf->Image($tmpFile, $x, $y, $this->anchoFirma($ancho), 0, 'PNG');
+                    @unlink($tmpFile);
                 }
             } else {
-                // Preview: placeholder de línea de firma
+                // Vista previa: raya de firma en el mismo sitio donde irá la imagen
                 $pdf->SetFont('Helvetica', 'I', $size);
                 $pdf->SetTextColor(150, 150, 150);
-                $pdf->SetXY($x, $y);
-                $pdf->Cell(80, 0, '________________________', 0, 0, 'L');
+                $pdf->Text($x, $y + self::desplazamientoLineaBase((float) $size), '________________________');
                 $pdf->SetTextColor(0, 0, 0);
             }
             return;
@@ -189,14 +240,50 @@ class ContractPdfService
         $pdf->SetFont('Helvetica', '', $size);
         $pdf->SetTextColor($r, $g, $b);
 
-        // Usamos Text() en vez de Cell() para evitar el offset interno de FPDF.
-        // Cell(0,0) suma ~0.8*fontSize internamente, desplazando el texto muy abajo.
-        // Text(x,y) coloca la baseline EXACTAMENTE en (x,y), sin offsets ocultos.
-        // Sumamos 0.25*fontSize para centrar visualmente el texto alrededor del click.
-        $baselineOffset = $size * 0.25;
-        $pdf->Text($x, $y + $baselineOffset, $value);
+        // El ancho máximo se guardaba pero no se usaba nunca: una dirección larga
+        // se comía las casillas de al lado. Se achica la fuente hasta el 60% y,
+        // si aun así no entra, se recorta.
+        [$value, $size] = $this->ajustarAlAncho($pdf, $value, $size, $ancho);
+
+        // Text() pone la línea base exactamente en (x, y); Cell() le suma un alto
+        // interno. El punto marcado es la esquina superior izquierda del texto,
+        // así que la línea base baja la altura de las mayúsculas, convertida de
+        // puntos a milímetros (la unidad del documento).
+        $pdf->Text($x, $y + self::desplazamientoLineaBase((float) $size), $value);
 
         $pdf->SetTextColor(0, 0, 0);
+    }
+
+    /** Ancho en mm de la firma estampada. */
+    public static function anchoFirma(float $ancho): float
+    {
+        return ($ancho > 0 && $ancho <= 120) ? $ancho : 80;
+    }
+
+    /**
+     * Encoge (y si hace falta recorta) un valor para que quepa en su ancho.
+     * Devuelve [texto, tamaño de fuente]; GetStringWidth ya responde en mm.
+     */
+    private function ajustarAlAncho(Fpdi $pdf, string $value, int $size, float $ancho): array
+    {
+        if ($ancho <= 0 || $pdf->GetStringWidth($value) <= $ancho) {
+            return [$value, $size];
+        }
+
+        $minimo = max(5, (int) round($size * self::FUENTE_MINIMA));
+        for ($actual = $size - 1; $actual >= $minimo; $actual--) {
+            $pdf->SetFont('Helvetica', '', $actual);
+            if ($pdf->GetStringWidth($value) <= $ancho) {
+                return [$value, $actual];
+            }
+        }
+
+        $pdf->SetFont('Helvetica', '', $minimo);
+        while (strlen($value) > 1 && $pdf->GetStringWidth($value . '.') > $ancho) {
+            $value = substr($value, 0, -1);
+        }
+
+        return [$value . '.', $minimo];
     }
 
     /**

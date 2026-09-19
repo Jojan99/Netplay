@@ -28,6 +28,8 @@ class OltOntRequest extends FormRequest
             // ningún id de ficha, y aceptaba ids que eran de otro cliente.
             'user_data_id'    => 'nullable|integer|exists:users,id',
             'line_profile_id' => 'nullable|integer',
+            // ZTE: el tipo de ONU del alta (el modelo, p. ej. F680V6.0.06).
+            'onu_type'        => ['nullable', 'string', 'max:40', 'regex:/^[\w.\-]+$/'],
             'srv_profile_id'  => 'nullable|integer',
             // Aprovisionamiento al autorizar: la red elegida y el WiFi escrito
             // en el alta (vacío = se genera uno).

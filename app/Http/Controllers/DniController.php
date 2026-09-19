@@ -233,14 +233,11 @@ class DniController extends Controller
         'getCompanyRouterId' => $this->getCompanyRouterId()
     ]);
 
-    $query = (new Query('/ip/arp/print'))
-        ->where('comment', $gestionUserRequest['dni']);
-
     $connection = $this->connection->conection($this->getCompanyRouterId());
 
     \Log::info('📡 Consultando ARP...');
 
-    $user = $connection->query($query)->read();
+    $user = $this->arpDelCliente($connection, (string) $gestionUserRequest['dni']);
 
     // Un cliente PPPoE no está en el ARP: su IP es la que recibe al conectar.
     // Antes el ping terminaba acá con "no encontrado en ARP" y no había forma
@@ -335,13 +332,10 @@ public function pruebaMikroPingBots(GestionUserRequest $gestionUserRequest)
 {
     try {
 
-        $query = (new Query('/ip/arp/print'))
-            ->where('comment', $gestionUserRequest['dni']);
-
-        $user = $this->connection
-            ->conection($this->getCompanyRouterId())
-            ->query($query)
-            ->read();
+        $user = $this->arpDelCliente(
+            $this->connection->conection($this->getCompanyRouterId()),
+            (string) $gestionUserRequest['dni']
+        );
 
         if(empty($user)){
             return response()->json([
@@ -435,10 +429,7 @@ public function diagnosticoConexionBot(GestionUserRequest $request)
         ================================
         */
 
-        $query = (new Query('/ip/arp/print'))
-            ->where('comment', $dni);
-
-        $arpUser = $connection->query($query)->read();
+        $arpUser = $this->arpDelCliente($connection, (string) $dni);
 
         if(empty($arpUser)){
             return response()->json([
@@ -531,6 +522,33 @@ public function diagnosticoConexionBot(GestionUserRequest $request)
     }
 }
 
+
+    /**
+     * Las entradas de ARP del cliente con ese documento.
+     *
+     * Se lo busca con el criterio común: el comment puede ser su documento o
+     * el nombre que tenía en la plataforma de la que se importó (WispHub deja
+     * ahí el nombre del servicio), y en última instancia vale su IP.
+     *
+     * @return array<int, array<string,mixed>>
+     */
+    private function arpDelCliente($connection, string $dni, ?int $companyId = null): array
+    {
+        $companyId = $companyId ?: (int) getSessionCompanyId();
+        $identidad = $companyId ? \App\Services\Red\IdentidadEnElRouter::deDocumento($dni, $companyId) : null;
+
+        $query = (new Query('/ip/arp/print'));
+        $query->add('=.proplist=.id,address,mac-address,interface,comment,disabled');
+
+        $entradas = $connection->query($query)->read();
+
+        if (!$identidad) {
+            // Sin ficha (o sin empresa en la sesión): como antes, por comment.
+            return array_values(array_filter($entradas, fn ($a) => trim((string) ($a['comment'] ?? '')) === $dni));
+        }
+
+        return \App\Services\Red\IdentidadEnElRouter::suyas($entradas, $identidad, $companyId);
+    }
 
     /**
      * La IP de la sesión PPPoE activa del cliente con ese documento.

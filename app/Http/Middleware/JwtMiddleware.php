@@ -32,6 +32,13 @@ class JwtMiddleware
                 return $this->soloOperadores();
             }
 
+            // Empresa suspendida por Netvula: el token que ya tenía tampoco
+            // sirve. Sólo cierra el panel del operador; el portal de sus
+            // clientes vive en jwt.client y no pasa por acá.
+            if ($user && $this->empresaSuspendida($user)) {
+                return $this->empresaCerrada();
+            }
+
             session(['user' => $user]);
         } catch (Exception $e) {
             if ($e instanceof \Tymon\JWTAuth\Exceptions\TokenInvalidException) {
@@ -55,6 +62,10 @@ class JwtMiddleware
 
                 if (self::esCliente(session('user'))) {
                     return $this->soloOperadores();
+                }
+
+                if ($this->empresaSuspendida(session('user'))) {
+                    return $this->empresaCerrada();
                 }
             } else {
                 return $this->responseJwt('The token is not authorized' . $e->getMessage());
@@ -82,6 +93,41 @@ class JwtMiddleware
         $nombres[$perfilId] ??= strtoupper((string) \Illuminate\Support\Facades\DB::table('profiles')->where('id', $perfilId)->value('name'));
 
         return $nombres[$perfilId] === 'USER';
+    }
+
+    /**
+     * ¿La empresa del usuario está suspendida por la plataforma?
+     *
+     * Cierra el panel del operador y nada más: el portal de sus clientes va
+     * por jwt.client y no pasa por acá, y la consola de Netvula vive en otra
+     * dirección con sus propios usuarios, así que suspender una empresa no
+     * deja a nadie de Netvula afuera.
+     */
+    private function empresaSuspendida(mixed $user): bool
+    {
+        static $hayColumna = null;
+        $hayColumna ??= \Illuminate\Support\Facades\Schema::hasColumn('companies', 'plataforma_suspendida');
+
+        if (!$hayColumna) {
+            return false;
+        }
+
+        $companyId = is_object($user) ? ($user->company_id ?? null) : ($user['company_id'] ?? null);
+
+        if (!$companyId) {
+            return false;
+        }
+
+        return (bool) \Illuminate\Support\Facades\DB::table('companies')->where('id', $companyId)->value('plataforma_suspendida');
+    }
+
+    private function empresaCerrada()
+    {
+        return response()->json([
+            'message' => 'El acceso de tu empresa a la plataforma está suspendido. Escribinos para reactivarlo.',
+            'data'    => null,
+            'error'   => 1,
+        ], 403);
     }
 
     private function soloOperadores()

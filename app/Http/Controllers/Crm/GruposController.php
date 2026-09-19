@@ -8,6 +8,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use App\Services\WhatsApp\LineasDeWhatsApp as Lineas;
 
 /**
  * Grupos de WhatsApp del CRM.
@@ -39,22 +40,41 @@ class GruposController extends Controller
 
         $base = rtrim(preg_replace('#/crm$#', '', (string) config('services.netplay_whatsapp.base_url')), '/');
 
-        try {
-            $res = Http::timeout(20)
-                ->withHeaders(['x-api-key' => $company->wa_api_key])
-                ->get("{$base}/crm/instances/{$company->wa_instance_id}/groups");
+        // Se recorren TODAS las líneas de la empresa, no sólo la principal: con
+        // dos líneas vinculadas la mitad de los grupos no aparecía en la lista.
+        // La api-key es la de la empresa y el servicio Node rechaza cualquier
+        // instancia que no sea suya, así que no se puede ver la de otra.
+        $lineas = Lineas::deEmpresa((int) $companyId)
+            ?: [['instance_id' => $company->wa_instance_id, 'nombre' => 'Principal']];
 
-            $grupos = $res->successful() ? ($res->json('groups') ?? []) : [];
-        } catch (\Throwable $e) {
-            return response()->json(['ok' => false, 'data' => [], 'motivo' => 'servicio_no_disponible']);
+        $data      = [];
+        $alcanzado = false;
+
+        foreach ($lineas as $linea) {
+            try {
+                $res = Http::timeout(20)
+                    ->withHeaders(['x-api-key' => $company->wa_api_key])
+                    ->get("{$base}/crm/instances/{$linea['instance_id']}/groups");
+            } catch (\Throwable $e) {
+                continue;   // una línea caída no puede dejar sin grupos a las demás
+            }
+
+            $alcanzado = true;
+
+            foreach ($res->successful() ? ($res->json('groups') ?? []) : [] as $g) {
+                $data[] = [
+                    'jid'           => $g['jid'] ?? null,
+                    'nombre'        => $g['name'] ?? ($g['jid'] ?? 'Grupo'),
+                    'participantes' => $g['participants'] ?? 0,
+                    'seguido'       => (bool) ($seguidos[$g['jid'] ?? ''] ?? false),
+                    'linea'         => $linea['nombre'],
+                ];
+            }
         }
 
-        $data = array_map(fn ($g) => [
-            'jid'           => $g['jid'] ?? null,
-            'nombre'        => $g['name'] ?? ($g['jid'] ?? 'Grupo'),
-            'participantes' => $g['participants'] ?? 0,
-            'seguido'       => (bool) ($seguidos[$g['jid'] ?? ''] ?? false),
-        ], $grupos);
+        if (!$alcanzado) {
+            return response()->json(['ok' => false, 'data' => [], 'motivo' => 'servicio_no_disponible']);
+        }
 
         return response()->json(['ok' => true, 'data' => $data]);
     }

@@ -28,7 +28,8 @@ class OltMedirSenal extends Command
             return self::FAILURE;
         }
 
-        $r = SenalDeLaOlt::medirAhora($olt);
+        // La pidió el operador desde la pantalla: la puede cancelar.
+        $r = SenalDeLaOlt::medirAhora($olt, true);
 
         $this->line("OLT {$olt->id}: " . count($r['onts'] ?? []) . ' ONT medidas' . ($r['error'] ? " · {$r['error']}" : ''));
 

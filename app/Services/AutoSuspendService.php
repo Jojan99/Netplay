@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Repositories\Interfaces\RouterRepositoryInterface;
 use Illuminate\Support\Facades\DB;
+use App\Services\Red\IdentidadEnElRouter;
 use RouterOS\Query;
 
 class AutoSuspendService
@@ -48,8 +49,11 @@ class AutoSuspendService
     /**
      * Abre una conexión con el MikroTik de la empresa.
      * Retorna null si no hay router configurado o si la conexión falla.
+     *
+     * Protegido a propósito: así las pruebas pueden correr toda la suspensión
+     * contra un router simulado, sin tocar el de la empresa.
      */
-    private function mikrotikClient(int $companyId): mixed
+    protected function mikrotikClient(int $companyId): mixed
     {
         try {
             $router = $this->routerRepo->getRouterByCompany($companyId);
@@ -100,57 +104,41 @@ class AutoSuspendService
         $found = 0; $done = 0; $notFound = 0; $errors = 0;
 
         try {
-            // DNI = campo que MikroTik guarda como comment en ARP
-            $users = DB::table('user_data as ud')
-                ->join('users', 'users.id', '=', 'ud.user_id')
-                ->whereIn('ud.user_id', $userIds)
-                ->select('ud.user_id', 'ud.dni', 'users.username', 'ud.names', 'ud.lastname')
-                ->get()
-                ->keyBy('user_id');
+            // Se lee el ARP una sola vez y se reconoce a cada cliente con el
+            // criterio común: documento, nombre en la plataforma de origen o su
+            // IP fija. Los clientes importados de WispHub tienen en el comment
+            // el nombre de servicio de allá, no la cédula.
+            $arpTodos = $api->query(new Query('/ip/arp/print'))->read();
 
             foreach ($userIds as $userId) {
-                $u   = $users->get($userId);
-                $dni = $u?->dni ?? null;
-                $label = $u
-                    ? "ID:{$userId} | {$u->names} {$u->lastname} | DNI:{$dni} | user:{$u->username}"
+                $identidad = IdentidadEnElRouter::deUsuario((int) $userId, $companyId);
+                $label = $identidad
+                    ? "ID:{$userId} | {$identidad['nombre']} | DNI:{$identidad['dni']} | user:{$identidad['username']}"
                     : "ID:{$userId} (sin datos)";
 
-                if (!$dni) {
-                    $this->writelog("  ✗ {$label} — sin DNI registrado, omitido");
+                if (!$identidad) {
+                    $this->writelog("  ✗ {$label} — sin ficha, omitido");
                     $notFound++;
                     continue;
                 }
 
                 try {
-                    // Intento 1: buscar por DNI
-                    $this->writelog("  >> Buscando en ARP MikroTik: comment=\"{$dni}\"");
-                    $arpEntries = $api->query(
-                        (new Query('/ip/arp/print'))->where('comment', $dni)
-                    )->read();
-
-                    $foundBy = 'DNI';
-
-                    // Intento 2: buscar por username si no encontró por DNI
-                    if (empty($arpEntries) && !empty($u?->username)) {
-                        $this->writelog("     No encontrado por DNI. Buscando por username=\"{$u->username}\"");
-                        $arpEntries = $api->query(
-                            (new Query('/ip/arp/print'))->where('comment', $u->username)
-                        )->read();
-                        $foundBy = 'USERNAME';
-                    }
+                    $arpEntries = IdentidadEnElRouter::suyas($arpTodos, $identidad, $companyId);
 
                     if (empty($arpEntries)) {
                         $this->writelog("  ✗ {$label}");
-                        $this->writelog("     NO encontrado en ARP (buscado DNI:\"{$dni}\" y USERNAME:\"{$u->username}\")");
+                        $this->writelog("     NO encontrado en ARP (se buscó por " . IdentidadEnElRouter::explicar($identidad) . ")");
                         $notFound++;
                         continue;
                     }
 
+                    $foundBy = $arpEntries[0]['via'];
                     $found++;
+
                     foreach ($arpEntries as $arp) {
                         $disabledState = ($arp['disabled'] ?? 'false') === 'true' ? 'YA-DESACTIVADO' : 'activo';
                         $this->writelog("  ✓ {$label}");
-                        $this->writelog("     Encontrado por {$foundBy} | IP:{$arp['address']} | MAC:{$arp['mac-address']} | Estado-ARP:{$disabledState} | .id:{$arp['.id']}");
+                        $this->writelog("     Encontrado por {$foundBy} | IP:{$arp['address']} | MAC:" . ($arp['mac-address'] ?? '') . " | Estado-ARP:{$disabledState} | .id:{$arp['.id']}");
 
                         if (empty($arp['.id'])) continue;
                         $api->query(
@@ -509,13 +497,6 @@ class AutoSuspendService
             // 1. Traer todos los ARP del MikroTik de una sola vez
             $allArp = $api->query(new Query('/ip/arp/print'))->read();
 
-            // Indexar por comment → puede haber varios (múltiples IPs por cliente)
-            $arpByComment = [];
-            foreach ($allArp as $entry) {
-                $comment = trim($entry['comment'] ?? '');
-                if ($comment === '') continue;
-                $arpByComment[$comment][] = $entry;
-            }
 
             // 2. Traer todos los usuarios de la empresa con su STATUS
             $users = DB::table('user_data as ud')
@@ -535,9 +516,11 @@ class AutoSuspendService
             foreach ($users as $u) {
                 $label = "ID:{$u->user_id} DNI:{$u->dni} ({$u->names} {$u->lastname}) user:{$u->username}";
 
-                // Buscar en ARP por DNI, luego por username
-                $arpEntries = $arpByComment[$u->dni] ?? $arpByComment[$u->username] ?? [];
-                $foundBy    = isset($arpByComment[$u->dni]) ? 'DNI' : (isset($arpByComment[$u->username]) ? 'USERNAME' : null);
+                // Se lo busca con el criterio común: documento, nombre en la
+                // plataforma de origen o su IP fija.
+                $identidad = IdentidadEnElRouter::deUsuario((int) $u->user_id, $companyId);
+                $arpEntries = $identidad ? IdentidadEnElRouter::suyas($allArp, $identidad, $companyId) : [];
+                $foundBy    = $arpEntries ? $arpEntries[0]['via'] : null;
 
                 if (empty($arpEntries)) {
                     $this->writelog("  ? {$label} │ STATUS=" . ($u->STATUS ? 'SUSPENDIDO' : 'ACTIVO') . " — NO encontrado en ARP");

@@ -18,7 +18,7 @@ class UpdateBillingConfigRequest extends FormRequest
         return [
             'schedules'               => 'required|array|min:1|max:4',
             'schedules.*.grupo'        => 'required|integer|min:1|max:4',
-            'schedules.*.billing_day'  => 'required|integer|min:1|max:28',
+            'schedules.*.billing_day'  => 'required|integer|min:1|max:30',
             'schedules.*.billing_hour' => 'required|integer|min:0|max:23',
             'schedules.*.active'       => 'required|boolean',
         ];
@@ -30,8 +30,8 @@ class UpdateBillingConfigRequest extends FormRequest
             'schedules.max'                  => 'Se permiten máximo 4 grupos de facturación.',
             'schedules.*.grupo.min'          => 'El grupo debe ser entre 1 y 4.',
             'schedules.*.grupo.max'          => 'El grupo debe ser entre 1 y 4.',
-            'schedules.*.billing_day.min'    => 'El día de corte debe ser entre 1 y 28.',
-            'schedules.*.billing_day.max'    => 'El día de corte debe ser entre 1 y 28.',
+            'schedules.*.billing_day.min'    => 'El día de corte debe ser entre 1 y 30.',
+            'schedules.*.billing_day.max'    => 'El día de corte debe ser entre 1 y 30.',
             'schedules.*.billing_hour.min'   => 'La hora debe ser entre 0 y 23.',
             'schedules.*.billing_hour.max'   => 'La hora debe ser entre 0 y 23.',
         ];

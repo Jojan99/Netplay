@@ -43,27 +43,52 @@ class SenalDeLaOlt
      *
      * En una OLT con cientos de ONT la tabla óptica tarda más de un minuto (la
      * OLT le pregunta a cada ONT) y la petición web se cortaba con 504. Se
-     * devuelve la última medición y, si está vieja o se pidió refrescar, se
-     * mide en otro proceso; 'midiendo' avisa que viene una nueva.
+     * devuelve la última medición guardada con su hora.
+     *
+     * Sólo se mide si el operador lo pide («Medir ahora», $refrescar): abrir
+     * una pantalla ya no dispara un barrido. La revisión de alertas de cada 15
+     * minutos (medirSiHaceFalta) sigue midiendo por su cuenta y deja guardada
+     * la medición que se muestra acá.
      *
      * @return array<string,mixed>
      */
     public static function de(OltAdmin $olt, bool $refrescar = false): array
     {
         $guardado = Cache::get(self::clave($olt));
-        $alDia = is_array($guardado) && !self::vieja($guardado);
 
         $midiendo = self::midiendo($olt);
 
-        if ($refrescar || !$alDia) {
+        if ($refrescar) {
             $midiendo = self::lanzar($olt) || $midiendo;
         }
 
+        $estado = ['desde_cache' => true, 'midiendo' => $midiendo, 'al_dia' => is_array($guardado) && !self::vieja($guardado)];
+
         if (is_array($guardado)) {
-            return $guardado + ['desde_cache' => true, 'midiendo' => $midiendo];
+            return $guardado + $estado;
         }
 
-        return self::vacio($olt) + ['desde_cache' => false, 'midiendo' => $midiendo];
+        return self::vacio($olt) + array_merge($estado, ['desde_cache' => false]);
+    }
+
+    /**
+     * Cancela la medición pedida desde la pantalla. El barrido SNMP que esté
+     * corriendo no se puede cortar a mitad, pero no sigue con el próximo, no
+     * guarda lo que midió y suelta el candado. La de la revisión de alertas no
+     * se toca: sin ella se cerrarían las alertas de señal abiertas.
+     *
+     * @return bool si había una medición en curso
+     */
+    public static function cancelar(OltAdmin $olt): bool
+    {
+        if (!self::midiendo($olt)) {
+            return false;
+        }
+
+        Cache::put(self::claveCancelada($olt), now()->toIso8601String(), self::MAXIMO_BARRIDO);
+        Cache::forget("olt:{$olt->id}:senal:lanzada");
+
+        return true;
     }
 
     /** Para procesos de fondo (revisión de alertas): la guardada si está al día, si no mide. */
@@ -78,8 +103,13 @@ class SenalDeLaOlt
         return self::medirAhora($olt);
     }
 
-    /** Mide ya y guarda. Si otro proceso está midiendo esta OLT, no repite el barrido. */
-    public static function medirAhora(OltAdmin $olt): array
+    /**
+     * Mide ya y guarda. Si otro proceso está midiendo esta OLT, no repite el barrido.
+     *
+     * @param bool $cancelable la lanzada desde la pantalla (olt:medir-senal): el
+     *                         operador la puede cancelar. La de alertas, no.
+     */
+    public static function medirAhora(OltAdmin $olt, bool $cancelable = false): array
     {
         $candado = Cache::lock("olt:{$olt->id}:senal:midiendo", self::MAXIMO_BARRIDO);
 
@@ -89,8 +119,14 @@ class SenalDeLaOlt
             return is_array($guardado) ? $guardado : self::vacio($olt);
         }
 
+        $cancelada = fn () => $cancelable && Cache::has(self::claveCancelada($olt));
+
         try {
-            $resultado = self::leer($olt);
+            $resultado = self::leer($olt, $cancelada);
+
+            if ($cancelada()) {
+                return array_merge(self::vacio($olt), ['error' => 'Medición cancelada por el usuario.', 'cancelada' => true]);
+            }
 
             if (($resultado['onts'] ?? []) !== []) {
                 Cache::put(self::clave($olt), $resultado, now()->addSeconds(self::CONSERVAR));
@@ -100,7 +136,16 @@ class SenalDeLaOlt
         } finally {
             $candado->release();
             Cache::forget("olt:{$olt->id}:senal:lanzada");
+
+            if ($cancelable) {
+                Cache::forget(self::claveCancelada($olt));
+            }
         }
+    }
+
+    private static function claveCancelada(OltAdmin $olt): string
+    {
+        return "olt:{$olt->id}:senal:cancelada";
     }
 
     /** Arranca la medición en otro proceso, salvo que ya haya una en curso. */
@@ -111,6 +156,9 @@ class SenalDeLaOlt
         if (!Cache::add("olt:{$olt->id}:senal:lanzada", now()->toIso8601String(), self::MAXIMO_BARRIDO)) {
             return true;
         }
+
+        // Una cancelación vieja no puede frenar la medición nueva.
+        Cache::forget(self::claveCancelada($olt));
 
         try {
             $php = (new \Symfony\Component\Process\PhpExecutableFinder())->find() ?: 'php';
@@ -165,8 +213,10 @@ class SenalDeLaOlt
     /**
      * @return array<string,mixed>
      */
-    private static function leer(OltAdmin $olt): array
+    private static function leer(OltAdmin $olt, ?\Closure $cancelada = null): array
     {
+        $cancelada ??= fn () => false;
+
         $vacio = [
             'olt_id'    => (int) $olt->id,
             'medido_en' => now()->toIso8601String(),
@@ -178,20 +228,76 @@ class SenalDeLaOlt
         ];
 
         try {
+            // ZTE: la potencia de cada ONU se pide por consola, un comando por
+            // puerto (la C320 de skartelecon: 620 ONT en ~20 s). Su MIB no es
+            // la de Huawei y por SNMP no devolvía nada.
+            // ZTE: por SNMP con su MIB (620 ONT en ~4 s). Si el SNMP no
+            // responde, por consola, un comando por puerto (~20 s).
+            if (strtolower((string) $olt->brand) === 'zte') {
+                try {
+                    $zte = new SnmpZte(new HuaweiSnmpReader($olt));
+                    $mediciones = $zte->senal();
+
+                    if ($mediciones !== [] && !$cancelada()) {
+                        $datos = [];
+
+                        foreach ($zte->onts() as $ont) {
+                            $datos[$ont['fsp'] . ':' . $ont['ont_id']] = $ont;
+                        }
+
+                        $onts = array_map(fn ($m) => array_merge($m, [
+                            'serial'      => $datos[$m['fsp'] . ':' . $m['ont_id']]['serial'] ?? null,
+                            'description' => $datos[$m['fsp'] . ':' . $m['ont_id']]['description'] ?? null,
+                            'status'      => $datos[$m['fsp'] . ':' . $m['ont_id']]['status'] ?? null,
+                            'estado'      => self::clasificar($m['potencia']),
+                        ]), $mediciones);
+
+                        return array_merge($vacio, [
+                            'onts'    => $onts,
+                            'resumen' => self::resumen($onts),
+                            'por_pon' => self::porPon($onts),
+                            'peores'  => self::peores($onts),
+                        ]);
+                    }
+                } catch (\Throwable $e) {
+                    Log::info('[OLT] ZTE sin SNMP, se mide por consola', ['olt' => $olt->id, 'error' => $e->getMessage()]);
+                }
+
+                return self::leerPorConsola($olt, $vacio, $cancelada);
+            }
+
             $snmp = new HuaweiSnmpReader($olt);
 
             // Cada familia de equipos publica la señal en su propia MIB: Huawei
-            // en la suya, las EPON con la NSCRTV. Se prueba la EPON primero en
-            // las que no son Huawei, para no gastarle un barrido de más a una
-            // Huawei con cientos de ONT.
-            $epon = strtolower((string) $olt->brand) !== 'huawei'
-                ? new SnmpEponNscrtv($snmp)
-                : null;
+            // en la suya, las EPON con la NSCRTV y las GPON C-Data en la suya
+            // propia. Se prueban las otras primero en las que no son Huawei,
+            // para no gastarle un barrido de más a una Huawei con cientos de ONT.
+            $otras = strtolower((string) $olt->brand) !== 'huawei'
+                ? [new SnmpEponNscrtv($snmp), new SnmpGponCdata($snmp)]
+                : [];
 
-            if ($epon && $epon->esCompatible()) {
-                $mediciones = $epon->senal();
-                $lista      = $epon->onts();
-            } else {
+            $mediciones = null;
+            $lista      = null;
+
+            // Entre un barrido y el siguiente se mira si el operador canceló:
+            // uno que ya empezó no se puede cortar, pero no se larga el otro.
+            foreach ($otras as $lector) {
+                if ($cancelada()) {
+                    return $vacio;
+                }
+
+                if ($lector->esCompatible()) {
+                    $mediciones = $cancelada() ? [] : $lector->senal();
+                    $lista      = $cancelada() ? [] : $lector->onts();
+                    break;
+                }
+            }
+
+            if ($cancelada()) {
+                return $vacio;
+            }
+
+            if ($mediciones === null) {
                 $mediciones = $snmp->senalDeTodasLasOnts();
                 $lista      = null;
             }
@@ -205,6 +311,10 @@ class SenalDeLaOlt
             // El nombre y el serial no están en la tabla óptica; se toman de la
             // lista de ONT autorizadas, que es otro barrido del mismo equipo.
             $datos = [];
+
+            if ($cancelada()) {
+                return $vacio;
+            }
 
             foreach ($lista ?? $snmp->getAuthorizedONTs() as $ont) {
                 $datos[$ont['fsp'] . ':' . $ont['ont_id']] = $ont;
@@ -237,6 +347,61 @@ class SenalDeLaOlt
 
             return array_merge($vacio, ['error' => $e->getMessage()]);
         }
+    }
+
+    /** La señal por consola, puerto por puerto (OLT ZTE). */
+    private static function leerPorConsola(OltAdmin $olt, array $vacio, \Closure $cancelada): array
+    {
+        $despachador = app(\App\Services\OltTelnetDispatcher::class);
+
+        // El nombre y el serial: de la lista guardada; si no hay, de la OLT.
+        $lista = \App\Models\OltOnt::where('olt_id', $olt->id)->get(['fsp', 'ont_id', 'serial', 'description', 'status'])->toArray()
+            ?: (array) $despachador->dispatch((int) $olt->id, 'getAuthorizedONTs', []);
+
+        $datos = [];
+
+        foreach ($lista as $ont) {
+            $datos[$ont['fsp'] . ':' . $ont['ont_id']] = $ont;
+        }
+
+        $puertos = array_values(array_unique(array_column($lista, 'fsp')));
+        natsort($puertos);
+        $onts = [];
+
+        foreach ($puertos as $puerto) {
+            if ($cancelada()) {
+                return $vacio;
+            }
+
+            foreach ((array) $despachador->dispatch((int) $olt->id, 'potenciasDelPuerto', ['fsp' => $puerto]) as $m) {
+                $ont = $datos[$m['fsp'] . ':' . $m['ont_id']] ?? [];
+
+                $onts[] = [
+                    'fsp'         => $m['fsp'],
+                    'ont_id'      => (int) $m['ont_id'],
+                    'potencia'    => $m['potencia'],
+                    'tx'          => null,
+                    'corriente'   => null,
+                    'voltaje'     => null,
+                    'temperatura' => null,
+                    'serial'      => $ont['serial']      ?? null,
+                    'description' => $ont['description'] ?? null,
+                    'status'      => $ont['status']      ?? null,
+                    'estado'      => self::clasificar($m['potencia']),
+                ];
+            }
+        }
+
+        if (!$onts) {
+            return array_merge($vacio, ['error' => 'La OLT no devolvió potencias por consola.']);
+        }
+
+        return array_merge($vacio, [
+            'onts'    => $onts,
+            'resumen' => self::resumen($onts),
+            'por_pon' => self::porPon($onts),
+            'peores'  => self::peores($onts),
+        ]);
     }
 
     public static function olvidar(OltAdmin $olt): void

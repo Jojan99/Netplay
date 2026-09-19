@@ -1266,8 +1266,13 @@ public function parseServicePorts(string $output): array
      * @param bool      $pisarAjenas  equipo recién autorizado: las conexiones de
      *                                otra VLAN (un equipo reutilizado) no le dan
      *                                servicio y se pueden reemplazar
+     * @param bool      $aunqueTengaTr069 gestión temporal para un cambio de
+     *                                conexión: el TR-069 va por la conexión de
+     *                                internet que hay que reemplazar, y por ahí
+     *                                el ACS no le puede avisar al momento. Se crea
+     *                                igual (sin pisar el lugar 2) y después se quita.
      */
-    public function darGestionAOnt(string $fsp, int $ontId, int $vlan, int $servicePort, array $vlansCliente = [], bool $pisarAjenas = false): array
+    public function darGestionAOnt(string $fsp, int $ontId, int $vlan, int $servicePort, array $vlansCliente = [], bool $pisarAjenas = false, bool $aunqueTengaTr069 = false): array
     {
         [$frame, $slot, $puerto] = $this->parseFsp($fsp);
 
@@ -1310,7 +1315,7 @@ public function parseServicePorts(string $output): array
                 continue;
             }
 
-            if (stripos($w['servicio'], 'tr069') !== false) {
+            if (stripos($w['servicio'], 'tr069') !== false && !$aunqueTengaTr069) {
                 $this->volverAlPrincipio();
 
                 return [

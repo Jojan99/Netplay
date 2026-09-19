@@ -10,9 +10,10 @@ use RouterOS\Query;
 /**
  * Trae al sistema la IP que cada cliente tiene de verdad en el MikroTik.
  *
- * En el router cada cliente está identificado por su número de documento, en
- * el comment de la entrada ARP. Ese es el dato que manda: es la IP con la que
- * el cliente efectivamente navega. La plataforma se venía desincronizando —
+ * A cada cliente se lo reconoce con el criterio común (IdentidadEnElRouter):
+ * el documento en el comment, el nombre que traía de la plataforma de la que
+ * se importó, o su IP. La IP del router es la que manda: es con la que el
+ * cliente efectivamente navega. La plataforma se venía desincronizando —
  * migraciones que no llegaban a guardarse, IPs cambiadas a mano en el router,
  * registros de asignación compartidos entre clientes — y eso rompía todo lo
  * que se apoya en la IP: el diagnóstico, la suspensión, la lista de IPs libres.
@@ -106,22 +107,19 @@ class SincronizarIpsDesdeRouter
             $query = new Query('/ip/arp/print');
             $query->add('=.proplist=address,comment,disabled');
 
-            $porDocumento = [];
+            $entradas = [];
 
             foreach ($api->query($query)->read() as $fila) {
-                $documento = trim((string) ($fila['comment'] ?? ''));
-                $ip        = trim((string) ($fila['address'] ?? ''));
+                $ip = trim((string) ($fila['address'] ?? ''));
 
-                // Sin documento en el comment no hay a quién atribuirle la IP:
-                // son gateways, equipos de la red o entradas hechas a mano.
-                if ($documento === '' || $ip === '') {
+                if ($ip === '') {
                     continue;
                 }
 
-                $porDocumento[$documento][] = $ip;
+                $entradas[] = ['address' => $ip, 'comment' => trim((string) ($fila['comment'] ?? ''))];
             }
 
-            return $porDocumento;
+            return $entradas;
         } catch (\Throwable $e) {
             Log::warning('[Sync IPs] No se pudo leer el ARP', [
                 'company_id' => $this->companyId,
@@ -135,7 +133,7 @@ class SincronizarIpsDesdeRouter
 
     /* ── Clientes ─────────────────────────────────────────────────────────── */
 
-    /** @return array<string,object> documento => cliente con su IP actual */
+    /** @return array<int,object> user_id => cliente con su IP actual */
     private function clientesPorDocumento(): array
     {
         $filas = DB::table('user_data as ud')
@@ -144,96 +142,108 @@ class SincronizarIpsDesdeRouter
             ->where('u.company_id', $this->companyId)
             // Un retirado no debe recibir la IP del router: ya no es cliente.
             ->where('ud.active', 1)
-            ->whereNotNull('ud.dni')
-            ->where('ud.dni', '<>', '')
             ->get(['ud.user_id', 'ud.dni', 'ud.names', 'ud.lastname', 't.ip as ip_actual']);
 
-        $porDocumento = [];
+        $porCliente = [];
 
         foreach ($filas as $f) {
-            // Documentos repetidos entre clientes: no se puede saber cuál es,
-            // así que ninguno se toca. Se marca con null y se reporta.
-            $clave = $this->normalizar($f->dni);
-
-            $porDocumento[$clave] = array_key_exists($clave, $porDocumento) ? null : $f;
+            $porCliente[(int) $f->user_id] = $f;
         }
 
-        return $porDocumento;
-    }
-
-    /** El comment del router puede venir con puntos, espacios o guiones. */
-    private function normalizar(string $documento): string
-    {
-        return preg_replace('/\D/', '', $documento) ?: $documento;
+        return $porCliente;
     }
 
     /* ── Comparación ──────────────────────────────────────────────────────── */
 
     private function procesarArp(array $arp, array $clientes, object $router, bool $simular, array &$resultado): void
     {
-        // Si en el propio router una misma IP aparece bajo dos documentos, no
-        // se copia a la plataforma: traería el conflicto para adentro en vez
-        // de arreglarlo. Se reporta para revisarlo en el MikroTik.
+        // Cada entrada se le atribuye a un cliente con el criterio común:
+        // documento en el comment, nombre que traía de la plataforma anterior
+        // o —en última instancia— la IP que ya tiene en su ficha.
+        $porCliente = [];
+
+        foreach ($arp as $entrada) {
+            $ip = $entrada['address'];
+            $etiqueta = $entrada['comment'] !== '' ? $entrada['comment'] : $ip;
+            $quien = IdentidadEnElRouter::resolver($this->companyId, $entrada);
+
+            if ($quien['estado'] === 'ambiguo') {
+                $resultado['ambiguos'][] = [
+                    'documento' => $etiqueta,
+                    'router'    => $router->name,
+                    'ips'       => [$ip],
+                    'motivo'    => 'Hay más de un cliente que responde a ese dato en la plataforma.',
+                ];
+                continue;
+            }
+
+            if ($quien['estado'] !== 'cliente' || !$quien['identidad']) {
+                // Sin dueño: gateways, equipos de la red o entradas a mano.
+                if ($entrada['comment'] !== '') {
+                    $resultado['desconocidos'][] = [
+                        'documento' => $entrada['comment'],
+                        'router'    => $router->name,
+                        'ip'        => $ip,
+                    ];
+                }
+                continue;
+            }
+
+            $identidad = $quien['identidad'];
+
+            // Un retirado no debe recibir la IP del router: ya no es cliente.
+            if (!$identidad['activo']) {
+                continue;
+            }
+
+            $porCliente[$identidad['user_id']]['identidad'] = $identidad;
+            $porCliente[$identidad['user_id']]['via'] = $quien['via'];
+            $porCliente[$identidad['user_id']]['entradas'][] = $entrada;
+        }
+
+        // Si en el propio router una misma IP está en dos entradas de clientes
+        // distintos, no se copia a la plataforma: traería el conflicto para
+        // adentro en vez de arreglarlo.
         $duenosPorIp = [];
 
-        foreach ($arp as $documento => $ips) {
-            foreach (array_unique($ips) as $ip) {
-                $duenosPorIp[$ip][] = (string) $documento;
+        foreach ($porCliente as $userId => $datos) {
+            foreach ($datos['entradas'] as $e) {
+                $duenosPorIp[$e['address']][$userId] = true;
             }
         }
 
-        $ipsDisputadas = array_keys(array_filter(
-            $duenosPorIp,
-            fn ($duenos) => count(array_unique($duenos)) > 1
-        ));
+        foreach ($porCliente as $userId => $datos) {
+            $identidad = $datos['identidad'];
+            $ips = array_values(array_unique(array_column($datos['entradas'], 'address')));
+            $etiqueta = $identidad['dni'] ?: (string) $userId;
 
-        foreach ($arp as $documento => $ips) {
-            $clave = $this->normalizar((string) $documento);
-            $ips   = array_values(array_unique($ips));
-
-            // El mismo documento con dos IPs en el router: no hay forma de
-            // saber cuál es la buena, se deja para revisar a mano.
+            // El mismo cliente con dos IPs en el router: no hay forma de saber
+            // cuál es la buena, se deja para revisar a mano.
             if (count($ips) > 1) {
                 $resultado['ambiguos'][] = [
-                    'documento' => $documento,
+                    'documento' => $etiqueta,
                     'router'    => $router->name,
                     'ips'       => $ips,
-                    'motivo'    => 'El router tiene este documento en más de una entrada ARP.',
-                ];
-                continue;
-            }
-
-            $cliente = $clientes[$clave] ?? false;
-
-            if ($cliente === false) {
-                $resultado['desconocidos'][] = [
-                    'documento' => $documento,
-                    'router'    => $router->name,
-                    'ip'        => $ips[0],
-                ];
-                continue;
-            }
-
-            if ($cliente === null) {
-                $resultado['ambiguos'][] = [
-                    'documento' => $documento,
-                    'router'    => $router->name,
-                    'ips'       => $ips,
-                    'motivo'    => 'Hay más de un cliente con este documento en la plataforma.',
+                    'motivo'    => 'El router tiene a este cliente en más de una entrada ARP.',
                 ];
                 continue;
             }
 
             $ipRouter = $ips[0];
 
-            if (in_array($ipRouter, $ipsDisputadas, true)) {
+            if (count($duenosPorIp[$ipRouter] ?? []) > 1) {
                 $resultado['ambiguos'][] = [
-                    'documento' => $documento,
+                    'documento' => $etiqueta,
                     'router'    => $router->name,
                     'ips'       => [$ipRouter],
-                    'motivo'    => 'En el router esta IP está en más de un documento: ' .
-                                   implode(', ', array_unique($duenosPorIp[$ipRouter])),
+                    'motivo'    => 'En el router esta IP está en más de un cliente.',
                 ];
+                continue;
+            }
+
+            $cliente = $clientes[$userId] ?? null;
+
+            if (!$cliente) {
                 continue;
             }
 
@@ -242,7 +252,7 @@ class SincronizarIpsDesdeRouter
                 continue;
             }
 
-            $cambio = [
+            $resultado['cambios'][] = [
                 'tipo'      => $cliente->ip_actual ? 'cambio' : 'faltaba',
                 'user_id'   => (int) $cliente->user_id,
                 'cliente'   => trim($cliente->names . ' ' . $cliente->lastname),
@@ -250,9 +260,8 @@ class SincronizarIpsDesdeRouter
                 'router'    => $router->name,
                 'antes'     => $cliente->ip_actual,
                 'ahora'     => $ipRouter,
+                'via'       => $datos['via'],
             ];
-
-            $resultado['cambios'][] = $cambio;
         }
     }
 

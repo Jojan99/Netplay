@@ -29,6 +29,27 @@ class UserController extends Controller
         return standardApiReponse('ok', $pagina, ApiResponseConstants::SUCCESS);
     }
 
+    /** Clientes eliminados de la empresa, para poder reinstalarlos. */
+    public function eliminados(Request $request, \App\Services\Clientes\ClientesEliminados $eliminados): object
+    {
+        $pagina = $eliminados->lista($request->only(['page', 'per_page', 'q']));
+        return standardApiReponse('ok', $pagina, ApiResponseConstants::SUCCESS);
+    }
+
+    /** Devuelve un cliente eliminado al registro de activos. */
+    public function reinstalar(int $id, Request $request, \App\Services\Clientes\ClientesEliminados $eliminados): object
+    {
+        $r = $eliminados->reinstalar($id, $request->only(['ip_accion', 'ip', 'interfaz']));
+        return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
+    }
+
+    /** Antes de reinstalar: ¿la IP que tenía sigue libre (en la plataforma y en el router)? */
+    public function reinstalarRevisarIp(int $id, \App\Services\Clientes\ClientesEliminados $eliminados): object
+    {
+        $r = $eliminados->revisarIp($id);
+        return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
+    }
+
 
     /**
      * @param GetUserUseCaseInterface $getUserUseCaseInterface

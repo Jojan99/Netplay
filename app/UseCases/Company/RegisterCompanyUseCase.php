@@ -96,6 +96,14 @@ class RegisterCompanyUseCase implements RegisterCompanyUseCaseInterface
                 return $company;
             });
 
+            // Suscripción con Netvula: nace en prueba y con su código de
+            // referido. Si el alta trajo un código, se anota acá.
+            try {
+                $this->anotarCodigo($company->id, (string) ($data['codigo'] ?? ''));
+            } catch (\Throwable $e) {
+                Log::warning('[Registro empresa] no se pudo aplicar el código', ['company_id' => $company->id, 'error' => $e->getMessage()]);
+            }
+
             // Aprovisionar la empresa en el servicio de WhatsApp (no bloquea el registro)
             try {
                 $waService = new WhatsAppApiService();
@@ -134,6 +142,42 @@ class RegisterCompanyUseCase implements RegisterCompanyUseCaseInterface
             'status'  => 0,
             'data'    => ['company_id' => $company->id, 'email_sent' => true, 'subdominio' => $company->subdomain],
         ];
+    }
+
+    /**
+     * Le abre la suscripción a la empresa nueva y aplica el código del alta.
+     *
+     * El código puede ser el de referido de otra empresa (y entonces se anota
+     * quién trajo a quién, más el descuento de bienvenida) o un cupón suelto.
+     * Un código que no sirve no frena el registro.
+     */
+    private function anotarCodigo(int $companyId, string $codigo): void
+    {
+        $suscripcion = \App\Services\Plataforma\SuscripcionDeEmpresa::asegurar($companyId);
+
+        if (!$suscripcion || trim($codigo) === '') {
+            return;
+        }
+
+        $codigo = strtoupper(trim($codigo));
+
+        if (\App\Services\Plataforma\Referidos::registrar($companyId, $codigo)) {
+            $cupon = \App\Services\Plataforma\Referidos::cuponDeBienvenida($companyId);
+
+            if ($cupon) {
+                \App\Services\Plataforma\Cupones::aplicarASuscripcion($cupon, $companyId, 'registro');
+            }
+
+            return;
+        }
+
+        $revision = \App\Services\Plataforma\Cupones::revisar($codigo, $companyId);
+
+        if ($revision['ok']) {
+            \App\Services\Plataforma\Cupones::aplicarASuscripcion($revision['cupon'], $companyId, 'registro');
+        } else {
+            Log::info('[Registro empresa] código no aplicado', ['company_id' => $companyId, 'codigo' => $codigo, 'motivo' => $revision['motivo']]);
+        }
     }
 
     /** Traduce los errores típicos de base de datos a algo que el usuario entienda. */

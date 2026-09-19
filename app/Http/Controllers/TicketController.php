@@ -205,18 +205,14 @@ class TicketController extends Controller
 
         $ticket = $repo->getTicketById($id);
         if ($ticket) {
-            $message =
-                "🔁 *TICKET REABIERTO*\n\n" .
-                "🆔 *ID Ticket:* {$id}\n" .
-                "👤 *Cliente:* {$ticket->user_names} {$ticket->user_lastname}\n\n" .
-                "👨‍🔧 *Técnico:* {$ticket->tech_names} {$ticket->tech_lastname}\n\n" .
-                "📝 *Motivo:* {$request->input('reason')}";
-
-            \App\Services\NotificationRouterService::dispatch(
-                getSessionCompanyId(),
-                'ticket_reopen',
-                $message
-            );
+            \App\Services\Avisos\MensajeDeAviso::nuevo('Ticket reabierto', getSessionCompanyId(), '🔁')
+                ->dato('Ticket', "#{$id}")
+                ->dato('Cliente', trim("{$ticket->user_names} {$ticket->user_lastname}"))
+                ->dato('Dirección', $ticket->address ?? null)
+                ->dato('Técnico', trim("{$ticket->tech_names} {$ticket->tech_lastname}"))
+                ->fecha('Reabierto', now())
+                ->bloque('Motivo', $request->input('reason'))
+                ->enviar('ticket_reopen');
         }
 
         return standardApiReponse('Ticket reabierto', null, 0, JsonResponse::HTTP_OK);

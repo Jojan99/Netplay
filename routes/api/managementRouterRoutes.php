@@ -163,6 +163,7 @@ Route::prefix('management')->middleware('empresa.propia')->group(function () {
         Route::post('/aprovisionamiento/cliente/{userId}/reaplicar', [\App\Http\Controllers\GestionRemotaController::class, 'reaplicarDeCliente'])->whereNumber('userId');
         Route::get('/aprovisionamiento/{id}', [\App\Http\Controllers\GestionRemotaController::class, 'verAprovisionamiento'])->whereNumber('id');
         Route::post('/aprovisionamiento/{id}/reintentar', [\App\Http\Controllers\GestionRemotaController::class, 'reintentarAprovisionamiento'])->whereNumber('id');
+        Route::post('/aprovisionamiento/{id}/cancelar', [\App\Http\Controllers\GestionRemotaController::class, 'cancelarAprovisionamiento'])->whereNumber('id');
         Route::get('/tareas/{id}',        [\App\Http\Controllers\GestionRemotaController::class, 'tarea']);
         Route::post('/tareas/{id}/parar', [\App\Http\Controllers\GestionRemotaController::class, 'pararTarea']);
         Route::get('/olt/{oltId}/perfiles', [\App\Http\Controllers\GestionRemotaController::class, 'perfiles'])->whereNumber('oltId');
@@ -188,6 +189,7 @@ Route::prefix('management')->middleware('empresa.propia')->group(function () {
         // Ficha del equipo: marca, modelo, tarjetas y puertos, por SNMP.
         Route::get('/{oltId}/equipo',       [OltAdminController::class, 'equipo']);
         Route::get('/{oltId}/senal',        [OltAdminController::class, 'senal']);
+        Route::post('/{oltId}/senal/cancelar', [OltAdminController::class, 'cancelarSenal'])->whereNumber('oltId');
         Route::get('/{oltId}/capacidades',        [OltAdminController::class, 'capacidades']);
         Route::get('/{oltId}/auto-autorizacion',  [OltAdminController::class, 'autoAutorizacion']);
         Route::post('/{oltId}/auto-autorizacion', [OltAdminController::class, 'cambiarAutoAutorizacion']);
@@ -364,6 +366,10 @@ Route::get('team/ice', [\App\Http\Controllers\Crm\TeamController::class, 'ice'])
 
 // ── CONFIGURACIÓN DEL CRM ────────────────────────────────────────────────────
 Route::get('crm/settings', [ConversationController::class, 'getSettings']);
+
+// Líneas de WhatsApp Web de la empresa (badge del chat, filtro de la bandeja y
+// selector al iniciar una conversación nueva)
+Route::get('crm/lineas', [ConversationController::class, 'lineas']);
 
 // Grupos de WhatsApp (solo WhatsApp Web; Meta no soporta grupos)
 Route::get('crm/grupos',  [\App\Http\Controllers\Crm\GruposController::class, 'index']);

@@ -4,10 +4,13 @@ namespace App\Services\Alertas;
 
 use App\Models\Alerta;
 use App\Models\Company;
+use App\Models\WaNotificationRoute;
 use App\Services\NetplayWhatsAppService;
+use App\Services\NotificationRouterService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * Las alertas de la red, al grupo de WhatsApp de los técnicos.
@@ -19,6 +22,13 @@ use Illuminate\Support\Facades\Log;
  * grupo se vuelve ruido y lo terminan silenciando.
  *
  * Sale siempre por la línea de WhatsApp Web: la API de Meta no maneja grupos.
+ *
+ * El destino se configura desde el panel (Avisos y destinos) como dos eventos
+ * más, alerta_red y alerta_resumen, junto con los avisos de tickets y pagos.
+ * companies.alertas_grupo_jid se sigue guardando como espejo del primero: lo
+ * usan el comando alertas:grupo y la tarea del resumen para saber qué empresas
+ * tienen alertas prendidas. Cuando una empresa nunca pasó por el panel, el
+ * espejo es el que manda, así que nada dejó de funcionar.
  */
 class AvisosAlGrupo
 {
@@ -30,9 +40,154 @@ class AvisosAlGrupo
 
     public function __construct(private int $companyId) {}
 
+    /** El grupo espejo en companies. Se mantiene para el comando y la tarea. */
     public function grupo(): ?string
     {
         return Company::whereKey($this->companyId)->value('alertas_grupo_jid') ?: null;
+    }
+
+    /**
+     * A dónde van las alertas de un evento: [destino => etiqueta].
+     *
+     * Si la empresa nunca configuró la red en el panel se usa el espejo; desde
+     * que toca la pantalla, manda lo que ella dejó ahí (y si borra todo, deja
+     * de recibir, que es lo que pidió).
+     *
+     * @return array<string,string>
+     */
+    public function destinos(string $evento = 'alerta_red'): array
+    {
+        $configurados = NotificationRouterService::destinos($this->companyId, $evento);
+
+        if ($configurados || self::tieneRutasDeRed($this->companyId)) {
+            return $configurados;
+        }
+
+        $espejo = $this->grupo();
+
+        if (!$espejo) {
+            return [];
+        }
+
+        $nombre = Company::whereKey($this->companyId)->value('alertas_grupo_nombre');
+
+        return [$espejo => (string) ($nombre ?: $espejo)];
+    }
+
+    /** ¿La empresa ya configuró la red desde el panel? (prendida o apagada) */
+    public static function tieneRutasDeRed(int $companyId): bool
+    {
+        if (!Schema::hasTable('wa_notification_routes')) {
+            return false;
+        }
+
+        return WaNotificationRoute::where('company_id', $companyId)
+            ->whereIn('event_type', NotificationRouterService::EVENTOS_DE_RED)
+            ->exists();
+    }
+
+    /**
+     * Pasa el grupo del espejo a las rutas del panel, una sola vez por empresa.
+     * Lo llaman la migración y la pantalla: así el dueño ve su grupo de siempre
+     * ya cargado aunque la migración todavía no haya corrido.
+     */
+    public static function materializarEspejo(int $companyId): void
+    {
+        if (!Schema::hasTable('wa_notification_routes') || self::tieneRutasDeRed($companyId)) {
+            return;
+        }
+
+        $empresa = Company::find($companyId);
+
+        if (!$empresa?->alertas_grupo_jid) {
+            return;
+        }
+
+        foreach (NotificationRouterService::EVENTOS_DE_RED as $evento) {
+            try {
+                WaNotificationRoute::create([
+                    'company_id'  => $companyId,
+                    'event_type'  => $evento,
+                    'destination' => $empresa->alertas_grupo_jid,
+                    'label'       => NotificationRouterService::textoLimpio($empresa->alertas_grupo_nombre),
+                    'enabled'     => true,
+                ]);
+            } catch (\Throwable $e) {
+                // Dos pestañas abriendo la pantalla a la vez: el índice único
+                // frena la segunda y la fila ya está. No es un error.
+                Log::info('[Alertas] El grupo ya estaba pasado a rutas', ['empresa' => $companyId, 'evento' => $evento]);
+            }
+        }
+    }
+
+    /**
+     * Deja companies.alertas_grupo_jid apuntando al primer destino activo de
+     * las alertas críticas (o del resumen, si sólo configuró ese). Sin esto la
+     * tarea alertas:resumen no sabría a qué empresas recorrer.
+     */
+    public static function sincronizarEspejo(int $companyId): void
+    {
+        $empresa = Company::find($companyId);
+
+        if (!$empresa) {
+            return;
+        }
+
+        $destinos = NotificationRouterService::destinos($companyId, 'alerta_red')
+            ?: NotificationRouterService::destinos($companyId, 'alerta_resumen');
+
+        $jid    = $destinos ? (string) array_key_first($destinos) : null;
+        $nombre = $jid ? (string) $destinos[$jid] : null;
+
+        $empresa->forceFill([
+            'alertas_grupo_jid'    => $jid,
+            'alertas_grupo_nombre' => $nombre,
+        ])->save();
+    }
+
+    /**
+     * Deja un único grupo para las dos alertas de red (o ninguno con null).
+     * Es lo que hace el comando alertas:grupo; la pantalla usa el ABM de rutas
+     * y termina llamando a sincronizarEspejo().
+     */
+    public static function asociarGrupo(int $companyId, ?string $jid, ?string $nombre = null): void
+    {
+        if (Schema::hasTable('wa_notification_routes')) {
+            WaNotificationRoute::where('company_id', $companyId)
+                ->whereIn('event_type', NotificationRouterService::EVENTOS_DE_RED)
+                ->delete();
+
+            if ($jid) {
+                foreach (NotificationRouterService::EVENTOS_DE_RED as $evento) {
+                    WaNotificationRoute::create([
+                        'company_id'  => $companyId,
+                        'event_type'  => $evento,
+                        'destination' => $jid,
+                        'label'       => NotificationRouterService::textoLimpio($nombre),
+                        'enabled'     => true,
+                    ]);
+                }
+            }
+        }
+
+        Company::whereKey($companyId)->update([
+            'alertas_grupo_jid'    => $jid,
+            'alertas_grupo_nombre' => $jid ? NotificationRouterService::textoLimpio($nombre) : null,
+        ]);
+    }
+
+    /** Las empresas que hoy reciben alertas de red, por espejo o por rutas. */
+    public static function empresasConAlertas(): array
+    {
+        $ids = Company::whereNotNull('alertas_grupo_jid')->pluck('id')->all();
+
+        if (Schema::hasTable('wa_notification_routes')) {
+            $ids = array_merge($ids, WaNotificationRoute::whereIn('event_type', NotificationRouterService::EVENTOS_DE_RED)
+                ->where('enabled', true)
+                ->pluck('company_id')->all());
+        }
+
+        return array_values(array_unique(array_map('intval', $ids)));
     }
 
     /**
@@ -42,7 +197,7 @@ class AvisosAlGrupo
      */
     public function enviarPendientes(): array
     {
-        if (!$this->grupo()) {
+        if (!$this->destinos('alerta_red')) {
             return ['abiertas' => 0, 'resueltas' => 0];
         }
 
@@ -67,11 +222,11 @@ class AvisosAlGrupo
 
         // Sólo se marca lo que salió: si WhatsApp falla, se reintenta en la
         // próxima revisión en vez de perderse.
-        if ($nuevas->isNotEmpty() && $this->enviar($this->textoDeNuevas($nuevas))) {
+        if ($nuevas->isNotEmpty() && $this->enviar($this->textoDeNuevas($nuevas), 'alerta_red')) {
             Alerta::whereIn('id', $nuevas->pluck('id'))->update(['avisada_en' => now()]);
         }
 
-        if ($resueltas->isNotEmpty() && $this->enviar($this->textoDeResueltas($resueltas))) {
+        if ($resueltas->isNotEmpty() && $this->enviar($this->textoDeResueltas($resueltas), 'alerta_red')) {
             Alerta::whereIn('id', $resueltas->pluck('id'))->update(['cierre_avisado_en' => now()]);
         }
 
@@ -81,7 +236,7 @@ class AvisosAlGrupo
     /** Resumen de la mañana: lo que sigue abierto en la red. */
     public function enviarResumen(): bool
     {
-        if (!$this->grupo()) {
+        if (!$this->destinos('alerta_resumen')) {
             return false;
         }
 
@@ -93,7 +248,7 @@ class AvisosAlGrupo
             ->get();
 
         if ($abiertas->isEmpty()) {
-            return $this->enviar("☀️ *Resumen de la red*\nSin novedades: no hay alertas abiertas.");
+            return $this->enviar("☀️ *Resumen de la red*\nSin novedades: no hay alertas abiertas.", 'alerta_resumen');
         }
 
         $criticas = $abiertas->where('nivel', 'critico');
@@ -107,13 +262,33 @@ class AvisosAlGrupo
             $lineas[] = '… y ' . ($abiertas->count() - self::MAXIMO_POR_MENSAJE * 2) . ' más en el panel (Alertas).';
         }
 
-        return $this->enviar(implode("\n", $lineas));
+        return $this->enviar(implode("\n", $lineas), 'alerta_resumen');
+    }
+
+    /** El mismo texto que ve el grupo al quedar asociado, desde el panel o el comando. */
+    public static function textoDeConfirmacion(): string
+    {
+        return "✅ Grupo asociado. Acá van a llegar las alertas de la red: cortes de puerto, OLT o túnel caídos, clientes caídos por fibra y señal crítica, más un resumen cada mañana.";
     }
 
     /** Mensaje de prueba al asociar el grupo. */
     public function probar(): bool
     {
-        return $this->enviar("✅ Grupo asociado. Acá van a llegar las alertas de la red: cortes de puerto, OLT o túnel caídos, clientes caídos por fibra y señal crítica, más un resumen cada mañana.");
+        return $this->enviar(self::textoDeConfirmacion(), 'alerta_red');
+    }
+
+    /** Un solo envío a un destino puntual: la prueba que dispara el panel. */
+    public function enviarA(string $destino, string $texto): bool
+    {
+        try {
+            (new NetplayWhatsAppService($this->companyId, true))->mensajeInformativo($destino, $texto);
+
+            return true;
+        } catch (\Throwable $e) {
+            Log::warning('[Alertas] No se pudo enviar', ['empresa' => $this->companyId, 'destino' => $destino, 'error' => $e->getMessage()]);
+
+            return false;
+        }
     }
 
     /**
@@ -224,24 +399,38 @@ class AvisosAlGrupo
         return $abierta->diffForHumans($a->cerrada_en ?? now(), \Carbon\CarbonInterface::DIFF_ABSOLUTE, true, 2);
     }
 
-    private function enviar(string $texto): bool
+    /**
+     * Manda a todos los destinos del evento. Devuelve true si salió por lo
+     * menos uno: con eso se marca la alerta como avisada. Si no salió por
+     * ninguno se reintenta en la próxima revisión en vez de perderse.
+     */
+    private function enviar(string $texto, string $evento): bool
     {
-        $grupo = $this->grupo();
+        $destinos = $this->destinos($evento);
 
-        if (!$grupo) {
+        if (!$destinos) {
             return false;
         }
 
-        try {
-            // true: aunque la empresa tenga apagado WhatsApp para clientes, las
-            // alertas internas igual tienen que salir.
-            (new NetplayWhatsAppService($this->companyId, true))->mensajeInformativo($grupo, $texto);
+        // true: aunque la empresa tenga apagado WhatsApp para clientes, las
+        // alertas internas igual tienen que salir.
+        $wa = new NetplayWhatsAppService($this->companyId, true);
+        $alguno = false;
 
-            return true;
-        } catch (\Throwable $e) {
-            Log::warning('[Alertas] No se pudo avisar al grupo', ['empresa' => $this->companyId, 'error' => $e->getMessage()]);
-
-            return false;
+        foreach (array_keys($destinos) as $destino) {
+            try {
+                $wa->mensajeInformativo($destino, $texto);
+                $alguno = true;
+            } catch (\Throwable $e) {
+                Log::warning('[Alertas] No se pudo avisar al grupo', [
+                    'empresa' => $this->companyId,
+                    'evento'  => $evento,
+                    'destino' => $destino,
+                    'error'   => $e->getMessage(),
+                ]);
+            }
         }
+
+        return $alguno;
     }
 }

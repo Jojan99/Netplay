@@ -14,6 +14,7 @@ class Contract extends Model
         'pdf_path',
         'installation_value',
         'plazo',
+        'terminos',
         'active',
     ];
 

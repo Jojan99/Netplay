@@ -14,6 +14,8 @@ Route::prefix('importador')->middleware('role:admin')->group(function () {
     Route::delete('credenciales/{origen}',      [ImportadorController::class, 'olvidarCredencial'])->whereIn('origen', ['wisphub', 'mikrowisp']);
     // Grupos de facturación, para crearlos sin salir del importador.
     Route::post('grupos',                       [ImportadorController::class, 'crearGrupo']);
+    // Normalizar los comentarios del MikroTik: primero muestra, después escribe.
+    Route::post('comentarios',                  [ImportadorController::class, 'comentarios']);
     Route::get('{id}',                          [ImportadorController::class, 'ver'])->whereNumber('id');
     Route::get('{id}/filas',                    [ImportadorController::class, 'filas'])->whereNumber('id');
     Route::post('{id}/mapeo',                   [ImportadorController::class, 'mapeo'])->whereNumber('id');

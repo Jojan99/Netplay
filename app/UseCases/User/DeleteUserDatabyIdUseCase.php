@@ -56,6 +56,9 @@ class DeleteUserDatabyIdUseCase implements DeleteUserDatabyIdUseCaseInterface
             ];
         }
 
+        // Queda anotado quién y cuándo, para la pantalla de clientes eliminados.
+        $this->anotarBaja((int) $id, $enRouter);
+
         // El router se limpia aquí y no desde el panel: antes el panel llamaba
         // a la suspensión por falta de pago, que además le mandaba al cliente
         // el WhatsApp de "servicio suspendido".
@@ -66,6 +69,28 @@ class DeleteUserDatabyIdUseCase implements DeleteUserDatabyIdUseCaseInterface
             'status'  => 0,
             'data'    => ['router' => $router['detalle']],
         ];
+    }
+
+    /** Deja registro de la baja: sin esto no se sabe cuándo se eliminó a un cliente. */
+    private function anotarBaja(int $userId, string $enRouter): void
+    {
+        try {
+            \Illuminate\Support\Facades\DB::table('user_audit_logs')->insert([
+                'user_id'       => $userId,
+                'changed_by'    => getSessionUserId(),
+                'company_id'    => getSessionCompanyId(),
+                'field_changed' => 'cliente',
+                'old_value'     => 'activo',
+                'new_value'     => 'eliminado',
+                'description'   => $enRouter === 'quitar'
+                    ? 'Cliente eliminado y quitado del MikroTik'
+                    : 'Cliente eliminado',
+                'created_at'    => now(),
+                'updated_at'    => now(),
+            ]);
+        } catch (QueryException $err) {
+            // El registro es informativo: si falla, la baja igual se hizo.
+        }
     }
 
     /** @return array{mensaje:string, detalle:array|null} */

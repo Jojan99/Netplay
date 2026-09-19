@@ -11,8 +11,10 @@ use App\Models\UserData;
 use App\Models\WhatsappPlanRequest;
 use App\Models\WaNotificationRoute;
 use App\Services\AutoSuspendService;
+use App\Services\Equipo\BajaDePersonal;
 use App\Services\NotificationRouterService;
 use App\Services\WhatsAppApiService;
+use App\Services\WhatsApp\LineasDeWhatsApp;
 use App\UseCases\Company\Interfaces\ConfirmCompanyEmailUseCaseInterface;
 use App\UseCases\Company\Interfaces\CreateStaffUseCaseInterface;
 use App\UseCases\Company\Interfaces\GetStaffUseCaseInterface;
@@ -187,6 +189,29 @@ class CompanyController extends Controller
             $result['status'],
             JsonResponse::HTTP_OK
         );
+    }
+
+    /**
+     * DELETE /api/company/staff/{id}
+     * Da de baja una cuenta del equipo. Si no tiene trabajo a su nombre se
+     * borra; si ya trabajó, se desactiva para no romper el historial.
+     */
+    public function deleteStaff(int $id, BajaDePersonal $baja): object
+    {
+        $result = $baja->eliminar($id);
+
+        return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
+    }
+
+    /**
+     * POST /api/company/staff/{id}/reactivar
+     * Vuelve a habilitar una cuenta del equipo que había sido desactivada.
+     */
+    public function reactivateStaff(int $id, BajaDePersonal $baja): object
+    {
+        $result = $baja->reactivar($id);
+
+        return standardApiReponse($result['message'], $result['data'], $result['status'], JsonResponse::HTTP_OK);
     }
 
     /**
@@ -383,10 +408,55 @@ class CompanyController extends Controller
 
         try {
             $result = (new WhatsAppApiService())->getInstances($company->wa_api_key);
-            return standardApiReponse('OK', $result['instances'] ?? [], false, JsonResponse::HTTP_OK);
+
+            // El catálogo se pone al día con lo que dice el servicio y cada
+            // instancia sale marcada si es la línea principal de la empresa.
+            $lineas = (new LineasDeWhatsApp())->sincronizar((int) $company->id);
+            $porId  = collect($lineas)->keyBy('instance_id');
+
+            $instancias = array_map(function ($inst) use ($porId) {
+                $id = $inst['instanceId'] ?? $inst['id'] ?? null;
+                $l  = $id ? $porId->get($id) : null;
+
+                return $inst + [
+                    'principal' => (bool) ($l['principal'] ?? false),
+                    'linea_id'  => $l['id'] ?? null,
+                ];
+            }, $result['instances'] ?? []);
+
+            return standardApiReponse('OK', $instancias, false, JsonResponse::HTTP_OK);
         } catch (\Throwable $e) {
             return standardApiReponse($e->getMessage(), null, true, JsonResponse::HTTP_OK);
         }
+    }
+
+    /**
+     * GET /api/company/whatsapp/lineas
+     * El catálogo de líneas de la empresa (sincronizado con el servicio Node).
+     */
+    public function getWhatsAppLineas(): object
+    {
+        $company = Company::findOrFail(getSessionCompanyId());
+
+        (new LineasDeWhatsApp())->sincronizar((int) $company->id);
+
+        return standardApiReponse('OK', LineasDeWhatsApp::deEmpresa((int) $company->id), false, JsonResponse::HTTP_OK);
+    }
+
+    /**
+     * PUT /api/company/whatsapp/lineas/{lineaId}/principal
+     * Cambia la línea principal: la que usan las facturas, los avisos y todo lo
+     * que no cuelga de una conversación del CRM.
+     */
+    public function setWhatsAppLineaPrincipal(int $lineaId): object
+    {
+        $companyId = (int) getSessionCompanyId();
+
+        if (!(new LineasDeWhatsApp())->marcarPrincipal($companyId, $lineaId)) {
+            return standardApiReponse('Esa línea no existe o no está activa.', null, true, JsonResponse::HTTP_OK);
+        }
+
+        return standardApiReponse('Línea principal actualizada', LineasDeWhatsApp::deEmpresa($companyId), false, JsonResponse::HTTP_OK);
     }
 
     /**
@@ -410,6 +480,16 @@ class CompanyController extends Controller
                 $company->update(['wa_instance_id' => $result['instanceId']]);
             }
 
+            // La línea nueva entra al catálogo: es lo que permite que un mensaje
+            // que llegue por ella resuelva empresa y caiga en la bandeja.
+            if (!empty($result['instanceId'])) {
+                (new LineasDeWhatsApp())->registrar(
+                    (int) $company->id,
+                    (string) $result['instanceId'],
+                    (string) $request->input('name', 'principal')
+                );
+            }
+
             return standardApiReponse('Instancia creada. Escanea el QR para conectar.', $result, false, JsonResponse::HTTP_OK);
         } catch (\Throwable $e) {
             return standardApiReponse($e->getMessage(), null, true, JsonResponse::HTTP_OK);
@@ -428,12 +508,27 @@ class CompanyController extends Controller
         }
 
         try {
+            // Una instancia de OTRA empresa no se borra desde acá aunque el id
+            // llegue en la URL. Si no figura en el catálogo se sincroniza antes
+            // de rechazar: puede ser una línea recién creada desde el panel.
+            if (LineasDeWhatsApp::disponible() && !LineasDeWhatsApp::porInstancia($instanceId, (int) $company->id)) {
+                (new LineasDeWhatsApp())->sincronizar((int) $company->id);
+
+                if (!LineasDeWhatsApp::porInstancia($instanceId, (int) $company->id)) {
+                    return standardApiReponse('Esa línea no es de tu empresa.', null, true, JsonResponse::HTTP_OK);
+                }
+            }
+
             (new WhatsAppApiService())->deleteInstance($company->wa_api_key, $instanceId);
 
             // Si era la instancia por defecto, limpiar
             if ($company->wa_instance_id === $instanceId) {
                 $company->update(['wa_instance_id' => null]);
             }
+
+            // Baja lógica en el catálogo: las conversaciones viejas siguen
+            // apuntando a esa línea y perderían el nombre si se borrara.
+            (new LineasDeWhatsApp())->darDeBaja((int) $company->id, $instanceId);
 
             return standardApiReponse('Instancia eliminada', null, false, JsonResponse::HTTP_OK);
         } catch (\Throwable $e) {
@@ -610,67 +705,264 @@ class CompanyController extends Controller
     }
 
     // ═══════════════════════════════════════════════════════════
-    // NOTIFICATION ROUTES
+    // AVISOS Y DESTINOS (notification routes)
     // ═══════════════════════════════════════════════════════════
 
-    /** GET /api/company/notification-routes */
+    /**
+     * GET /api/company/notification-routes
+     *
+     * Todo lo que necesita la pantalla: el catálogo de avisos con su
+     * explicación, a dónde va cada uno hoy y si la línea de WhatsApp Web
+     * está vinculada (sin ella no hay grupos).
+     */
     public function listNotificationRoutes(): JsonResponse
     {
-        $routes = WaNotificationRoute::where('company_id', getSessionCompanyId())
+        $companyId = getSessionCompanyId();
+
+        // El grupo de alertas que quedó del comando pasa a ser una ruta más, la
+        // primera vez que la empresa entra acá. Idempotente: la migración hace
+        // lo mismo para todas de una.
+        \App\Services\Alertas\AvisosAlGrupo::materializarEspejo($companyId);
+
+        $routes = WaNotificationRoute::where('company_id', $companyId)
             ->orderBy('event_type')->orderBy('id')
-            ->get();
+            ->get()
+            ->map(fn ($r) => [
+                'id'          => (int) $r->id,
+                'event_type'  => $r->event_type,
+                'destination' => $r->destination,
+                'label'       => NotificationRouterService::textoLimpio($r->label),
+                'enabled'     => (bool) $r->enabled,
+            ])
+            ->values();
+
+        $company = Company::findOrFail($companyId);
 
         return standardApiReponse('OK', [
             'routes'      => $routes,
+            'eventos'     => NotificationRouterService::catalogo(),
             'event_types' => NotificationRouterService::eventLabels(),
+            'linea'       => [
+                'conectada'   => (bool) ($company->wa_instance_id && $company->wa_api_key),
+                'instancia'   => $company->wa_instance_id,
+                'wa_activado' => (bool) $company->whatsapp_enabled,
+            ],
         ], false, JsonResponse::HTTP_OK);
     }
 
     /** POST /api/company/notification-routes */
     public function createNotificationRoute(Request $request): JsonResponse
     {
-        $allowed = array_keys(NotificationRouterService::eventLabels());
-        $event   = $request->input('event_type');
+        $companyId = getSessionCompanyId();
+        $event     = (string) $request->input('event_type');
 
-        if (!in_array($event, $allowed)) {
-            return standardApiReponse('Tipo de evento inválido.', null, true, JsonResponse::HTTP_OK);
+        if (!array_key_exists($event, NotificationRouterService::eventLabels())) {
+            return standardApiReponse('Ese tipo de aviso no existe.', null, true, JsonResponse::HTTP_OK);
+        }
+
+        $destino = $this->destinoDeAviso($request->input('destination'), $event);
+
+        if (is_string($destino['error'] ?? null)) {
+            return standardApiReponse($destino['error'], null, true, JsonResponse::HTTP_OK);
+        }
+
+        $yaEsta = WaNotificationRoute::where('company_id', $companyId)
+            ->where('event_type', $event)
+            ->where('destination', $destino['valor'])
+            ->exists();
+
+        if ($yaEsta) {
+            return standardApiReponse('Ese destino ya está en este aviso.', null, true, JsonResponse::HTTP_OK);
         }
 
         $route = WaNotificationRoute::create([
-            'company_id'  => getSessionCompanyId(),
+            'company_id'  => $companyId,
             'event_type'  => $event,
-            'destination' => $request->input('destination'),
-            'label'       => $request->input('label'),
+            'destination' => $destino['valor'],
+            'label'       => NotificationRouterService::textoLimpio($request->input('label')),
             'enabled'     => true,
         ]);
 
-        return standardApiReponse('Ruta creada.', $route, false, JsonResponse::HTTP_OK);
+        $this->despuesDeTocarAvisos($companyId, $event, $destino['valor'], true);
+
+        return standardApiReponse('Destino agregado.', $route, false, JsonResponse::HTTP_OK);
     }
 
     /** PUT /api/company/notification-routes/{id} */
     public function updateNotificationRoute(Request $request, int $id): JsonResponse
     {
+        $companyId = getSessionCompanyId();
+
         $route = WaNotificationRoute::where('id', $id)
-            ->where('company_id', getSessionCompanyId())
+            ->where('company_id', $companyId)
             ->firstOrFail();
 
-        $route->update(array_filter([
-            'destination' => $request->input('destination'),
-            'label'       => $request->input('label'),
-            'enabled'     => $request->has('enabled') ? (bool) $request->input('enabled') : null,
-        ], fn($v) => $v !== null));
+        $cambios = [];
 
-        return standardApiReponse('Ruta actualizada.', $route, false, JsonResponse::HTTP_OK);
+        if ($request->filled('destination')) {
+            $destino = $this->destinoDeAviso($request->input('destination'), $route->event_type);
+
+            if (is_string($destino['error'] ?? null)) {
+                return standardApiReponse($destino['error'], null, true, JsonResponse::HTTP_OK);
+            }
+
+            $repetido = WaNotificationRoute::where('company_id', $companyId)
+                ->where('event_type', $route->event_type)
+                ->where('destination', $destino['valor'])
+                ->where('id', '!=', $route->id)
+                ->exists();
+
+            if ($repetido) {
+                return standardApiReponse('Ese destino ya está en este aviso.', null, true, JsonResponse::HTTP_OK);
+            }
+
+            $cambios['destination'] = $destino['valor'];
+        }
+
+        if ($request->has('label')) {
+            $cambios['label'] = NotificationRouterService::textoLimpio($request->input('label'));
+        }
+
+        if ($request->has('enabled')) {
+            $cambios['enabled'] = $request->boolean('enabled');
+        }
+
+        if ($cambios) {
+            $route->update($cambios);
+        }
+
+        $this->despuesDeTocarAvisos($companyId, $route->event_type, $route->destination, false);
+
+        return standardApiReponse('Aviso actualizado.', $route, false, JsonResponse::HTTP_OK);
     }
 
     /** DELETE /api/company/notification-routes/{id} */
     public function deleteNotificationRoute(int $id): JsonResponse
     {
-        WaNotificationRoute::where('id', $id)
-            ->where('company_id', getSessionCompanyId())
-            ->delete();
+        $companyId = getSessionCompanyId();
 
-        return standardApiReponse('Ruta eliminada.', null, false, JsonResponse::HTTP_OK);
+        $route = WaNotificationRoute::where('id', $id)
+            ->where('company_id', $companyId)
+            ->first();
+
+        if (!$route) {
+            return standardApiReponse('Ese destino ya no existe.', null, false, JsonResponse::HTTP_OK);
+        }
+
+        $evento = $route->event_type;
+        $route->delete();
+
+        $this->despuesDeTocarAvisos($companyId, $evento, null, false);
+
+        return standardApiReponse('Destino eliminado.', null, false, JsonResponse::HTTP_OK);
+    }
+
+    /**
+     * POST /api/company/notification-routes/probar
+     *
+     * Manda un mensaje de prueba al destino, por la línea de la empresa de la
+     * sesión y sólo a un destino que esté guardado en sus propios avisos.
+     */
+    public function probarNotificationRoute(Request $request): JsonResponse
+    {
+        $companyId = getSessionCompanyId();
+
+        $route = WaNotificationRoute::where('company_id', $companyId)
+            ->where('id', (int) $request->input('id'))
+            ->first();
+
+        if (!$route) {
+            return standardApiReponse('No encontramos ese destino en tus avisos.', null, true, JsonResponse::HTTP_OK);
+        }
+
+        $company = Company::findOrFail($companyId);
+
+        if (!$company->wa_instance_id || !$company->wa_api_key) {
+            return standardApiReponse('La empresa no tiene una línea de WhatsApp Web vinculada.', null, true, JsonResponse::HTTP_OK);
+        }
+
+        $titulo = NotificationRouterService::eventLabels()[$route->event_type] ?? $route->event_type;
+        $texto  = \App\Services\Avisos\MensajeDeAviso::nuevo('Mensaje de prueba', $companyId)
+            ->empresa($company->name)
+            ->dato('Aviso', $titulo)
+            ->dato('Destino', $route->label ?: $route->destination)
+            ->fecha('Enviado', now())
+            ->cierre('Así van a llegar estos avisos. Es sólo una prueba: no pasó nada en la red ni en el sistema.')
+            ->texto();
+
+        try {
+            if (in_array($route->event_type, NotificationRouterService::EVENTOS_DE_RED, true)) {
+                // Las de red salen forzadas, como las de verdad.
+                $ok = (new \App\Services\Alertas\AvisosAlGrupo($companyId))->enviarA($route->destination, $texto);
+            } else {
+                (new \App\Services\WhatsAppService($companyId, false, 'netplay'))
+                    ->mensajeInformativo($route->destination, $texto);
+                $ok = true;
+            }
+        } catch (\Throwable $e) {
+            return standardApiReponse('No se pudo enviar: ' . $e->getMessage(), null, true, JsonResponse::HTTP_OK);
+        }
+
+        return $ok
+            ? standardApiReponse('Mensaje de prueba enviado.', null, false, JsonResponse::HTTP_OK)
+            : standardApiReponse('No se pudo enviar. Revisá que la línea siga conectada.', null, true, JsonResponse::HTTP_OK);
+    }
+
+    /**
+     * Valida y normaliza el destino: un grupo de WhatsApp o un teléfono.
+     *
+     * @return array{valor?:string, error?:string}
+     */
+    private function destinoDeAviso(mixed $crudo, string $evento): array
+    {
+        $texto = trim((string) $crudo);
+
+        if ($texto === '') {
+            return ['error' => 'Falta el destino.'];
+        }
+
+        if (str_contains($texto, '@g.us')) {
+            return preg_match('/^\d{5,32}(-\d{5,20})?@g\.us$/', $texto)
+                ? ['valor' => $texto]
+                : ['error' => 'Ese grupo no tiene un identificador válido.'];
+        }
+
+        if (in_array($evento, NotificationRouterService::EVENTOS_DE_RED, true)) {
+            return ['error' => 'Las alertas de red van a un grupo de WhatsApp, no a un número suelto.'];
+        }
+
+        $digitos = preg_replace('/\D/', '', str_replace('@s.whatsapp.net', '', $texto));
+
+        // Diez dígitos empezando en 3 es un celular colombiano sin indicativo:
+        // el dueño lo escribe así y el servicio necesita el país adelante.
+        if (strlen($digitos) === 10 && str_starts_with($digitos, '3')) {
+            $digitos = '57' . $digitos;
+        }
+
+        if (strlen($digitos) < 10 || strlen($digitos) > 15) {
+            return ['error' => 'El número tiene que ir con indicativo del país, por ejemplo 573001234567.'];
+        }
+
+        return ['valor' => $digitos];
+    }
+
+    /**
+     * Después de tocar un aviso de red: deja el espejo de companies al día y,
+     * si es un grupo recién agregado, le manda la misma confirmación que
+     * mandaba el comando para que los técnicos sepan qué va a llegar ahí.
+     */
+    private function despuesDeTocarAvisos(int $companyId, string $evento, ?string $destinoNuevo, bool $confirmar): void
+    {
+        if (!in_array($evento, NotificationRouterService::EVENTOS_DE_RED, true)) {
+            return;
+        }
+
+        \App\Services\Alertas\AvisosAlGrupo::sincronizarEspejo($companyId);
+
+        if ($confirmar && $destinoNuevo && $evento === 'alerta_red') {
+            (new \App\Services\Alertas\AvisosAlGrupo($companyId))
+                ->enviarA($destinoNuevo, \App\Services\Alertas\AvisosAlGrupo::textoDeConfirmacion());
+        }
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -998,13 +1290,30 @@ class CompanyController extends Controller
             return standardApiReponse('WhatsApp no configurado.', [], false, JsonResponse::HTTP_OK);
         }
 
-        try {
-            $waService = new \App\Services\WhatsAppApiService();
-            $result    = $waService->getGroups($company->wa_api_key, $company->wa_instance_id);
-            return standardApiReponse('OK', $result, false, JsonResponse::HTTP_OK);
-        } catch (\Throwable $e) {
-            return standardApiReponse('No se pudieron obtener grupos: ' . $e->getMessage(), [], false, JsonResponse::HTTP_OK);
+        // Los grupos de TODAS las líneas de la empresa, no sólo la principal:
+        // con dos líneas la mitad de los grupos no aparecía.
+        $lineas = LineasDeWhatsApp::deEmpresa((int) $company->id)
+            ?: [['instance_id' => $company->wa_instance_id, 'nombre' => 'Principal', 'id' => null]];
+
+        $waService = new \App\Services\WhatsAppApiService();
+        $grupos    = [];
+
+        foreach ($lineas as $linea) {
+            try {
+                $result = $waService->getGroups($company->wa_api_key, $linea['instance_id']);
+
+                foreach ($result['groups'] ?? [] as $g) {
+                    $grupos[] = $g + ['linea_id' => $linea['id'], 'linea_nombre' => $linea['nombre']];
+                }
+            } catch (\Throwable $e) {
+                // Una línea desconectada no puede dejar sin grupos a las demás.
+                \Illuminate\Support\Facades\Log::warning('[Grupos WA] Línea sin grupos', [
+                    'instance_id' => $linea['instance_id'], 'error' => $e->getMessage(),
+                ]);
+            }
         }
+
+        return standardApiReponse('OK', ['groups' => $grupos], false, JsonResponse::HTTP_OK);
     }
 
     /**

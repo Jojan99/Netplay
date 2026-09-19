@@ -215,7 +215,7 @@ class ManagementRouterController extends Controller
         }
 
         try {
-            $datos = (new \App\Services\Red\DetalleDePuerto($conexion, $router->token))->de($puerto);
+            $datos = (new \App\Services\Red\DetalleDePuerto($conexion, $router->token, (int) getSessionCompanyId()))->de($puerto);
         } catch (\Throwable $e) {
             return standardApiReponse('No se pudo consultar el puerto: ' . $e->getMessage(), null, 1, JsonResponse::HTTP_OK);
         }
@@ -261,28 +261,22 @@ class ManagementRouterController extends Controller
             return standardApiReponse('Falta el cliente', null, 1, JsonResponse::HTTP_UNPROCESSABLE_ENTITY);
         }
 
+        // Con la ONT en el TR-069 el cambio lo lleva CambioDeConexion: router y
+        // ONT juntos, sin sacar lo viejo hasta confirmar lo nuevo. Antes se
+        // cambiaba el router y después se le encolaba el cambio a la ONT: si
+        // la ONT no lo tomaba al momento, el cliente quedaba sin internet.
+        // "a_mano": el operador lo carga él en el equipo (sólo el router).
         $r = (new \App\Services\Red\CambiarConexionCliente($conexion, $companyId))->aplicar(
             $userId,
-            $request->only(['connection_type', 'pppoe_user', 'pppoe_password', 'pppoe_profile', 'ip', 'vlan'])
+            $request->only(['connection_type', 'pppoe_user', 'pppoe_password', 'pppoe_profile', 'ip', 'vlan', 'a_mano'])
         );
 
-        // Con la ONT en el TR-069, el equipo se reconfigura solo: sin esto había
-        // que ir al equipo o reautorizarlo para que tomara la conexión nueva.
-        $aprovisionamiento = null;
-
-        if ($r['ok']) {
-            try {
-                $extra = \App\Services\Red\AprovisionamientoDeOnt::reaplicarConexion((int) $companyId, $userId);
-                if ($extra) {
-                    $r['mensaje'] = preg_replace('/ Tiene que (reconectar|reiniciar)[^.]*\./', '', $r['mensaje']) . ' ' . $extra['texto'];
-                    $aprovisionamiento = $extra['id'];
-                }
-            } catch (\Throwable $e) {
-                \Log::warning('[Aprovisionamiento] No se pudo programar tras cambiar la conexión', ['user' => $userId, 'error' => $e->getMessage()]);
-            }
-        }
-
-        return standardApiReponse($r['mensaje'], ['aprovisionamiento' => $aprovisionamiento], $r['ok'] ? 0 : 1, JsonResponse::HTTP_OK);
+        return standardApiReponse($r['mensaje'], [
+            'aprovisionamiento' => $r['aprovisionamiento'] ?? null,
+            'requiere_a_mano'   => (bool) ($r['requiere_a_mano'] ?? false),
+            'motivo'            => $r['motivo'] ?? null,
+            'que_hacer'         => $r['que_hacer'] ?? null,
+        ], $r['ok'] ? 0 : 1, JsonResponse::HTTP_OK);
     }
 
     /** Qué hace falta decidir para montar el servidor PPPoE. */
@@ -553,23 +547,36 @@ class ManagementRouterController extends Controller
 
     public function migrarIp(
         GetIpAvaliblesUseCaseInterface $getIpAvaliblesUseCaseInterface,
-        GestionUserRequest $gestionUserRequest
+        GestionUserRequest $gestionUserRequest,
+        \App\Managers\Interfaces\ConectionRouterManagerInterface $conexion
     ): object {
         try {
-            $result = $getIpAvaliblesUseCaseInterface->migrarIp($gestionUserRequest, $this->routerId($gestionUserRequest));
+            // Con la ONT en el TR-069: la IP nueva se agrega, se cambia la ONT,
+            // se confirma y recién ahí se saca la vieja (CambioDeConexion).
+            // Antes se sacaba la vieja del router y se le encolaba el cambio a
+            // la ONT: si no lo tomaba al momento, el cliente quedaba sin
+            // internet. Sin ONT que manejar, o si el operador lo carga en el
+            // equipo ("a_mano"), sigue la migración de siempre: sólo el router.
+            $companyId = (int) getSessionCompanyId();
+            $conOnt = $companyId && (int) $gestionUserRequest['service_id']
+                ? (new \App\Services\Red\CambiarConexionCliente($conexion, $companyId))->cambiarIp(
+                    (int) $gestionUserRequest['service_id'],
+                    trim((string) ($gestionUserRequest['new_ip'] ?? '')),
+                    trim((string) ($gestionUserRequest['vlan'] ?? '')),
+                    filter_var($gestionUserRequest['a_mano'] ?? false, FILTER_VALIDATE_BOOLEAN),
+                )
+                : null;
 
-            // La ONT toma la IP nueva sola si está en el TR-069.
-            if (($result['status'] ?? 1) === 0) {
-                try {
-                    $extra = \App\Services\Red\AprovisionamientoDeOnt::reaplicarConexion((int) getSessionCompanyId(), (int) $gestionUserRequest['service_id']);
-                    if ($extra) {
-                        $result['message'] .= '. ' . $extra['texto'];
-                        $result['data'] = (array) ($result['data'] ?? []) + ['aprovisionamiento' => $extra['id']];
-                    }
-                } catch (\Throwable $e) {
-                    \Log::warning('[Aprovisionamiento] No se pudo programar tras migrar la IP', ['error' => $e->getMessage()]);
-                }
+            if ($conOnt !== null) {
+                return standardApiReponse($conOnt['mensaje'], [
+                    'aprovisionamiento' => $conOnt['aprovisionamiento'] ?? null,
+                    'requiere_a_mano'   => (bool) ($conOnt['requiere_a_mano'] ?? false),
+                    'motivo'            => $conOnt['motivo'] ?? null,
+                    'que_hacer'         => $conOnt['que_hacer'] ?? null,
+                ], $conOnt['ok'] ? 0 : 1, JsonResponse::HTTP_OK);
             }
+
+            $result = $getIpAvaliblesUseCaseInterface->migrarIp($gestionUserRequest, $this->routerId($gestionUserRequest));
         } catch (JWTException $e) {
             return standardApiReponse(
                 'Error al migrar IP: ' . $e->getMessage(),

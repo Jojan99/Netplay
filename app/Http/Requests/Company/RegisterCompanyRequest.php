@@ -42,6 +42,9 @@ class RegisterCompanyRequest extends FormRequest
             'invoice_prefix'  => 'nullable|string|max:10',
             'admin_username'  => 'nullable|string|max:60|regex:/^[A-Za-z0-9._-]+$/|unique:users,username',
             'admin_dni'       => 'nullable|string|max:30',
+            // Cupón de descuento o código de referido. Si no sirve, el alta
+            // sigue igual: no se le niega una empresa a nadie por un código.
+            'codigo'          => 'nullable|string|max:40',
             'admin_phone'     => 'nullable|string|max:20',
             // La dirección de la empresa (empresa.netvula.com). Vacía: se arma con el nombre.
             'subdomain'       => ['nullable', 'string', 'max:40', function ($campo, $valor, $falla) {

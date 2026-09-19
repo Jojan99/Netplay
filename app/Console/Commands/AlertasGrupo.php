@@ -12,6 +12,9 @@ use Illuminate\Support\Str;
  *
  * Sin nombre, lista los grupos de la línea. Con nombre, busca el que coincida
  * (sin importar mayúsculas, tildes ni emojis), lo guarda y manda una prueba.
+ *
+ * Lo mismo se hace desde el panel (WhatsApp → Avisos y destinos); los dos
+ * escriben por AvisosAlGrupo::asociarGrupo, así que no se pisan.
  */
 class AlertasGrupo extends Command
 {
@@ -32,7 +35,7 @@ class AlertasGrupo extends Command
         }
 
         if ($this->option('quitar')) {
-            $empresa->forceFill(['alertas_grupo_jid' => null, 'alertas_grupo_nombre' => null])->save();
+            AvisosAlGrupo::asociarGrupo($empresaId, null);
             $this->info('Listo: ya no se mandan alertas a ningún grupo.');
             return self::SUCCESS;
         }
@@ -64,7 +67,7 @@ class AlertasGrupo extends Command
         }
 
         $grupo = $coinciden[0];
-        $empresa->forceFill(['alertas_grupo_jid' => $grupo['jid'], 'alertas_grupo_nombre' => $grupo['nombre']])->save();
+        AvisosAlGrupo::asociarGrupo($empresaId, $grupo['jid'], $grupo['nombre']);
         $this->info("Asociado: {$grupo['nombre']} ({$grupo['participantes']} participantes).");
 
         if (!$this->option('sin-prueba')) {

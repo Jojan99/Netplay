@@ -72,6 +72,26 @@ class OltAdminController extends Controller
         return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
     }
 
+    /**
+     * Cancela la medición de señal pedida desde la pantalla. Sólo sobre una
+     * OLT de la empresa en sesión.
+     */
+    public function cancelarSenal(int $oltId): JsonResponse
+    {
+        $olt = \App\Models\OltAdmin::where('id', $oltId)->where('company_id', (int) getSessionCompanyId())->first();
+
+        if (!$olt) {
+            return standardApiReponse('Esa OLT no es de tu empresa.', null, 1, JsonResponse::HTTP_NOT_FOUND);
+        }
+
+        $habia = \App\Services\Olt\SenalDeLaOlt::cancelar($olt);
+
+        return standardApiReponse(
+            $habia ? 'Medición cancelada: no se guarda lo que haya medido y la OLT queda libre.' : 'No había una medición en curso.',
+            ['cancelada' => $habia], 0, JsonResponse::HTTP_OK
+        );
+    }
+
     /** Fija los perfiles que se usan al autorizar una ONT en esta OLT. */
     public function fijarPerfiles(Request $request, int $oltId): JsonResponse
     {

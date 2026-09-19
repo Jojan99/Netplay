@@ -13,8 +13,19 @@ Route::prefix('egresos')->middleware('role:admin,contador')->group(function () {
 
     // Egresos v2
     Route::get('list',                      [EgresosController::class, 'listPaginated']);
-    Route::post('create-v2',                [EgresosController::class, 'createEgresoV2']);
-    Route::put('{id}',                      [EgresosController::class, 'updateEgreso']);
-    Route::delete('{id}',                   [EgresosController::class, 'deleteEgreso']);
+    Route::get('tablero',                   [EgresosController::class, 'tablero']);
     Route::get('export',                    [EgresosController::class, 'exportEgresosCSV']);
+    Route::post('create-v2',                [EgresosController::class, 'createEgresoV2']);
+
+    // Categorías por empresa (antes de {id} para que no se las trague la ruta comodín)
+    Route::get('categorias',                [EgresosController::class, 'listarCategorias']);
+    Route::post('categorias',               [EgresosController::class, 'crearCategoria']);
+    Route::put('categorias/{id}',           [EgresosController::class, 'actualizarCategoria']);
+    Route::patch('categorias/{id}/toggle',  [EgresosController::class, 'alternarCategoria']);
+    Route::delete('categorias/{id}',        [EgresosController::class, 'eliminarCategoria']);
+
+    Route::get('{id}/comprobante',          [EgresosController::class, 'verComprobante'])->whereNumber('id');
+    Route::post('{id}/repetir',             [EgresosController::class, 'repetirEgreso'])->whereNumber('id');
+    Route::put('{id}',                      [EgresosController::class, 'updateEgreso'])->whereNumber('id');
+    Route::delete('{id}',                   [EgresosController::class, 'deleteEgreso'])->whereNumber('id');
 });

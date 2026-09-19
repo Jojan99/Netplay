@@ -14,5 +14,8 @@ interface GetIpAvaliblesUseCaseInterface
 
     public function registerIpInArp(string $ip, string $mac, string $vlan, string $comment, ?int $routerId = null): bool;
 
+    /** @return array{ok:bool, mensaje:string, accion:?string, comment_anterior:?string, mac:?string} */
+    public function asegurarIpEnArp(string $ip, string $vlan, string $documento, ?int $userId = null, ?int $routerId = null, string $mac = ''): array;
+
     public function migrarIp(GestionUserRequest $request, ?int $routerId = null): array;
 }

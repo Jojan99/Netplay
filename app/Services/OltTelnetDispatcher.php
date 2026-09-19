@@ -32,6 +32,14 @@ class OltTelnetDispatcher
             return $this->viaWorker($oltId, $method, $params);
         }
 
+        // Hay un worker vivo pero ocupado con un comando largo: su cola sigue
+        // funcionando. Arrancar otro, o abrir una conexión directa, le quita a
+        // la OLT uno de los pocos cupos de sesión que tiene (fue lo que la dejó
+        // sin cupos: "Reenter times").
+        if (Redis::exists("olt:{$oltId}:worker_lock")) {
+            return $this->viaWorker($oltId, $method, $params);
+        }
+
         // Worker no activo — intentar arrancarlo automáticamente
         if ($this->spawnWorker($oltId)) {
             return $this->viaWorker($oltId, $method, $params);
@@ -158,6 +166,11 @@ class OltTelnetDispatcher
 
     private function call(OltDriverInterface $driver, string $method, array $p): mixed
     {
+        // ZTE: el tipo de ONU elegido en el alta (el modelo real).
+        if ($method === 'registerONT' && !empty($p['onu_type']) && method_exists($driver, 'usarTipoOnu')) {
+            $driver->usarTipoOnu((string) $p['onu_type']);
+        }
+
         return match ($method) {
             'getVersion'        => $driver->getVersion(),
             'getUnauthONTs'     => $driver->getUnauthONTs(),
@@ -209,7 +222,8 @@ class OltTelnetDispatcher
                                        ? $driver->prepararVlanDeGestion((int) $p['vlan'], (string) $p['uplink']) : null,
             'darGestionAOnt'    => method_exists($driver, 'darGestionAOnt')
                                        ? $driver->darGestionAOnt($p['fsp'], (int) $p['ont_id'], (int) $p['vlan'], (int) $p['service_port'],
-                                           array_map('intval', (array) ($p['vlans_cliente'] ?? [])), (bool) ($p['pisar_ajenas'] ?? false)) : null,
+                                           array_map('intval', (array) ($p['vlans_cliente'] ?? [])), (bool) ($p['pisar_ajenas'] ?? false),
+                                           (bool) ($p['aunque_tenga_tr069'] ?? false)) : null,
             'perfilDeOnt'       => method_exists($driver, 'perfilDeOnt')
                                        ? $driver->perfilDeOnt((string) $p['fsp'], (int) $p['ont_id']) : null,
             'perfilesDeLinea'   => method_exists($driver, 'perfilesDeLinea')
@@ -224,6 +238,10 @@ class OltTelnetDispatcher
                                        ? $driver->asignarServidorTr069((string) $p['fsp'], (int) $p['ont_id'], (int) $p['perfil'], $p['url'] ?? null, $p['usuario'] ?? null, $p['clave'] ?? null) : null,
             'reiniciarOnt'      => method_exists($driver, 'reiniciarOnt')
                                        ? $driver->reiniciarOnt((string) $p['fsp'], (int) $p['ont_id']) : null,
+            'opticaDeOnt'       => method_exists($driver, 'opticaDeOnt')
+                                       ? $driver->opticaDeOnt((string) $p['fsp'], (int) $p['ont_id']) : [],
+            'potenciasDelPuerto' => method_exists($driver, 'potenciasDelPuerto')
+                                       ? $driver->potenciasDelPuerto((string) $p['fsp']) : [],
             'equipoDeOnt'       => method_exists($driver, 'equipoDeOnt')
                                        ? $driver->equipoDeOnt($p['fsp'], (int) $p['ont_id']) : [],
             'autoAutorizacion'  => method_exists($driver, 'autoAutorizacion')
