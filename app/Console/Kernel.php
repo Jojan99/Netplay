@@ -27,6 +27,10 @@ class Kernel extends ConsoleKernel
         // Revisa la red y deja anotado lo que hay que mirar: señal caída,
         // puertos PON apagados, túneles sin saludo, OLT que no se dejan leer.
         $schedule->command('alertas:revisar')->everyFifteenMinutes()->user('www-data')->withoutOverlapping();
+        // Justo después del barrido de alertas: guarda esa misma medición para
+        // tener historia de la red (no le pregunta nada a la OLT).
+        $schedule->command('red:muestrear')->everyFifteenMinutes()->user('www-data')->withoutOverlapping();
+        $schedule->command('red:muestrear --limpiar')->weeklyOn(1, '04:20')->user('www-data');
 
         // Resumen de la mañana al grupo de WhatsApp de los técnicos: lo que
         // sigue abierto, antes de que salgan a la calle.

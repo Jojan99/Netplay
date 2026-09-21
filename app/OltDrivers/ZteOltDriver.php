@@ -634,6 +634,47 @@ class ZteOltDriver extends DriverBase
         ];
     }
 
+    /**
+     * Reinicia la ONU desde la OLT. En ZTE se hace dentro de su gestión
+     * ("pon-onu-mng gpon-onu_1/1/13:1" y ahí "reboot"); según el firmware el
+     * comando puede ser otro y algunos piden confirmación.
+     *
+     * @return array{ok:bool, detalle:string}
+     */
+    public function reiniciarOnt(string $fsp, int $ontId): array
+    {
+        $onu = $this->onu($fsp, $ontId);
+        $entrada = $this->cmds(['configure terminal', 'pon-onu-mng ' . $onu], 20);
+
+        if ($this->fallo($entrada)) {
+            $this->volverAlPrompt();
+
+            Log::error('[OLT ZTE] No se pudo entrar a la gestión de la ONU para reiniciarla', ['onu' => $onu, 'salida' => $entrada]);
+
+            return ['ok' => false, 'detalle' => 'La OLT no dejó entrar a la gestión del equipo: ' . $this->mensaje($entrada)];
+        }
+
+        $r = $this->primeraQueSirva(['reboot', 'onu reboot', 'reset'], 25);
+        $salida = $r['salida'];
+
+        // Algunos firmwares preguntan antes de reiniciar.
+        if (preg_match('/\(y\/n\)|\[yes\/no\]|confirm/i', $salida)) {
+            $salida .= $this->cmd('y', 20);
+        }
+
+        $this->volverAlPrompt();
+
+        if (!$r['comando'] || $this->fallo($salida)) {
+            Log::error('[OLT ZTE] La OLT no reinició la ONU', ['onu' => $onu, 'salida' => $salida]);
+
+            return ['ok' => false, 'detalle' => 'La OLT no reinició el equipo: ' . $this->mensaje($salida)];
+        }
+
+        Log::info('[OLT ZTE] ONU reiniciada', ['onu' => $onu, 'comando' => $r['comando']]);
+
+        return ['ok' => true, 'detalle' => 'El equipo se está reiniciando.'];
+    }
+
     public function deactivateONT(string $fsp, int $ontId): bool
     {
         $salida = $this->cmds([

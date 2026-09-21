@@ -1593,16 +1593,60 @@ class GestionRemotaDeOnt
         $internet = collect((new AprovisionamientoDeOnt($this->companyId))->conexiones($d))
             ->first(fn ($c) => $c['vlan'] !== $vlanGestion && str_contains($c['servicios'], 'INTERNET'));
 
-        return $internet
-            ? "No se le da la gestión desde la OLT: este Huawei tiene su conexión de internet configurada en el propio equipo ({$internet['nombre']}) y al recibir la gestión de la OLT la borra: el cliente quedaría sin servicio."
-            : null;
+        if (!$internet) {
+            return null;
+        }
+
+        // Lo del ACS puede ser viejo (ELVIRA_JIMENEZ, 19-09: se reinició, perdió
+        // su conexión y lo guardado de las 11:42 la seguía mostrando). Si esa IP
+        // no contesta desde el router, el cliente ya no tiene servicio y darle
+        // la gestión no le quita nada: al contrario, es lo que permite
+        // devolvérselo.
+        $ip = (string) AprovisionamientoDeOnt::v($d, "{$internet['ruta']}.ExternalIPAddress");
+
+        if ($this->contestaDesdeElRouter($serial, $ip) === false) {
+            Log::info('[GestionRemota] Gestión permitida: la conexión que muestra el ACS no contesta', ['serial' => $serial, 'ip' => $ip]);
+
+            return null;
+        }
+
+        return "No se le da la gestión desde la OLT: este Huawei tiene su conexión de internet configurada en el propio equipo ({$internet['nombre']}) y al recibir la gestión de la OLT la borra: el cliente quedaría sin servicio.";
+    }
+
+    /**
+     * ¿La IP de la conexión del cliente contesta un ping desde su router?
+     * null si no se pudo saber (sin IP, sin router o sin conexión con él): en
+     * la duda se sigue cuidando la conexión.
+     */
+    private function contestaDesdeElRouter(string $serial, string $ip): ?bool
+    {
+        if (!filter_var($ip, FILTER_VALIDATE_IP) || $ip === '0.0.0.0') {
+            return null;
+        }
+
+        $userId = OltOnt::whereHas('olt', fn ($q) => $q->where('company_id', $this->companyId))
+            ->where('serial', $serial)->whereNotNull('user_data_id')->latest('updated_at')->value('user_data_id');
+
+        try {
+            $api = $userId ? (new AprovisionamientoDeOnt($this->companyId))->routerDelCliente((int) $userId) : null;
+
+            if (!$api) {
+                return null;
+            }
+
+            $respuestas = collect($api->query((new Query('/ping'))->equal('address', $ip)->equal('count', '3'))->read());
+        } catch (\Throwable) {
+            return null;
+        }
+
+        return $respuestas->contains(fn ($r) => isset($r['time']) || (int) ($r['received'] ?? 0) > 0);
     }
 
     public function reiniciarEquipo(int $oltId, string $fsp, int $ontId): array
     {
         $olt = OltAdmin::where('id', $oltId)->where('company_id', $this->companyId)->first();
 
-        if (!$olt || !self::admiteGestion((string) $olt->brand)) {
+        if (!$olt || !self::admiteReinicio((string) $olt->brand)) {
             return ['ok' => false, 'detalle' => $olt ? 'Esta OLT no permite reiniciar equipos desde acá.' : 'Esa OLT no es de tu empresa.'];
         }
 
@@ -2240,6 +2284,16 @@ class GestionRemotaDeOnt
      * Las EPON de C-Data no tienen cómo: su CLI sólo habilita o deshabilita la
      * VLAN del servicio, no le puede decir a la ONT que pida IP de gestión.
      */
+    /**
+     * Reiniciar el equipo del cliente desde la OLT. Es aparte de la gestión
+     * remota: en ZTE la plataforma sabe reiniciar, pero todavía no le da
+     * gestión TR-069 a las ONU.
+     */
+    public static function admiteReinicio(string $marca): bool
+    {
+        return self::admiteGestion($marca) || strtolower($marca) === 'zte';
+    }
+
     public static function admiteGestion(string $marca): bool
     {
         // C-Data: sólo GPON (el driver lo contesta; en EPON dice que no se puede).

@@ -171,6 +171,9 @@ Route::prefix('management')->middleware('empresa.propia')->group(function () {
             ->whereNumber('oltId')->whereNumber('perfil');
     });
 
+    // ── Salud de la red: tendencia de los puertos y equipos al borde ──────
+    Route::get('/red/salud', [\App\Http\Controllers\SaludDeLaRedController::class, 'index']);
+
     // ── Avisos de la red ───────────────────────────────────────────────────
     Route::prefix('alertas')->group(function () {
         Route::get('/',          [\App\Http\Controllers\AlertaController::class, 'index']);

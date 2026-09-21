@@ -48,6 +48,7 @@ class AprovisionamientoDeOnt
 
     private const DNS = '8.8.8.8,8.8.4.4';
     private const WAN = 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice';
+    private const RUTA_POR_DEFECTO = 'InternetGatewayDevice.Layer3Forwarding.DefaultConnectionService';
     private const WLAN = 'InternetGatewayDevice.LANDevice.1.WLANConfiguration';
     private const CUENTAS = 'InternetGatewayDevice.UserInterface.X_HW_WebUserInfo';
 
@@ -525,7 +526,7 @@ class AprovisionamientoDeOnt
      * @return array{texto:string, id:?int}|null lo que se le dice al operador y el
      *         aprovisionamiento creado, o null si no aplica
      */
-    public static function reaplicarConexion(int $companyId, int $userId): ?array
+    public static function reaplicarConexion(int $companyId, int $userId, ?string $motivo = null): ?array
     {
         $g = GestionRemota::where('company_id', $companyId)->first();
 
@@ -604,11 +605,11 @@ class AprovisionamientoDeOnt
             'ont_id'     => $ont->ont_id,
             'serial'     => $ont->serial,
             'user_id'    => $userId,
-            'datos'      => ['cliente' => $cliente['nombre'] ?? null, 'wan' => $wan, 'avisos' => [], 'origen' => 'cambio_de_conexion']
+            'datos'      => ['cliente' => $cliente['nombre'] ?? null, 'wan' => $wan, 'avisos' => [], 'origen' => $motivo ? 'reinicio' : 'cambio_de_conexion']
                 + ($compatible ? ['compatibilidad' => $compatible] : []),
             'estado'     => $enAcs ? 'aplicando' : 'esperando',
             'acs_id'     => $enAcs,
-            'pasos'      => $enAcs ? [['paso' => 'Cambio de conexión desde la ficha del cliente', 'ok' => true, 'detalle' => $enAcs]] : [],
+            'pasos'      => $enAcs ? [['paso' => $motivo ?? 'Cambio de conexión desde la ficha del cliente', 'ok' => true, 'detalle' => $enAcs]] : [],
             'detalle'    => $enAcs ? 'Aplicando la conexión nueva…' : self::textoDeEspera($compatible),
         ]);
 
@@ -791,7 +792,88 @@ class AprovisionamientoDeOnt
                 }
             });
 
+        try {
+            $revisados += self::repararTrasReinicio();
+        } catch (\Throwable $e) {
+            Log::warning('[Aprovisionamiento] No se pudieron revisar los reinicios', ['error' => $e->getMessage()]);
+        }
+
+        try {
+            $revisados += GestionPorInternet::trabajar();
+        } catch (\Throwable $e) {
+            Log::warning('[Aprovisionamiento] Gestión por internet', ['error' => $e->getMessage()]);
+        }
+
         return $revisados;
+    }
+
+    /**
+     * Una ONT Huawei con la gestión de la OLT que se reinicia puede volver sin
+     * la conexión de internet que se le creó por TR-069: la OLT le vuelve a
+     * cargar su configuración y la borra (19-09: LILIANA_JIMENEZ a las 9:08 y
+     * ELVIRA_JIMENEZ a las 9:40 quedaron sólo con la de gestión). Cada equipo
+     * aprovisionado que arrancó después de su aprovisionamiento se mira una vez
+     * por arranque; si no tiene conexión de internet se le vuelve a poner.
+     */
+    public static function repararTrasReinicio(): int
+    {
+        if (!\Illuminate\Support\Facades\Cache::add('aprovisionamiento:reinicios', 1, 110)) {
+            return 0;
+        }
+
+        $reparados = 0;
+
+        foreach (GestionRemota::where('aprovisionar', true)->where('aprov_wan', true)->pluck('company_id')->unique() as $companyId) {
+            $companyId = (int) $companyId;
+            $acs = GenieAcs::deEmpresa($companyId);
+
+            // Arrancaron en las últimas horas y ya tuvieron unos minutos para acomodarse.
+            $arranques = collect($acs->dispositivos(['_lastBoot' => [
+                '$gt' => now()->subHours(12)->toIso8601String(),
+                '$lt' => now()->subMinutes(3)->toIso8601String(),
+            ]], ['_id', '_lastBoot']))->pluck('_lastBoot', '_id');
+
+            if ($arranques->isEmpty()) {
+                continue;
+            }
+
+            $ultimos = Aprovisionamiento::where('company_id', $companyId)->whereIn('acs_id', $arranques->keys())
+                ->orderByDesc('id')->get()->unique('acs_id');
+
+            foreach ($ultimos as $a) {
+                $arranque = \Carbon\Carbon::parse($arranques[$a->acs_id]);
+
+                if ($a->estado !== 'listo' || empty($a->datos['wan']) || !$a->user_id || $arranque->lte($a->updated_at)) {
+                    continue;
+                }
+
+                $visto = 'aprovisionamiento:arranque:' . md5($a->acs_id . $arranque->toIso8601String());
+
+                if (\Illuminate\Support\Facades\Cache::has($visto)) {
+                    continue;
+                }
+
+                // Lo guardado puede ser de antes del arranque: se lee de nuevo.
+                // Si no contesta, se vuelve a probar en la próxima pasada.
+                if (!($acs->tarea((string) $a->acs_id, ['name' => 'refreshObject', 'objectName' => self::WAN], 60)['hecha'] ?? false)) {
+                    continue;
+                }
+
+                \Illuminate\Support\Facades\Cache::put($visto, 1, now()->addDays(2));
+                $d = $acs->dispositivo((string) $a->acs_id) ?? [];
+
+                if (self::gruposSinLeer($d) || collect((new self($companyId))->conexiones($d))->contains(fn ($c) => str_contains($c['servicios'], 'INTERNET'))) {
+                    continue;
+                }
+
+                $r = self::reaplicarConexion($companyId, (int) $a->user_id,
+                    'El equipo se reinició (' . $arranque->timezone('America/Bogota')->format('d/m H:i') . ') y volvió sin su conexión a internet: se le vuelve a poner');
+                Log::info('[Aprovisionamiento] Conexión perdida al reiniciar', ['equipo' => $a->acs_id, 'cliente' => $a->user_id, 'resultado' => $r['texto'] ?? null]);
+                $reparados++;
+            }
+        }
+
+        return $reparados;
     }
 
     /** Un no_aplica que igual apareció en el TR-069 (se lo configuraron a mano): se aplica. */
@@ -1226,27 +1308,57 @@ class AprovisionamientoDeOnt
         } catch (\Throwable) {
         }
 
+        // Sin saber qué tiene cada grupo no se toca nada: un grupo sin leer se
+        // veía vacío y se le metía la conexión nueva al lado de la del dueño
+        // anterior, que se quedaba con los puertos LAN y el WiFi (ANGIE_MONTALVO,
+        // 19-09: PPPoE conectado y sin internet).
+        if ($sinLeer = self::gruposSinLeer($d)) {
+            return ['paso' => $titulo, 'ok' => false, 'reintentar' => self::WAN,
+                'detalle' => 'No se pudieron leer las conexiones que ya tiene el equipo (grupo ' . implode(', ', $sinLeer) . '): se reintenta sin tocar nada.'];
+        }
+
         // La conexión de gestión no se toca nunca: por ahí llega el TR-069.
         $todas = collect($this->conexiones($d));
         $conexiones = $todas
             ->reject(fn ($c) => ($vlanGestion && $c['vlan'] === $vlanGestion) || $c['servicios'] === 'TR069');
 
         // Las de otra VLAN vienen del dueño anterior del equipo: no dan servicio
-        // y chocan con la del cliente. Se borra cada grupo que sea sólo ajeno.
+        // y chocan con la del cliente. Se borra cada grupo que sea sólo ajeno;
+        // en un grupo compartido, sólo la conexión de internet ajena (sin el
+        // TR-069). Los puertos que tenía pasan a la del cliente.
         $ajenas = $conexiones->filter(fn ($c) => $c['vlan'] !== null && $c['vlan'] !== (int) $wan['vlan']);
         $borradas = [];
         $quitados = [];
+        $puertos = [];
 
         foreach ($ajenas->groupBy('dispositivo') as $grupo => $delGrupo) {
-            if ($todas->where('dispositivo', $grupo)->count() !== $delGrupo->count()) {
-                continue; // comparte grupo con la de gestión o con la del cliente
+            $todoElGrupo = $todas->where('dispositivo', $grupo)->count() === $delGrupo->count();
+            $aBorrar = $todoElGrupo ? $delGrupo
+                : $delGrupo->filter(fn ($c) => str_contains($c['servicios'], 'INTERNET') && !str_contains($c['servicios'], 'TR069'));
+
+            if ($todoElGrupo) {
+                $r = $this->alMomento($acs, $equipo, ['name' => 'deleteObject', 'objectName' => self::WAN . ".{$grupo}"]);
+
+                if ($r['hecha']) {
+                    $quitados[] = (string) $grupo;
+                }
+            } else {
+                foreach ($aBorrar as $i => $c) {
+                    if (!$this->alMomento($acs, $equipo, ['name' => 'deleteObject', 'objectName' => $c['ruta']])['hecha']) {
+                        $aBorrar->forget($i);
+                    }
+                }
+                $r = ['hecha' => $aBorrar->isNotEmpty()];
             }
 
-            $r = $this->alMomento($acs, $equipo, ['name' => 'deleteObject', 'objectName' => self::WAN . ".{$grupo}"]);
-
             if ($r['hecha']) {
-                $quitados[] = (string) $grupo;
-                $borradas = array_merge($borradas, $delGrupo->pluck('nombre')->all());
+                $borradas = array_merge($borradas, $aBorrar->pluck('nombre')->all());
+                foreach ($aBorrar as $c) {
+                    $puertos += array_filter(self::puertosDe($d, $c['ruta']));
+                }
+                $rutas = $aBorrar->pluck('ruta')->all();
+                $todas = $todas->reject(fn ($c) => in_array($c['ruta'], $rutas, true));
+                $conexiones = $conexiones->reject(fn ($c) => in_array($c['ruta'], $rutas, true));
             }
         }
 
@@ -1320,7 +1432,61 @@ class AprovisionamientoDeOnt
                 'reintentar' => $r['rechazada'] ? null : self::WAN];
         }
 
+        // Aparte, para que un equipo que no acepte los puertos no tumbe la conexión.
+        if ($puertos) {
+            $r = $this->alMomento($acs, $equipo, ['name' => 'setParameterValues', 'parameterValues' => array_map(
+                fn ($p) => ["{$ruta}.X_HW_LANBIND.{$p}", 'true', 'xsd:boolean'], array_keys($puertos))]);
+
+            $nota .= $r['hecha']
+                ? ' Los puertos que usaba la anterior (' . implode(', ', array_keys($puertos)) . ') quedaron en la del cliente.'
+                : ' No se le pudieron pasar los puertos de la anterior (' . implode(', ', array_keys($puertos)) . "): {$r['motivo']}";
+        }
+
+        // Sin ruta por defecto, lo que no está amarrado a una conexión no sale
+        // a ningún lado (ANGIE_MONTALVO: al borrar la del dueño anterior quedó
+        // vacía y el PPPoE conectado no pasaba tráfico).
+        if (self::v($d, self::RUTA_POR_DEFECTO) === null) {
+            try {
+                $acs->tarea($equipo, ['name' => 'refreshObject', 'objectName' => 'InternetGatewayDevice.Layer3Forwarding'], 20);
+                $d = $acs->dispositivo($equipo) ?? $d;
+            } catch (\Throwable) {
+            }
+        }
+        $porDefecto = self::v($d, self::RUTA_POR_DEFECTO);
+        if ($porDefecto !== null && $porDefecto !== $ruta && ($porDefecto === '' || !$todas->contains('ruta', rtrim((string) $porDefecto, '.')))) {
+            $r = $this->alMomento($acs, $equipo, ['name' => 'setParameterValues', 'parameterValues' => [[self::RUTA_POR_DEFECTO, $ruta, 'xsd:string']]]);
+            $nota .= $r['hecha'] ? ' La salida por defecto del equipo quedó en esta conexión.' : " No se pudo dejar la salida por defecto en esta conexión: {$r['motivo']}";
+        }
+
         return ['paso' => $titulo, 'ok' => true, 'detalle' => "{$como}: " . self::resumenWan($wan) . '.' . $nota];
+    }
+
+    /**
+     * Los grupos de conexiones cuyo contenido el ACS no tiene leído: se ven,
+     * pero no se sabe si están vacíos.
+     *
+     * @return list<string>
+     */
+    public static function gruposSinLeer(array $d): array
+    {
+        $grupos = \Illuminate\Support\Arr::get($d, self::WAN);
+
+        return array_values(array_filter(self::hijos($d, self::WAN), fn ($g) => !is_array($grupos[$g]['WANIPConnection'] ?? null)
+            && !is_array($grupos[$g]['WANPPPConnection'] ?? null)));
+    }
+
+    /** @return array<string,bool> los puertos LAN/WiFi de una conexión (Huawei) */
+    public static function puertosDe(array $d, string $ruta): array
+    {
+        $lista = [];
+
+        foreach ((array) (\Illuminate\Support\Arr::get($d, "{$ruta}.X_HW_LANBIND") ?? []) as $nombre => $nodo) {
+            if (!str_starts_with((string) $nombre, '_') && is_array($nodo) && array_key_exists('_value', $nodo)) {
+                $lista[(string) $nombre] = filter_var($nodo['_value'], FILTER_VALIDATE_BOOLEAN);
+            }
+        }
+
+        return $lista;
     }
 
     /**
