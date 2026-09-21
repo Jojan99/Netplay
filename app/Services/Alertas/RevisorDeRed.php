@@ -35,7 +35,7 @@ class RevisorDeRed
     {
         $vistas = [];
 
-        foreach ([$this->senalYCortes(...), $this->tuneles(...), $this->oltsSinSincronizar(...), $this->datosIncompletos(...)] as $revision) {
+        foreach ([$this->senalYCortes(...), $this->tuneles(...), $this->oltsSinSincronizar(...), $this->datosIncompletos(...), $this->sinCaminoDeDatos(...)] as $revision) {
             try {
                 $vistas = array_merge($vistas, $revision());
             } catch (\Throwable $e) {
@@ -258,6 +258,82 @@ class RevisorDeRed
      *
      * @return list<string>
      */
+    /**
+     * ONT registradas que se quedaron sin service-port.
+     *
+     * Es el peor caso silencioso de la red: la ONT prende, la OLT la ve
+     * online, la fibra está bien —y el cliente no navega, porque sin
+     * service-port no hay camino de datos. Pasa cuando se desautoriza y se
+     * vuelve a autorizar sin VLAN. Antes no lo sabía nadie hasta que el
+     * cliente llamaba.
+     *
+     * @return list<string>
+     */
+    /** Segunda lectura, sólo de esa ONT, antes de dar por cierto que le falta. */
+    private function confirmaQueLeFalta(int $oltId, string $fsp, int $ontId): bool
+    {
+        try {
+            $respuesta = app(\App\Services\OltTelnetDispatcher::class)
+                ->dispatch($oltId, 'getServicePorts', ['fsp' => $fsp, 'ont_id' => $ontId]) ?: [];
+        } catch (\Throwable $e) {
+            return false;
+        }
+
+        $delPuerto = collect($respuesta)->filter(
+            fn ($sp) => str_contains(str_replace(['gpon', 'epon'], '', (string) ($sp['port'] ?? '')), $fsp),
+        );
+
+        // Sin datos del puerto, la lectura no sirve para afirmar nada.
+        return $delPuerto->isNotEmpty()
+            && !$delPuerto->contains(fn ($sp) => (int) ($sp['ont_id'] ?? -1) === $ontId);
+    }
+
+    private function sinCaminoDeDatos(): array
+    {
+        $claves = [];
+
+        foreach (OltAdmin::where('company_id', $this->companyId)->get() as $olt) {
+            try {
+                $incompletas = app(\App\UseCases\OltAdmin\OltAdminUseCase::class)->ontsIncompletas($olt->id);
+            } catch (\Throwable $e) {
+                Log::warning('[Alertas] No se pudo revisar los service-ports', ['olt' => $olt->id, 'error' => $e->getMessage()]);
+                continue;
+            }
+
+            foreach ($incompletas as $ont) {
+                if (!in_array('service-port', $ont['falta'] ?? [], true)) {
+                    continue;
+                }
+
+                // Se vuelve a preguntar por esa ONT antes de avisar: la lectura
+                // por puerto viene paginada y una respuesta cortada hace
+                // parecer que falta un service-port que sí está. Avisar de más
+                // acá es mandar a un técnico a una casa donde todo funciona.
+                if (!$this->confirmaQueLeFalta($olt->id, $ont['fsp'], (int) $ont['ont_id'])) {
+                    continue;
+                }
+
+                $fila = OltOnt::where('olt_id', $olt->id)->where('fsp', $ont['fsp'])->where('ont_id', $ont['ont_id'])->first();
+                $nombre = $fila?->user_data_id
+                    ? $this->nombreDelCliente((int) $fila->user_data_id)
+                    : str_replace('_', ' ', (string) ($ont['descripcion'] ?: 'Equipo ' . $ont['fsp'] . ':' . $ont['ont_id']));
+
+                $claves[] = $this->anotar(
+                    "sin-service-port:{$olt->id}:{$ont['fsp']}:{$ont['ont_id']}",
+                    'datos',
+                    'critico',
+                    "{$nombre} no tiene camino de datos",
+                    'La ONT está registrada en la OLT pero sin service-port: prende y no navega. '
+                        . 'Se arregla desde Admin OLT, completando el service-port con la VLAN del cliente.',
+                    ['olt' => $olt->name, 'fsp' => $ont['fsp'], 'ont_id' => $ont['ont_id'], 'serial' => $ont['serial']],
+                    $fila?->user_data_id,
+                );
+            }
+        }
+
+        return $claves;
+    }
+
     private function datosIncompletos(): array
     {
         $claves = [];

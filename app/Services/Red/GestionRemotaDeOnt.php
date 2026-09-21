@@ -27,6 +27,9 @@ use RouterOS\Query;
  */
 class GestionRemotaDeOnt
 {
+    /** Sin saludar al ACS por más de esto, el equipo se da por mudo. */
+    public const MINUTOS_PARA_DARLO_POR_MUDO = 30;
+
     /** Marca con la que se reconoce lo que puso la plataforma. */
     private const MARCA = 'Netplay gestion ONT';
 
@@ -1055,6 +1058,11 @@ class GestionRemotaDeOnt
                         // Recién autorizada: las conexiones de otra VLAN se reemplazan.
                         'vlans_cliente' => $limpiarAjenas ? self::vlansDeServicio($registrada, (int) $g->vlan) : [],
                         'pisar_ajenas'  => $limpiarAjenas,
+                        // Tener TR-069 en la conexión de internet alcanza… si esa
+                        // conexión funciona. Cuando el equipo lleva horas mudo,
+                        // confiar en ella es dejarlo incomunicado: se le abre la
+                        // gestión igual, que es la única puerta que queda.
+                        'aunque_tenga_tr069' => $this->estaMudo($registrada?->serial),
                     ]);
                 } catch (\Throwable $e) {
                     return ['ok' => false, 'detalle' => \App\Services\Olt\EstadoDeUnaOnt::explicar($e->getMessage())];
@@ -1280,6 +1288,36 @@ class GestionRemotaDeOnt
      *
      * @return array{ok:bool, detalle:string, sp?:?int, creo_algo?:bool}
      */
+    /**
+     * ¿El equipo lleva horas sin saludar al TR-069?
+     *
+     * Si nunca estuvo en el ACS no se opina: puede ser un alta nueva. Lo que
+     * importa es el que estaba y se calló, porque ése tiene su conexión de
+     * internet rota y no va a volver solo.
+     */
+    private function estaMudo(?string $serial): bool
+    {
+        if (!$serial) {
+            return false;
+        }
+
+        try {
+            $crudo = strtoupper((string) preg_replace('/[^0-9A-Za-z]/', '', $serial));
+            $ficha = \App\Services\Acs\GenieAcs::deEmpresa($this->companyId)->dispositivos(
+                ['_deviceId._SerialNumber' => ['$in' => array_values(array_unique([$crudo, \App\Services\Acs\EquiposDelAcs::serial($serial)]))]],
+                ['_id', '_lastInform'],
+            )[0] ?? null;
+        } catch (\Throwable $e) {
+            return false;
+        }
+
+        if (!$ficha || empty($ficha['_lastInform'])) {
+            return false;
+        }
+
+        return \Carbon\Carbon::parse($ficha['_lastInform'])->lt(now()->subMinutes(self::MINUTOS_PARA_DARLO_POR_MUDO));
+    }
+
     public function darGestionTemporal(int $oltId, string $fsp, int $ontId): array
     {
         $g = $this->config();
@@ -1802,6 +1840,29 @@ class GestionRemotaDeOnt
 
         $listo = ($fila['estado'] ?? '') === 'listo';
 
+        // Si le falta, se prepara y listo: que el equipo se quede sin gestión
+        // porque a su perfil le falta un carril no es algo que deba resolver
+        // una persona leyendo un aviso. Se prepara una vez y sirve para todos
+        // los equipos de ese perfil.
+        if (!$listo && ($fila['estado'] ?? '') !== 'sin_leer') {
+            try {
+                $preparado = $this->prepararPerfil($oltId, (int) $deOnt['id']);
+            } catch (\Throwable $e) {
+                $preparado = ['ok' => false, 'detalle' => mb_substr($e->getMessage(), 0, 120)];
+            }
+
+            if ($preparado['ok'] ?? false) {
+                return [
+                    'listo'   => true,
+                    'id'      => $deOnt['id'],
+                    'nombre'  => $deOnt['nombre'],
+                    'detalle' => "Su perfil {$deOnt['nombre']} no dejaba salir la gestión: se preparó solo.",
+                ];
+            }
+
+            $fila['detalle_preparar'] = $preparado['detalle'] ?? null;
+        }
+
         return [
             'listo'   => $listo,
             'id'      => $deOnt['id'],
@@ -1812,7 +1873,8 @@ class GestionRemotaDeOnt
                     // No es lo mismo que le falte a que no se haya podido leer:
                     // con YINETH decía "falta preparar" y el perfil estaba bien.
                     ? "no se pudo leer en la OLT su perfil de línea «{$deOnt['nombre']}» para confirmarlo; si el equipo aparece en el TR-069 está bien"
-                    : "falta preparar su perfil de línea «{$deOnt['nombre']}» en Acceso remoto → Perfiles de línea: sin eso el equipo no puede salir por la VLAN {$vlan}"),
+                    : "no se pudo preparar su perfil de línea «{$deOnt['nombre']}» para que deje salir la gestión por la VLAN {$vlan}"
+                        . ($fila['detalle_preparar'] ?? null ? ': ' . $fila['detalle_preparar'] : '. Probá desde Acceso remoto → Perfiles de línea.')),
         ];
     }
 

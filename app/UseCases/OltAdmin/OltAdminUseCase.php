@@ -9,6 +9,8 @@ use App\Repositories\Interfaces\OltAdminRepositoryInterface;
 use App\Services\HuaweiSnmpReader;
 use App\Services\OltTelnetDispatcher;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class OltAdminUseCase
 {
@@ -778,8 +780,20 @@ class OltAdminUseCase
         try {
             $desc = strtoupper(str_replace(' ', '_', trim($data['description'] ?? $data['serial'])));
 
-            $vlan    = !empty($data['vlan']) ? (int) $data['vlan'] : null;
+            $vlan    = !empty($data['vlan']) ? (int) $data['vlan'] : $this->vlanQueLeToca($oltId, $data);
             $spIndex = $vlan !== null ? $this->generateServicePort($oltId, $vlan) : null;
+
+            // Sin VLAN la ONT queda registrada y sin service-port: prende, la
+            // OLT la ve online y el cliente no navega ni aparece en el TR-069.
+            // Pasó de verdad, y nadie se enteró hasta que el cliente llamó.
+            if ($vlan === null) {
+                return [
+                    'status'  => 1,
+                    'message' => 'Falta la VLAN: sin ella la ONT queda registrada pero el cliente no navega. '
+                        . 'Elegí la VLAN del servicio o poné una VLAN por defecto en la OLT.',
+                    'data'    => null,
+                ];
+            }
 
             \Log::debug('OLT registerONT: payload recibido', [
                 'olt_id'       => $oltId,
@@ -971,6 +985,10 @@ class OltAdminUseCase
                 ]);
             }
 
+            // Antes de borrar, recordar su VLAN: si mañana se vuelve a autorizar
+            // este mismo equipo, se le devuelve sola y no queda sin datos.
+            $this->recordarVlan($oltId, $fsp, $ontId, $ports ?? []);
+
             $ok = $this->dispatcher->dispatch($oltId, 'deleteONT', [
                 'fsp'           => $fsp,
                 'ont_id'        => $ontId,
@@ -1090,7 +1108,10 @@ class OltAdminUseCase
         $ontId = (int) $data['ont_id'];
 
         $oltModel = $this->getOltModel($oltId);
-        $vlan     = (int) ($data['vlan'] ?? $oltModel->default_vlan);
+
+        // La VLAN por defecto de la OLT puede no ser la que usa ese puerto:
+        // primero la que tenía el equipo, después la de sus vecinos.
+        $vlan = (int) ($data['vlan'] ?? $this->vlanQueLeToca($oltId, $data) ?? $oltModel->default_vlan);
 
         if (!$vlan) {
             return ['status' => 1, 'message' => 'Hace falta la VLAN para crear el service-port.', 'data' => null];
@@ -1167,7 +1188,7 @@ class OltAdminUseCase
             $ok = $this->dispatcher->dispatch($oltId, 'assignToClient', [
                 'fsp'         => $data['fsp'],
                 'ont_id'      => (int) $data['ont_id'],
-                'vlan'        => (int) ($data['vlan'] ?? $oltModel->default_vlan),
+                'vlan'        => (int) ($data['vlan'] ?? $this->vlanQueLeToca($oltId, $data) ?? $oltModel->default_vlan),
                 'service_port'=> (int) $data['service_port'],
                 'description' => $data['description'] ?? '',
             ]);
@@ -1529,6 +1550,72 @@ class OltAdminUseCase
      * Ejemplo: año 2026, día 16, minuto 32, segundo 45 → 6·6·2·5 = 6625
      * Si ya está en uso, incrementa hasta encontrar uno libre (máx 9999).
      */
+    /**
+     * La VLAN que le corresponde a esta ONT cuando el alta no la trae.
+     *
+     * Se busca en este orden: la que tenía la última vez (queda guardada al
+     * borrarla), la de sus vecinos del mismo puerto PON —que es la del barrio—
+     * y la que la OLT tenga por defecto. Así una reautorización no deja al
+     * cliente sin camino de datos.
+     */
+    /** Guarda la VLAN de una ONT antes de que se borre, por serial. */
+    private function recordarVlan(int $oltId, string $fsp, int $ontId, array $ports): void
+    {
+        if (!Schema::hasTable('olt_vlan_recordada')) {
+            return;
+        }
+
+        $ont  = OltOnt::where('olt_id', $oltId)->where('fsp', $fsp)->where('ont_id', $ontId)->first();
+        $vlan = collect($ports)->pluck('vlan')->map(fn ($v) => (int) $v)->filter()->first()
+            ?: collect($ont?->service_ports ?? [])->pluck('vlan')->map(fn ($v) => (int) $v)->filter()->first();
+
+        if (!$ont?->serial || !$vlan) {
+            return;
+        }
+
+        DB::table('olt_vlan_recordada')->updateOrInsert(
+            ['olt_id' => $oltId, 'serial' => strtoupper($ont->serial)],
+            ['vlan' => (int) $vlan, 'descripcion' => $ont->description, 'updated_at' => now(), 'created_at' => now()],
+        );
+    }
+
+    private function vlanQueLeToca(int $oltId, array $data): ?int
+    {
+        $fsp    = (string) ($data['fsp'] ?? '');
+        $serial = strtoupper((string) ($data['serial'] ?? ''));
+
+        // 1. La que tenía antes de que la borraran.
+        if ($serial && Schema::hasTable('olt_vlan_recordada')) {
+            $suya = DB::table('olt_vlan_recordada')->where('olt_id', $oltId)->where('serial', $serial)->value('vlan');
+
+            if ($suya) {
+                return (int) $suya;
+            }
+        }
+
+        // 2. La de los vecinos del mismo puerto: en una OLT bien armada, todos
+        //    los de un puerto llevan la misma.
+        if ($fsp) {
+            try {
+                $vecinas = collect($this->dispatcher->dispatch($oltId, 'getServicePorts', ['fsp' => $fsp]) ?: [])
+                    ->pluck('vlan')->map(fn ($v) => (int) $v)->filter()->countBy()->sortDesc();
+
+                if ($vecinas->isNotEmpty()) {
+                    return (int) $vecinas->keys()->first();
+                }
+            } catch (\Throwable $e) {
+                \Log::warning('OLT registerONT: no se pudo mirar la VLAN del puerto', [
+                    'olt_id' => $oltId, 'fsp' => $fsp, 'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        // 3. La de la OLT.
+        $porDefecto = (int) ($this->getOltModel($oltId)->default_vlan ?? 0);
+
+        return $porDefecto ?: null;
+    }
+
     private function generateServicePort(int $oltId, int $vlan = 0): int
     {
         $used = OltOnt::where('olt_id', $oltId)

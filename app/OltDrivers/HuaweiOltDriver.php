@@ -530,15 +530,10 @@ class HuaweiOltDriver implements OltDriverInterface
 
 public function getServicePorts(?string $fsp = null, ?int $ontId = null): array
 {
-    Log::debug('INICIO getServicePortsaaaaaaaaaaaaaaaaaa', [
-        'fsp_original' => $fsp,
-        'ont_id' => $ontId
-    ]);
-
     $this->resetToPrompt();
-    $this->ssh->setTimeout(4);
+    $this->ssh->setTimeout(8);
 
-    // 🔧 Normalizar FSP
+    // Normalizar FSP
     if ($fsp !== null) {
         $fsp = trim($fsp);
         $fsp = preg_replace('/[^\d\/]/', '', $fsp);
@@ -546,7 +541,6 @@ public function getServicePorts(?string $fsp = null, ?int $ontId = null): array
         $fsp = trim($fsp, '/');
     }
 
-    // 🧾 Comando
     if ($fsp !== null && $ontId !== null) {
         $command = "display service-port port {$fsp} ont {$ontId}";
     } elseif ($fsp !== null) {
@@ -559,50 +553,26 @@ public function getServicePorts(?string $fsp = null, ?int $ontId = null): array
         return [];
     }
 
-    Log::debug('COMANDO', ['cmd' => $command]);
-
-    // 1. Enviar comando
     $this->ssh->write($command . "\r\n");
 
-    // 2. Esperar que Huawei responda
-    usleep(100000); // 300ms
+    // La respuesta viene paginada: "---- More ( Press 'Q' to break ) ----".
+    // Antes se leía una sola vez y se devolvía la primera página como si
+    // fuera todo: un puerto con más de una pantalla de service-ports daba
+    // una lista incompleta, y los que faltaban parecían no existir. Con eso
+    // la plataforma llegó a decir que un cliente no tenía camino de datos
+    // cuando sí lo tenía.
+    $output = $this->collectPaged();
 
-    // 3. Leer buffer inicial
-    $buffer = $this->ssh->read('/[>#$]\s*$/');
-    Log::debug('BUFFER INICIAL', ['buffer' => $buffer]);
-
-    // 4. Si hay prompt interactivo { ... }
-    if (str_contains($buffer, '{')) {
-        $this->ssh->write("\r\n"); // enviar ENTER
-
-        usleep(100000);
-
-        $output = $this->ssh->read('/[>#$]\s*$/');
-    } else {
-        $output = $buffer;
-    }
-
-    // 🧹 Limpiar salida
     $output = preg_replace('/\x1B\[[0-9;]*[A-Za-z]/', '', $output);
     $output = preg_replace('/\x07/', '', $output);
 
-    Log::debug('RAW OUTPUT', ['output' => $output]);
-
-    // ⚠️ sesión inválida
     if (str_contains($output, 'User password') || str_contains($output, 'User name')) {
         Log::warning('HuaweiOLT: sesión en estado de autenticación');
+
         return [];
     }
 
-    // 🔄 Parsear
-    $parsed = $this->parseServicePorts($output);
-
-    Log::debug('PARSED', [
-        'count' => count($parsed),
-        'data'  => $parsed
-    ]);
-
-    return $parsed;
+    return $this->parseServicePorts($output);
 }
 
 public function parseServicePorts(string $output): array

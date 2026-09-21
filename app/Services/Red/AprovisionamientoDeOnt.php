@@ -7,6 +7,8 @@ use App\Models\GestionRemota;
 use App\Models\OltAdmin;
 use App\Models\UserData;
 use App\Services\Acs\EquiposDelAcs;
+use App\Services\Red\AsignacionDeIp;
+use App\Services\Red\GestionRemotaDeOnt;
 use App\Services\Acs\GenieAcs;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -38,6 +40,18 @@ class AprovisionamientoDeOnt
      * otros tantos, así que en 15 ya se sabe si va a aparecer.
      */
     public const ESPERA_SIN_CONFIRMAR_MINUTOS = 15;
+
+    /** A los pocos minutos ya se puede mirar si el equipo tiene por dónde salir. */
+    public const ESPERA_SIN_CAMINO_MINUTOS = 4;
+
+    /** Si no apareció en este tiempo, se le abre la puerta de servicio solo. */
+    public const ESPERA_PARA_ABRIR_CAMINO = 5;
+
+    /** Y si con el camino abierto sigue mudo, se lo reinicia. */
+    public const ESPERA_PARA_REINICIAR = 9;
+
+    /** Sin saludar al ACS por más de esto, el equipo se da por mudo. */
+    public const MINUTOS_PARA_DARLO_POR_MUDO = 30;
 
     /**
      * Los que no se pueden configurar solos (estado no_aplica) no muestran
@@ -353,7 +367,15 @@ class AprovisionamientoDeOnt
 
         $clave = null;
 
-        if ($g->aprov_wifi) {
+        // El alta puede decir que no se le mande WiFi: la ONT ya está instalada
+        // con su red andando y cambiarla deja a la familia sin conexión hasta
+        // que alguien reconecte todos los teléfonos. Si el alta no dice nada,
+        // manda lo que tenga configurado la empresa.
+        $quiereWifi = array_key_exists('wifi', $pedido)
+            ? (bool) $pedido['wifi']
+            : (bool) $g->aprov_wifi;
+
+        if ($quiereWifi) {
             $ssid = self::limpiarSsid((string) ($pedido['wifi_ssid'] ?? '')) ?: $yo->ssidPorDefecto($g, $cliente, $serial);
             $clave = trim((string) ($pedido['wifi_clave'] ?? '')) ?: self::claveWifi();
             $datos['wifi'] = ['ssid' => $ssid];
@@ -580,12 +602,22 @@ class AprovisionamientoDeOnt
 
         try {
             $crudo = strtoupper((string) preg_replace('/[^0-9A-Za-z]/', '', $ont->serial));
-            $enAcs = GenieAcs::deEmpresa($companyId)->dispositivos(
-                ['_deviceId._SerialNumber' => ['$in' => array_values(array_unique([$crudo, EquiposDelAcs::serial($ont->serial)]))]], ['_id']
-            )[0]['_id'] ?? null;
+            $ficha = GenieAcs::deEmpresa($companyId)->dispositivos(
+                ['_deviceId._SerialNumber' => ['$in' => array_values(array_unique([$crudo, EquiposDelAcs::serial($ont->serial)]))]],
+                ['_id', '_lastInform'],
+            )[0] ?? null;
+            $enAcs = $ficha['_id'] ?? null;
         } catch (\Throwable) {
+            $ficha = null;
             $enAcs = null;
         }
+
+        // Estar en el ACS no es estar vivo: la ficha queda guardada aunque el
+        // equipo lleve días mudo. Si no saluda hace rato, las tareas se
+        // encolan para nadie —eso fue exactamente lo que pasó con LILIANA_GIL—
+        // así que para decidir si hay que destrabar se mira el último saludo.
+        $ultimo = isset($ficha['_lastInform']) ? Carbon::parse($ficha['_lastInform']) : null;
+        $responde = $ultimo && $ultimo->gt(now()->subMinutes(self::MINUTOS_PARA_DARLO_POR_MUDO));
 
         // Fuera del TR-069 y sin forma de llegar solo: no se deja esperando.
         $compatible = $enAcs ? null : self::compatibilidad($g, (int) $ont->olt_id, (string) $ont->fsp, (int) $ont->ont_id, (string) $ont->serial, false);
@@ -593,6 +625,11 @@ class AprovisionamientoDeOnt
         if (($compatible['puede'] ?? null) === CompatibilidadDeOnt::NO) {
             return ['texto' => 'La ONT no se reconfigura sola: ' . $compatible['motivo'] . ' ' . $compatible['que_hacer'], 'id' => null];
         }
+
+        // Si el equipo no está en el TR-069, antes de encolar tareas que nadie
+        // va a recoger se mira si se le puede abrir un camino. Si no hace
+        // falta, esto no hace nada.
+        $destrabe = $responde ? ['pasos' => [], 'ip_prestada' => null] : self::destrabar($companyId, $ont, $userId);
 
         Aprovisionamiento::where('company_id', $companyId)->where('serial', $ont->serial)
             ->whereIn('estado', ['esperando', 'aplicando', 'no_aplica'])
@@ -606,14 +643,151 @@ class AprovisionamientoDeOnt
             'serial'     => $ont->serial,
             'user_id'    => $userId,
             'datos'      => ['cliente' => $cliente['nombre'] ?? null, 'wan' => $wan, 'avisos' => [], 'origen' => $motivo ? 'reinicio' : 'cambio_de_conexion']
-                + ($compatible ? ['compatibilidad' => $compatible] : []),
+                + ($compatible ? ['compatibilidad' => $compatible] : [])
+                + ($destrabe['ip_prestada'] ?? null ? ['ip_prestada' => $destrabe['ip_prestada']] : []),
             'estado'     => $enAcs ? 'aplicando' : 'esperando',
             'acs_id'     => $enAcs,
-            'pasos'      => $enAcs ? [['paso' => $motivo ?? 'Cambio de conexión desde la ficha del cliente', 'ok' => true, 'detalle' => $enAcs]] : [],
+            'pasos'      => array_merge(
+                $enAcs ? [['paso' => $motivo ?? 'Cambio de conexión desde la ficha del cliente', 'ok' => true, 'detalle' => $enAcs]] : [],
+                $destrabe['pasos'] ?? [],
+            ),
             'detalle'    => $enAcs ? 'Aplicando la conexión nueva…' : self::textoDeEspera($compatible),
         ]);
 
         return ['texto' => 'La ONT se reconfigura sola en uno o dos minutos: ' . self::resumenWan($wan) . '.', 'id' => $nuevo->id];
+    }
+
+    /**
+     * Le abre un camino a un equipo que no puede pedir ayuda.
+     *
+     * La configuración viaja por TR-069, el TR-069 viaja por la conexión del
+     * cliente: si esa conexión quedó mal, el equipo no puede reportarse y no
+     * hay forma de arreglarlo. Reaplicar, solo, encola tareas que nadie va a
+     * recoger. Acá se mira si falta algo y se abre lo que haga falta; si el
+     * equipo ya tiene por dónde salir, esto no toca nada.
+     *
+     * @return array{pasos: list<array{paso:string, ok:bool, detalle:string}>, ip_prestada: ?string}
+     */
+    private static function destrabar(int $companyId, object $ont, int $userId): array
+    {
+        $pasos = [];
+        $ipPrestada = null;
+
+        $g = GestionRemota::where('company_id', $companyId)->first();
+        $vlanGestion = (int) ($g?->vlan ?: 0);
+
+        // ── 1. El camino de gestión por la OLT ─────────────────────────────
+        $tieneGestion = collect(json_decode((string) ($ont->service_ports ?? '[]'), true) ?: [])
+            ->contains(fn ($sp) => (int) ($sp['vlan'] ?? 0) === $vlanGestion);
+
+        if ($vlanGestion && !$tieneGestion && $g?->activa) {
+            try {
+                // darAcceso hace la cadena entera: conexión de gestión, perfil
+                // de línea si le falta el carril, y servidor TR-069.
+                $r = app(GestionRemotaDeOnt::class, ['companyId' => $companyId])
+                    ->darAcceso((int) $ont->olt_id, (string) $ont->fsp, (int) $ont->ont_id, true);
+
+                $pasos[] = [
+                    'paso'    => 'Abrir camino de gestión',
+                    'ok'      => (bool) ($r['ok'] ?? false),
+                    'detalle' => ($r['ok'] ?? false)
+                        ? 'El equipo no se reportaba: se le dio la conexión de gestión por la OLT para poder entrar. Se le quita sola cuando quede andando.'
+                        : ($r['detalle'] ?? 'La OLT no aceptó la conexión de gestión.'),
+                ];
+            } catch (\Throwable $e) {
+                $pasos[] = ['paso' => 'Abrir camino de gestión', 'ok' => false, 'detalle' => mb_substr($e->getMessage(), 0, 140)];
+            }
+        }
+
+        // ── 2. La IP que el equipo sigue pidiendo ──────────────────────────
+        //
+        // Un equipo al que le cambiaron la conexión conserva la anterior hasta
+        // que alguien se la cambie por TR-069. Si sigue pidiendo una IP fija
+        // que quedó libre, prestársela es la forma de entrar sin tocar nada
+        // suyo: se le devuelve, se lo configura, y se suelta.
+        $suya = self::wanQuePideLaOnt((int) $ont->olt_id, (string) $ont->fsp, (int) $ont->ont_id);
+
+        $yaTiene = DB::table('user_data')->where('user_id', $userId)->value('ip_assignment_id');
+
+        if ($suya && !$yaTiene) {
+            $libre = DB::table('tabla_ips as t')
+                ->leftJoin('user_data as ud', 'ud.ip_assignment_id', '=', 't.id')
+                ->where('t.company_id', $companyId)->where('t.ip', $suya['ip'])
+                ->whereNull('ud.user_id')
+                ->value('t.id');
+
+            if ($libre) {
+                try {
+                    AsignacionDeIp::asignar($userId, $suya['ip'], $companyId);
+
+                    $api = (new self($companyId))->routerDelCliente($userId);
+
+                    if (!$api) {
+                        throw new \RuntimeException('No se pudo entrar al router del cliente.');
+                    }
+
+                    $ipFija = new \App\Services\Red\IpFijaEnElRouter($api, $companyId);
+                    $revision = $ipFija->revisar($suya['ip'], (string) ($suya['vlan'] ?: ''), $userId);
+
+                    if (!($revision['ok'] ?? false)) {
+                        throw new \RuntimeException((string) ($revision['mensaje'] ?? 'El router no aceptó la IP.'));
+                    }
+
+                    $ipFija->aplicar(
+                        $revision,
+                        $suya['ip'],
+                        (string) ($suya['vlan'] ?: ''),
+                        (string) (DB::table('user_data')->where('user_id', $userId)->value('dni') ?: ''),
+                        $suya['mac'] ?? '',
+                    );
+
+                    $ipPrestada = $suya['ip'];
+                    $pasos[] = [
+                        'paso'    => 'Devolverle la IP que sigue pidiendo',
+                        'ok'      => true,
+                        'detalle' => "El equipo sigue configurado con la IP fija {$suya['ip']}, que estaba libre: se le devolvió para poder entrar por TR-069. "
+                            . 'Se suelta sola cuando tome su conexión nueva.',
+                    ];
+                } catch (\Throwable $e) {
+                    $pasos[] = ['paso' => 'Devolverle la IP que sigue pidiendo', 'ok' => false, 'detalle' => mb_substr($e->getMessage(), 0, 140)];
+                }
+            }
+        }
+
+        return ['pasos' => $pasos, 'ip_prestada' => $ipPrestada];
+    }
+
+    /**
+     * Qué conexión tiene puesta la ONT hoy, leída de la OLT.
+     *
+     * @return array{ip:string, vlan:int, mac:string}|null
+     */
+    private static function wanQuePideLaOnt(int $oltId, string $fsp, int $ontId): ?array
+    {
+        [$f, $s, $p] = array_pad(explode('/', $fsp), 3, '0');
+
+        try {
+            $salida = (string) app(\App\Services\OltTelnetDispatcher::class)
+                ->dispatch($oltId, 'runCommand', ['command' => "display ont wan-info {$f}/{$s} {$p} {$ontId}"]);
+        } catch (\Throwable $e) {
+            return null;
+        }
+
+        if (!preg_match('/IPv4 access type\s*:\s*Static/i', $salida)
+            || !preg_match('/IPv4 address\s*:\s*(\d+\.\d+\.\d+\.\d+)/i', $salida, $mi)) {
+            return null;
+        }
+
+        preg_match('/Manage VLAN\s*:\s*(\d+)/i', $salida, $mv);
+        preg_match('/MAC address\s*:\s*([0-9A-Fa-f-]{14})/', $salida, $mm);
+
+        return [
+            'ip'   => $mi[1],
+            'vlan' => (int) ($mv[1] ?? 0),
+            'mac'  => isset($mm[1])
+                ? implode(':', str_split(strtoupper(str_replace('-', '', $mm[1])), 2))
+                : '',
+        ];
     }
 
     /** @return array{id:int, nombre:string, nombres:string, apellidos:string, tipo:string, pppoe_usuario:?string, ip:?string}|null */
@@ -965,6 +1139,139 @@ class AprovisionamientoDeOnt
         }
     }
 
+    /**
+     * ¿La ONT quedó sin service-port? Devuelve dónde está, o null si está bien.
+     *
+     * La ausencia nunca es prueba por sí sola: la OLT pagina sus respuestas y
+     * una lectura cortada hace parecer que faltan service-ports que sí están.
+     * Por eso se pregunta por esa ONT puntual, se exige que la respuesta traiga
+     * datos del puerto —si no, la lectura no sirve— y recién ahí se concluye.
+     */
+    /**
+     * El destrabe completo, desde el trabajo de fondo.
+     *
+     * Es el mismo que hace Reaplicar: abrir la gestión por la OLT —preparando
+     * el perfil de línea si le falta el carril—, asignar el servidor TR-069 y,
+     * si el equipo sigue pidiendo una IP fija que está libre, prestársela.
+     * Corre una sola vez por aprovisionamiento.
+     */
+    private function destrabarloSolo(Aprovisionamiento $a): void
+    {
+        $datos = $a->datos ?? [];
+        $datos['camino_abierto'] = now()->toIso8601String();
+        $a->datos = $datos;
+        $a->save();
+
+        $ont = DB::table('olt_onts')->where('olt_id', $a->olt_id)
+            ->whereRaw('UPPER(serial) = ?', [strtoupper((string) $a->serial)])
+            ->first(['olt_id', 'fsp', 'ont_id', 'serial', 'service_ports']);
+
+        if (!$ont) {
+            return;
+        }
+
+        $r = self::destrabar((int) $a->company_id, $ont, (int) $a->user_id);
+
+        foreach ($r['pasos'] as $paso) {
+            $this->anotarPaso($a, $paso['paso'], $paso['ok'], $paso['detalle']);
+        }
+
+        if ($r['ip_prestada'] ?? null) {
+            $datos = $a->datos;
+            $datos['ip_prestada'] = $r['ip_prestada'];
+            $a->timestamps = false;
+            $a->datos = $datos;
+            $a->save();
+            $a->timestamps = true;
+        }
+    }
+
+    /** Un reinicio, una sola vez: el equipo toma el servidor TR-069 al arrancar. */
+    private function reiniciarloSolo(Aprovisionamiento $a): void
+    {
+        $datos = $a->datos ?? [];
+        $datos['reinicio_pedido'] = now()->toIso8601String();
+        $a->datos = $datos;
+        $a->save();
+
+        $ont = DB::table('olt_onts')->where('olt_id', $a->olt_id)
+            ->whereRaw('UPPER(serial) = ?', [strtoupper((string) $a->serial)])
+            ->first(['olt_id', 'fsp', 'ont_id']);
+
+        if (!$ont) {
+            return;
+        }
+
+        try {
+            $r = app(GestionRemotaDeOnt::class, ['companyId' => (int) $a->company_id])
+                ->reiniciarEquipo((int) $ont->olt_id, (string) $ont->fsp, (int) $ont->ont_id);
+        } catch (\Throwable $e) {
+            $this->anotarPaso($a, 'Reiniciar el equipo', false, mb_substr($e->getMessage(), 0, 130));
+
+            return;
+        }
+
+        $this->anotarPaso(
+            $a,
+            'Reiniciar el equipo',
+            (bool) ($r['ok'] ?? false),
+            ($r['ok'] ?? false)
+                ? 'Seguía sin reportarse con el camino abierto: se lo reinició para que tome el servidor TR-069 al arrancar.'
+                : ($r['detalle'] ?? 'La OLT no pudo reiniciarlo.'),
+        );
+    }
+
+    /** Deja un paso anotado sin moverle la fecha al aprovisionamiento. */
+    private function anotarPaso(Aprovisionamiento $a, string $paso, bool $ok, string $detalle): void
+    {
+        $a->timestamps = false;
+        $a->pasos = array_merge($a->pasos ?? [], [['paso' => $paso, 'ok' => $ok, 'detalle' => $detalle]]);
+        $a->save();
+        $a->timestamps = true;
+    }
+
+    private function sinCaminoDeDatos(Aprovisionamiento $a): ?string
+    {
+        $fsp   = $a->fsp;
+        $ontId = $a->ont_id === null ? null : (int) $a->ont_id;
+
+        // El alta no siempre conoce el número de ONT: cuando falta, se busca
+        // por serial, que es lo único que no cambia. Ojo: en Huawei la primera
+        // ONT de un puerto es la 0, así que un cero es un número válido.
+        if ($ontId === null && $a->serial) {
+            $fila = \App\Models\OltOnt::where('olt_id', $a->olt_id)
+                ->whereRaw('UPPER(serial) = ?', [strtoupper((string) $a->serial)])
+                ->first(['fsp', 'ont_id']);
+
+            $fsp   = $fila?->fsp ?: $fsp;
+            $ontId = $fila?->ont_id === null ? null : (int) $fila->ont_id;
+        }
+
+        if (!$a->olt_id || !$fsp || $ontId === null) {
+            return null;
+        }
+
+        try {
+            $respuesta = app(\App\Services\OltTelnetDispatcher::class)
+                ->dispatch((int) $a->olt_id, 'getServicePorts', ['fsp' => $fsp, 'ont_id' => $ontId]) ?: [];
+        } catch (\Throwable $e) {
+            return null;
+        }
+
+        // Sin datos del puerto no se opina: puede ser la sesión, no el cliente.
+        $delPuerto = collect($respuesta)->filter(
+            fn ($sp) => str_contains(str_replace(['gpon', 'epon'], '', (string) ($sp['port'] ?? '')), $fsp),
+        );
+
+        if ($delPuerto->isEmpty()) {
+            return null;
+        }
+
+        $suyo = $delPuerto->contains(fn ($sp) => (int) ($sp['ont_id'] ?? -1) === $ontId);
+
+        return $suyo ? null : "{$fsp}:{$ontId}";
+    }
+
     private function unaVuelta(Aprovisionamiento $a, GenieAcs $acs): void
     {
         if ($a->estado === 'esperando') {
@@ -984,6 +1291,40 @@ class AprovisionamientoDeOnt
             } else {
                 $sinConfirmar = ($compatible['puede'] ?? null) === CompatibilidadDeOnt::NO_SE_SABE;
                 $espera = $sinConfirmar ? self::ESPERA_SIN_CONFIRMAR_MINUTOS : self::ESPERA_MINUTOS;
+
+                // Antes de seguir esperando: si la ONT no tiene service-port,
+                // no hay camino de datos y no va a aparecer nunca. Esperar 90
+                // minutos por algo que no puede pasar deja al cliente sin
+                // internet y al técnico mirando un reloj.
+                // Si no aparece por su cuenta, se le abre la puerta de servicio:
+                // la gestión por la OLT. Un equipo con la WAN rota no puede
+                // llamar al TR-069, y sin TR-069 no se le puede arreglar la
+                // WAN. Alguien tiene que abrir ese círculo, y no puede ser
+                // siempre una persona mirando la pantalla.
+                if ($a->created_at->lt(now()->subMinutes(self::ESPERA_PARA_ABRIR_CAMINO))
+                    && empty($a->datos['camino_abierto'])) {
+                    $this->destrabarloSolo($a);
+                }
+
+                // Y si con el camino abierto sigue sin saludar, un reinicio:
+                // el equipo toma el servidor TR-069 al arrancar. Una vez.
+                if ($a->created_at->lt(now()->subMinutes(self::ESPERA_PARA_REINICIAR))
+                    && !empty($a->datos['camino_abierto'])
+                    && empty($a->datos['reinicio_pedido'])) {
+                    $this->reiniciarloSolo($a);
+                }
+
+                if ($a->created_at->lt(now()->subMinutes(self::ESPERA_SIN_CAMINO_MINUTOS))
+                    && ($donde = $this->sinCaminoDeDatos($a))) {
+                    $a->fill([
+                        'estado'  => 'error',
+                        'detalle' => "La ONT {$donde} está registrada en la OLT pero sin service-port: "
+                            . 'no tiene camino de datos, por eso no navega ni aparece en el TR-069. '
+                            . 'Completale el service-port con la VLAN del cliente desde Admin OLT y reintentá.',
+                    ])->save();
+
+                    return;
+                }
 
                 if ($a->created_at->lt(now()->subMinutes($espera))) {
                     $a->fill([
@@ -1134,6 +1475,46 @@ class AprovisionamientoDeOnt
             'detalle'  => $mal->isEmpty() ? 'Equipo aprovisionado.' : ($mal->count() === 1 ? 'Un paso no se aplicó.' : "{$mal->count()} pasos no se aplicaron."),
             'listo_en' => now(),
         ])->save();
+
+        if ($mal->isEmpty()) {
+            $this->soltarIpPrestada($a);
+        }
+    }
+
+    /**
+     * Devuelve la IP que se le prestó al equipo para poder entrar.
+     *
+     * Sólo se suelta si el cliente de verdad quedó en otra conexión: si su
+     * plan sigue siendo esa IP fija, era suya desde el principio y se queda.
+     */
+    private function soltarIpPrestada(Aprovisionamiento $a): void
+    {
+        $ip = $a->datos['ip_prestada'] ?? null;
+
+        if (!$ip || !$a->user_id) {
+            return;
+        }
+
+        $tipo = (string) DB::table('user_data')->where('user_id', $a->user_id)->value('connection_type');
+
+        if ($tipo !== 'pppoe') {
+            return;
+        }
+
+        DB::table('user_data')->where('user_id', $a->user_id)->update(['ip_assignment_id' => null]);
+
+        $datos = $a->datos;
+        unset($datos['ip_prestada']);
+
+        $a->timestamps = false;
+        $a->datos = $datos;
+        $a->pasos = array_merge($a->pasos ?? [], [[
+            'paso'    => 'Soltar la IP prestada',
+            'ok'      => true,
+            'detalle' => "El equipo ya está por PPPoE: se devolvió la IP {$ip} a la tabla.",
+        ]]);
+        $a->save();
+        $a->timestamps = true;
     }
 
     /**
