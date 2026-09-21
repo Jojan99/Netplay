@@ -19,6 +19,8 @@ class ListaDeClientes
     private const SIN_IP = "(COALESCE(tabla_ips.ip, '') = '' AND COALESCE(user_data.connection_type, 'static') <> 'pppoe')";
     /** La columna nace en 1: sin fila marcada, el cliente recibe WhatsApp. */
     private const SIN_WA = 'COALESCE(user_data.whatsapp_enabled, 1) = 0';
+    /** Los que cobran por la pasarela: la marca vive en la factura. */
+    private const CON_FE = 'COALESCE(cab_facturations.billing_electronic, 0) = 1';
 
     public function pagina(array $filtros): array
     {
@@ -29,7 +31,8 @@ class ListaDeClientes
             COALESCE(SUM(internet_status.name = 'ACTIVE'), 0) AS activos,
             COALESCE(SUM(internet_status.name <> 'ACTIVE'), 0) AS suspendidos,
             COALESCE(SUM(" . self::SIN_IP . "), 0) AS sin_ip,
-            COALESCE(SUM(" . self::SIN_WA . "), 0) AS sin_wa
+            COALESCE(SUM(" . self::SIN_WA . "), 0) AS sin_wa,
+            COALESCE(SUM(" . self::CON_FE . "), 0) AS con_fe
         ")->first();
 
         $conteos = [
@@ -38,6 +41,7 @@ class ListaDeClientes
             'suspendidos' => (int) $c->suspendidos,
             'sin_ip'      => (int) $c->sin_ip,
             'sin_wa'      => (int) $c->sin_wa,
+            'con_fe'      => (int) $c->con_fe,
         ];
 
         $query = clone $base;
@@ -47,6 +51,7 @@ class ListaDeClientes
             case 'suspended': $query->where('internet_status.name', '<>', 'ACTIVE'); $total = $conteos['suspendidos']; break;
             case 'noip':      $query->whereRaw(self::SIN_IP); $total = $conteos['sin_ip']; break;
             case 'nowa':      $query->whereRaw(self::SIN_WA); $total = $conteos['sin_wa']; break;
+            case 'fe':        $query->whereRaw(self::CON_FE); $total = $conteos['con_fe']; break;
             default:          $total = $conteos['todos'];
         }
 
@@ -71,7 +76,8 @@ class ListaDeClientes
             'user_data.router_id',
             'user_data.connection_type',
             'user_data.control_velocidad',
-            DB::raw('COALESCE(user_data.whatsapp_enabled, 1) AS whatsapp_enabled')
+            DB::raw('COALESCE(user_data.whatsapp_enabled, 1) AS whatsapp_enabled'),
+            DB::raw('COALESCE(cab_facturations.billing_electronic, 0) AS billing_electronic')
         )
             // Los más recientes primero: el cliente recién creado queda a la vista.
             ->orderByDesc('users.id')

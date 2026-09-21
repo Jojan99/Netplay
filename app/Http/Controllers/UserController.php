@@ -29,6 +29,30 @@ class UserController extends Controller
         return standardApiReponse('ok', $pagina, ApiResponseConstants::SUCCESS);
     }
 
+    /**
+     * Enciende o apaga la facturación electrónica del cliente (la marca vive en
+     * su factura). Es la que decide si cobra por la pasarela y qué mensajes de
+     * pago recibe.
+     */
+    public function facturacionElectronica(int $id, Request $request): object
+    {
+        $activa = $request->boolean('activa');
+
+        $cab = \App\Models\CabFacturation::where('user_id', $id)
+            ->where('company_id', getSessionCompanyId())
+            ->first();
+
+        if (!$cab) {
+            return standardApiReponse('Ese cliente todavía no tiene facturación creada.', null, 1, JsonResponse::HTTP_OK);
+        }
+
+        $cab->billing_electronic = $activa ? 1 : 0;
+        $cab->save();
+
+        return standardApiReponse($activa ? 'Facturación electrónica activada.' : 'Facturación electrónica desactivada.',
+            ['billing_electronic' => (int) $cab->billing_electronic], 0, JsonResponse::HTTP_OK);
+    }
+
     /** Clientes eliminados de la empresa, para poder reinstalarlos. */
     public function eliminados(Request $request, \App\Services\Clientes\ClientesEliminados $eliminados): object
     {

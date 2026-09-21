@@ -21,6 +21,8 @@ Route::prefix('user')->group(function () {
         Route::get('{id}/reinstalar/ip', [UserController::class, 'reinstalarRevisarIp'])->whereNumber('id');
         // Qué tiene el cliente en el MikroTik, antes de eliminarlo.
         Route::get('{id}/en-router', [UserController::class, 'enRouter'])->whereNumber('id');
+        // Facturación electrónica del cliente (cobra por la pasarela).
+        Route::post('{id}/facturacion-electronica', [UserController::class, 'facturacionElectronica'])->whereNumber('id');
     });
 
     // Admin y contador: consultar clientes y generar PDF

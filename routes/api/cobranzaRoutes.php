@@ -11,6 +11,8 @@ Route::prefix('cobranza')->middleware('role:admin,contador')->group(function () 
     Route::post('vistos', [CobranzaController::class, 'marcarVistos']);
     Route::post('revisar', [CobranzaController::class, 'revisarAhora']);
     Route::post('ia/probar', [CobranzaController::class, 'probarIa']);
+    Route::post('pago/qr',   [CobranzaController::class, 'guardarQr']);
+    Route::delete('pago/qr', [CobranzaController::class, 'quitarQr']);
     Route::get('casos',   [CobranzaController::class, 'casos']);
     Route::get('casos/{id}', [CobranzaController::class, 'caso'])->whereNumber('id');
     Route::post('casos/{id}/autorizar', [CobranzaController::class, 'autorizar'])->whereNumber('id');

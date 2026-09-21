@@ -44,15 +44,15 @@ class Herramientas
                     'required' => ['fechas'],
                 ],
             ],
-            $this->hayPasarela() ? [
-                'name'        => 'enviar_link_de_pago',
-                'description' => 'Genera el link para pagar en línea TODA la deuda y te devuelve la URL para compartirla. '
-                    . ($desc > 0
+            $this->medios()['hay'] ? [
+                'name'        => 'enviar_medios_de_pago',
+                'description' => 'Le da al cliente cómo pagar TODA la deuda: ' . $this->comoSePaga() . ' '
+                    . ($desc > 0 && $this->medios()['link']
                         ? "Opcional: descuento_pct (máximo {$desc}) si el cliente paga el total dentro de {$this->cfg->descuento_dias} día(s); ofrécelo sólo si hace falta para cerrar el pago, empezando por menos."
                         : 'No hay descuentos autorizados.'),
                 'input_schema' => [
                     'type' => 'object',
-                    'properties' => $desc > 0 ? ['descuento_pct' => ['type' => 'integer', 'minimum' => 0, 'maximum' => $desc]] : (object) [],
+                    'properties' => $desc > 0 && $this->medios()['link'] ? ['descuento_pct' => ['type' => 'integer', 'minimum' => 0, 'maximum' => $desc]] : (object) [],
                 ],
             ] : null,
             [
@@ -86,7 +86,8 @@ class Herramientas
         try {
             return match ($nombre) {
                 'registrar_compromiso' => $this->registrarCompromiso((array) ($entrada['fechas'] ?? []), (string) ($entrada['nota'] ?? '')),
-                'enviar_link_de_pago'  => $this->linkDePago((int) ($entrada['descuento_pct'] ?? 0)),
+                'enviar_medios_de_pago',
+                'enviar_link_de_pago'  => $this->comoPagar((int) ($entrada['descuento_pct'] ?? 0)),
                 'escalar_a_humano'     => $this->escalar((string) ($entrada['motivo'] ?? 'El asistente pidió ayuda.')),
                 'cerrar_caso'          => $this->cerrar((string) ($entrada['resultado'] ?? ''), (string) ($entrada['nota'] ?? '')),
                 default                => ['ok' => false, 'texto' => "No existe la herramienta {$nombre}."],
@@ -203,16 +204,140 @@ class Herramientas
         return ['ok' => true, 'texto' => "Compromiso registrado:\n{$texto}\n"
             . ($sinDescuento ? 'El descuento que se le había ofrecido ya no aplica (era sólo por pagar todo con el link a tiempo): los valores de arriba son sin descuento. Díselo con claridad. ' : '')
             . ($this->cfg->compromiso_suspende ? 'Si no paga en la fecha, el servicio se suspende automáticamente (díselo con tacto). ' : '')
-            . ($this->hayPasarela() ? 'Puedes ofrecerle el link de pago para cuando vaya a pagar.' : '')];
+            . ($this->medios()['hay'] ? 'Puedes pasarle los medios de pago con enviar_medios_de_pago para cuando vaya a pagar.' : '')];
     }
 
     // ── Link de pago (con descuento opcional) ─────────────────────────────
 
+    /**
+     * Cómo paga el cliente, con lo que tenga cargado la empresa: link de pago
+     * (si hay pasarela), la imagen del QR —que se le manda al momento— y los
+     * datos escritos (cuentas, llaves, oficinas).
+     */
+    private function comoPagar(int $descuento): array
+    {
+        $medios = $this->medios();
+
+        if (!$medios['hay']) {
+            return ['ok' => false, 'texto' => 'La empresa no cargó medios de pago. Ofrece un compromiso de pago o escala a una persona para que le den los datos.'];
+        }
+
+        $partes = [];
+        $link = $medios['link'] ? $this->linkDePago($descuento) : null;
+
+        // Si el link falla (descuento inválido, sin saldo…), eso manda: no se
+        // le mandan medios de pago encima de un error.
+        if ($link && !$link['ok']) {
+            return $link;
+        }
+
+        if ($link) {
+            $partes[] = $link['texto'];
+        }
+
+        if ($medios['qr']) {
+            $partes[] = $this->mandarQr($medios['qr'])
+                ? 'Ya le envié al cliente la imagen del QR de pago: dile que escanee el QR que le acaba de llegar.'
+                : 'No se pudo enviar la imagen del QR; dale los datos escritos de abajo.';
+        }
+
+        if ($medios['texto']) {
+            $partes[] = "Medios de pago de la empresa (cópialos tal cual, sin cambiar ni un número):\n" . $medios['texto'];
+        }
+
+        $partes[] = 'Después pídele que te mande el comprobante cuando pague.';
+
+        return ['ok' => true, 'texto' => implode("\n\n", $partes)];
+    }
+
+    /**
+     * Lo que este cliente puede usar para pagar. El link y el QR son de la
+     * pasarela: sólo para quien tenga factura electrónica activa. Al resto se
+     * le dan únicamente los datos de pago escritos (Nequi, Daviplata…).
+     *
+     * @return array{link:bool, qr:?string, texto:?string, hay:bool}
+     */
+    private function medios(): array
+    {
+        $m = $this->cfg->mediosDePago($this->hayPasarela());
+
+        if (!$this->conFacturaElectronica()) {
+            $m['link'] = false;
+            $m['qr'] = null;
+            $m['hay'] = (bool) $m['texto'];
+        }
+
+        return $m;
+    }
+
+    /** ¿El cliente cobra por la pasarela (factura electrónica activa)? */
+    private function conFacturaElectronica(): bool
+    {
+        return (bool) DB::table('cab_facturations')
+            ->where('company_id', $this->caso->company_id)
+            ->where('user_id', $this->caso->user_id)
+            ->value('billing_electronic');
+    }
+
+    /** En una línea, para que la IA sepa qué va a pasar al usarla. */
+    private function comoSePaga(): string
+    {
+        $m = $this->medios();
+        $como = array_filter([
+            $m['link'] ? 'le devuelve el link de pago en línea' : null,
+            $m['qr'] ? 'le manda al cliente la imagen del QR de pago' : null,
+            $m['texto'] ? 'te devuelve los datos de pago escritos para que se los copies' : null,
+        ]);
+
+        return implode(', ', $como) . '.';
+    }
+
+    /** Manda la imagen del QR por la misma línea de WhatsApp de la conversación. */
+    private function mandarQr(string $ruta): bool
+    {
+        try {
+            $linea = DB::table('wa_lineas')->where('company_id', $this->caso->company_id)->where('activa', 1)
+                ->when($this->cfg->wa_linea_id, fn ($q) => $q->where('id', $this->cfg->wa_linea_id))
+                ->orderByDesc('principal')->first(['id', 'instance_id']);
+
+            $url = asset('storage/' . $ruta);
+
+            app(Mensajero::class)->enviarImagen(
+                (int) $this->caso->company_id,
+                $linea?->instance_id,
+                (string) $this->caso->telefono,
+                $url,
+                'Código QR para pagar'
+            );
+
+            // Que quede en la conversación: si no, el equipo ve que el
+            // asistente habla de un QR que no aparece por ninguna parte.
+            if ($this->caso->conversation_id) {
+                DB::table('crm_messages')->insert([
+                    'conversation_id' => $this->caso->conversation_id,
+                    'wa_linea_id'     => $linea?->id,
+                    'sender_type'     => 'agent',
+                    'message_type'    => 'image',
+                    'media_url'       => $url,
+                    'mime_type'       => 'image/jpeg',
+                    'content'         => 'Código QR para pagar',
+                    'status'          => 'sent',
+                    'agent_signature' => mb_substr((string) $this->cfg->nombre_asistente, 0, 200),
+                    'created_at'      => now(),
+                    'updated_at'      => now(),
+                ]);
+            }
+
+            return true;
+        } catch (\Throwable $e) {
+            Log::error('[Cobranza] No se pudo mandar el QR de pago', ['caso' => $this->caso->id, 'error' => $e->getMessage()]);
+
+            return false;
+        }
+    }
+
     private function linkDePago(int $descuento): array
     {
-        if (!$this->hayPasarela()) {
-            return ['ok' => false, 'texto' => 'La empresa no tiene pago en línea. Ofrece un compromiso de pago o escala a una persona para los datos de consignación.'];
-        }
 
         $companyId = (int) $this->caso->company_id;
         $deuda = Deuda::de($companyId, (int) $this->caso->user_id);

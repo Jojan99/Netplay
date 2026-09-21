@@ -10,6 +10,8 @@ use App\Services\Cobranza\Cobranza;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 
 /** Cobranza inteligente: configuración, casos y la burbuja del panel. */
@@ -41,6 +43,7 @@ class CobranzaController extends Controller
                 'url_clave'     => Ia::URL_CLAVE,
                 'url_limites'   => Ia::URL_LIMITES,
             ],
+            'pago_qr_url'   => $cfg->pago_qr ? asset('storage/' . $cfg->pago_qr) : null,
             'lineas'        => DB::table('wa_lineas')->where('company_id', $companyId)->where('activa', 1)->orderByDesc('principal')->get(['id', 'nombre', 'telefono', 'principal']),
         ], 0, JsonResponse::HTTP_OK);
     }
@@ -70,10 +73,20 @@ class CobranzaController extends Controller
             'nombre_asistente'          => 'required|string|max:60',
             'instrucciones'             => 'nullable|string|max:1500',
             'wa_linea_id'               => ['nullable', 'integer', Rule::exists('wa_lineas', 'id')->where('company_id', $companyId)],
+            'pago_link'                 => 'nullable|boolean',
+            'pago_texto'                => 'nullable|string|max:1000',
         ], [
             'hora_hasta.after' => 'La hora de fin tiene que ser después de la de inicio.',
             'dias.regex'       => 'Elegí al menos un día.',
         ]);
+
+        // Los medios de pago son de una migración nueva: si todavía no se corrió,
+        // se guarda el resto igual en vez de reventar.
+        foreach (['pago_link', 'pago_texto'] as $campo) {
+            if (array_key_exists($campo, $datos) && !Schema::hasColumn('cobranza_configs', $campo)) {
+                unset($datos[$campo]);
+            }
+        }
 
         $cfg = CobranzaConfig::deEmpresa($companyId);
         $cfg->fill($datos + ['company_id' => $companyId]);
@@ -101,6 +114,57 @@ class CobranzaController extends Controller
         $cfg->save();
 
         return standardApiReponse('Cobranza guardada.', $cfg->fresh(), 0, JsonResponse::HTTP_OK);
+    }
+
+    /**
+     * La imagen del QR de pago de la empresa. Se guarda en el disco público
+     * porque WhatsApp la descarga por URL para mandársela al cliente.
+     */
+    public function guardarQr(Request $request): JsonResponse
+    {
+        $request->validate(['qr' => 'required|image|mimes:jpg,jpeg,png,webp|max:3072']);
+
+        if (!Schema::hasColumn('cobranza_configs', 'pago_qr')) {
+            return standardApiReponse('Falta correr la migración de medios de pago (php artisan migrate).', null, 1, JsonResponse::HTTP_OK);
+        }
+
+        $companyId = $this->empresa();
+        $cfg = CobranzaConfig::deEmpresa($companyId);
+        $anterior = (string) $cfg->pago_qr;
+
+        $ruta = $request->file('qr')->storeAs(
+            'cobranza',
+            'qr-' . $companyId . '-' . now()->format('YmdHis') . '.' . $request->file('qr')->extension(),
+            'public'
+        );
+
+        if (!$ruta) {
+            return standardApiReponse('No se pudo guardar la imagen.', null, 1, JsonResponse::HTTP_OK);
+        }
+
+        $cfg->company_id = $companyId;
+        $cfg->pago_qr = $ruta;
+        $cfg->save();
+
+        // La anterior ya no la ve nadie.
+        if ($anterior && $anterior !== $ruta) {
+            Storage::disk('public')->delete($anterior);
+        }
+
+        return standardApiReponse('QR guardado.', ['pago_qr_url' => asset('storage/' . $ruta)], 0, JsonResponse::HTTP_OK);
+    }
+
+    public function quitarQr(): JsonResponse
+    {
+        $cfg = CobranzaConfig::deEmpresa($this->empresa());
+
+        if ($cfg->pago_qr) {
+            Storage::disk('public')->delete($cfg->pago_qr);
+            $cfg->pago_qr = null;
+            $cfg->save();
+        }
+
+        return standardApiReponse('QR quitado.', null, 0, JsonResponse::HTTP_OK);
     }
 
     /** Prueba una clave (la que escribió, o la guardada) sin guardarla. */
@@ -164,6 +228,11 @@ class CobranzaController extends Controller
             'detectados'    => (int) ($cuenta['detectado'] ?? 0),
             'escalados'     => (int) ($cuenta['escalado'] ?? 0),
             'en_curso'      => (int) collect(['autorizado', 'contactado', 'negociando', 'acuerdo'])->sum(fn ($e) => $cuenta[$e] ?? 0),
+            // Conversaciones que se movieron en los últimos minutos: la burbuja
+            // parpadea "trabajando" mientras las haya.
+            'trabajando'    => CobranzaCaso::where('company_id', $companyId)
+                ->whereIn('estado', ['autorizado', 'contactado', 'negociando'])
+                ->where('updated_at', '>=', now()->subMinutes(10))->count(),
             'no_vistos'     => CobranzaCaso::where('company_id', $companyId)->where('visto', false)
                 ->whereIn('estado', ['detectado', 'escalado', 'acuerdo', 'pagado'])->count(),
         ], 0, JsonResponse::HTTP_OK);

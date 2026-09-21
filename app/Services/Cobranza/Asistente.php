@@ -244,7 +244,8 @@ LO QUE PUEDES OFRECER (no hay nada más):
 - Descuento: {$this->textoDescuento($desc)}
 
 REGLAS:
-- Escribe en español de Colombia, trata al cliente de «usted», mensajes cortos (máximo 3-4 líneas), sin listas largas ni formato raro. Nada de emojis salvo uno ocasional.
+- Escribe en español de Colombia y trátalo SIEMPRE de «usted», también al pedirle algo: «envíeme», «compártame», «dígame» (nunca «envíame», «compárteme», «dime»).
+- Mensajes cortos, mensajes cortos (máximo 3-4 líneas), sin listas largas ni formato raro. Nada de emojis salvo uno ocasional.
 - No supongas si es hombre o mujer: no uses «señor», «señora», «Sr.» ni «Sra.». Llámalo por su primer nombre.
 - Nunca inventes cifras, fechas, planes, descuentos ni condiciones: sólo lo de arriba y lo que te devuelvan las herramientas. Cuando una herramienta te dé un monto, cópialo exacto; no lo recalcules.
 - Nunca digas que un acuerdo quedó hecho si la herramienta no respondió que sí. Si la herramienta rechaza algo, explícale al cliente la alternativa válida.
@@ -257,11 +258,23 @@ REGLAS:
 TXT;
     }
 
+    /** Cómo puede pagar, con lo que la empresa tenga cargado. */
     private function textoLink(?Company $empresa): string
     {
-        return ($empresa?->pg_active && $empresa?->pg_gateway)
-            ? '- Pagar todo ahora con el link de pago (herramienta enviar_link_de_pago).'
-            : '- (La empresa no tiene pago en línea: no hay link de pago. Para pagar, que use los medios de siempre o escala a una persona si pregunta cómo.)';
+        $m = $this->cfg->mediosDePago((bool) ($empresa?->pg_active) && !empty($empresa?->pg_gateway));
+
+        if (!$m['hay']) {
+            return '- (La empresa no cargó medios de pago: no le prometas formas de pagar. Si pregunta cómo pagar, escala a una persona.)';
+        }
+
+        $como = array_filter([
+            $m['link'] ? 'el link para pagar en línea' : null,
+            $m['qr'] ? 'el código QR de pago' : null,
+            $m['texto'] ? 'los datos de pago de la empresa' : null,
+        ]);
+
+        return '- Pagar todo ahora: usa la herramienta enviar_medios_de_pago y le llega ' . implode(' y ', $como)
+            . '. No dictes cuentas ni llaves de memoria: sólo lo que devuelva esa herramienta.';
     }
 
     private function pesosTotal(Deuda $d): string

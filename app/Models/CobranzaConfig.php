@@ -15,6 +15,7 @@ class CobranzaConfig extends Model
         'descuento_max_pct', 'descuento_dias', 'cuotas_max', 'plazo_max_dias', 'compromiso_suspende',
         'hora_desde', 'hora_hasta', 'dias', 'max_contactos_dia', 'recordatorios', 'horas_entre_recordatorios',
         'nombre_asistente', 'instrucciones', 'wa_linea_id',
+        'pago_link', 'pago_qr', 'pago_texto',
         'ia_clave', 'ia_modelos',
     ];
 
@@ -26,7 +27,22 @@ class CobranzaConfig extends Model
         'activa'              => 'boolean',
         'compromiso_suspende' => 'boolean',
         'min_monto'           => 'float',
+        'pago_link'           => 'boolean',
     ];
+
+    /**
+     * Cómo puede pagar el cliente, con lo que tenga cargado la empresa.
+     *
+     * @return array{link:bool, qr:?string, texto:?string, hay:bool}
+     */
+    public function mediosDePago(bool $conPasarela): array
+    {
+        $texto = trim((string) $this->pago_texto) ?: null;
+        $qr = trim((string) $this->pago_qr) ?: null;
+        $link = $conPasarela && (bool) ($this->pago_link ?? true);
+
+        return ['link' => $link, 'qr' => $qr, 'texto' => $texto, 'hay' => $link || $qr || $texto];
+    }
 
     /** ¿La empresa usa su propia clave de Google? */
     public function tieneClavePropia(): bool
