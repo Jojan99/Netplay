@@ -152,11 +152,11 @@ class RouterDelCliente
      * Cambia el nombre o la contraseña de una de sus redes WiFi. Con $todas,
      * la contraseña queda igual en todas sus redes (2.4 y 5 GHz).
      */
-    public function cambiarWifi(int $indice, ?string $ssid, ?string $clave, bool $todas = false): array
+    public function cambiarWifi(int $indice, ?string $ssid, ?string $clave, bool $todas = false, ?bool $oculta = null): array
     {
         $equipo = $this->exigirEquipo();
 
-        return (new EquiposDelAcs($this->companyId))->cambiarWifi($equipo['id'], $indice, $ssid, $clave, $todas);
+        return (new EquiposDelAcs($this->companyId))->cambiarWifi($equipo['id'], $indice, $ssid, $clave, $todas, $oculta);
     }
 
     /** Cambia el canal de una red; null vuelve a automático. */
@@ -290,6 +290,9 @@ class RouterDelCliente
             'canal_auto'  => $r['canal_auto'] ?? null,
             'canales_posibles' => $r['canales_posibles'] ?? null,
             'puede_cambiar_clave' => (bool) $r['ruta_clave'],
+            // Red oculta: null es "el equipo no lo informa".
+            'oculta'              => $r['oculta'] ?? null,
+            'puede_ocultar'       => (bool) ($r['ruta_oculta'] ?? null),
             // El canal sólo en redes que el equipo confirma encendidas.
             'puede_cambiar_canal' => $r['activo'] === true && (bool) ($r['ruta_canal'] ?? null),
         ], $encendidas);

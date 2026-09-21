@@ -324,7 +324,7 @@ class EquiposDelAcs
      * que cambiarla dos veces. Va en un solo envío, así el equipo no queda con
      * una red cambiada y la otra no. El nombre es siempre sólo de la elegida.
      */
-    public function cambiarWifi(string $id, int $indice, ?string $ssid, ?string $clave, bool $todas = false): array
+    public function cambiarWifi(string $id, int $indice, ?string $ssid, ?string $clave, bool $todas = false, ?bool $oculta = null): array
     {
         $this->exigirPropio($id);
 
@@ -374,6 +374,25 @@ class EquiposDelAcs
 
             foreach ($destinos as $ruta) {
                 $valores[] = [$ruta, $clave, 'xsd:string'];
+            }
+        }
+
+        // Ocultar la red: el equipo deja de anunciar su nombre. Se aplica a la
+        // red elegida, o a todas cuando el cliente pidió usar lo mismo en todas
+        // —si no, queda la de 5 GHz visible y la de 2.4 escondida—.
+        if ($oculta !== null) {
+            $destinos = $todas
+                ? $redes->filter(fn ($r) => ($r['ruta_oculta'] ?? null) && $r['activo'] === true)->pluck('ruta_oculta')
+                    ->merge([$red['ruta_oculta'] ?? null])->filter()->unique()->values()->all()
+                : array_filter([$red['ruta_oculta'] ?? null]);
+
+            if (!$destinos) {
+                throw new \InvalidArgumentException('Este equipo no permite ocultar la red por TR-069.');
+            }
+
+            foreach ($destinos as $ruta) {
+                // El parámetro dice si se anuncia: ocultar es apagarlo.
+                $valores[] = [$ruta, $oculta ? 'false' : 'true', 'xsd:boolean'];
             }
         }
 
@@ -677,6 +696,12 @@ class EquiposDelAcs
                     'rutas_clave' => $rutasClave,
                     'ruta_canal' => self::existe($d, "{$b}.Channel") ? "{$b}.Channel" : null,
                     'ruta_canal_auto' => self::existe($d, "{$b}.AutoChannelEnable") ? "{$b}.AutoChannelEnable" : null,
+                    // Red oculta: el equipo deja de anunciar su nombre. Quien
+                    // la quiera usar tiene que escribirlo a mano.
+                    'oculta'      => self::existe($d, "{$b}.SSIDAdvertisementEnabled")
+                        ? self::booleano(self::v($d, "{$b}.SSIDAdvertisementEnabled")) === false
+                        : null,
+                    'ruta_oculta' => self::existe($d, "{$b}.SSIDAdvertisementEnabled") ? "{$b}.SSIDAdvertisementEnabled" : null,
                 ];
             }
         } else {
@@ -685,6 +710,11 @@ class EquiposDelAcs
                     'indice'    => (int) $i,
                     'ssid'      => self::v($d, "Device.WiFi.SSID.{$i}.SSID"),
                     'activo'    => self::booleano(self::v($d, "Device.WiFi.SSID.{$i}.Enable")),
+                    'oculta'    => self::existe($d, "Device.WiFi.AccessPoint.{$i}.SSIDAdvertisementEnabled")
+                        ? self::booleano(self::v($d, "Device.WiFi.AccessPoint.{$i}.SSIDAdvertisementEnabled")) === false
+                        : null,
+                    'ruta_oculta' => self::existe($d, "Device.WiFi.AccessPoint.{$i}.SSIDAdvertisementEnabled")
+                        ? "Device.WiFi.AccessPoint.{$i}.SSIDAdvertisementEnabled" : null,
                     'clave'     => self::v($d, "Device.WiFi.AccessPoint.{$i}.Security.KeyPassphrase") ?: null,
                     'banda'     => null,
                     'estandar'  => null,

@@ -74,6 +74,8 @@ class AcsController extends Controller
             'ssid'   => 'nullable|string|max:32',
             'clave'  => 'nullable|string|min:8|max:63',
             'todas'  => 'nullable|boolean',
+            // Ocultar la red: el equipo deja de anunciar su nombre.
+            'oculta' => 'nullable|boolean',
         ]);
 
         return $this->accion($request, 'cambiar el WiFi', fn (EquiposDelAcs $acs, string $id) => $acs->cambiarWifi(
@@ -82,6 +84,7 @@ class AcsController extends Controller
             $request->input('ssid'),
             $request->input('clave'),
             $request->boolean('todas'),
+            $request->has('oculta') ? $request->boolean('oculta') : null,
         ));
     }
 

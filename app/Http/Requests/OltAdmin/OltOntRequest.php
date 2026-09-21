@@ -38,6 +38,9 @@ class OltOntRequest extends FormRequest
             'aprovisionar.mascara'    => 'nullable|string|max:3',
             'aprovisionar.wifi_ssid'  => 'nullable|string|max:32',
             'aprovisionar.wifi_clave' => 'nullable|string|min:8|max:63',
+            // Si el equipo ya está en la casa con su red andando, se aprovisiona
+            // sólo la conexión y no se le toca el WiFi.
+            'aprovisionar.wifi'       => 'nullable|boolean',
         ];
     }
 }
