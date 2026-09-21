@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -56,6 +57,114 @@ class CarteraController extends Controller
                 ->selectRaw('action, COUNT(*) n')->groupBy('action')->pluck('n', 'action'),
             'calculado_en'   => now()->toIso8601String(),
         ]]);
+    }
+
+    /**
+     * GET api/cartera/deudores — los que más deben, para el tablero.
+     *
+     * El resumen completo arma 200 filas con compromisos y avisos; el tablero
+     * sólo necesita cinco nombres y su deuda, así que esto es una consulta
+     * sola con LIMIT.
+     */
+    public function deudores(Request $request): JsonResponse
+    {
+        $empresa = (int) getSessionCompanyId();
+        $limite  = now()->subDays(self::DIAS_PARA_MORA)->toDateString();
+        $cuantos = min(20, max(1, (int) $request->query('limite', 5)));
+        $saldo   = self::SALDO;
+
+        $filas = DB::table('det_facturations as d')
+            ->join('cab_facturations as c', 'c.id', '=', 'd.cab_id')
+            ->join('user_data as ud', 'ud.user_id', '=', 'c.user_id')
+            ->where('c.company_id', $empresa)
+            ->where('d.paid', 0)
+            ->where('ud.active', 1)
+            ->groupBy('c.user_id', 'ud.names', 'ud.lastname')
+            ->havingRaw("SUM(CASE WHEN d.date_facturation < ? THEN {$saldo} ELSE 0 END) > 0", [$limite])
+            ->selectRaw("c.user_id,
+                TRIM(CONCAT(COALESCE(ud.names,''), ' ', COALESCE(ud.lastname,''))) AS nombre,
+                SUM(CASE WHEN d.date_facturation < ? THEN 1 ELSE 0 END) AS facturas,
+                SUM(CASE WHEN d.date_facturation < ? THEN {$saldo} ELSE 0 END) AS deuda,
+                MIN(d.date_facturation) AS mas_vieja", [$limite, $limite])
+            ->orderByDesc('deuda')
+            ->limit($cuantos)
+            ->get();
+
+        $hoy = now()->startOfDay();
+
+        return standardApiReponse('OK', $filas->map(fn ($f) => [
+            'user_id'  => (int) $f->user_id,
+            'nombre'   => $f->nombre ?: "Cliente {$f->user_id}",
+            'facturas' => (int) $f->facturas,
+            'deuda'    => round((float) $f->deuda, 2),
+            'dias'     => $f->mas_vieja ? (int) $hoy->diffInDays($f->mas_vieja) : 0,
+        ])->all(), 0, JsonResponse::HTTP_OK);
+    }
+
+    /**
+     * GET api/cartera/mora — la deuda repartida por antigüedad, para el tablero.
+     *
+     * Una consulta sola: cuánto se debe y cuántos clientes hay en cada tramo,
+     * más lo que se recuperó este mes. El resumen completo hace mucho más y
+     * tarda demasiado para una pantalla que se abre en cada ingreso.
+     */
+    public function mora(): JsonResponse
+    {
+        $empresa = (int) getSessionCompanyId();
+        $saldo   = self::SALDO;
+        $hoy     = now()->toDateString();
+
+        $tramos = DB::table('det_facturations as d')
+            ->join('cab_facturations as c', 'c.id', '=', 'd.cab_id')
+            ->join('user_data as ud', 'ud.user_id', '=', 'c.user_id')
+            ->where('c.company_id', $empresa)
+            ->where('d.paid', 0)
+            ->where('ud.active', 1)
+            ->whereRaw('DATEDIFF(?, d.date_facturation) > ?', [$hoy, self::DIAS_PARA_MORA])
+            ->selectRaw("
+                CASE
+                    WHEN DATEDIFF(?, d.date_facturation) <= 60  THEN '1 a 30 días'
+                    WHEN DATEDIFF(?, d.date_facturation) <= 90  THEN '31 a 60 días'
+                    WHEN DATEDIFF(?, d.date_facturation) <= 120 THEN '61 a 90 días'
+                    ELSE 'más de 90 días'
+                END AS tramo,
+                SUM({$saldo}) AS deuda,
+                COUNT(DISTINCT c.user_id) AS clientes", [$hoy, $hoy, $hoy])
+            ->groupBy('tramo')
+            ->get()->keyBy('tramo');
+
+        $orden = ['1 a 30 días', '31 a 60 días', '61 a 90 días', 'más de 90 días'];
+
+        $antiguedad = array_map(fn ($t) => [
+            'tramo'    => $t,
+            'deuda'    => round((float) ($tramos[$t]->deuda ?? 0), 2),
+            'clientes' => (int) ($tramos[$t]->clientes ?? 0),
+        ], $orden);
+
+        $activos = DB::table('user_data as ud')->join('users as u', 'u.id', '=', 'ud.user_id')
+            ->where('u.company_id', $empresa)->where('ud.active', 1)->count();
+
+        $enMora = DB::table('det_facturations as d')
+            ->join('cab_facturations as c', 'c.id', '=', 'd.cab_id')
+            ->join('user_data as ud', 'ud.user_id', '=', 'c.user_id')
+            ->where('c.company_id', $empresa)->where('d.paid', 0)->where('ud.active', 1)
+            ->whereRaw('DATEDIFF(?, d.date_facturation) > ?', [$hoy, self::DIAS_PARA_MORA])
+            ->distinct()->count('c.user_id');
+
+        $recuperado = (float) DB::table('payment_logs as p')
+            ->join('det_facturations as d', 'd.id', '=', 'p.det_facturation_id')
+            ->where('p.company_id', $empresa)
+            ->where('p.created_at', '>=', now()->startOfMonth())
+            ->whereRaw('DATEDIFF(DATE(p.created_at), d.date_facturation) > ?', [self::DIAS_PARA_MORA])
+            ->sum('p.amount');
+
+        return standardApiReponse('OK', [
+            'antiguedad'  => $antiguedad,
+            'total'       => round(array_sum(array_column($antiguedad, 'deuda')), 2),
+            'clientes'    => $enMora,
+            'al_dia_pct'  => $activos ? round(max(0, $activos - $enMora) * 100 / $activos, 1) : null,
+            'recuperado'  => round($recuperado, 2),
+        ], 0, JsonResponse::HTTP_OK);
     }
 
     // ── Cálculos ──────────────────────────────────────────────────────────

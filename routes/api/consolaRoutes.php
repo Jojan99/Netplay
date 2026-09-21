@@ -83,6 +83,13 @@ Route::domain($host)->prefix('consola')->group(function () {
         Route::delete('cupones/{id}',   [ConsolaCuponesController::class, 'destroy'])->whereNumber('id');
         Route::get('cupones/{id}/usos', [ConsolaCuponesController::class, 'usos'])->whereNumber('id');
 
+        // ── Novedades para las empresas ─────────────────────────────────
+        Route::get('novedades',              [\App\Http\Controllers\Consola\ConsolaNovedadesController::class, 'index']);
+        Route::post('novedades',             [\App\Http\Controllers\Consola\ConsolaNovedadesController::class, 'store']);
+        Route::put('novedades/{id}',         [\App\Http\Controllers\Consola\ConsolaNovedadesController::class, 'update'])->whereNumber('id');
+        Route::post('novedades/{id}/publicar', [\App\Http\Controllers\Consola\ConsolaNovedadesController::class, 'publicar'])->whereNumber('id');
+        Route::delete('novedades/{id}',      [\App\Http\Controllers\Consola\ConsolaNovedadesController::class, 'destroy'])->whereNumber('id');
+
         // ── Referidos ───────────────────────────────────────────────────
         Route::get('referidos',         [ConsolaSuscripcionesController::class, 'referidos']);
         Route::put('referidos/ajustes', [ConsolaSuscripcionesController::class, 'guardarAjustesReferidos']);

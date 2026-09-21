@@ -27,6 +27,16 @@ Route::prefix('company')->group(function () {
 
     // ── Cualquier usuario autenticado ─────────────────────────────────────────
     Route::get('my-modules',             [CompanyController::class, 'getMyModules']);
+    // Novedades de la plataforma: lo que se fue agregando, con su puntito.
+    Route::get('novedades',        [\App\Http\Controllers\NovedadController::class, 'index']);
+    Route::post('novedades/vistas', [\App\Http\Controllers\NovedadController::class, 'vistas']);
+    // Centro de notificaciones: la campana del encabezado.
+    Route::get('notificaciones',        [\App\Http\Controllers\NotificacionController::class, 'index']);
+    Route::post('notificaciones/vistas', [\App\Http\Controllers\NotificacionController::class, 'vistas']);
+    // El tablero de inicio que armó cada usuario: qué paneles y en qué orden.
+    Route::get('tablero',    [\App\Http\Controllers\TableroController::class, 'ver']);
+    Route::put('tablero',    [\App\Http\Controllers\TableroController::class, 'guardar']);
+    Route::delete('tablero', [\App\Http\Controllers\TableroController::class, 'olvidar']);
     Route::post('whatsapp/plan-request', [CompanyController::class, 'submitPlanRequest']);
 
     // ── Solo admin ──────────────────────────────────────────────────────────
