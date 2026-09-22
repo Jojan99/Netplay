@@ -67,8 +67,8 @@ class ProbarFlowDePago extends Command
             flowId:    $flowId,
             companyId: (int) $empresa->id,
             userId:    $clienteId,
-            titulo:    'Pagá tu factura',
-            cuerpo:    'Mirá lo que tenés pendiente y pagalo acá mismo, sin salir de WhatsApp.',
+            titulo:    'Paga tu factura',
+            cuerpo:    'Mira lo que tienes pendiente y págalo aquí mismo, sin salir de WhatsApp.',
             borrador:  !$this->option('publicado'),
         );
 

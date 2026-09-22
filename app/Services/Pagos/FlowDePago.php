@@ -40,22 +40,22 @@ class FlowDePago
         ],
         'bancolombia' => [
             'title'       => 'Botón Bancolombia',
-            'description' => 'Salís a tu banco para aprobar y volvés al chat',
+            'description' => 'Sales a tu banco para aprobar y vuelves al chat',
             'wompi'       => 'BANCOLOMBIA_TRANSFER',
         ],
         'daviplata' => [
             'title'       => 'Daviplata',
-            'description' => 'Salís a Daviplata para autorizar el pago',
+            'description' => 'Sales a Daviplata para autorizar el pago',
             'wompi'       => 'DAVIPLATA',
         ],
         'pse' => [
             'title'       => 'PSE',
-            'description' => 'Salís a tu banco con tu usuario y clave',
+            'description' => 'Sales a tu banco con tu usuario y clave',
             'wompi'       => 'PSE',
         ],
         'tarjeta' => [
             'title'       => 'Tarjeta de crédito o débito',
-            'description' => 'Salís a una página segura para poner los datos de la tarjeta',
+            'description' => 'Sales a una página segura para poner los datos de la tarjeta',
             'wompi'       => 'CARD',
         ],
     ];
@@ -91,7 +91,7 @@ class FlowDePago
         $deuda = $this->deuda($companyId, $userId);
 
         if (!$deuda['cuantas']) {
-            return $this->cerrar('No tenés nada pendiente', 'Tus facturas están al día. ¡Gracias!');
+            return $this->cerrar('No tienes nada pendiente', 'Tus facturas están al día. ¡Gracias!');
         }
 
         $empresa = Company::find($companyId);
@@ -100,7 +100,7 @@ class FlowDePago
         if (!$medios) {
             return $this->cerrar(
                 'Pago en línea no disponible',
-                'Ahora mismo no podemos cobrarte por acá. Escribinos y te pasamos los datos de pago.',
+                'Ahora mismo no podemos cobrarte por aquí. Escríbenos y te pasamos los datos de pago.',
             );
         }
 
@@ -149,7 +149,7 @@ class FlowDePago
         $enlace = $this->enlaceDelBanco($companyId, $userId, $medio);
 
         if (!$enlace) {
-            return $this->cerrar('No se pudo', 'No pudimos armar el pago ahora. Escribinos y te ayudamos.');
+            return $this->cerrar('No se pudo', 'No pudimos armar el pago ahora. Escríbenos y te ayudamos.');
         }
 
         $banco = self::MEDIOS[$medio]['title'];
@@ -177,7 +177,7 @@ class FlowDePago
         }
 
         if (strlen($numero) !== 10) {
-            return $this->cerrar('Revisá el número', 'Ese número no parece un celular colombiano. Volvé a intentarlo.');
+            return $this->cerrar('Revisa el número', 'Ese número no parece un celular colombiano. Inténtalo de nuevo.');
         }
 
         try {
@@ -194,17 +194,17 @@ class FlowDePago
         } catch (\Throwable $e) {
             Log::error('[Flow de pago] No se pudo crear el cobro de Nequi', ['empresa' => $companyId, 'error' => $e->getMessage()]);
 
-            return $this->cerrar('No se pudo', 'No pudimos enviar el cobro ahora. Escribinos y te ayudamos.');
+            return $this->cerrar('No se pudo', 'No pudimos enviar el cobro ahora. Escríbenos y te ayudamos.');
         }
 
         if (!OnlinePaymentTransaction::where('reference', $r['reference'] ?? '')->exists()) {
-            return $this->cerrar('No se pudo', 'No pudimos enviar el cobro ahora. Escribinos y te ayudamos.');
+            return $this->cerrar('No se pudo', 'No pudimos enviar el cobro ahora. Escríbenos y te ayudamos.');
         }
 
         return $this->cerrar(
             'Te enviamos el cobro',
-            "Abrí tu app de Nequi y aprobá el cobro de {$this->pesos($deuda['total'])}. Te llegó al {$numero}.",
-            'Apenas lo apruebes, tus facturas quedan al día y te avisamos por acá.',
+            "Abre tu app de Nequi y aprueba el cobro de {$this->pesos($deuda['total'])}. Te llegó al {$numero}.",
+            'Apenas lo apruebes, tus facturas quedan al día y te avisamos por aquí.',
         );
     }
 
