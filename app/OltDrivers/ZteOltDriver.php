@@ -340,7 +340,7 @@ class ZteOltDriver extends DriverBase
             'ont_id'       => $ontId,
             'serial'       => $this->dato($detalle, '/Serial\s*number\s*:?\s*(\S+)/i'),
             'status'       => str_contains(strtolower($detalle), 'working') ? 'online' : 'offline',
-            'description'  => $this->dato($detalle, '/Name\s*:?\s*(.+)/i'),
+            'description'  => $this->descripcionLegible($this->dato($detalle, '/Name\s*:?\s*(.+)/i')),
             'distancia_m'  => $this->numero($detalle, '/Distance\s*:?\s*(-?[\d.]+)/i'),
             // C320:  up    Rx :-24.437(dbm)   Tx:2.777(dbm)    (OLT recibe / ONU transmite)
             //        down  Tx :6.450(dbm)     Rx:-21.192(dbm)  (OLT transmite / ONU recibe)

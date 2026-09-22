@@ -240,4 +240,47 @@ abstract class DriverBase implements OltDriverInterface
     {
         return [];
     }
+
+    /**
+     * La descripción de una ONT, en letras.
+     *
+     * Algunas OLT —CDATA entre ellas— devuelven la descripción en hexadecimal
+     * cuando lleva tildes o eñes, y en pantalla se veía el hexadecimal crudo:
+     * «56 C3 AD 63 74 6F 72 20 6D 61 72 74 69 6E 65 7A» en lugar de «Víctor
+     * martinez».
+     *
+     * Se convierte sólo cuando no hay duda: pares hexadecimales separados por
+     * espacios, o una tira larga de hexadecimal, y siempre que lo que salga
+     * sea texto legible. Ante cualquier duda se devuelve tal cual vino: una
+     * descripción que de verdad diga «DEADBEEF» tiene que seguir diciéndolo.
+     */
+    protected function descripcionLegible(?string $texto): ?string
+    {
+        $texto = $texto !== null ? trim($texto) : null;
+
+        if ($texto === null || $texto === '') {
+            return null;
+        }
+
+        $pares = preg_match('/^(?:[0-9A-Fa-f]{2}\s+){3,}[0-9A-Fa-f]{2}$/', $texto);
+        $tira  = preg_match('/^[0-9A-Fa-f]{16,}$/', $texto) && strlen($texto) % 2 === 0;
+
+        if (!$pares && !$tira) {
+            return $texto;
+        }
+
+        $crudo = @hex2bin(str_replace(' ', '', $texto));
+
+        if ($crudo === false || $crudo === '' || !mb_check_encoding($crudo, 'UTF-8')) {
+            return $texto;
+        }
+
+        // Tiene que parecer un nombre, no bytes sueltos: sin caracteres de
+        // control y con al menos una letra.
+        if (preg_match('/[\x00-\x08\x0E-\x1F\x7F]/', $crudo) || !preg_match('/\p{L}/u', $crudo)) {
+            return $texto;
+        }
+
+        return trim($crudo);
+    }
 }

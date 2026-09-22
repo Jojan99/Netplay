@@ -174,7 +174,7 @@ class VsolOltDriver extends DriverBase
                 'serial'      => strtoupper($m[3]),
                 'status'      => str_contains(strtolower($m[4]), 'online') || str_contains(strtolower($m[4]), 'up')
                                  ? 'online' : 'offline',
-                'description' => trim($m[5] ?? '') ?: null,
+                'description' => $this->descripcionLegible(trim($m[5] ?? '')) ?: null,
             ];
         }
 
@@ -204,7 +204,7 @@ class VsolOltDriver extends DriverBase
             'ont_id'      => $ontId,
             'serial'      => $this->dato($detalle, '/SN\s*:?\s*([0-9A-Za-z]{8,20})/i'),
             'status'      => str_contains(strtolower($detalle), 'online') ? 'online' : 'offline',
-            'description' => $this->dato($detalle, '/(?:Description|Name)\s*:?\s*(.+)/i'),
+            'description' => $this->descripcionLegible($this->dato($detalle, '/(?:Description|Name)\s*:?\s*(.+)/i')),
             'distancia_m' => $this->numero($distancia, '/(-?[\d.]+)\s*m/i'),
             'ont_rx'      => $this->numero($optico, '/(?:ONU|Rx)\s*[Rr]x?\s*[Pp]ower\s*:?\s*(-?[\d.]+)/i')
                              ?? $this->numero($optico, '/Rx\s*:?\s*(-?[\d.]+)/i'),

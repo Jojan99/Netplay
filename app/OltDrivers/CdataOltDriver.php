@@ -598,7 +598,7 @@ class CdataOltDriver extends DriverBase
                 'serial'      => strtoupper($m[3]),
                 'status'      => str_contains(strtolower($m[4]), 'online') ? 'online' : 'offline',
                 'admin'       => strtolower(trim($m[5] ?? '')),
-                'description' => trim($m[6] ?? '') ?: null,
+                'description' => $this->descripcionLegible(trim($m[6] ?? '')) ?: null,
             ];
         }
 
@@ -628,7 +628,7 @@ class CdataOltDriver extends DriverBase
             'status'      => $estado !== null
                 ? (strtolower($estado) === 'online' ? 'online' : 'offline')
                 : (str_contains(strtolower($detalle), 'online') ? 'online' : 'offline'),
-            'description' => $this->dato($detalle, '/Descri\w*\s*:\s*(.+)/i'),
+            'description' => $this->descripcionLegible($this->dato($detalle, '/Descri\w*\s*:\s*(.+)/i')),
             'distancia_m' => $this->numero($detalle, '/Distance\s*\(?m?\)?\s*:\s*(-?[\d.]+)/i'),
             'ont_rx'      => $this->numero($optico, '/^\s*Rx\s*optical\s*power(?:\(dBm\))?\s*:\s*(-?[\d.]+)/mi')
                              ?? $this->numero($optico, '/(?:ONT|Rx)\s*[Oo]ptical\s*[Pp]ower\s*:\s*(-?[\d.]+)/i')
@@ -772,7 +772,7 @@ class CdataOltDriver extends DriverBase
             'ont_id'        => $ontId,
             'serial'        => self::mac($b['mac'] ?? '') ?? null,
             'status'        => strtolower($b['run state'] ?? '') === 'online' ? 'online' : 'offline',
-            'description'   => ($b['description'] ?? '') !== '' ? $b['description'] : null,
+            'description'   => ($b['description'] ?? '') !== '' ? $this->descripcionLegible($b['description']) : null,
             'distancia_m'   => isset($b['ont distance']) ? (int) $b['ont distance'] : null,
             'modo_auth'     => $b['auth mode'] ?? null,
             'perfil_linea'  => $b['line profile name'] ?? null,
