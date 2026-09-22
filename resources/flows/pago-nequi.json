@@ -1,0 +1,99 @@
+{
+  "version": "7.0",
+  "data_api_version": "3.0",
+  "routing_model": {
+    "RESUMEN": ["LISTO"],
+    "LISTO": []
+  },
+  "screens": [
+    {
+      "id": "RESUMEN",
+      "title": "Pagar con Nequi",
+      "terminal": false,
+      "data": {
+        "titulo": { "type": "string", "__example__": "Tenés 3 facturas pendientes" },
+        "total": { "type": "string", "__example__": "$ 210.000" },
+        "detalle": { "type": "string", "__example__": "NT15110 · NT15460 · NT16352" },
+        "celular": { "type": "string", "__example__": "3001234567" }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "TextHeading",
+            "text": "${data.total}"
+          },
+          {
+            "type": "TextBody",
+            "text": "${data.titulo}"
+          },
+          {
+            "type": "TextCaption",
+            "text": "${data.detalle}"
+          },
+          {
+            "type": "Form",
+            "name": "datos",
+            "children": [
+              {
+                "type": "TextInput",
+                "name": "celular",
+                "label": "Tu número de Nequi",
+                "input-type": "phone",
+                "required": true,
+                "helper-text": "A ese número te llega el cobro para aprobar.",
+                "init-value": "${data.celular}"
+              },
+              {
+                "type": "Footer",
+                "label": "Enviar el cobro",
+                "on-click-action": {
+                  "name": "data_exchange",
+                  "payload": {
+                    "celular": "${form.celular}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "LISTO",
+      "title": "Cobro enviado",
+      "terminal": true,
+      "success": true,
+      "data": {
+        "encabezado": { "type": "string", "__example__": "Te enviamos el cobro" },
+        "mensaje": { "type": "string", "__example__": "Abrí tu app de Nequi y aprobá el cobro de $ 210.000." },
+        "nota": { "type": "string", "__example__": "Apenas lo apruebes, tus facturas quedan al día." }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "TextHeading",
+            "text": "${data.encabezado}"
+          },
+          {
+            "type": "TextBody",
+            "text": "${data.mensaje}"
+          },
+          {
+            "type": "TextCaption",
+            "text": "${data.nota}"
+          },
+          {
+            "type": "Footer",
+            "label": "Cerrar",
+            "on-click-action": {
+              "name": "complete",
+              "payload": {}
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -279,6 +279,10 @@ Route::prefix('management')->middleware('empresa.propia')->group(function () {
     )->withoutMiddleware('jwt.verify')->middleware('solo.servidor');
 
     // 🧾 Comprobante de pago recibido por WhatsApp Web.
+    // La pantalla de pago dentro de WhatsApp: Meta habla cifrado, sin sesión.
+    Route::post('flow-de-pago', \App\Http\Controllers\FlowDePagoController::class)
+        ->withoutMiddleware('jwt.verify')->middleware('throttle:120,1');
+
     // Lo manda el servicio Node máquina a máquina, firmado con la clave
     // maestra: no hay sesión de usuario detrás de un mensaje entrante.
     Route::post(

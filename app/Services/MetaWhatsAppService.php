@@ -90,6 +90,51 @@ class MetaWhatsAppService
         return $this->sendRequest($payload);
     }
 
+    /**
+     * Manda la pantalla de pago dentro del chat (un «Flow» de Meta).
+     *
+     * El cliente ve un botón; al tocarlo se abre la pantalla sin salir de
+     * WhatsApp. El token lleva de quién es la deuda, y como viaja dentro del
+     * mensaje que mandamos nosotros, el cliente no lo puede cambiar.
+     */
+    public function enviarFlowDePago(string $to, string $flowId, int $companyId, int $userId, string $titulo, string $cuerpo): array
+    {
+        if (!$this->isEnabled()) {
+            return ['success' => false, 'error' => 'Meta WhatsApp deshabilitado.'];
+        }
+
+        if (!$this->hasOpenCustomerWindow($to)) {
+            return $this->closedWindowResponse();
+        }
+
+        return $this->sendRequest([
+            'messaging_product' => 'whatsapp',
+            'recipient_type'    => 'individual',
+            ...$this->recipientField($to),
+            'type'        => 'interactive',
+            'interactive' => [
+                'type'   => 'flow',
+                'header' => ['type' => 'text', 'text' => mb_substr($titulo, 0, 60)],
+                'body'   => ['text' => mb_substr($cuerpo, 0, 1024)],
+                'footer' => ['text' => 'Pago seguro'],
+                'action' => [
+                    'name'       => 'flow',
+                    'parameters' => [
+                        'flow_message_version' => '3',
+                        'flow_id'              => $flowId,
+                        'flow_token'           => "pago:{$companyId}:{$userId}",
+                        'flow_cta'             => 'Pagar con Nequi',
+                        'flow_action'          => 'navigate',
+                        'flow_action_payload'  => [
+                            'screen' => 'RESUMEN',
+                            'data'   => ['empresa' => (string) $companyId, 'cliente' => (string) $userId],
+                        ],
+                    ],
+                ],
+            ],
+        ]);
+    }
+
     public function sendPoll(string $to, string $question, array $options, int $selectable = 1): array
     {
         return ['success' => false, 'status' => 'error', 'message' => 'La API de Meta no permite enviar encuestas.'];
