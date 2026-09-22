@@ -37,6 +37,7 @@ class PaymentInitiationService
         string $origin = 'portal',
         string $returnTo = 'web',
         ?array $paymentMethods = null,
+        ?string $customerPhone = null,
     ): array {
         $firstInvoice = $invoices->first();
         $orderedIds   = $invoices->pluck('id')->values()->all();
@@ -45,7 +46,7 @@ class PaymentInitiationService
         $tag       = count($orderedIds) > 1 ? 'MULTI' : $firstInvoice->number_facture;
         $reference = $company->slug . '-' . $tag . '-' . time() . '-' . $firstInvoice->id;
 
-        $userData      = DB::table('user_data')->where('user_id', $clientUserId)->first(['names', 'lastname', 'email']);
+        $userData      = DB::table('user_data')->where('user_id', $clientUserId)->first(['names', 'lastname', 'email', 'phone']);
         $customerEmail = $userData->email ?? '';
         $customerName  = trim(($userData->names ?? '') . ' ' . ($userData->lastname ?? ''));
 
@@ -72,6 +73,8 @@ class PaymentInitiationService
             'limit_date'     => $limitDate,
             // Cuando viene, el checkout muestra solo estos medios.
             'payment_methods'=> $paymentMethods,
+            // Para Nequi: el cobro le llega como notificación a ese número.
+            'customer_phone' => $customerPhone ?: ($userData->phone ?? null),
         ]);
 
         OnlinePaymentTransaction::create([

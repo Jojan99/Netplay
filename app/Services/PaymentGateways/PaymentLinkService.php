@@ -71,8 +71,22 @@ class PaymentLinkService
      * Medios a los que se puede llevar directo. La clave es lo que viaja en la
      * URL; el valor, la forma que espera la pasarela.
      */
+    /**
+     * Qué se le pide a cada pasarela cuando el link trae un medio elegido.
+     *
+     * Cada una lo nombra a su manera, y con Wompi un solo medio además cambia
+     * el camino: en vez del checkout con todos los botones, la transacción se
+     * crea directo y el cliente cae en su banco.
+     */
     private const METHOD_FILTERS = [
-        'nequi' => ['debit' => ['Nequi']],
+        'epayco' => [
+            'nequi' => ['debit' => ['Nequi']],
+        ],
+        'wompi' => [
+            'nequi'       => ['NEQUI'],
+            'bancolombia' => ['BANCOLOMBIA_TRANSFER'],
+            'pse'         => ['PSE'],
+        ],
     ];
 
     public function resolveToCheckout(string $token, ?string $method = null): array
@@ -121,7 +135,9 @@ class PaymentLinkService
             origin:       'payment_link',
             // Un link creado por el bot nació en un chat; ahí debe volver.
             returnTo:     $link->created_via === 'bot' ? 'whatsapp' : 'web',
-            paymentMethods: self::METHOD_FILTERS[$method] ?? null,
+            paymentMethods: $method
+                ? (self::METHOD_FILTERS[(string) $company->pg_gateway][$method] ?? null)
+                : null,
         );
 
         $link->increment('used_count');

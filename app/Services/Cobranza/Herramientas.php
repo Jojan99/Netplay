@@ -47,12 +47,22 @@ class Herramientas
             $this->medios()['hay'] ? [
                 'name'        => 'enviar_medios_de_pago',
                 'description' => 'Le da al cliente cómo pagar TODA la deuda: ' . $this->comoSePaga() . ' '
+                    . ($this->mediosDeLaPasarela()
+                        ? 'Puede pagar con ' . implode(', ', $this->mediosDeLaPasarela()) . ': si dice con cuál, pásalo en «metodo» y el link lo lleva derecho ahí. '
+                        : '')
                     . ($desc > 0 && $this->medios()['link']
                         ? "Opcional: descuento_pct (máximo {$desc}) si el cliente paga el total dentro de {$this->cfg->descuento_dias} día(s); ofrécelo sólo si hace falta para cerrar el pago, empezando por menos."
                         : 'No hay descuentos autorizados.'),
                 'input_schema' => [
                     'type' => 'object',
-                    'properties' => $desc > 0 && $this->medios()['link'] ? ['descuento_pct' => ['type' => 'integer', 'minimum' => 0, 'maximum' => $desc]] : (object) [],
+                    'properties' => array_merge(
+                        $desc > 0 && $this->medios()['link'] ? ['descuento_pct' => ['type' => 'integer', 'minimum' => 0, 'maximum' => $desc]] : [],
+                        $this->mediosDeLaPasarela() ? ['metodo' => [
+                            'type' => 'string',
+                            'enum' => array_keys($this->mediosDeLaPasarela()),
+                            'description' => 'Con qué quiere pagar. Si el cliente no lo dice, no lo mandes: se le ofrecen todos.',
+                        ]] : [],
+                    ) ?: (object) [],
                 ],
             ] : null,
             [
@@ -87,7 +97,7 @@ class Herramientas
             return match ($nombre) {
                 'registrar_compromiso' => $this->registrarCompromiso((array) ($entrada['fechas'] ?? []), (string) ($entrada['nota'] ?? '')),
                 'enviar_medios_de_pago',
-                'enviar_link_de_pago'  => $this->comoPagar((int) ($entrada['descuento_pct'] ?? 0)),
+                'enviar_link_de_pago'  => $this->comoPagar((int) ($entrada['descuento_pct'] ?? 0), $entrada['metodo'] ?? null),
                 'escalar_a_humano'     => $this->escalar((string) ($entrada['motivo'] ?? 'El asistente pidió ayuda.')),
                 'cerrar_caso'          => $this->cerrar((string) ($entrada['resultado'] ?? ''), (string) ($entrada['nota'] ?? '')),
                 default                => ['ok' => false, 'texto' => "No existe la herramienta {$nombre}."],
@@ -214,7 +224,7 @@ class Herramientas
      * (si hay pasarela), la imagen del QR —que se le manda al momento— y los
      * datos escritos (cuentas, llaves, oficinas).
      */
-    private function comoPagar(int $descuento): array
+    private function comoPagar(int $descuento, ?string $metodo = null): array
     {
         $medios = $this->medios();
 
@@ -223,7 +233,7 @@ class Herramientas
         }
 
         $partes = [];
-        $link = $medios['link'] ? $this->linkDePago($descuento) : null;
+        $link = $medios['link'] ? $this->linkDePago($descuento, $metodo) : null;
 
         // Si el link falla (descuento inválido, sin saldo…), eso manda: no se
         // le mandan medios de pago encima de un error.
@@ -268,6 +278,38 @@ class Herramientas
         }
 
         return $m;
+    }
+
+    /**
+     * Los medios de la pasarela que esta empresa puede ofrecer de verdad.
+     *
+     * Se le pregunta a la pasarela: ofrecer un botón que la cuenta no tiene
+     * habilitado termina en un error del banco delante del cliente.
+     *
+     * @return array<string,string>
+     */
+    private function mediosDeLaPasarela(): array
+    {
+        if (!$this->medios()['link']) {
+            return [];
+        }
+
+        $empresa = Company::find($this->caso->company_id);
+
+        if (!$empresa || strtolower((string) $empresa->pg_gateway) !== 'wompi') {
+            return [];
+        }
+
+        try {
+            $acepta = (new \App\Services\PaymentGateways\WompiGateway($empresa))->metodosAceptados();
+        } catch (\Throwable $e) {
+            return [];
+        }
+
+        $equivale = ['bancolombia' => 'BANCOLOMBIA_TRANSFER', 'nequi' => 'NEQUI', 'pse' => 'PSE'];
+        $nombres  = ['bancolombia' => 'Bancolombia', 'nequi' => 'Nequi', 'pse' => 'PSE'];
+
+        return array_filter($nombres, fn ($_, $clave) => in_array($equivale[$clave], $acepta, true), ARRAY_FILTER_USE_BOTH);
     }
 
     /** ¿El cliente cobra por la pasarela (factura electrónica activa)? */
@@ -336,7 +378,7 @@ class Herramientas
         }
     }
 
-    private function linkDePago(int $descuento): array
+    private function linkDePago(int $descuento, ?string $metodo = null): array
     {
 
         $companyId = (int) $this->caso->company_id;
@@ -370,11 +412,22 @@ class Herramientas
         $link = $servicio->create(Company::findOrFail($companyId), (int) $this->caso->user_id, $deuda->facturas->pluck('id')->all(), 'cobranza', $ttl, (string) $this->caso->telefono);
         $url = $servicio->publicUrl($link);
 
+        // Con un medio elegido, el link no abre la pantalla de "elegí cómo
+        // pagar": lleva derecho al banco, o dispara el cobro de Nequi.
+        $deLaPasarela = $this->mediosDeLaPasarela();
+
+        if ($metodo && isset($deLaPasarela[$metodo])) {
+            $url .= '?m=' . $metodo;
+        }
+
         $this->caso->fill([
             'resumen' => 'Link de pago enviado por ' . Deuda::pesos($deuda->total()) . ($aplicado ? " (descuento {$descuento}%, vence " . $this->caso->descuento_vence?->format('Y-m-d') . ')' : ''),
         ])->save();
 
-        return ['ok' => true, 'texto' => "Link de pago: {$url}\nTotal a pagar: " . Deuda::pesos($deuda->total())
+        $comoPaga = $metodo && isset($deLaPasarela[$metodo]) ? $deLaPasarela[$metodo] : null;
+
+        return ['ok' => true, 'texto' => ($comoPaga ? "Link para pagar con {$comoPaga}: {$url}" : "Link de pago: {$url}")
+            . "\nTotal a pagar: " . Deuda::pesos($deuda->total())
             . ($aplicado ? "\nIncluye el descuento de {$descuento}% (" . Deuda::pesos($aplicado) . "), válido hasta el " . $this->caso->descuento_vence?->format('Y-m-d') . '. Si no paga antes, el descuento se pierde.' : '')
             . "\nComparte el link tal cual, sin cambiarlo."];
     }
