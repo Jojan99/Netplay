@@ -91,15 +91,77 @@ class WompiGateway implements PaymentGatewayInterface
         }
     }
 
+    /**
+     * Los medios de pago que esta cuenta tiene habilitados de verdad.
+     *
+     * Nunca se guarda una respuesta vacía: antes, un tropiezo de Wompi —o unas
+     * llaves mal puestas— dejaba la lista en blanco durante una hora, y en ese
+     * rato el bot dejaba de ofrecer Nequi sin que nadie supiera por qué.
+     * Ahora se vuelve a preguntar hasta que conteste bien.
+     */
     public function metodosAceptados(): array
     {
         $clave = "wompi:metodos:{$this->company->id}:" . ($this->company->pg_sandbox ? 'pruebas' : 'produccion');
 
-        return Cache::remember($clave, now()->addHour(), function () {
-            $r = $this->pedir("{$this->base()}/merchants/{$this->company->pg_public_key}");
+        try {
+            $guardado = Cache::get($clave);
+            if (is_array($guardado) && $guardado) {
+                return $guardado;
+            }
+        } catch (\Throwable $e) {
+            // Sin caché se pregunta siempre: más lento, nunca equivocado.
+        }
 
-            return array_values(array_filter((array) ($r['data']['accepted_payment_methods'] ?? [])));
-        });
+        $this->avisarSiLasLlavesNoVanConElModo();
+
+        $r      = $this->pedir("{$this->base()}/merchants/{$this->company->pg_public_key}");
+        $medios = array_values(array_filter((array) ($r['data']['accepted_payment_methods'] ?? [])));
+
+        if (!$medios) {
+            Log::warning('[Wompi] La cuenta no devolvió medios de pago', [
+                'empresa'  => $this->company->id,
+                'modo'     => $this->company->pg_sandbox ? 'pruebas' : 'producción',
+                'respuesta' => $r['error'] ?? null,
+            ]);
+
+            return [];
+        }
+
+        try {
+            Cache::put($clave, $medios, now()->addHour());
+        } catch (\Throwable $e) {
+            // Que no se pueda guardar no es motivo para no responder.
+        }
+
+        return $medios;
+    }
+
+    /**
+     * Llaves de prueba en producción (o al revés).
+     *
+     * Wompi responde «Formato inválido» y la plataforma se queda sin ningún
+     * medio de pago, que desde afuera se ve como si la pasarela estuviera
+     * bien pero no hubiera nada para ofrecer. Queda dicho en el registro con
+     * todas las letras.
+     */
+    private function avisarSiLasLlavesNoVanConElModo(): void
+    {
+        $llave    = (string) $this->company->pg_public_key;
+        $pruebas  = (bool) $this->company->pg_sandbox;
+        $esDePrueba = str_starts_with($llave, 'pub_test_');
+
+        if ($llave === '' || $esDePrueba === $pruebas) {
+            return;
+        }
+
+        Log::error('[Wompi] Las llaves no corresponden al modo configurado', [
+            'empresa' => $this->company->id,
+            'modo'    => $pruebas ? 'pruebas' : 'producción',
+            'llave'   => $esDePrueba ? 'de pruebas (pub_test_)' : 'de producción (pub_prod_)',
+            'que_hacer' => $pruebas
+                ? 'Poné las llaves de pruebas o desactivá el modo pruebas.'
+                : 'Poné las llaves de producción (pub_prod_ y prv_prod_) o volvé a activar el modo pruebas.',
+        ]);
     }
 
     /**
