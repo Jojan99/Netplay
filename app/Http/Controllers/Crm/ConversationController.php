@@ -368,13 +368,49 @@ public function addConversationLabel(int $conversationId, Request $request, Conv
 {
     $request->validate(['label_id' => 'required|integer']);
     $repo->addConversationLabel($conversationId, (int)$request->label_id);
+    $this->avisarALaBandeja($conversationId);
+
     return response()->json(['ok' => true]);
 }
 
 public function removeConversationLabel(int $conversationId, int $labelId, ConversationRepositoryInterface $repo): JsonResponse
 {
     $repo->removeConversationLabel($conversationId, $labelId);
+    $this->avisarALaBandeja($conversationId);
+
     return response()->json(['ok' => true]);
+}
+
+/**
+ * Le dice a las bandejas abiertas que este chat cambió.
+ *
+ * La etiqueta se pinta en la fila del cliente, así que ponerla sin avisar
+ * dejaba a los demás agentes viéndola recién al recargar la página. Se manda
+ * como 'agent' para que no suene la campana: no llegó nada del cliente.
+ */
+private function avisarALaBandeja(int $conversationId): void
+{
+    $conversacion = \Illuminate\Support\Facades\DB::table('crm_conversations')
+        ->where('id', $conversationId)
+        ->first(['status', 'provider']);
+
+    if (!$conversacion) {
+        return;
+    }
+
+    try {
+        broadcast(new \App\Events\InboxUpdatedEvent(
+            $conversationId,
+            (string) ($conversacion->status ?? 'in_progress'),
+            'agent',
+            $conversacion->provider ?? 'netplay',
+        ));
+    } catch (\Throwable $e) {
+        // Un aviso que no sale no puede tumbar el cambio de etiqueta.
+        \Illuminate\Support\Facades\Log::warning('[CRM] No se pudo avisar del cambio de etiqueta', [
+            'conversacion' => $conversationId, 'error' => $e->getMessage(),
+        ]);
+    }
 }
 
 /* =====================================================================
