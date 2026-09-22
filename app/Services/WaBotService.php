@@ -8,6 +8,7 @@ use App\Models\WaBotSession;
 use App\Models\UserData;
 use App\Models\CabFacturation;
 use App\Models\DetFacturation;
+use App\Models\OnlinePaymentTransaction;
 use App\Models\PaymentProof;
 use App\Models\PaymentProofAudit;
 use App\Models\Ticket;
@@ -22,6 +23,7 @@ use Illuminate\Database\QueryException;
 use App\Services\WhatsAppService;
 use App\Models\WaIdentity;
 use App\Services\PaymentGateways\EfiPayGateway;
+use App\Services\PaymentGateways\PaymentInitiationService;
 use App\Services\PaymentGateways\PaymentLinkService;
 use App\Services\PaymentGateways\WompiGateway;
 use Symfony\Component\Process\Process;
@@ -1571,6 +1573,10 @@ class WaBotService
                 return true;
             }
 
+            if (in_array($message, ['pm_nequi', 'nequi', '1'], true)) {
+                return $this->preguntarCelularDeNequi($company, $session, $phone);
+            }
+
             return $this->sendPaymentCta(
                 $company,
                 $phone,
@@ -1578,8 +1584,56 @@ class WaBotService
                 (float) ($data['pay_amount'] ?? 0),
                 (int) ($data['pay_count'] ?? 1),
                 $data['pay_vence'] ?? null,
-                in_array($message, ['pm_nequi', 'nequi', '1'], true) ? 'nequi' : null
+                null
             );
+        }
+
+        // ── Nequi: a qué celular se le manda el cobro ────────────────────────
+        if ($step === 'nequi_phone') {
+            if (in_array($message, ['pm_cancel', 'cancelar', '3'], true)) {
+                $this->sendTextMessage($company, $phone, "Listo, cancelamos el pago.\n\nEscribe *menu* para volver al inicio.");
+                $this->clearSession($company->id, $phone);
+                return true;
+            }
+
+            if (in_array($message, ['nq_otro', '2'], true)) {
+                $session->update(['current_step' => 'nequi_otro', 'expires_at' => self::vencimientoSesion()]);
+                $this->sendTextMessage($company, $phone, "Escribe el celular de Nequi al que quieres que te llegue el cobro (10 dígitos).");
+
+                return true;
+            }
+
+            $escrito = $this->celularEscrito($message);
+
+            if ($escrito) {
+                return $this->dispararCobroNequi($company, $session, $phone, $escrito);
+            }
+
+            if (in_array($message, ['nq_si', 'si', 'sí', '1'], true)) {
+                return $this->dispararCobroNequi($company, $session, $phone, (string) (($session->data ?? [])['nequi_phone'] ?? ''));
+            }
+
+            $this->sendTextMessage($company, $phone, "No te entendí. Responde *SÍ* para usar ese número, o escribe otro celular de 10 dígitos.");
+
+            return true;
+        }
+
+        if ($step === 'nequi_otro') {
+            if (in_array($message, ['pm_cancel', 'cancelar'], true)) {
+                $this->sendTextMessage($company, $phone, "Listo, cancelamos el pago.\n\nEscribe *menu* para volver al inicio.");
+                $this->clearSession($company->id, $phone);
+                return true;
+            }
+
+            $escrito = $this->celularEscrito($message);
+
+            if (!$escrito) {
+                $this->sendTextMessage($company, $phone, "Ese número no parece un celular de 10 dígitos. Escríbelo de nuevo, por ejemplo 3001234567.");
+
+                return true;
+            }
+
+            return $this->dispararCobroNequi($company, $session, $phone, $escrito);
         }
 
         // ── Paso 2: alcance del pago ─────────────────────────────────────────
@@ -1699,10 +1753,13 @@ class WaBotService
             $session->update([
                 'current_step' => 'choose_method',
                 'data' => array_merge($data, [
-                    'pay_url'    => $url,
-                    'pay_amount' => $amount,
-                    'pay_count'  => $invoiceCount,
-                    'pay_vence'  => $vence,
+                    'pay_url'      => $url,
+                    'pay_amount'   => $amount,
+                    'pay_count'    => $invoiceCount,
+                    'pay_vence'    => $vence,
+                    // Para el cobro por Nequi hace falta saber qué facturas
+                    // son: el cobro se crea aparte del link.
+                    'pay_invoices' => $invoiceIds,
                 ]),
                 'expires_at' => self::vencimientoSesion(),
             ]);
@@ -1739,6 +1796,164 @@ class WaBotService
             'wompi'  => (new WompiGateway($company))->aceptaNequi($amount),
             default  => false,
         };
+    }
+
+    /**
+     * Pregunta a qué celular se le manda el cobro de Nequi.
+     *
+     * Se propone el que tenemos registrado, porque casi siempre es el mismo
+     * desde el que escribe; cambiarlo es un botón, no una obligación.
+     */
+    private function preguntarCelularDeNequi(Company $company, WaBotSession $session, string $phone): bool
+    {
+        $data = $session->data ?? [];
+
+        $guardado = $this->celularDelCliente((int) ($data['client_user_id'] ?? 0))
+            ?: substr(preg_replace('/\D/', '', $phone), -10);
+
+        $session->update([
+            'current_step' => 'nequi_phone',
+            'data'         => array_merge($data, ['nequi_phone' => $guardado]),
+            'expires_at'   => self::vencimientoSesion(),
+        ]);
+
+        $texto = "Te enviamos el cobro a tu app de Nequi y lo apruebas ahí mismo, sin salir de WhatsApp.\n\n"
+            . "¿Te lo enviamos al *{$this->celularBonito($guardado)}*?";
+
+        $this->recordBotConversationMessage($company, $phone, 'system', $texto);
+
+        (new WhatsAppService($company->id, false, 'meta'))->sendInteractiveButtons($phone, $texto, [
+            ['id' => 'nq_si',     'title' => 'Sí, a ese'],
+            ['id' => 'nq_otro',   'title' => 'Otro número'],
+            ['id' => 'pm_cancel', 'title' => 'Cancelar'],
+        ]);
+
+        return true;
+    }
+
+    /**
+     * Dispara el cobro contra la app de Nequi del cliente.
+     *
+     * Si la pasarela no lo acepta no se lo deja colgado: se le manda el
+     * checkout filtrado a Nequi, que es el camino que existía antes.
+     */
+    private function dispararCobroNequi(Company $company, WaBotSession $session, string $phone, string $celular): bool
+    {
+        $data     = $session->data ?? [];
+        $celular  = substr(preg_replace('/\D/', '', $celular), -10);
+        $cliente  = (int) ($data['client_user_id'] ?? 0);
+
+        if (strlen($celular) !== 10) {
+            $this->sendTextMessage($company, $phone, "Ese número no parece un celular de 10 dígitos. Escríbelo de nuevo, por ejemplo 3001234567.");
+
+            return true;
+        }
+
+        $facturas = $this->pendingInvoicesFor($company, $cliente);
+        $pedidas  = $data['pay_invoices'] ?? null;
+
+        if (is_array($pedidas) && $pedidas) {
+            $pedidas  = array_map('intval', $pedidas);
+            $facturas = $facturas->filter(fn ($f) => in_array((int) $f->id, $pedidas, true))->values();
+        }
+
+        if ($facturas->isEmpty()) {
+            $this->sendTextMessage($company, $phone, "Tus facturas ya están al día. No hay nada que cobrar.");
+            $this->clearSession($company->id, $phone);
+
+            return true;
+        }
+
+        $monto = (float) $facturas->sum(fn ($f) => $this->invoiceBalance($f));
+
+        try {
+            $r = app(PaymentInitiationService::class)->initiate(
+                company:        $company,
+                clientUserId:   $cliente,
+                invoices:       $facturas,
+                amount:         $monto,
+                origin:         'bot',
+                returnTo:       'whatsapp',
+                paymentMethods: ['NEQUI'],
+                customerPhone:  $celular,
+            );
+        } catch (\Throwable $e) {
+            Log::error('[WaBotService] No se pudo crear el cobro de Nequi', [
+                'company_id' => $company->id,
+                'error'      => $e->getMessage(),
+            ]);
+
+            return $this->nequiPorElCheckout($company, $session, $phone, $data);
+        }
+
+        if (!isset($r['reference']) || !OnlinePaymentTransaction::where('reference', $r['reference'])->exists()) {
+            return $this->nequiPorElCheckout($company, $session, $phone, $data);
+        }
+
+        $texto = "✅ Listo, ya te enviamos el cobro.\n\n"
+            . "*Abre tu app de Nequi* y aprueba los " . $this->formatMoney($monto) . ". "
+            . "Te llegó al {$this->celularBonito($celular)}.\n\n"
+            . "Apenas lo apruebes te aviso por aquí y tus facturas quedan al día.";
+
+        $this->recordBotConversationMessage($company, $phone, 'system', $texto);
+        $this->sendTextMessage($company, $phone, $texto);
+        $this->clearSession($company->id, $phone);
+
+        return true;
+    }
+
+    /** Cuando el cobro directo falla, el checkout de Nequi sigue sirviendo. */
+    private function nequiPorElCheckout(Company $company, WaBotSession $session, string $phone, array $data): bool
+    {
+        $url = (string) ($data['pay_url'] ?? '');
+
+        if ($url === '') {
+            $this->sendTextMessage($company, $phone, "No pudimos enviarte el cobro en este momento. Intenta de nuevo en unos minutos.");
+            $this->clearSession($company->id, $phone);
+
+            return true;
+        }
+
+        $this->sendTextMessage($company, $phone, "No pudimos enviarte el cobro a Nequi directamente. Te dejamos el enlace para pagarlo:");
+
+        return $this->sendPaymentCta(
+            $company,
+            $phone,
+            $url,
+            (float) ($data['pay_amount'] ?? 0),
+            (int) ($data['pay_count'] ?? 1),
+            $data['pay_vence'] ?? null,
+            'nequi'
+        );
+    }
+
+    /** El celular que tenemos registrado del cliente, en diez dígitos. */
+    private function celularDelCliente(int $clientUserId): ?string
+    {
+        if (!$clientUserId) {
+            return null;
+        }
+
+        $crudo = (string) DB::table('user_data')->where('user_id', $clientUserId)->value('phone');
+        $diez  = substr(preg_replace('/\D/', '', $crudo), -10);
+
+        return strlen($diez) === 10 ? $diez : null;
+    }
+
+    /** Un celular escrito por el cliente, si lo que mandó es uno. */
+    private function celularEscrito(string $mensaje): ?string
+    {
+        $diez = substr(preg_replace('/\D/', '', $mensaje), -10);
+
+        return strlen($diez) === 10 && $diez[0] === '3' ? $diez : null;
+    }
+
+    /** 3001234567 → 300 123 4567, que es como se lee de un vistazo. */
+    private function celularBonito(string $celular): string
+    {
+        $d = preg_replace('/\D/', '', $celular);
+
+        return strlen($d) === 10 ? substr($d, 0, 3) . ' ' . substr($d, 3, 3) . ' ' . substr($d, 6) : $d;
     }
 
     /** Manda el botón de pago, apuntando al medio elegido si lo hay. */
