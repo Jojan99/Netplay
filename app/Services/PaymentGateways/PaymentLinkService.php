@@ -86,6 +86,8 @@ class PaymentLinkService
             'nequi'       => ['NEQUI'],
             'bancolombia' => ['BANCOLOMBIA_TRANSFER'],
             'pse'         => ['PSE'],
+            'daviplata'   => ['DAVIPLATA'],
+            'tarjeta'     => ['CARD'],
         ],
     ];
 

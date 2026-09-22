@@ -33,9 +33,21 @@ class SobreCifrado
             throw new \RuntimeException('El sobre de Meta vino incompleto.');
         }
 
-        $clave = '';
+        // Meta cifra la clave con OAEP y hash SHA-256. openssl_private_decrypt
+        // sólo sabe hacerlo con SHA-1, así que con él la respuesta es siempre
+        // «no se pudo descifrar» —y una prueba que cifre y descifre con PHP no
+        // lo detecta, porque se equivoca de los dos lados igual—.
+        try {
+            $clave = \phpseclib3\Crypt\PublicKeyLoader::loadPrivateKey($privada)
+                ->withPadding(\phpseclib3\Crypt\RSA::ENCRYPTION_OAEP)
+                ->withHash('sha256')
+                ->withMGFHash('sha256')
+                ->decrypt($claveCifrada);
+        } catch (\Throwable $e) {
+            throw new \RuntimeException('No se pudo abrir la clave: ' . $e->getMessage());
+        }
 
-        if (!openssl_private_decrypt($claveCifrada, $clave, $privada, OPENSSL_PKCS1_OAEP_PADDING)) {
+        if (!$clave) {
             throw new \RuntimeException('No se pudo abrir la clave: ¿la llave pública que subiste a Meta es la de este servidor?');
         }
 
@@ -74,8 +86,8 @@ class SobreCifrado
         return base64_encode($cifrado . $etiqueta);
     }
 
-    /** @return \OpenSSLAsymmetricKey */
-    private static function llavePrivada()
+    /** La llave privada del .env, en texto. */
+    private static function llavePrivada(): string
     {
         $pem = (string) config('services.whatsapp_flow.private_key', env('WHATSAPP_FLOW_PRIVATE_KEY', ''));
         $pem = str_replace('\\n', "\n", $pem);
@@ -84,12 +96,10 @@ class SobreCifrado
             throw new \RuntimeException('Falta WHATSAPP_FLOW_PRIVATE_KEY en el .env.');
         }
 
-        $llave = openssl_pkey_get_private($pem, (string) env('WHATSAPP_FLOW_PASSPHRASE', ''));
-
-        if (!$llave) {
+        if (!openssl_pkey_get_private($pem)) {
             throw new \RuntimeException('La llave privada del Flow no se pudo leer.');
         }
 
-        return $llave;
+        return $pem;
     }
 }

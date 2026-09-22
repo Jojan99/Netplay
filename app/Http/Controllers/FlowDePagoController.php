@@ -47,17 +47,20 @@ class FlowDePagoController extends Controller
 
         [$companyId, $userId] = $this->deQuienEs($datos);
 
+        // Sin cliente reconocido es la vista previa de Meta: se muestran las
+        // pantallas con datos de ejemplo, en vez de un error que parece falla.
         if (!$companyId || !$userId) {
-            return $this->responder([
-                'screen' => 'LISTO',
-                'data'   => ['encabezado' => 'No se pudo', 'mensaje' => 'No pudimos reconocer tu cuenta. Escribinos y te ayudamos.', 'nota' => ''],
-            ], $sobre);
+            return $this->responder($flow->pantallaDeEjemplo(), $sobre);
         }
 
-        $respuesta = match ($accion) {
-            'INIT'          => $flow->pantallaInicial($companyId, $userId),
-            'data_exchange' => $flow->enviarCobro($companyId, $userId, (string) ($datos['data']['celular'] ?? '')),
-            default         => $flow->pantallaInicial($companyId, $userId),
+        $paso = (string) ($datos['data']['paso'] ?? '');
+
+        $respuesta = match (true) {
+            $accion === 'INIT'          => $flow->pantallaInicial($companyId, $userId),
+            $paso === 'metodo'          => $flow->eligioMedio($companyId, $userId, (string) ($datos['data']['metodo'] ?? '')),
+            $paso === 'nequi'           => $flow->enviarCobroNequi($companyId, $userId, (string) ($datos['data']['celular'] ?? '')),
+            $paso === 'afuera'          => $flow->esperandoAlBanco(),
+            default                     => $flow->pantallaInicial($companyId, $userId),
         };
 
         return $this->responder($respuesta, $sobre);
