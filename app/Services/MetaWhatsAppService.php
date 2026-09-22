@@ -97,7 +97,15 @@ class MetaWhatsAppService
      * WhatsApp. El token lleva de quién es la deuda, y como viaja dentro del
      * mensaje que mandamos nosotros, el cliente no lo puede cambiar.
      */
-    public function enviarFlowDePago(string $to, string $flowId, int $companyId, int $userId, string $titulo, string $cuerpo): array
+    /**
+     * Le manda al cliente la pantalla de pago.
+     *
+     * En borrador ($borrador = true) el Flow se puede probar antes de
+     * publicarlo, pero sólo le llega a quien tenga un rol en la app o en la
+     * cuenta de WhatsApp Business. Sirve para probarlo uno mismo mientras
+     * Meta destraba la publicación.
+     */
+    public function enviarFlowDePago(string $to, string $flowId, int $companyId, int $userId, string $titulo, string $cuerpo, bool $borrador = false): array
     {
         if (!$this->isEnabled()) {
             return ['success' => false, 'error' => 'Meta WhatsApp deshabilitado.'];
@@ -123,12 +131,12 @@ class MetaWhatsAppService
                         'flow_message_version' => '3',
                         'flow_id'              => $flowId,
                         'flow_token'           => "pago:{$companyId}:{$userId}",
-                        'flow_cta'             => 'Pagar con Nequi',
-                        'flow_action'          => 'navigate',
-                        'flow_action_payload'  => [
-                            'screen' => 'RESUMEN',
-                            'data'   => ['empresa' => (string) $companyId, 'cliente' => (string) $userId],
-                        ],
+                        'flow_cta'             => 'Pagar ahora',
+                        // El endpoint arma la primera pantalla: así el cliente
+                        // ve su deuda al día y sólo los medios que su empresa
+                        // acepta de verdad.
+                        'flow_action'          => 'data_exchange',
+                        ...($borrador ? ['mode' => 'draft'] : []),
                     ],
                 ],
             ],
