@@ -66,6 +66,31 @@ class WompiGateway implements PaymentGatewayInterface
      *
      * @return list<string>
      */
+    /**
+     * Tope de Nequi, para no ofrecerlo cuando el cobro no va a caber.
+     *
+     * Wompi no publica el límite por API, así que se usa uno conservador: por
+     * encima de esto el cliente vería un checkout «solo Nequi» que le rebota,
+     * y es preferible mandarlo a la lista completa de medios. Para una factura
+     * de internet nunca se alcanza; está acá por si se cobran varios meses
+     * juntos.
+     */
+    private const NEQUI_TOPE = 2000000.0;
+
+    /** ¿Se le puede cobrar este monto por Nequi con esta cuenta? */
+    public function aceptaNequi(float $monto): bool
+    {
+        if ($monto <= 0 || $monto > self::NEQUI_TOPE) {
+            return false;
+        }
+
+        try {
+            return in_array('NEQUI', $this->metodosAceptados(), true);
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
     public function metodosAceptados(): array
     {
         $clave = "wompi:metodos:{$this->company->id}:" . ($this->company->pg_sandbox ? 'pruebas' : 'produccion');

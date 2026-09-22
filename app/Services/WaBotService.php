@@ -23,6 +23,7 @@ use App\Services\WhatsAppService;
 use App\Models\WaIdentity;
 use App\Services\PaymentGateways\EfiPayGateway;
 use App\Services\PaymentGateways\PaymentLinkService;
+use App\Services\PaymentGateways\WompiGateway;
 use Symfony\Component\Process\Process;
 
 class WaBotService
@@ -1730,13 +1731,14 @@ class WaBotService
      */
     private function nequiSirveParaEsteMonto(Company $company, float $amount): bool
     {
-        if ($company->pg_gateway !== 'efipay') {
-            return false;
-        }
-
-        $max = (new EfiPayGateway($company))->nequiMaxAmount();
-
-        return $max !== null && $amount <= $max;
+        return match (strtolower((string) $company->pg_gateway)) {
+            // EfiPay no dice qué acepta: hay que averiguar el tope con una
+            // sonda y, si no se pudo averiguar, no se ofrece.
+            'efipay' => ($max = (new EfiPayGateway($company))->nequiMaxAmount()) !== null && $amount <= $max,
+            // Wompi sí lista los medios que la cuenta tiene habilitados.
+            'wompi'  => (new WompiGateway($company))->aceptaNequi($amount),
+            default  => false,
+        };
     }
 
     /** Manda el botón de pago, apuntando al medio elegido si lo hay. */
