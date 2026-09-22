@@ -57,7 +57,9 @@ class ProbarFlowDePago extends Command
             return self::FAILURE;
         }
 
-        $nombre = DB::table('users')->where('id', $clienteId)->value('name');
+        $nombre = DB::table('user_data')->where('user_id', $clienteId)
+            ->selectRaw("TRIM(CONCAT(COALESCE(names,''),' ',COALESCE(lastname,''))) AS nombre")
+            ->value('nombre');
         $this->info("Empresa: {$empresa->name} · Cliente: {$nombre} (#{$clienteId}) · " . ($this->option('publicado') ? 'publicado' : 'borrador'));
 
         $r = (new MetaWhatsAppService((int) $empresa->id))->enviarFlowDePago(
