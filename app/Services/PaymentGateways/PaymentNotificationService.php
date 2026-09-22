@@ -85,6 +85,7 @@ class PaymentNotificationService
         'declined'  => 'pago_fallido',
         'failed'    => 'pago_fallido',
         'cancelled' => 'pago_fallido',
+        'expired'   => 'pago_fallido',
     ];
 
     /**
@@ -214,6 +215,7 @@ class PaymentNotificationService
             'declined',
             'failed'    => $this->declinedMessage($amount, $method, $voucher),
             'cancelled' => $this->cancelledMessage($amount, $method, $voucher),
+            'expired'   => $this->expiredMessage($amount, $method),
             default     => null,
         };
     }
@@ -281,6 +283,25 @@ class PaymentNotificationService
             "",
             "Si el dinero salió de tu cuenta, se te devuelve automáticamente.",
             "Tu factura sigue pendiente. Escríbenos por aquí si tienes dudas.",
+        ]);
+    }
+
+    /**
+     * El cobro se envió y nadie lo aprobó.
+     *
+     * No es un error ni un rechazo: se venció esperando. Se le dice sin
+     * dramatismo y se le ofrece el camino de vuelta, porque lo más probable es
+     * que lo haya dejado a medias sin querer.
+     */
+    private function expiredMessage(string $amount, string $method): string
+    {
+        return implode("\n", [
+            "⏳ *El cobro se venció*",
+            "",
+            "No alcanzamos a recibir la aprobación del pago por *{$amount}* con {$method}, así que lo dimos de baja.",
+            "",
+            "Tu factura sigue pendiente y no se te cobró nada.",
+            "Escribe *pagar* cuando quieras y te lo enviamos de nuevo.",
         ]);
     }
 
