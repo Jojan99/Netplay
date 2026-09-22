@@ -29,6 +29,11 @@ class PaginasLegalesController extends Controller
         return view('legal.eliminacion', $this->datos($request));
     }
 
+    public function terminos(Request $request)
+    {
+        return view('legal.terminos', $this->datos($request));
+    }
+
     /** Los datos de la empresa dueña del dominio por el que entraron. */
     private function datos(Request $request): array
     {

@@ -23,6 +23,8 @@ Route::get('/politica-de-privacidad', [\App\Http\Controllers\PaginasLegalesContr
     ->name('legal.privacidad');
 Route::get('/eliminacion-de-datos', [\App\Http\Controllers\PaginasLegalesController::class, 'eliminacionDeDatos'])
     ->name('legal.eliminacion');
+Route::get('/terminos-del-servicio', [\App\Http\Controllers\PaginasLegalesController::class, 'terminos'])
+    ->name('legal.terminos');
 
 // Página de firma de contrato para el cliente (acceso por token, sin login)
 Route::get('/contrato/firmar/{token}', [\App\Http\Controllers\ContractSignController::class, 'show'])

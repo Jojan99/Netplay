@@ -68,6 +68,7 @@ footer a{margin-right:16px;white-space:nowrap}
   <footer>
     <a href="/politica-de-privacidad">Política de privacidad</a>
     <a href="/eliminacion-de-datos">Eliminación de datos</a>
+    <a href="/terminos-del-servicio">Condiciones del servicio</a>
     <p style="margin-top:12px">Última actualización: {{ $actualizado }} · {{ $empresa }}</p>
   </footer>
 </div>
