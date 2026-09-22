@@ -56,6 +56,12 @@ class Kernel extends ConsoleKernel
         // horario de cada empresa, el asistente escribe y recuerda.
         $schedule->command('cobranza:revisar')->everyFiveMinutes()->user('www-data')->withoutOverlapping(20)->runInBackground();
 
+        // Pagos en línea que quedaron colgados: la pasarela avisa por webhook y
+        // el cliente vuelve a la página de retorno, pero las dos cosas fallan
+        // solas —un webhook sin configurar, un navegador cerrado— y el cliente
+        // queda pagando sin que la factura se entere. Esto lo pregunta.
+        $schedule->command('pagos:conciliar')->everyFiveMinutes()->user('www-data')->withoutOverlapping(10)->runInBackground();
+
         // Sincroniza ARP MikroTik con STATUS de plataforma — corrige desyncs diariamente
         $schedule->command('arp:sync')->dailyAt('06:00')->user('www-data');
 
