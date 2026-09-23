@@ -67,11 +67,22 @@ class FacturationRepository implements FacturationRepositoryInterface
 
     public function getDatePayFacture(GetDateFacturePendingnRequest $data): mixed
     {
-        $query = DetFacturation::select(
-            'id','cab_id','date_facturation','number_facture','date_create_facturation',
+        // Las anuladas se muestran acá —marcadas— para que no parezca que la
+        // factura se esfumó; en el resto de la plataforma siguen sin contar.
+        $query = DetFacturation::conAnuladas()->select(
+            'det_facturations.id','det_facturations.cab_id','date_facturation','number_facture','date_create_facturation',
             'total','price_total','porcentage_discount','days_facture','discount',
             'price_discount','create_facture_manual','paid','price_abone','abone',
-            DB::raw('price_total - price_abone as balance')
+            'paid_at','observacion','anulada_en','anulada_motivo',
+            DB::raw('price_total - price_abone as balance'),
+            // Con qué se pagó: del último movimiento de esa factura.
+            DB::raw("(SELECT pm.name FROM payment_logs pl
+                        LEFT JOIN payment_methods pm ON pm.id = pl.payment_method_id
+                       WHERE pl.det_facturation_id = det_facturations.id AND pl.amount > 0
+                    ORDER BY pl.created_at DESC LIMIT 1) as metodo_pago"),
+            DB::raw("(SELECT pl.notes FROM payment_logs pl
+                       WHERE pl.det_facturation_id = det_facturations.id AND pl.amount > 0
+                    ORDER BY pl.created_at DESC LIMIT 1) as nota_pago")
         )->where('cab_id', $data['cab_id']);
 
         if (!self::cabeceraDeLaEmpresa((int) $data['cab_id'])) {
@@ -316,16 +327,30 @@ class FacturationRepository implements FacturationRepositoryInterface
      * Paginated client list showing pending balances.
      * Returns stdClass with items[], total, per_page, current_page, last_page.
      */
-    public function getClientsPaginated(?string $search, int $page, int $perPage): object
+    /**
+     * Los clientes de la cartera.
+     *
+     * Por defecto sólo los que deben algo, que es lo que se viene a cobrar.
+     * Con $incluirAlDia entran también los que están al día: antes, un cliente
+     * que terminaba de pagar desaparecía de la pantalla y no había manera de
+     * abrir su historial de facturas desde acá.
+     */
+    public function getClientsPaginated(?string $search, int $page, int $perPage, bool $incluirAlDia = false): object
     {
         $companyId = getSessionCompanyId();
 
+        // El pendiente se cuenta con un join condicionado en vez de un WHERE:
+        // así el cliente sin deuda sigue apareciendo, con cero.
+        $pendiente = fn ($join) => $join->on('cb.id', '=', 'dt.cab_id')
+            ->where('dt.paid', 0)
+            ->whereNull('dt.anulada_en');
+
         $base = DB::table('user_data as us')
             ->join('cab_facturations as cb', 'cb.user_id', '=', 'us.user_id')
-            ->join('det_facturations as dt', 'cb.id', '=', 'dt.cab_id')
+            ->leftJoin('det_facturations as dt', $pendiente)
             ->join('users', 'users.id', '=', 'us.user_id')
             ->where('users.company_id', $companyId)
-            ->where('dt.paid', 0);
+            ->when(!$incluirAlDia, fn ($q) => $q->whereNotNull('dt.id'));
 
         if ($search) {
             $base->where(function ($q) use ($search) {
@@ -345,7 +370,7 @@ class FacturationRepository implements FacturationRepositoryInterface
             ->select([
                 'us.user_id', 'us.names', 'us.lastname', 'us.dni', 'us.phone', 'us.email', 'us.address',
                 'cb.id as cab_id', 'cb.date_init_facturation',
-                DB::raw('SUM(dt.price_total - dt.price_discount - dt.price_abone) as total_pending'),
+                DB::raw('COALESCE(SUM(dt.price_total - dt.price_discount - dt.price_abone), 0) as total_pending'),
                 DB::raw('COUNT(dt.id) as months_pending'),
             ])
             ->groupBy('us.user_id','us.names','us.lastname','us.dni','us.phone','us.email','us.address',
@@ -362,6 +387,7 @@ class FacturationRepository implements FacturationRepositoryInterface
             ->join('users', 'users.id', '=', 'us.user_id')
             ->where('users.company_id', $companyId)
             ->where('dt.paid', 0)
+            ->whereNull('dt.anulada_en')
             ->select('us.user_id', 'cb.id as cab_id',
                 DB::raw('COUNT(dt.id) as months'),
                 DB::raw('SUM(dt.price_total - dt.price_discount - dt.price_abone) as pending'))

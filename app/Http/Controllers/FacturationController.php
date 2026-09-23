@@ -231,7 +231,10 @@ class FacturationController extends Controller
         $data = $repo->getClientsPaginated(
             $request->query('search'),
             (int) $request->query('page', 1),
-            (int) $request->query('per_page', 15)
+            (int) $request->query('per_page', 15),
+            // Con «al_dia=1» entran también los clientes sin deuda, para poder
+            // abrir su historial de facturas desde la misma pantalla.
+            $request->boolean('al_dia'),
         );
         return standardApiReponse('OK', $data, 0, JsonResponse::HTTP_OK);
     }
