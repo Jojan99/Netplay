@@ -439,10 +439,16 @@ class FacturationRepository implements FacturationRepositoryInterface
         ->orderByDesc('det_facturations.date_facturation')
         ->get();
 
+        // Quién lo registró: la pantalla decía «por ·» sin nombre porque el
+        // dato nunca venía. Los pagos de pasarela no los registra nadie, así
+        // que ahí queda vacío a propósito.
         $logs = PaymentLog::with('paymentMethod:id,name')
-            ->where('cab_id', $cabId)
-            ->where('company_id', $companyId)
-            ->orderByDesc('created_at')
+            ->from('payment_logs as pl')
+            ->leftJoin('user_data as ud', 'ud.user_id', '=', 'pl.recorded_by_user_id')
+            ->where('pl.cab_id', $cabId)
+            ->where('pl.company_id', $companyId)
+            ->orderByDesc('pl.created_at')
+            ->select('pl.*', DB::raw("TRIM(CONCAT(COALESCE(ud.names,''),' ',COALESCE(ud.lastname,''))) as recorded_by_name"))
             ->get();
 
         return ['invoices' => $invoices, 'logs' => $logs];
