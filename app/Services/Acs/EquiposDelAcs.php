@@ -196,7 +196,9 @@ class EquiposDelAcs
             \Illuminate\Support\Facades\Cache::put($marca, true, now()->addHour());
 
             try {
-                $this->acs->tarea($id, ['name' => 'refreshObject', 'objectName' => "{$raiz}.Users"]);
+                // Sin esperar: esto corre al abrir la ficha del cliente y el
+                // dato no hace falta ahora. Llega para la próxima vuelta.
+                $this->acs->encolar($id, ['name' => 'refreshObject', 'objectName' => "{$raiz}.Users"]);
             } catch (\Throwable $e) {
                 // Un equipo dormido no contesta: se vuelve a intentar en una hora.
             }
@@ -286,18 +288,22 @@ class EquiposDelAcs
             ]
             : ['Device.DeviceInfo', 'Device.WiFi', 'Device.Hosts', 'Device.IP', 'Device.Users'];
 
-        $r = ['hecha' => true, 'en_cola' => false, 'estado' => 200, 'instancia' => null];
+        // Las ramas se dejan todas en la cola sin esperar, y sólo la última
+        // le avisa al equipo: GenieACS abre una sola sesión y en ella corren
+        // las cinco. Antes cada rama esperaba su propio aviso —hasta 45 s por
+        // rama, más de tres minutos para un clic— con un proceso de PHP
+        // tomado todo ese rato. Con veinte técnicos refrescando a la vez se
+        // acababan los procesos y se caía la plataforma entera.
+        $ultima = array_pop($ramas);
 
         foreach ($ramas as $rama) {
-            $paso = $this->acs->tarea($id, ['name' => 'refreshObject', 'objectName' => $rama]);
-
-            // Con que una quede en cola, el conjunto no está completo.
-            if (!($paso['hecha'] ?? false)) {
-                $r = $paso;
-            }
+            $this->acs->encolar($id, ['name' => 'refreshObject', 'objectName' => $rama]);
         }
 
-        return $r;
+        // La espera es corta a propósito: si el equipo no contesta en 20 s, la
+        // cola ya quedó armada y se aplica en cuanto se reporte. La pantalla
+        // no se queda colgada esperando a un equipo dormido.
+        return $this->acs->tarea($id, ['name' => 'refreshObject', 'objectName' => $ultima], 20);
     }
 
     /** Borra las tareas viejas del equipo: una trabada bloquea a las demás. */
@@ -409,7 +415,7 @@ class EquiposDelAcs
         if ($clave !== null && $clave !== '' && isset($d['InternetGatewayDevice'])
             && !self::existe($d, "InternetGatewayDevice.LANDevice.1.WLANConfiguration.{$indice}.BSSID")) {
             try {
-                $this->acs->tarea($id, ['name' => 'refreshObject', 'objectName' => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration']);
+                $this->acs->tarea($id, ['name' => 'refreshObject', 'objectName' => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration'], 20);
                 $d = $this->acs->dispositivo($id) ?? $d;
             } catch (\Throwable $e) {
                 Log::info('[ACS] No se pudo leer el WiFi antes de cambiar la clave', ['equipo' => $id, 'error' => $e->getMessage()]);

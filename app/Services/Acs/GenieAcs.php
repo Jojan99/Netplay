@@ -109,6 +109,33 @@ class GenieAcs
     }
 
     /**
+     * Deja una tarea en la cola y vuelve enseguida.
+     *
+     * Sin avisarle al equipo: se aplica en la sesión que abra la primera
+     * tarea que sí lo avise, o en su próximo reporte. Sirve para armar un
+     * grupo de tareas sin pagar la espera de cada una.
+     *
+     * Existe porque «tarea()» espera hasta 45 s por cada llamada, y eso,
+     * dentro de una pantalla, deja un proceso de PHP tomado todo ese rato.
+     * Con cinco ramas seguidas eran más de tres minutos con un trabajador
+     * ocupado; veinte técnicos a la vez dejaban la plataforma entera sin
+     * trabajadores libres —no sólo la pantalla del equipo: también los
+     * pagos, el portal y los avisos de WhatsApp—.
+     *
+     * @param  array<string,mixed>  $tarea
+     */
+    public function encolar(string $id, array $tarea): bool
+    {
+        try {
+            $r = Http::timeout(10)->post("{$this->base}/devices/" . rawurlencode($id) . '/tasks', $tarea);
+        } catch (\Illuminate\Http\Client\ConnectionException) {
+            return false;
+        }
+
+        return in_array($r->status(), [200, 202], true);
+    }
+
+    /**
      * Encola una tarea y pide al equipo que se conecte para hacerla ya.
      *
      * GenieACS responde 200 si el equipo la hizo en el momento y 202 si quedó
