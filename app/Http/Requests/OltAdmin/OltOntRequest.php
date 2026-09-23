@@ -37,10 +37,19 @@ class OltOntRequest extends FormRequest
             'aprovisionar.gateway'    => 'nullable|ipv4',
             'aprovisionar.mascara'    => 'nullable|string|max:3',
             'aprovisionar.wifi_ssid'  => 'nullable|string|max:32',
-            'aprovisionar.wifi_clave' => 'nullable|string|min:8|max:63',
+            // WPA sólo admite ASCII imprimible: una eñe o una tilde hacen
+            // que el equipo conteste «Invalid arguments» y nadie entienda por qué.
+            'aprovisionar.wifi_clave' => ['nullable', 'string', 'min:8', 'max:63', 'regex:/^[\\x20-\\x7E]+$/'],
             // Si el equipo ya está en la casa con su red andando, se aprovisiona
             // sólo la conexión y no se le toca el WiFi.
             'aprovisionar.wifi'       => 'nullable|boolean',
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'aprovisionar.wifi_clave.regex' => 'La clave del WiFi no puede llevar eñes, tildes ni símbolos raros: el equipo la rechaza.',
         ];
     }
 }

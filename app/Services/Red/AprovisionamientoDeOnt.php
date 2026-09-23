@@ -2057,6 +2057,41 @@ class AprovisionamientoDeOnt
         return (ip2long($ip) & $mascara) === (ip2long($red) & $mascara);
     }
 
+    /**
+     * Por qué una clave WiFi no va a entrar, dicho en palabras.
+     *
+     * El equipo sólo contesta «Invalid arguments», así que la explicación
+     * tiene que salir de acá.
+     *
+     * @return string|null El motivo, o null si la clave sirve.
+     */
+    public static function problemaDeLaClaveWifi(string $clave): ?string
+    {
+        $largo = strlen($clave);
+
+        if ($largo < 8 || $largo > 63) {
+            return "La clave WiFi tiene que tener entre 8 y 63 caracteres; ésta tiene {$largo}.";
+        }
+
+        // WPA acepta ASCII imprimible (32 a 126) y nada más.
+        if (!preg_match('/^[\x20-\x7E]+$/', $clave)) {
+            $raros = [];
+
+            foreach (preg_split('//u', $clave, -1, PREG_SPLIT_NO_EMPTY) as $c) {
+                if (!preg_match('/^[\x20-\x7E]$/', $c)) {
+                    $raros[$c] = true;
+                }
+            }
+
+            return 'La clave WiFi tiene caracteres que el estándar no admite ('
+                . implode(' ', array_keys($raros))
+                . '): las eñes, las tildes y los símbolos raros no se pueden usar. '
+                . 'Cambiala por una con letras sin tilde, números y signos simples.';
+        }
+
+        return null;
+    }
+
     private function aplicarWifi(GenieAcs $acs, Aprovisionamiento $a, array $d): array
     {
         $ssid = (string) $a->datos['wifi']['ssid'];
@@ -2067,6 +2102,14 @@ class AprovisionamientoDeOnt
 
         if (!$redes) {
             return ['paso' => $titulo, 'ok' => false, 'detalle' => 'El equipo no informó redes WiFi encendidas: no se cambió.', 'reintentar' => self::WLAN];
+        }
+
+        // El estándar WPA sólo admite ASCII imprimible en la contraseña. Una
+        // «ñ» o una tilde hacen que el equipo conteste «cwmp.9003 Invalid
+        // arguments», que no le dice nada a nadie. Mejor decirlo acá: nadie
+        // va a adivinar que el problema era la eñe.
+        if ($problema = self::problemaDeLaClaveWifi($clave)) {
+            return ['paso' => $titulo, 'ok' => false, 'detalle' => $problema];
         }
 
         $valores = [];
