@@ -1304,13 +1304,50 @@ class WaBotService
     }
 
     /** Público: lo reusa también el flujo de comprobantes de WhatsApp Web. */
+    /**
+     * El monto del comprobante.
+     *
+     * Antes se tomaba el primer número que apareciera después de «¿Cuánto?»,
+     * y el OCR mete ruido: en un comprobante de Nequi la línea salió como
+     * «2 $70.008,00 ?» y se guardaron dos pesos.
+     *
+     * Ahora se juntan todos los candidatos marcados con «$» y gana el mayor
+     * de los que estén cerca de la palabra clave; si no hay ninguno marcado,
+     * recién ahí se mira un número suelto. El OCR puede errar un dígito en
+     * una foto movida —«70.008» por «70.000»—, así que el valor se ofrece
+     * para confirmar, no para creerle a ciegas.
+     */
+    private function montoDelComprobante(string $text): ?float
+    {
+        $candidatos = [];
+
+        // Con signo de peso: es lo que de verdad indica un importe.
+        if (preg_match_all('/\$\s*([\d][\d.,]{2,})/u', $text, $m)) {
+            foreach ($m[1] as $bruto) {
+                $v = $this->parsePaymentAmount($bruto);
+                if ($v !== null && $v >= 100) {
+                    $candidatos[] = $v;
+                }
+            }
+        }
+
+        if ($candidatos) {
+            // El mayor: en un comprobante los otros números con peso suelen ser
+            // costos («a otros bancos te cuesta $7.590»), nunca el importe.
+            return max($candidatos);
+        }
+
+        // Sin signo de peso, se busca junto a la palabra que lo anuncia.
+        if (preg_match('/(?:valor\s+de\s+la\s+transferencia|valor\s+transferido|monto\s+transferido|importe\s+enviado|cu[aá]nto\??|monto|valor|total)[^\d]{0,80}([\d][\d.,]{2,})/iu', $text, $match)) {
+            return $this->parsePaymentAmount($match[1]);
+        }
+
+        return null;
+    }
+
     public function extractPaymentProofDetails(string $text): array
     {
-        $amount = null;
-        if (preg_match('/(?:valor\s+de\s+la\s+transferencia|valor\s+transferido|monto\s+transferido|importe\s+enviado|cu[aá]nto\??)[^\d$]{0,80}\$?\s*([\d\.,]+)/iu', $text, $match)
-            || preg_match('/(?:^|\R)\s*(?:monto|valor|total|pago|abono)\s*[:$]?\s*\$?\s*([\d\.,]+)/imu', $text, $match)) {
-            $amount = $this->parsePaymentAmount($match[1]);
-        }
+        $amount = $this->montoDelComprobante($text);
 
         $date = null;
         if (preg_match('/(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/', $text, $match)) {

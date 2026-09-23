@@ -76,6 +76,17 @@ class PaymentProofController extends Controller
 
         $proofs = $query->paginate($request->get('per_page', 20));
 
+        // Por qué WhatsApp entró cada comprobante: con dos instancias
+        // recibiendo pagos, quien revisa necesita saber dónde buscar el chat.
+        $lineas = DB::table('wa_lineas')->where('company_id', getSessionCompanyId())
+            ->pluck('nombre', 'id');
+
+        $proofs->getCollection()->transform(function ($p) use ($lineas) {
+            $p->linea_nombre = $p->wa_linea_id ? ($lineas[$p->wa_linea_id] ?? null) : null;
+
+            return $p;
+        });
+
         return response()->json([
             'status' => 'success',
             'data' => $proofs,
@@ -160,7 +171,9 @@ class PaymentProofController extends Controller
     public function releer(int $id): JsonResponse
     {
         $proof = $this->findOwned($id);
-        $leido = $this->leerDeLaImagen($proof);
+        // Releer es para corregir: pisa lo que se había leído antes, pero
+        // nunca el monto que alguien escribió a mano.
+        $leido = $this->leerDeLaImagen($proof, true);
 
         if (!$leido) {
             return response()->json([
@@ -183,7 +196,7 @@ class PaymentProofController extends Controller
      *
      * @return bool Si se pudo leer algo.
      */
-    private function leerDeLaImagen(PaymentProof $proof): bool
+    private function leerDeLaImagen(PaymentProof $proof, bool $corregir = false): bool
     {
         $ruta = $this->rutaLocal($proof);
 
@@ -199,11 +212,17 @@ class PaymentProofController extends Controller
 
         $d = app(\App\Services\WaBotService::class)->extractPaymentProofDetails($texto);
 
+        // Al corregir mandan los datos nuevos; al completar, sólo se llena lo
+        // que estaba vacío.
+        $elegir = fn (string $campo, $nuevo) => $corregir
+            ? ($nuevo ?? $proof->{$campo})
+            : ($proof->{$campo} ?? $nuevo);
+
         $proof->update(array_filter([
-            'detected_amount'  => $proof->detected_amount ?? ($d['amount'] ?? null),
-            'payment_date'     => $proof->payment_date ?? ($d['payment_date'] ?? null),
-            'reference_number' => $proof->reference_number ?? ($d['reference'] ?? null),
-            'bank_name'        => $proof->bank_name ?? ($d['bank_name'] ?? null),
+            'detected_amount'  => $elegir('detected_amount', $d['amount'] ?? null),
+            'payment_date'     => $elegir('payment_date', $d['payment_date'] ?? null),
+            'reference_number' => $elegir('reference_number', $d['reference'] ?? null),
+            'bank_name'        => $elegir('bank_name', $d['bank_name'] ?? null),
             'ocr_text'         => $texto,
         ], fn ($v) => $v !== null));
 
