@@ -865,6 +865,48 @@ class OltAdminUseCase
                     ];
                 }
 
+                // El service-port es el camino de datos. Sin él la ONT
+                // autentica y prende, pero no navega —y si no navega nunca va
+                // a aparecer en el TR-069—, así que aprovisionar encima de un
+                // service-port fallido es tirar el tiempo: falla la WAN, falla
+                // el WiFi y falla la gestión, y el técnico se queda mirando
+                // tres errores cuya causa es uno solo.
+                //
+                // Se reintenta una vez. completarServicePort ya sabe hacerlo
+                // bien: mira si quedó a medio crear en la OLT y toma un índice
+                // nuevo en vez de insistir con el que falló.
+                if ($vlan !== null && !$spCreated && empty($result['vlan_paso'])) {
+                    try {
+                        $reintento = $this->completarServicePort($oltId, [
+                            'fsp'     => $data['fsp'],
+                            'ont_id'  => $ontId,
+                            'vlan'    => $vlan,
+                        ]);
+
+                        $spCreated = ($reintento['status'] ?? 1) === 0;
+
+                        if ($spCreated && !empty($reintento['data']['service_port'])) {
+                            $spIndex = (int) $reintento['data']['service_port'];
+                        }
+
+                        $pasos[] = [
+                            'paso'    => 'Reintentar el service-port',
+                            'ok'      => $spCreated,
+                            'detalle' => $reintento['message'] ?? null,
+                        ];
+                    } catch (\Throwable $e) {
+                        \Log::warning('[OLT] Falló el reintento del service-port', [
+                            'olt' => $oltId, 'fsp' => $data['fsp'], 'ont' => $ontId, 'error' => $e->getMessage(),
+                        ]);
+
+                        $pasos[] = [
+                            'paso'    => 'Reintentar el service-port',
+                            'ok'      => false,
+                            'detalle' => $e->getMessage(),
+                        ];
+                    }
+                }
+
                 if (!empty($data['user_data_id'])) {
                     $pasos[] = [
                         'paso'    => 'Vincular el cliente',
@@ -904,12 +946,30 @@ class OltAdminUseCase
                     $pasos[] = $gestion;
                 }
 
+                // Con el camino de datos sin hacer no se aprovisiona: se
+                // deja dicho qué falta, para arreglar eso y reaplicar.
+                $caminoDeDatos = $vlan === null || $spCreated || !empty($result['vlan_paso']);
+
                 // Aprovisionamiento: WAN, WiFi y cuenta del equipo cuando
                 // aparezca en el TR-069, si la empresa lo tiene encendido.
+                if (!$caminoDeDatos) {
+                    $pasos[] = [
+                        'paso'    => 'Aprovisionamiento del equipo',
+                        'ok'      => false,
+                        'omitido' => true,
+                        'detalle' => 'No se programó: sin service-port el equipo no navega, '
+                                   . 'y sin navegar no llega al TR-069. Creá el service-port y reaplicá.',
+                    ];
+                }
+
                 try {
+
                     // Trasladada a otro puerto: sólo se le reaplica la conexión
                     // (y la MAC con IP fija); su WiFi y su cuenta quedan como están.
                     $companyDeLaOlt = (int) (OltAdmin::find($oltId)?->company_id ?: 0);
+                    $aprovisionamiento = null;
+
+                    if ($caminoDeDatos) {
                     $aprovisionamiento = !empty($data['_trasladada']) && !empty($data['user_data_id'])
                         ? (($re = \App\Services\Red\AprovisionamientoDeOnt::reaplicarConexion($companyDeLaOlt, (int) $data['user_data_id']))
                             ? ['paso' => 'Conexión del cliente', 'ok' => (bool) $re['id'], 'omitido' => !$re['id'], 'detalle' => $re['texto'], 'aprovisionamiento' => $re['id']] : null)
@@ -918,6 +978,7 @@ class OltAdminUseCase
                             isset($data['user_data_id']) ? (int) $data['user_data_id'] : null,
                             $vlan, (array) ($data['aprovisionar'] ?? [])
                         );
+                    }
 
                     if ($aprovisionamiento) {
                         $pasos[] = $aprovisionamiento;
