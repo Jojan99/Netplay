@@ -522,12 +522,30 @@ class FacturationRepository implements FacturationRepositoryInterface
             return ['ok' => false, 'mensaje' => 'Esa factura no está pagada.'];
         }
 
-        $pagado = (float) $det->price_total - (float) $det->price_discount - (float) ($det->price_abone ?? 0);
+        // Lo que de verdad se cobró sale de los movimientos, no de la resta:
+        // un pago por pasarela deja el importe en el abono, así que la resta
+        // daba cero y el reverso quedaba en $0.
+        $cobrado = (float) PaymentLog::where('det_facturation_id', $det->id)
+            ->where('amount', '>', 0)->sum('amount');
 
+        $pagado = $cobrado > 0
+            ? $cobrado
+            : (float) $det->price_total - (float) $det->price_discount - (float) ($det->price_abone ?? 0);
+
+        // El abono que dejó ese pago también se deshace: si no, la factura
+        // volvía a «pendiente» pero con saldo cero y seguía sin cobrarse.
+        $abonoQueQueda = max(0, round((float) ($det->price_abone ?? 0) - $pagado, 2));
+
+        // Las dos cosas van juntas o no va ninguna. Sin esto, si falla el
+        // registro del movimiento la factura queda impaga y sin explicación:
+        // pasó de verdad la primera vez que se usó.
+        DB::transaction(function () use ($det, $empresa, $pagado, $motivo, $abonoQueQueda) {
         $det->update([
             'paid'            => 0,
             'paid_at'         => null,
             'paid_by_user_id' => null,
+            'price_abone'     => $abonoQueQueda,
+            'abone'           => $abonoQueQueda > 0 ? 1 : 0,
         ]);
 
         PaymentLog::create([
@@ -544,6 +562,7 @@ class FacturationRepository implements FacturationRepositoryInterface
             'type'                => 'reverso',
             'notes'               => $motivo,
         ]);
+        });
 
         return ['ok' => true, 'mensaje' => 'El pago se revirtió y la factura volvió a quedar pendiente.'];
     }
