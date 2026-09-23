@@ -164,11 +164,49 @@ class EquiposDelAcs
             'wifi'      => self::wifi($d, $raiz),
             'equipos'   => self::hosts($d, $raiz),
             'optica'    => self::optica($d),
+            'cuentas'   => self::cuentasDelEquipo($d, $raiz),
             'url_acs'   => self::v($d, "{$raiz}.ManagementServer.URL"),
             // Por dónde el ACS le habla al equipo para aplicar algo al momento.
             'url_conexion' => self::v($d, "{$raiz}.ManagementServer.ConnectionRequestURL"),
             'intervalo' => self::entero(self::v($d, "{$raiz}.ManagementServer.PeriodicInformInterval")),
         ]);
+    }
+
+    /**
+     * Las cuentas para entrar a la página del equipo.
+     *
+     * El TR-069 las publica en «Users.User.{i}» y muchos equipos las devuelven
+     * en texto plano —un ZTE F680 entrega tres: la del operador que lo vendió,
+     * la de administración y la del propio equipo—. Hasta ahora el técnico
+     * tenía que pedírselas al cliente o buscarlas en la etiqueta.
+     *
+     * Las que el equipo no entrega salen sin clave: se ve el usuario y se
+     * sabe que existe, que ya es más que nada.
+     *
+     * @return list<array{indice:int, usuario:?string, clave:?string, habilitada:?bool}>
+     */
+    private static function cuentasDelEquipo(array $d, string $raiz): array
+    {
+        $cuentas = [];
+
+        foreach (self::hijos($d, "{$raiz}.Users.User") as $i) {
+            $usuario = self::v($d, "{$raiz}.Users.User.{$i}.Username");
+
+            if (($usuario ?? '') === '') {
+                continue;
+            }
+
+            $cuentas[] = [
+                'indice'     => (int) $i,
+                'usuario'    => $usuario,
+                'clave'      => self::v($d, "{$raiz}.Users.User.{$i}.Password") ?: null,
+                'habilitada' => self::existe($d, "{$raiz}.Users.User.{$i}.Enable")
+                    ? self::booleano(self::v($d, "{$raiz}.Users.User.{$i}.Enable"))
+                    : null,
+            ];
+        }
+
+        return $cuentas;
     }
 
     /**
@@ -209,8 +247,11 @@ class EquiposDelAcs
                 'InternetGatewayDevice.LANDevice.1.WLANConfiguration',
                 'InternetGatewayDevice.LANDevice.1.Hosts',
                 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice',
+                // Las cuentas para entrar a la página del equipo: el ACS sólo
+                // guarda lo que alguna vez pidió, y esto nunca se pedía.
+                'InternetGatewayDevice.Users',
             ]
-            : ['Device.DeviceInfo', 'Device.WiFi', 'Device.Hosts', 'Device.IP'];
+            : ['Device.DeviceInfo', 'Device.WiFi', 'Device.Hosts', 'Device.IP', 'Device.Users'];
 
         $r = ['hecha' => true, 'en_cola' => false, 'estado' => 200, 'instancia' => null];
 
