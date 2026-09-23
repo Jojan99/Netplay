@@ -149,6 +149,84 @@ class PaymentProofController extends Controller
         }
     }
 
+    /**
+     * Volver a leer la imagen del comprobante.
+     *
+     * Los comprobantes que entraron antes de que el servidor tuviera lector
+     * de imágenes quedaron sin monto, sin fecha y sin referencia. Y una
+     * imagen borrosa puede leerse mejor en un segundo intento. Sólo se
+     * completan los campos vacíos: lo que alguien escribió a mano manda.
+     */
+    public function releer(int $id): JsonResponse
+    {
+        $proof = $this->findOwned($id);
+        $leido = $this->leerDeLaImagen($proof);
+
+        if (!$leido) {
+            return response()->json([
+                'status'  => 'error',
+                'message' => 'No pudimos leer la imagen. Escribí el monto a mano.',
+            ], 422);
+        }
+
+        return response()->json([
+            'status'  => 'success',
+            'message' => $proof->fresh()->detected_amount
+                ? 'Leímos el comprobante.'
+                : 'Leímos la imagen pero no encontramos el monto.',
+            'data'    => $proof->fresh(),
+        ]);
+    }
+
+    /**
+     * Pasa la imagen por el lector y completa lo que falte.
+     *
+     * @return bool Si se pudo leer algo.
+     */
+    private function leerDeLaImagen(PaymentProof $proof): bool
+    {
+        $ruta = $this->rutaLocal($proof);
+
+        if (!$ruta || !is_file($ruta)) {
+            return false;
+        }
+
+        $texto = app(\App\Services\WaBotService::class)->extractTextFromProof($ruta);
+
+        if (!$texto) {
+            return false;
+        }
+
+        $d = app(\App\Services\WaBotService::class)->extractPaymentProofDetails($texto);
+
+        $proof->update(array_filter([
+            'detected_amount'  => $proof->detected_amount ?? ($d['amount'] ?? null),
+            'payment_date'     => $proof->payment_date ?? ($d['payment_date'] ?? null),
+            'reference_number' => $proof->reference_number ?? ($d['reference'] ?? null),
+            'bank_name'        => $proof->bank_name ?? ($d['bank_name'] ?? null),
+            'ocr_text'         => $texto,
+        ], fn ($v) => $v !== null));
+
+        return true;
+    }
+
+    /** El archivo en el disco, a partir de la dirección guardada. */
+    private function rutaLocal(PaymentProof $proof): ?string
+    {
+        $guardado = (string) $proof->file_path;
+
+        if ($guardado === '') {
+            return null;
+        }
+
+        // Se guarda la dirección pública; el archivo vive en storage/app/public.
+        $relativa = str_contains($guardado, '/storage/')
+            ? substr($guardado, strpos($guardado, '/storage/') + strlen('/storage/'))
+            : ltrim($guardado, '/');
+
+        return storage_path('app/public/' . $relativa);
+    }
+
     public function approve(int $id, Request $request): JsonResponse
     {
         $proof = $this->findOwned($id);
@@ -164,6 +242,13 @@ class PaymentProofController extends Controller
 
         // Aprobar con monto cero no aplicaba nada y decía «aprobado»: la
         // factura seguía debiendo y nadie se enteraba hasta el reclamo.
+        // Antes de rendirse, se vuelve a leer la imagen: puede ser un
+        // comprobante viejo, de cuando el servidor no tenía lector.
+        if ($proofAmount <= 0 && !$request->filled('amount') && $this->leerDeLaImagen($proof)) {
+            $proofAmount = (float) ($proof->fresh()->detected_amount ?? 0);
+            $proof = $proof->fresh();
+        }
+
         if ($proofAmount <= 0) {
             return response()->json([
                 'status'  => 'error',
