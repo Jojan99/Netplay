@@ -164,12 +164,44 @@ class EquiposDelAcs
             'wifi'      => self::wifi($d, $raiz),
             'equipos'   => self::hosts($d, $raiz),
             'optica'    => self::optica($d),
-            'cuentas'   => self::cuentasDelEquipo($d, $raiz),
+            'cuentas'   => $this->cuentasConPedido($id, $d, $raiz),
             'url_acs'   => self::v($d, "{$raiz}.ManagementServer.URL"),
             // Por dónde el ACS le habla al equipo para aplicar algo al momento.
             'url_conexion' => self::v($d, "{$raiz}.ManagementServer.ConnectionRequestURL"),
             'intervalo' => self::entero(self::v($d, "{$raiz}.ManagementServer.PeriodicInformInterval")),
         ]);
+    }
+
+    /**
+     * Las cuentas, pidiéndoselas al equipo la primera vez.
+     *
+     * El ACS sólo guarda lo que alguna vez pidió, así que un equipo al que
+     * nunca se le preguntó no las tiene. En vez de mostrar el hueco y esperar
+     * a que alguien toque refrescar, se piden al pasar: aparecen solas en la
+     * próxima carga. Se pide una vez por hora como mucho, para no encolarle
+     * una tarea al equipo cada vez que se abre la ficha.
+     */
+    private function cuentasConPedido(string $id, array $d, string $raiz): array
+    {
+        $cuentas = self::cuentasDelEquipo($d, $raiz);
+
+        if ($cuentas) {
+            return $cuentas;
+        }
+
+        $marca = 'acs:cuentas-pedidas:' . md5($id);
+
+        if (!\Illuminate\Support\Facades\Cache::has($marca)) {
+            \Illuminate\Support\Facades\Cache::put($marca, true, now()->addHour());
+
+            try {
+                $this->acs->tarea($id, ['name' => 'refreshObject', 'objectName' => "{$raiz}.Users"]);
+            } catch (\Throwable $e) {
+                // Un equipo dormido no contesta: se vuelve a intentar en una hora.
+            }
+        }
+
+        return [];
     }
 
     /**
