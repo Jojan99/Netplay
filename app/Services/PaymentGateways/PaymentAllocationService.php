@@ -21,7 +21,67 @@ class PaymentAllocationService
     /** Diferencia máxima tolerada entre lo cobrado y lo registrado (redondeos). */
     private const AMOUNT_TOLERANCE = 1.0;
 
-    public function allocate(int $companyId, string $reference, float $amountPaid, string $gateway): void
+    /**
+     * @param string|null $medio Con qué pagó el cliente en la pasarela
+     *                           (NEQUI, PSE, BANCOLOMBIA_TRANSFER…). Sin esto
+     *                           todos los pagos en línea quedaban «sin método».
+     */
+    /**
+     * El medio de pago de un cobro por pasarela.
+     *
+     * No se reutilizan los medios que cargó la empresa —«NEQUI 3245127869
+     * JOJAN» es una cuenta propia y ahí no cayó esta plata—: se usa uno propio
+     * de la pasarela, que se crea la primera vez que aparece. Queda inactivo a
+     * propósito, para que no se ofrezca al cobrar a mano pero sí se vea en el
+     * historial.
+     */
+    private function medioDePasarela(int $companyId, string $gateway, ?string $medio, ?string $banco): ?int
+    {
+        if (!$medio) {
+            return null;
+        }
+
+        $legible = match (strtoupper($medio)) {
+            'NEQUI'                 => 'Nequi',
+            'PSE'                   => 'PSE',
+            'BANCOLOMBIA_TRANSFER',
+            'BANCOLOMBIA_COLLECT',
+            'BANCOLOMBIA_QR',
+            'BANCOLOMBIA'           => 'Bancolombia',
+            'DAVIPLATA'             => 'Daviplata',
+            'CARD'                  => 'Tarjeta',
+            'NEQUI_PUSH'            => 'Nequi',
+            default                 => ucfirst(strtolower(str_replace('_', ' ', $medio))),
+        };
+
+        $nombre = strtoupper($gateway) . ' · ' . $legible . ($banco ? " ({$banco})" : '');
+        $nombre = mb_substr($nombre, 0, 100);
+
+        try {
+            $id = DB::table('payment_methods')
+                ->where('company_id', $companyId)
+                ->where('name', $nombre)
+                ->value('id');
+
+            return $id ?: DB::table('payment_methods')->insertGetId([
+                'company_id' => $companyId,
+                'name'       => $nombre,
+                // Inactivo: es para leer el historial, no para elegirlo al
+                // cobrar en efectivo.
+                'active'     => 0,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('[Pagos] No se pudo anotar el medio de la pasarela', [
+                'empresa' => $companyId, 'medio' => $medio, 'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
+    public function allocate(int $companyId, string $reference, float $amountPaid, string $gateway, ?string $medio = null, ?string $banco = null): void
     {
         $tx = OnlinePaymentTransaction::where('reference', $reference)->first();
         if (!$tx) {
@@ -138,7 +198,7 @@ class PaymentAllocationService
                     // Escribir cualquier otra cosa hace que MySQL trunque y aborte.
                     'type'                => $fullyPaid ? 'pago_completo' : 'abono',
                     'notes'               => 'Pago online vía ' . strtoupper($gateway) . ". Ref: {$locked->reference}",
-                    'payment_method_id'   => null,
+                    'payment_method_id'   => $this->medioDePasarela($companyId, $gateway, $medio, $banco),
                 ]);
             }
 

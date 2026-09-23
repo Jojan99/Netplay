@@ -409,7 +409,22 @@ class PaymentGatewayController extends Controller
             ]);
 
             if ($txStatus === 'approved') {
-                $this->markInvoicePaid($company->id, $reference, $amount, $gatewayName);
+                // Con qué pagó: viene en el mismo aviso, y es lo que evita que
+                // el movimiento quede «sin método» en el historial.
+                $medio = match ($gatewayName) {
+                    'wompi'  => $request->input('data.transaction.payment_method_type')
+                                ?? $request->input('data.transaction.payment_method.type'),
+                    'efipay' => $request->input('checkout.payment_method')
+                                ?? $request->input('transaction.payment_method'),
+                    default  => null,
+                };
+
+                $banco = $gatewayName === 'wompi'
+                    ? ($request->input('data.transaction.payment_method.extra.bank_name')
+                       ?? $request->input('data.transaction.payment_method.extra.brand'))
+                    : null;
+
+                $this->markInvoicePaid($company->id, $reference, $amount, $gatewayName, $medio, $banco);
             }
 
             // Se notifica después de acreditar, para que el mensaje pueda
@@ -428,8 +443,8 @@ class PaymentGatewayController extends Controller
     }
 
     /** Público: lo usa también la página de retorno cuando resuelve el pago sin webhook. */
-    public function markInvoicePaid(int $companyId, string $reference, float $amountPaid, string $gateway): void
+    public function markInvoicePaid(int $companyId, string $reference, float $amountPaid, string $gateway, ?string $medio = null, ?string $banco = null): void
     {
-        app(PaymentAllocationService::class)->allocate($companyId, $reference, $amountPaid, $gateway);
+        app(PaymentAllocationService::class)->allocate($companyId, $reference, $amountPaid, $gateway, $medio, $banco);
     }
 }

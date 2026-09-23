@@ -357,6 +357,12 @@ class WompiGateway implements PaymentGatewayInterface
                 },
                 'amount'    => isset($d['amount_in_cents']) ? ((int) $d['amount_in_cents']) / 100 : 0.0,
                 'reference' => $d['reference'] ?? null,
+                // Con qué pagó el cliente: NEQUI, PSE, BANCOLOMBIA_TRANSFER…
+                // Sin esto, todos los pagos en línea quedaban «sin método».
+                'medio'     => $d['payment_method_type'] ?? ($d['payment_method']['type'] ?? null),
+                'banco'     => $d['payment_method']['extra']['bank_name']
+                               ?? $d['payment_method']['extra']['brand']
+                               ?? null,
             ];
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::warning('[Wompi] Error consultando la transacción', [

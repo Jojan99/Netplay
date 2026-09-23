@@ -161,6 +161,10 @@ class ConciliarPagosEnLinea extends Command
             (string) $tx->reference,
             $monto,
             (string) $tx->gateway,
+            // La consulta a la pasarela ya dice con qué pagó: se aprovecha,
+            // así el movimiento no queda «sin método».
+            $r['medio'] ?? null,
+            $r['banco'] ?? null,
         );
 
         $tx->update(['status' => 'approved', 'paid_at' => now(), 'allocation_done' => true]);
