@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Client;
 
+use App\Rules\ClaveWifi;
 use App\Http\Controllers\Controller;
 use App\Services\Acs\RouterDelCliente;
 use Illuminate\Http\JsonResponse;
@@ -31,7 +32,7 @@ class ClientRouterController extends Controller
         $request->validate([
             'indice' => 'required|integer|min:1',
             'nombre' => 'prohibited',
-            'clave'  => 'required|string|min:8|max:63',
+            'clave'  => ['required', 'string', new ClaveWifi()],
             'todas'  => 'nullable|boolean',
         ], ['nombre.prohibited' => 'El nombre de la red no se puede cambiar desde el portal.']);
 

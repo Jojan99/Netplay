@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\User;
 
+use App\Rules\ClaveDeEquipo;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use App\Http\Requests\Traits\DefaultResponseTrait;
@@ -46,8 +47,11 @@ class CreateUserDataRequest extends FormRequest
             // Con PPPoE no hay IP que asignar: el cliente entra con usuario y
             // contraseña y la IP se la da el pool del router.
             'connection_type' => 'nullable|in:static,pppoe',
-            'pppoe_user' => 'nullable|string|max:120|required_if:connection_type,pppoe',
-            'pppoe_password' => 'nullable|string|max:120|required_if:connection_type,pppoe',
+            // El usuario y la clave del PPPoE terminan dentro de la ONT: los
+            // signos que el equipo no admite se rechazan acá y no a mitad del
+            // aprovisionamiento, cuando ya es tarde.
+            'pppoe_user' => ['nullable', 'string', 'max:120', 'required_if:connection_type,pppoe', new ClaveDeEquipo('El usuario del PPPoE')],
+            'pppoe_password' => ['nullable', 'string', 'max:120', 'required_if:connection_type,pppoe', new ClaveDeEquipo('La clave del PPPoE')],
             'pppoe_profile' => 'nullable|string|max:120',
               // 'genderId' => 'required|int',
             // 'dniId' => 'required|int',

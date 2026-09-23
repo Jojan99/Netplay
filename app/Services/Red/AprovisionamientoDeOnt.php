@@ -110,7 +110,19 @@ class AprovisionamientoDeOnt
 
         // Sólo se cambia si llega una: la pantalla no la recibe nunca.
         if ((string) ($d['admin_clave'] ?? '') !== '') {
+            // Esta clave termina dentro del equipo por TR-069 y, en algunas
+            // marcas, por una línea de consola: una eñe o una comilla la parten
+            // en el camino y el equipo contesta «Invalid arguments».
+            if ($problema = self::problemaDeUnaClaveDeEquipo((string) $d['admin_clave'], 'La clave de administración del equipo')) {
+                throw new \InvalidArgumentException($problema);
+            }
+
             $cambios['onu_admin_clave'] = (string) $d['admin_clave'];
+        }
+
+        if ($cambios['onu_admin_usuario']
+            && $problema = self::problemaDeUnaClaveDeEquipo($cambios['onu_admin_usuario'], 'El usuario de administración del equipo')) {
+            throw new \InvalidArgumentException($problema);
         }
 
         if ($cambios['aprov_admin'] && (!$cambios['onu_admin_usuario'] || !(($cambios['onu_admin_clave'] ?? null) ?: $g->onu_admin_clave))) {
@@ -635,6 +647,14 @@ class AprovisionamientoDeOnt
             ->whereIn('estado', ['esperando', 'aplicando', 'no_aplica'])
             ->update(['estado' => 'reemplazado', 'detalle' => 'Se cambió la conexión del cliente.']);
 
+        // El WiFi del alta que nunca llegó a entrar se lleva de nuevo.
+        // Reaplicar rehace la conexión y nada más; si el WiFi había quedado
+        // fallado —una clave con eñe, el equipo mudo cuando se intentó— se
+        // quedaba esperando para siempre y desde afuera parecía que reaplicar
+        // no hacía nada. Lo que ya entró no se vuelve a tocar: cambiarle la
+        // red a un cliente que está navegando es peor que no hacer nada.
+        $wifi = self::wifiPendiente($companyId, (string) $ont->serial);
+
         $nuevo = Aprovisionamiento::create([
             'company_id' => $companyId,
             'olt_id'     => $ont->olt_id,
@@ -642,7 +662,9 @@ class AprovisionamientoDeOnt
             'ont_id'     => $ont->ont_id,
             'serial'     => $ont->serial,
             'user_id'    => $userId,
+            'wifi_clave' => $wifi['clave'] ?? null,
             'datos'      => ['cliente' => $cliente['nombre'] ?? null, 'wan' => $wan, 'avisos' => [], 'origen' => $motivo ? 'reinicio' : 'cambio_de_conexion']
+                + ($wifi ? ['wifi' => $wifi['datos']] : [])
                 + ($compatible ? ['compatibilidad' => $compatible] : [])
                 + ($destrabe['ip_prestada'] ?? null ? ['ip_prestada' => $destrabe['ip_prestada']] : []),
             'estado'     => $enAcs ? 'aplicando' : 'esperando',
@@ -654,7 +676,28 @@ class AprovisionamientoDeOnt
             'detalle'    => $enAcs ? 'Aplicando la conexión nueva…' : self::textoDeEspera($compatible),
         ]);
 
-        return ['texto' => 'La ONT se reconfigura sola en uno o dos minutos: ' . self::resumenWan($wan) . '.', 'id' => $nuevo->id];
+        return [
+            'texto' => 'La ONT se reconfigura sola en uno o dos minutos: ' . self::resumenWan($wan)
+                . ($wifi ? ', y se vuelve a intentar el WiFi «' . $wifi['datos']['ssid'] . '», que había quedado sin aplicar' : '') . '.',
+            'id' => $nuevo->id,
+        ];
+    }
+
+    /**
+     * El WiFi que se pidió en el alta y todavía no entró al equipo.
+     *
+     * @return array{datos: array, clave: string}|null
+     */
+    private static function wifiPendiente(int $companyId, string $serial): ?array
+    {
+        $a = Aprovisionamiento::where('company_id', $companyId)->where('serial', $serial)
+            ->whereNotNull('wifi_clave')->orderByDesc('id')->first();
+
+        if (!$a || empty($a->datos['wifi']['ssid']) || ($a->datos['resultados']['wifi']['ok'] ?? false)) {
+            return null;
+        }
+
+        return ['datos' => $a->datos['wifi'], 'clave' => (string) $a->wifi_clave];
     }
 
     /**
@@ -877,12 +920,14 @@ class AprovisionamientoDeOnt
 
     /**
      * El nombre de la red tal como lo escribieron, sin acentos ni caracteres
-     * que los equipos manejan mal. Se permiten los que las empresas usan en sus
-     * redes: arroba, numeral, ampersand, paréntesis, más, coma y apóstrofo.
+     * que los equipos manejan mal. Lo que no entra se cae en silencio: acá no
+     * se rechaza nada, porque este nombre lo arma el sistema.
      */
     private static function limpiarSsid(string $s): string
     {
-        return mb_substr(trim((string) preg_replace("/[^A-Za-z0-9_\-. @#&+,'()]/", '', Str::ascii(trim($s)))), 0, 32);
+        $signos = preg_quote(self::SIGNOS_WIFI, '/');
+
+        return mb_substr(trim((string) preg_replace("/[^A-Za-z0-9 {$signos}]/", '', Str::ascii(trim($s)))), 0, 32);
     }
 
     /** Diez letras y números sin los que se confunden (l, 1, o, 0). */
@@ -2058,6 +2103,29 @@ class AprovisionamientoDeOnt
     }
 
     /**
+     * Los signos que una clave o un nombre de red pueden llevar.
+     *
+     * La clave viaja por SOAP hasta el equipo y, en algunas marcas, termina
+     * metida en una línea de consola. Comillas, barras y acentos graves la
+     * parten por la mitad en algún punto del camino, y el equipo contesta
+     * «Invalid arguments» sin decir dónde. Con este puñado de signos alcanza
+     * para una clave segura y no hay nada que se pueda romper.
+     */
+    public const SIGNOS_WIFI = '-_.@#$%&*+=!?():,';
+
+    /**
+     * La expresión que acepta la clave, o el nombre de la red.
+     *
+     * El nombre además admite espacios —«Casa de Juan» es un nombre de red
+     * como cualquier otro y viaja sin problema—; la clave no, porque hay
+     * marcas que la pasan por una línea de consola y ahí el espacio corta.
+     */
+    public static function patronWifi(bool $conEspacio = false): string
+    {
+        return '/^[A-Za-z0-9' . ($conEspacio ? ' ' : '') . preg_quote(self::SIGNOS_WIFI, '/') . ']+$/';
+    }
+
+    /**
      * Por qué una clave WiFi no va a entrar, dicho en palabras.
      *
      * El equipo sólo contesta «Invalid arguments», así que la explicación
@@ -2073,23 +2141,55 @@ class AprovisionamientoDeOnt
             return "La clave WiFi tiene que tener entre 8 y 63 caracteres; ésta tiene {$largo}.";
         }
 
-        // WPA acepta ASCII imprimible (32 a 126) y nada más.
-        if (!preg_match('/^[\x20-\x7E]+$/', $clave)) {
-            $raros = [];
+        return self::problemaDeLosCaracteres($clave, 'La clave WiFi', false);
+    }
 
-            foreach (preg_split('//u', $clave, -1, PREG_SPLIT_NO_EMPTY) as $c) {
-                if (!preg_match('/^[\x20-\x7E]$/', $c)) {
-                    $raros[$c] = true;
-                }
-            }
-
-            return 'La clave WiFi tiene caracteres que el estándar no admite ('
-                . implode(' ', array_keys($raros))
-                . '): las eñes, las tildes y los símbolos raros no se pueden usar. '
-                . 'Cambiala por una con letras sin tilde, números y signos simples.';
+    /**
+     * Lo mismo para el nombre de la red: una eñe en el SSID rompe igual.
+     *
+     * @return string|null El motivo, o null si el nombre sirve.
+     */
+    public static function problemaDelNombreWifi(string $ssid): ?string
+    {
+        if ($ssid === '' || mb_strlen($ssid) > 32) {
+            return 'El nombre de la red tiene que tener entre 1 y 32 caracteres.';
         }
 
-        return null;
+        return self::problemaDeLosCaracteres($ssid, 'El nombre de la red', true);
+    }
+
+    /**
+     * Lo mismo para la clave de administración del equipo y para la del PPPoE.
+     *
+     * Acá no se mide el largo: esas claves las pone la marca o el proveedor y
+     * las hay de cinco caracteres. Lo que sí importa son los signos, porque
+     * viajan por el mismo camino y se rompen igual.
+     *
+     * @return string|null El motivo, o null si sirve.
+     */
+    public static function problemaDeUnaClaveDeEquipo(string $clave, string $que = 'La clave'): ?string
+    {
+        return $clave === '' ? null : self::problemaDeLosCaracteres($clave, $que, false);
+    }
+
+    /** El texto que explica qué signo sobra, para la clave o para el nombre. */
+    private static function problemaDeLosCaracteres(string $texto, string $que, bool $conEspacio): ?string
+    {
+        if (preg_match(self::patronWifi($conEspacio), $texto)) {
+            return null;
+        }
+
+        $raros = [];
+
+        foreach (preg_split('//u', $texto, -1, PREG_SPLIT_NO_EMPTY) as $c) {
+            if (!preg_match(self::patronWifi($conEspacio), $c)) {
+                $raros[$c === ' ' ? 'espacios' : $c] = true;
+            }
+        }
+
+        return $que . ' no puede llevar ' . implode(' ', array_keys($raros)) . '. '
+            . 'Se admiten letras sin tilde ni eñe, números y estos signos: '
+            . implode(' ', str_split(self::SIGNOS_WIFI)) . '.' . ($conEspacio ? ' Los espacios sí valen.' : '');
     }
 
     private function aplicarWifi(GenieAcs $acs, Aprovisionamiento $a, array $d): array

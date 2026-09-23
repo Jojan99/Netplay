@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Rules\ClaveDeEquipo;
 use App\Constants\ApiResponseConstants;
 use App\Models\OltAdmin;
 use App\Services\HuaweiSnmpReader;
@@ -260,6 +261,14 @@ class ManagementRouterController extends Controller
         if (!$userId) {
             return standardApiReponse('Falta el cliente', null, 1, JsonResponse::HTTP_UNPROCESSABLE_ENTITY);
         }
+
+        // Estos dos van a parar dentro de la ONT. Un signo que el equipo no
+        // admite dejaba al cliente con el router cambiado y la ONT sin tomar
+        // la conexión nueva: se revisa antes de tocar nada.
+        $request->validate([
+            'pppoe_user'     => ['nullable', 'string', 'max:120', new ClaveDeEquipo('El usuario del PPPoE')],
+            'pppoe_password' => ['nullable', 'string', 'max:120', new ClaveDeEquipo('La clave del PPPoE')],
+        ]);
 
         // Con la ONT en el TR-069 el cambio lo lleva CambioDeConexion: router y
         // ONT juntos, sin sacar lo viejo hasta confirmar lo nuevo. Antes se

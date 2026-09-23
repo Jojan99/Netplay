@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use App\Rules\ClaveWifi;
+use App\Rules\NombreWifi;
 use App\Services\Acs\EquiposDelAcs;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -71,14 +73,11 @@ class AcsController extends Controller
     {
         $request->validate([
             'indice' => 'required|integer|min:1',
-            'ssid'   => 'nullable|string|max:32',
-            // Sólo ASCII imprimible: lo que pide el estándar WPA.
-            'clave'  => ['nullable', 'string', 'min:8', 'max:63', 'regex:/^[\\x20-\\x7E]+$/'],
+            'ssid'   => ['nullable', 'string', 'max:32', new NombreWifi()],
+            'clave'  => ['nullable', 'string', new ClaveWifi()],
             'todas'  => 'nullable|boolean',
             // Ocultar la red: el equipo deja de anunciar su nombre.
             'oculta' => 'nullable|boolean',
-        ], [
-            'clave.regex' => 'La clave del WiFi no puede llevar eñes, tildes ni símbolos raros: el equipo la rechaza.',
         ]);
 
         return $this->accion($request, 'cambiar el WiFi', fn (EquiposDelAcs $acs, string $id) => $acs->cambiarWifi(

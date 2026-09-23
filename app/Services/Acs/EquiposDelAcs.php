@@ -2,6 +2,7 @@
 
 namespace App\Services\Acs;
 
+use App\Services\Red\AprovisionamientoDeOnt as Aprovisionamiento;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
@@ -423,16 +424,19 @@ class EquiposDelAcs
 
         $valores = [];
 
+        // Acá pasa todo: la ficha del cliente, el portal y el aprovisionamiento.
+        // La revisión va en este punto y no sólo en cada formulario, para que
+        // ninguna ruta nueva se salte la regla sin que nadie se dé cuenta.
         if ($ssid !== null && $ssid !== '') {
-            if (mb_strlen($ssid) > 32) {
-                throw new \InvalidArgumentException('El nombre de la red admite hasta 32 caracteres.');
+            if ($problema = Aprovisionamiento::problemaDelNombreWifi($ssid)) {
+                throw new \InvalidArgumentException($problema);
             }
             $valores[] = [$red['ruta_ssid'], $ssid, 'xsd:string'];
         }
 
         if ($clave !== null && $clave !== '') {
-            if (strlen($clave) < 8 || strlen($clave) > 63) {
-                throw new \InvalidArgumentException('La contraseña WiFi debe tener entre 8 y 63 caracteres.');
+            if ($problema = Aprovisionamiento::problemaDeLaClaveWifi($clave)) {
+                throw new \InvalidArgumentException($problema);
             }
             if (!$red['ruta_clave']) {
                 throw new \InvalidArgumentException('Este equipo no permite cambiar la contraseña por TR-069.');
