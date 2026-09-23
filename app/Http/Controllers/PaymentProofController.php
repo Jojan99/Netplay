@@ -116,13 +116,60 @@ class PaymentProofController extends Controller
         ]);
     }
 
+    /**
+     * El medio de pago de un comprobante, según el banco que se leyó.
+     *
+     * Igual que con la pasarela, no se reutilizan las cuentas cargadas por la
+     * empresa: se usa uno propio —«Comprobante · Bancolombia»— que se crea la
+     * primera vez y queda inactivo, para leerlo en el historial sin que
+     * aparezca al cobrar a mano.
+     */
+    private function medioDelComprobante(PaymentProof $proof): ?int
+    {
+        $banco = trim((string) $proof->bank_name);
+
+        if ($banco === '') {
+            return null;
+        }
+
+        $nombre = mb_substr('Comprobante · ' . $banco, 0, 100);
+
+        try {
+            return DB::table('payment_methods')
+                ->where('company_id', $proof->company_id)->where('name', $nombre)->value('id')
+                ?: DB::table('payment_methods')->insertGetId([
+                    'company_id' => $proof->company_id,
+                    'name'       => $nombre,
+                    'active'     => 0,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
     public function approve(int $id, Request $request): JsonResponse
     {
         $proof = $this->findOwned($id);
         $previous = $proof->status;
 
         $invoice = $proof->invoice;
-        $proofAmount = (float) ($proof->reported_amount ?? $proof->detected_amount ?? 0);
+
+        // Quien revisa puede corregir el monto: si el lector de la imagen no
+        // lo encontró, o lo leyó mal, se escribe a mano.
+        $proofAmount = $request->filled('amount')
+            ? (float) $request->input('amount')
+            : (float) ($proof->reported_amount ?? $proof->detected_amount ?? 0);
+
+        // Aprobar con monto cero no aplicaba nada y decía «aprobado»: la
+        // factura seguía debiendo y nadie se enteraba hasta el reclamo.
+        if ($proofAmount <= 0) {
+            return response()->json([
+                'status'  => 'error',
+                'message' => 'No sabemos de cuánto es el pago: escribí el monto para aprobarlo.',
+            ], 422);
+        }
 
         if ($invoice) {
             $baseDebt = (float) ($invoice->price_total ?? 0) - (float) ($invoice->price_discount ?? 0);
@@ -134,6 +181,24 @@ class PaymentProofController extends Controller
             $invoice->paid_at = $invoice->paid ? now() : null;
             $invoice->paid_by_user_id = $proof->user?->user_id;
             $invoice->save();
+
+            // El pago tiene que verse en los movimientos de la factura: sin
+            // esto, un comprobante aprobado no dejaba ningún rastro contable.
+            \App\Models\PaymentLog::create([
+                'company_id'          => $proof->company_id,
+                'det_facturation_id'  => $invoice->id,
+                'cab_id'              => $invoice->cab_id,
+                'number_facture'      => $invoice->number_facture,
+                'client_name'         => trim((string) \Illuminate\Support\Facades\DB::table('user_data')
+                    ->where('user_id', $proof->user_id)
+                    ->selectRaw("TRIM(CONCAT(COALESCE(names,''),' ',COALESCE(lastname,''))) n")->value('n')),
+                'recorded_by_user_id' => $request->input('reviewed_by', Auth::id()),
+                'amount'              => $proofAmount,
+                'type'                => $invoice->paid ? 'pago_completo' : 'abono',
+                'payment_method_id'   => $this->medioDelComprobante($proof),
+                'notes'               => trim('Comprobante por WhatsApp'
+                    . ($proof->reference_number ? ". Ref: {$proof->reference_number}" : '')),
+            ]);
         }
 
         $proof->update([

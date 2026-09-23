@@ -14,6 +14,7 @@ class PaymentProof extends Model
         // De dónde vino: 'whatsapp_web' (los que manda el cliente al número
         // de WhatsApp Web) o 'meta' (los del bot de la API oficial).
         'source',
+        'wa_linea_id',
         'user_id',
         'invoice_id',
         'file_path',

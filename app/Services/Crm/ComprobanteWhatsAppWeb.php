@@ -97,6 +97,7 @@ class ComprobanteWhatsAppWeb
         $proof = PaymentProof::create([
             'company_id'       => $companyId,
             'source'           => 'whatsapp_web',
+            'wa_linea_id'      => $datos['wa_linea_id'] ?? null,
             'user_id'          => $cliente->user_id,
             'invoice_id'       => $factura?->id,
             'file_path'        => $archivo['path'],

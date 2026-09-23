@@ -51,7 +51,17 @@ class ComprobanteWaWebController extends Controller
             return response()->json(['ok' => false, 'motivo' => 'empresa_no_resuelta'], 422);
         }
 
-        $resultado = $this->servicio->registrar($datos + ['company_id' => (int) $companyId]);
+        // Por qué línea entró: con varias, quien revisa necesita saber dónde
+        // buscar la conversación.
+        $linea = !empty($datos['instanceId'])
+            ? \Illuminate\Support\Facades\DB::table('wa_lineas')
+                ->where('instance_id', $datos['instanceId'])->value('id')
+            : null;
+
+        $resultado = $this->servicio->registrar($datos + [
+            'company_id'  => (int) $companyId,
+            'wa_linea_id' => $linea,
+        ]);
 
         return response()->json($resultado, $resultado['ok'] ? 200 : 422);
     }
