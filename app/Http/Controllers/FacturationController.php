@@ -274,6 +274,25 @@ class FacturationController extends Controller
     }
 
     /**
+     * Borrar una factura.
+     *
+     * Más estricto que anular: sólo administración, y sólo si no se tocó
+     * plata. Para todo lo demás está anular, que deja rastro.
+     */
+    public function borrarFactura(int $detId, FacturationRepositoryInterface $repo): object
+    {
+        $perfil = strtoupper((string) DB::table('profiles')->where('id', getSessionUserProfileId())->value('name'));
+
+        if ($perfil !== 'ADMIN') {
+            return standardApiReponse('Sólo administración puede borrar una factura.', null, 1, JsonResponse::HTTP_FORBIDDEN);
+        }
+
+        $r = $repo->borrarFactura($detId);
+
+        return standardApiReponse($r['mensaje'], null, $r['ok'] ? 0 : 1, JsonResponse::HTTP_OK);
+    }
+
+    /**
      * Revertir y anular mueven plata: sólo administración y contabilidad.
      */
     private function puedeTocarPagos(): bool

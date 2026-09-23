@@ -59,6 +59,7 @@ Route::prefix('facturation')->group(function () {
         // Deshacer un pago y anular una factura: dejan rastro, no borran nada.
         Route::post('invoices/{detId}/revertir',  [FacturationController::class, 'revertirPago']);
         Route::post('invoices/{detId}/anular',    [FacturationController::class, 'anularFactura']);
+        Route::delete('invoices/{detId}',         [FacturationController::class, 'borrarFactura']);
         Route::post('invoices/{detId}/abonar',   [FacturationController::class, 'abonarInvoice']);
         Route::put('invoices/{detId}',           [FacturationController::class, 'updateInvoiceNew']);
         Route::get('export',                     [FacturationController::class, 'exportPaymentsCSV']);

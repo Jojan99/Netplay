@@ -543,6 +543,51 @@ class FacturationRepository implements FacturationRepositoryInterface
     }
 
     /**
+     * Borrar una factura, de verdad.
+     *
+     * Casi siempre lo correcto es anularla: así queda el rastro y no se pierde
+     * el consecutivo. Borrar es para la factura que nunca debió existir —una
+     * creada dos veces, una de prueba— y sólo se permite si no se tocó plata:
+     * sin pagos, sin abonos y sin ningún movimiento registrado.
+     */
+    public function borrarFactura(int $detId): array
+    {
+        $empresa = getSessionCompanyId();
+
+        $det = DetFacturation::conAnuladas()
+            ->join('cab_facturations', 'cab_facturations.id', '=', 'det_facturations.cab_id')
+            ->where('det_facturations.id', $detId)
+            ->where('cab_facturations.company_id', $empresa)
+            ->select('det_facturations.*')
+            ->first();
+
+        if (!$det) {
+            return ['ok' => false, 'mensaje' => 'No encontramos esa factura.'];
+        }
+
+        if ($det->paid) {
+            return ['ok' => false, 'mensaje' => 'Está pagada: revertí el pago primero, o anulala.'];
+        }
+
+        if ((float) ($det->price_abone ?? 0) > 0 || $det->abone) {
+            return ['ok' => false, 'mensaje' => 'Tiene un abono registrado: no se puede borrar. Anulala.'];
+        }
+
+        if (PaymentLog::where('det_facturation_id', $detId)->exists()) {
+            return ['ok' => false, 'mensaje' => 'Tiene movimientos registrados: no se puede borrar. Anulala.'];
+        }
+
+        $numero = $det->number_facture;
+        $det->delete();
+
+        \Illuminate\Support\Facades\Log::info('[Facturación] Factura borrada', [
+            'empresa' => $empresa, 'factura' => $numero, 'por' => getSessionUserId(),
+        ]);
+
+        return ['ok' => true, 'mensaje' => "La factura {$numero} se borró."];
+    }
+
+    /**
      * Anular una factura.
      *
      * Una factura mal hecha no se borra: se anula. Así no se pierde el

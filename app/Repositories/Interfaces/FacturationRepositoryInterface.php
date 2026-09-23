@@ -107,4 +107,7 @@ interface FacturationRepositoryInterface
   public function exportPayments(?string $from, ?string $to, ?int $cabId): array;
   public function getPaymentLogsPaginated(?string $search, ?string $from, ?string $to, int $page, int $perPage): object;
 
+
+  /** Borrar una factura que nunca debió existir. Sólo si no se tocó plata. */
+  public function borrarFactura(int $detId): array;
 }
