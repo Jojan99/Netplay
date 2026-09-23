@@ -242,12 +242,53 @@ class FacturationController extends Controller
         return standardApiReponse('OK', $data, 0, JsonResponse::HTTP_OK);
     }
 
+    /** Deshacer un pago: la factura vuelve a quedar pendiente. */
+    public function revertirPago(Request $request, int $detId, FacturationRepositoryInterface $repo): object
+    {
+        if (!$this->puedeTocarPagos()) {
+            return standardApiReponse('No tenés permiso para revertir pagos.', null, 1, JsonResponse::HTTP_FORBIDDEN);
+        }
+
+        $request->validate(['motivo' => 'required|string|max:255']);
+
+        $r = $repo->revertirPago($detId, trim((string) $request->input('motivo')));
+
+        return standardApiReponse($r['mensaje'], null, $r['ok'] ? 0 : 1, JsonResponse::HTTP_OK);
+    }
+
+    /** Anular una factura mal hecha, sin borrarla. */
+    public function anularFactura(Request $request, int $detId, FacturationRepositoryInterface $repo): object
+    {
+        if (!$this->puedeTocarPagos()) {
+            return standardApiReponse('No tenés permiso para anular facturas.', null, 1, JsonResponse::HTTP_FORBIDDEN);
+        }
+
+        $request->validate(['motivo' => 'required|string|max:255']);
+
+        $r = $repo->anularFactura($detId, trim((string) $request->input('motivo')));
+
+        return standardApiReponse($r['mensaje'], null, $r['ok'] ? 0 : 1, JsonResponse::HTTP_OK);
+    }
+
+    /**
+     * Revertir y anular mueven plata: sólo administración y contabilidad.
+     */
+    private function puedeTocarPagos(): bool
+    {
+        $perfil = strtoupper((string) DB::table('profiles')->where('id', getSessionUserProfileId())->value('name'));
+
+        return in_array($perfil, ['ADMIN', 'CONTADOR'], true);
+    }
+
     public function payInvoice(Request $request, int $detId, FacturationRepositoryInterface $repo, AutoSuspendService $autoSuspend): object
     {
         $ok = $repo->payInvoice(
             $detId,
             $request->input('client_name', ''),
-            $request->input('payment_method_id') ? (int) $request->input('payment_method_id') : null
+            $request->input('payment_method_id') ? (int) $request->input('payment_method_id') : null,
+            // La referencia de la transferencia, el número de recibo, o lo que
+            // quien cobró necesite dejar anotado.
+            $request->filled('observacion') ? trim((string) $request->input('observacion')) : null,
         );
 
         if ($ok) {

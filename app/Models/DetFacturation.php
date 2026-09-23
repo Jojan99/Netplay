@@ -29,7 +29,33 @@ class DetFacturation extends Authenticatable
         'paid_at',
         'paid_by_user_id',
         'email_sent_at',
+        'anulada_en',
+        'anulada_por',
+        'anulada_motivo',
+        'observacion',
     ];
+
+    /**
+     * Una factura anulada no se cuenta.
+     *
+     * Deja de sumar a la cartera, no dispara suspensiones, no entra en los
+     * recordatorios ni en la cobranza. Sigue existiendo y se puede ver, pero
+     * para todo lo que pregunte «¿qué debe este cliente?» no está.
+     *
+     * Para verlas hay que pedirlas expresamente: DetFacturation::conAnuladas().
+     */
+    protected static function booted(): void
+    {
+        static::addGlobalScope('sinAnuladas', function ($q) {
+            $q->whereNull($q->getModel()->getTable() . '.anulada_en');
+        });
+    }
+
+    /** Incluye las anuladas, para listarlas o auditarlas. */
+    public static function conAnuladas(): \Illuminate\Database\Eloquent\Builder
+    {
+        return static::withoutGlobalScope('sinAnuladas');
+    }
 
     /**
      * Saldo pendiente de la factura.

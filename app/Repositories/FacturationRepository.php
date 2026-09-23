@@ -425,7 +425,7 @@ class FacturationRepository implements FacturationRepositoryInterface
     /**
      * Pay an invoice fully and log the event.
      */
-    public function payInvoice(int $detId, string $clientName, ?int $paymentMethodId = null): bool
+    public function payInvoice(int $detId, string $clientName, ?int $paymentMethodId = null, ?string $observacion = null): bool
     {
         $det = DetFacturation::where('det_facturations.id', $detId)
             ->join('cab_facturations', 'cab_facturations.id', '=', 'det_facturations.cab_id')
@@ -454,9 +454,104 @@ class FacturationRepository implements FacturationRepositoryInterface
             'amount'              => max(0, $amountPaid),
             'type'                => 'pago_completo',
             'payment_method_id'   => $paymentMethodId,
+            'notes'               => $observacion,
         ]);
 
+        if ($observacion !== null && $observacion !== '') {
+            $det->update(['observacion' => mb_substr($observacion, 0, 500)]);
+        }
+
         return true;
+    }
+
+    /**
+     * Deshacer un pago.
+     *
+     * No se borra nada: la factura vuelve a quedar pendiente y el movimiento
+     * queda anotado como reverso, con quién lo hizo y por qué. Si alguien
+     * pregunta el mes que viene por qué una factura pagada volvió a deber,
+     * la respuesta está en el historial.
+     */
+    public function revertirPago(int $detId, string $motivo): array
+    {
+        $empresa = getSessionCompanyId();
+
+        $det = DetFacturation::where('det_facturations.id', $detId)
+            ->join('cab_facturations', 'cab_facturations.id', '=', 'det_facturations.cab_id')
+            ->where('cab_facturations.company_id', $empresa)
+            ->select('det_facturations.*', 'cab_facturations.user_id')
+            ->first();
+
+        if (!$det) {
+            return ['ok' => false, 'mensaje' => 'No encontramos esa factura.'];
+        }
+
+        if (!$det->paid) {
+            return ['ok' => false, 'mensaje' => 'Esa factura no está pagada.'];
+        }
+
+        $pagado = (float) $det->price_total - (float) $det->price_discount - (float) ($det->price_abone ?? 0);
+
+        $det->update([
+            'paid'            => 0,
+            'paid_at'         => null,
+            'paid_by_user_id' => null,
+        ]);
+
+        PaymentLog::create([
+            'company_id'          => $empresa,
+            'det_facturation_id'  => $det->id,
+            'cab_id'              => $det->cab_id,
+            'number_facture'      => $det->number_facture,
+            'client_name'         => (string) DB::table('user_data')->where('user_id', $det->user_id)
+                ->selectRaw("TRIM(CONCAT(COALESCE(names,''),' ',COALESCE(lastname,''))) n")->value('n'),
+            'recorded_by_user_id' => getSessionUserId(),
+            // Negativo: así la suma de los movimientos sigue dando lo cobrado
+            // de verdad, sin tener que acordarse de descontar los reversos.
+            'amount'              => -max(0, $pagado),
+            'type'                => 'reverso',
+            'notes'               => $motivo,
+        ]);
+
+        return ['ok' => true, 'mensaje' => 'El pago se revirtió y la factura volvió a quedar pendiente.'];
+    }
+
+    /**
+     * Anular una factura.
+     *
+     * Una factura mal hecha no se borra: se anula. Así no se pierde el
+     * consecutivo ni el rastro de que existió, deja de contar en la cartera y
+     * queda dicho por qué.
+     */
+    public function anularFactura(int $detId, string $motivo): array
+    {
+        $empresa = getSessionCompanyId();
+
+        $det = DetFacturation::where('det_facturations.id', $detId)
+            ->join('cab_facturations', 'cab_facturations.id', '=', 'det_facturations.cab_id')
+            ->where('cab_facturations.company_id', $empresa)
+            ->select('det_facturations.*')
+            ->first();
+
+        if (!$det) {
+            return ['ok' => false, 'mensaje' => 'No encontramos esa factura.'];
+        }
+
+        if ($det->anulada_en) {
+            return ['ok' => false, 'mensaje' => 'Esa factura ya estaba anulada.'];
+        }
+
+        if ($det->paid) {
+            return ['ok' => false, 'mensaje' => 'Está pagada: primero hay que revertir el pago.'];
+        }
+
+        $det->update([
+            'anulada_en'     => now(),
+            'anulada_por'    => getSessionUserId(),
+            'anulada_motivo' => mb_substr($motivo, 0, 255),
+        ]);
+
+        return ['ok' => true, 'mensaje' => 'La factura quedó anulada.'];
     }
 
     /**

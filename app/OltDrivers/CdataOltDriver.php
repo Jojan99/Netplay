@@ -306,9 +306,16 @@ class CdataOltDriver extends DriverBase
             }
 
             $resto = trim($m[6]);
+            $causa = null;
 
+            // Con la columna «Last down-cause» el primer campo del resto es la
+            // causa, no la descripción. Antes se descartaba, y era justamente
+            // lo que explica cada caída: «LOS» es fibra; «initial», una ONT
+            // que nunca llegó a conectarse.
             if ($conCausa && $resto !== '') {
-                $resto = trim((string) (preg_split('/\s+/', $resto, 2)[1] ?? ''));
+                $partes = preg_split('/\s+/', $resto, 2);
+                $causa  = $partes[0] !== '--' ? strtolower($partes[0]) : null;
+                $resto  = trim((string) ($partes[1] ?? ''));
             }
 
             $filas[] = [
@@ -317,6 +324,7 @@ class CdataOltDriver extends DriverBase
                 'mac'         => strtoupper($m[3]),
                 'control'     => strtolower($m[4]),
                 'estado'      => strtolower($m[5]),
+                'causa'       => $causa,
                 'descripcion' => $resto !== '' ? $resto : null,
             ];
         }
@@ -573,6 +581,7 @@ class CdataOltDriver extends DriverBase
             'serial'      => $f['mac'],
             'status'      => $f['estado'] === 'online' ? 'online' : 'offline',
             'admin'       => $f['control'],
+            'causa_caida' => $f['causa'] ?? null,
             'description' => $f['descripcion'],
         ], self::tablaDeOnts($salida));
 
@@ -636,9 +645,54 @@ class CdataOltDriver extends DriverBase
             'ont_tx'      => $this->numero($optico, '/^\s*Tx\s*optical\s*power(?:\(dBm\))?\s*:\s*(-?[\d.]+)/mi')
                              ?? $this->numero($optico, '/Tx\s*power\s*:\s*(-?[\d.]+)/i'),
             'olt_rx'      => $this->numero($optico, '/OLT\s*Rx\s*(?:ONT\s*optical\s*)?(?:power)?(?:\(dBm\))?\s*:\s*(-?[\d.]+)/i'),
-            'temperatura' => $this->numero($optico, '/Temperature(?:\(C\))?\s*:\s*(-?[\d.]+)/i'),
-            'raw'         => $detalle . "\n" . $optico,
+            // La OLT entrega la óptica completa; antes se leían sólo las
+            // potencias y en pantalla quedaban tres rayas donde hay datos.
+            'temperatura'     => $this->numero($optico, '/^\s*Temperature\s*\(C\)\s*:\s*(-?[\d.]+)/mi')
+                                 ?? $this->numero($optico, '/Temperature(?:\(C\))?\s*:\s*(-?[\d.]+)/i'),
+            'voltaje'         => $this->numero($optico, '/^\s*(?:Supply\s*)?Voltage\s*\(V\)\s*:\s*(-?[\d.]+)/mi')
+                                 ?? $this->numero($optico, '/Voltage(?:\(V\))?\s*:\s*(-?[\d.]+)/i'),
+            'corriente'       => $this->numero($optico, '/^\s*(?:Laser\s*)?(?:Tx\s*)?bias\s*current\s*\(mA\)\s*:\s*(-?[\d.]+)/mi')
+                                 ?? $this->numero($optico, '/bias\s*current(?:\(mA\))?\s*:\s*(-?[\d.]+)/i'),
+            // Por qué se cayó: «LOS» es fibra cortada o desconectada;
+            // «initial» es una ONT que nunca llegó a conectarse.
+            'causa_caida'     => $this->dato($detalle, '/Last\s*down\s*cause\s*:\s*(\S+)/i'),
+            'ultima_conexion' => $this->dato($detalle, '/Last\s*up\s*time\s*:\s*(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})/i'),
+            'tiempo_en_linea' => $this->dato($detalle, '/Online\s*time\s*:\s*(.+?)\s*$/mi'),
+            'raw'             => $detalle . "\n" . $optico,
         ];
+    }
+
+    /**
+     * La óptica de una sola ONT, por consola.
+     *
+     * La ficha del cliente lee por SNMP con la MIB de Huawei, y una OLT C-Data
+     * no publica ahí la temperatura, el voltaje ni la corriente del láser: en
+     * pantalla quedaban tres rayas donde el equipo tiene datos. Esto los trae
+     * de la consola, sólo de la ONT que se está mirando.
+     *
+     * Devuelve las mismas claves que la ZTE, que es lo que espera la ficha.
+     */
+    public function opticaDeOnt(string $fsp, int $ontId): array
+    {
+        if ($this->esEpon()) {
+            return [];
+        }
+
+        $puerto = $this->entrarAlPuerto($fsp);
+        $salida = $this->cmd($this->comando('optico', ['p' => $puerto, 'id' => $ontId]), 30);
+        $this->volverAlPrompt();
+
+        // Las líneas de umbral dicen «[-30.00,-1.00]», así que hay que exigir
+        // que después de los dos puntos venga un número suelto.
+        $leer = fn (string $patron) => $this->numero($salida, $patron);
+
+        return array_filter([
+            'potencia'    => $leer('/^\s*Rx\s*optical\s*power\s*\(dBm\)\s*:\s*(-?[\d.]+)\s*$/mi'),
+            'tx'          => $leer('/^\s*Tx\s*optical\s*power\s*\(dBm\)\s*:\s*(-?[\d.]+)\s*$/mi'),
+            'voltaje'     => $leer('/^\s*Voltage\s*\(V\)\s*:\s*(-?[\d.]+)\s*$/mi'),
+            'corriente'   => $leer('/^\s*Laser\s*bias\s*current\s*\(mA\)\s*:\s*(-?[\d.]+)\s*$/mi'),
+            'temperatura' => $leer('/^\s*Temperature\s*\(C\)\s*:\s*(-?[\d.]+)\s*$/mi'),
+        ], fn ($v) => $v !== null);
     }
 
     public function getServicePorts(?string $fsp = null, ?int $ontId = null): array

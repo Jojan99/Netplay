@@ -1386,9 +1386,11 @@ class OltAdminUseCase
                 $info['estado'] = \App\Services\Olt\SenalDeLaOlt::clasificar($info['potencia']);
             }
 
-            // La ZTE no da temperatura, voltaje ni láser por SNMP: por consola,
-            // sólo de la ONT que se está mirando (~1,3 s).
-            if (strtolower((string) $olt->brand) === 'zte' && ($info['status'] ?? null) === 'online') {
+            // Ni la ZTE ni la C-Data dan temperatura, voltaje ni láser por
+            // SNMP: se traen por consola, sólo de la ONT que se está mirando
+            // (~1,3 s). Sin esto la ficha mostraba tres rayas donde el equipo
+            // tiene los datos.
+            if (in_array(strtolower((string) $olt->brand), ['zte', 'cdata'], true) && ($info['status'] ?? null) === 'online') {
                 try {
                     $info = array_merge($info, array_filter((array) $this->dispatcher->dispatch($oltId, 'opticaDeOnt', ['fsp' => $fsp, 'ont_id' => $ontId]), fn ($v) => $v !== null));
                 } catch (\Throwable) {
