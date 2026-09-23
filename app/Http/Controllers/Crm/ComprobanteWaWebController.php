@@ -35,10 +35,19 @@ class ComprobanteWaWebController extends Controller
         $companyId = $datos['company_id'] ?? null;
 
         if (!$companyId && !empty($datos['instanceId'])) {
-            $companyId = Company::where('wa_instance_id', $datos['instanceId'])->value('id');
+            // Se buscaba sólo en companies.wa_instance_id, que es la línea
+            // principal: un comprobante llegado por cualquier otra línea no
+            // coincidía con ninguna empresa y se descartaba en silencio.
+            // El catálogo de líneas ya sabía resolverlo; faltaba preguntarle.
+            $companyId = \App\Services\WhatsApp\LineasDeWhatsApp::empresaDeInstancia($datos['instanceId']);
         }
 
         if (!$companyId) {
+            \Illuminate\Support\Facades\Log::warning('[Comprobante] No se supo de qué empresa es', [
+                'instancia' => $datos['instanceId'] ?? null,
+                'telefono'  => $datos['phone'],
+            ]);
+
             return response()->json(['ok' => false, 'motivo' => 'empresa_no_resuelta'], 422);
         }
 
