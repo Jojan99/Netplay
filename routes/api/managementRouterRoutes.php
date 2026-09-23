@@ -133,8 +133,14 @@ Route::prefix('management')->middleware('empresa.propia')->group(function () {
             Route::get('/equipos',             [\App\Http\Controllers\AcsController::class, 'equipos']);
             Route::get('/pendientes',          [\App\Http\Controllers\AcsController::class, 'pendientes']);
             Route::get('/equipos/detalle',     [\App\Http\Controllers\AcsController::class, 'detalle']);
-            Route::post('/equipos/refrescar',  [\App\Http\Controllers\AcsController::class, 'refrescar']);
-            Route::post('/equipos/reiniciar',  [\App\Http\Controllers\AcsController::class, 'reiniciar']);
+            // Estas dos le hablan al equipo y esperan a que conteste: hasta
+            // 20 s con un proceso de PHP tomado. Son veinte procesos para
+            // toda la plataforma, así que sin freno un puñado de pantallas
+            // abiertas a la vez deja sin atender los pagos y el portal.
+            Route::post('/equipos/refrescar',  [\App\Http\Controllers\AcsController::class, 'refrescar'])
+                ->middleware('throttle:20,1');
+            Route::post('/equipos/reiniciar',  [\App\Http\Controllers\AcsController::class, 'reiniciar'])
+                ->middleware('throttle:10,1');
             Route::post('/equipos/wifi',       [\App\Http\Controllers\AcsController::class, 'wifi']);
         });
     });

@@ -68,9 +68,16 @@ Route::prefix('client')->middleware(['jwt.client'])->group(function () {
     Route::post('router/wifi',        [\App\Http\Controllers\Client\ClientRouterController::class, 'wifi']);
     Route::post('router/bloquear',    [\App\Http\Controllers\Client\ClientRouterController::class, 'bloquear']);
     Route::post('router/desbloquear', [\App\Http\Controllers\Client\ClientRouterController::class, 'desbloquear']);
-    Route::post('router/refrescar',   [\App\Http\Controllers\Client\ClientRouterController::class, 'refrescar']);
-    Route::post('router/canal',       [\App\Http\Controllers\Client\ClientRouterController::class, 'canal']);
-    Route::post('router/reiniciar',   [\App\Http\Controllers\Client\ClientRouterController::class, 'reiniciar']);
+    // El portal lo abre cualquier cliente, y estas tres esperan a que el
+    // equipo conteste. Un cliente impaciente —o un guion— apretando
+    // "Refrescar" sin parar se llevaba puestos los procesos de PHP de toda
+    // la plataforma. Seis por minuto le sobra a una persona.
+    Route::post('router/refrescar',   [\App\Http\Controllers\Client\ClientRouterController::class, 'refrescar'])
+        ->middleware('throttle:6,1');
+    Route::post('router/canal',       [\App\Http\Controllers\Client\ClientRouterController::class, 'canal'])
+        ->middleware('throttle:6,1');
+    Route::post('router/reiniciar',   [\App\Http\Controllers\Client\ClientRouterController::class, 'reiniciar'])
+        ->middleware('throttle:3,5');
 
     // ── Consumo de datos y velocidad ──
     Route::get('consumo',     [\App\Http\Controllers\Client\ClientConsumoController::class, 'historial']);
