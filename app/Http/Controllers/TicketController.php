@@ -111,6 +111,20 @@ class TicketController extends Controller
         return standardApiReponse('ok', $tickets, 0, JsonResponse::HTTP_OK);
     }
 
+    /**
+     * Qué clientes tienen un ticket sin cerrar.
+     *
+     * Lo pide cualquier pantalla donde aparezca el nombre de un cliente, para
+     * pintarle el punto de color al lado: es una consulta y no una por
+     * cliente.
+     */
+    public function ticketsAbiertos(TicketRepositoryInterface $repo): object
+    {
+        // Va como objeto y no como lista: con las claves siendo ids de cliente,
+        // un array vacío se serializa como [] y el front tendría que adivinar.
+        return standardApiReponse('ok', (object) $repo->ticketsAbiertos(), 0, JsonResponse::HTTP_OK);
+    }
+
     // ── New endpoints ──────────────────────────────────────────────────────
 
     public function getAllTickets(Request $request, TicketRepositoryInterface $repo): object

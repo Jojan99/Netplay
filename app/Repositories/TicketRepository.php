@@ -13,6 +13,10 @@ use Illuminate\Support\Facades\DB;
 
 class TicketRepository implements TicketRepositoryInterface
 {
+    /** Los estados que importan: un ticket finalizado no dice nada del cliente de hoy. */
+    private const POR_HACER = 1;
+    private const EN_CURSO = 2;
+
     public function getTypePriorityAll(): mixed
     {
         return TypePriority::where('active', 1)->get();
@@ -245,6 +249,7 @@ class TicketRepository implements TicketRepositoryInterface
     {
         return Ticket::select(
             'ticket_status.name as status',
+            'tickets.status_id',
             'ticket_type_prioritys.name as prioritys',
             'ticket_type_services.name as service',
             'tickets.address',
@@ -268,6 +273,44 @@ class TicketRepository implements TicketRepositoryInterface
         ->where('tickets.company_id', getSessionCompanyId())
         ->orderBy('tickets.created_at', 'desc')
         ->get();
+    }
+
+    /**
+     * Cuántos tickets sin cerrar tiene cada cliente, y desde cuándo.
+     *
+     * Es una sola consulta para toda la pantalla: el nombre del cliente
+     * aparece en cartera, en la red y en la lista de tickets, y pedir sus
+     * tickets de a uno serían cientos de consultas para pintar un punto.
+     *
+     * Van sólo los abiertos (por hacer y en curso). Un ticket finalizado no
+     * dice nada del cliente de hoy.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    public function ticketsAbiertos(): array
+    {
+        $filas = Ticket::query()
+            ->where('tickets.company_id', getSessionCompanyId())
+            ->whereIn('tickets.status_id', [self::POR_HACER, self::EN_CURSO])
+            ->selectRaw('tickets.user_id, tickets.status_id, COUNT(*) n, MIN(tickets.created_at) desde, MAX(tickets.id) ultimo')
+            ->groupBy('tickets.user_id', 'tickets.status_id')
+            ->get();
+
+        $out = [];
+
+        foreach ($filas as $f) {
+            $u = (int) $f->user_id;
+            $out[$u] ??= ['user_id' => $u, 'por_hacer' => 0, 'en_curso' => 0, 'desde' => null, 'ultimo' => null];
+            $out[$u][(int) $f->status_id === self::EN_CURSO ? 'en_curso' : 'por_hacer'] = (int) $f->n;
+
+            if ($out[$u]['desde'] === null || $f->desde < $out[$u]['desde']) {
+                $out[$u]['desde'] = $f->desde;
+            }
+
+            $out[$u]['ultimo'] = max((int) $out[$u]['ultimo'], (int) $f->ultimo);
+        }
+
+        return $out;
     }
 
     public function updateTicket(TicketRequest $data): mixed

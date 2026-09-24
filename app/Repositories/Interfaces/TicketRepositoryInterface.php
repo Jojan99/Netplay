@@ -14,6 +14,9 @@ interface TicketRepositoryInterface
     public function updateTicket(TicketRequest $data): mixed;
     public function getTicketInProgressAll($status): mixed;
     public function getTicketsByUser(int $userId): mixed;
+
+    /** @return array<int,array<string,mixed>> */
+    public function ticketsAbiertos(): array;
     public function getAllTickets(array $filters): mixed;
     public function getTicketById(int $id): mixed;
     public function addNote(int $ticketId, int $userId, string $note, array $photos, ?string $audioPath): mixed;

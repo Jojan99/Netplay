@@ -12,6 +12,8 @@ Route::prefix('ticket')->group(function () {
         Route::get('getTechnicaAll',     [TicketController::class, 'getTechnicaAll']);
         Route::get('stats',              [TicketController::class, 'getStats']);
         Route::get('all',                [TicketController::class, 'getAllTickets']);
+        // Antes de '{id}': si no, 'abiertos' se toma por un id de ticket.
+        Route::get('abiertos',           [TicketController::class, 'ticketsAbiertos']);
         Route::get('updates',            [TicketController::class, 'getTicketsSince']);
         Route::get('{id}/notes',         [TicketController::class, 'getNotes']);
         Route::get('getByUser/{user_id}',[TicketController::class, 'getTicketsByUser']);
