@@ -195,6 +195,22 @@ class OnePayGateway implements PaymentGatewayInterface
             ?? 0);
     }
 
+    /**
+     * Quita del nombre lo que identifica a UN instrumento concreto.
+     *
+     * «Mastercard ·3222» es un dato del movimiento, no una forma de pago. Si
+     * se deja, el catálogo de métodos crece una fila por cada tarjeta que
+     * pase por la plataforma.
+     */
+    public static function sinInstrumento(string $nombre): string
+    {
+        // Los últimos dígitos, con punto medio o con asteriscos.
+        $limpio = preg_replace('/\s*[·*•]+\s*\d{2,6}\s*$/u', '', $nombre);
+        $limpio = preg_replace('/\s*\*{2,}\s*\d{2,6}\s*$/', '', (string) $limpio);
+
+        return trim((string) $limpio) ?: $nombre;
+    }
+
     /** approved | declined | cancelled | failed | pending */
     public function getTransactionStatus(Request $request): string
     {
@@ -221,7 +237,13 @@ class OnePayGateway implements PaymentGatewayInterface
      * pregunta a la API por ese cobro. Sin esto el movimiento queda «sin
      * método» en el historial y nadie sabe cómo pagó el cliente.
      *
-     * @return array{0: ?string, 1: ?string} medio, banco
+     * Devuelve tres cosas: el medio para el catálogo, el banco cuando lo hay,
+     * y el detalle que identifica el instrumento («Mastercard ·3222»). El
+     * detalle NO va al catálogo: si fuera, habría un método de pago por cada
+     * tarjeta que use cualquier cliente y la lista sería impresentable a los
+     * pocos meses. Va en la nota del movimiento, que es donde sirve.
+     *
+     * @return array{0: ?string, 1: ?string, 2: ?string} medio, banco, detalle
      */
     public function medioYBanco(Request $request): array
     {
@@ -241,7 +263,7 @@ class OnePayGateway implements PaymentGatewayInterface
                     Log::info('[OnePay] No se pudo leer el medio de pago', ['cobro' => $id, 'error' => $e->getMessage()]);
                 }
             } elseif ($suelto) {
-                return [(string) $suelto, null];
+                return [self::sinInstrumento((string) $suelto), null, (string) $suelto];
             }
         }
 
@@ -257,9 +279,12 @@ class OnePayGateway implements PaymentGatewayInterface
                         ?? $intentos->last();
 
                     if ($pagado) {
+                        $etiqueta = $pagado['payment_method_label'] ?? $pagado['payment_method_type'] ?? null;
+
                         return [
-                            $pagado['payment_method_label'] ?? $pagado['payment_method_type'] ?? null,
-                            $pagado['payment_method_type'] ?? null,
+                            $etiqueta ? self::sinInstrumento((string) $etiqueta) : null,
+                            null,
+                            $etiqueta ? (string) $etiqueta : null,
                         ];
                     }
                 } catch (\Throwable $e) {
@@ -267,15 +292,30 @@ class OnePayGateway implements PaymentGatewayInterface
                 }
             }
 
-            return [is_string($metodo) && $metodo !== '' ? $metodo : null, null];
+            $suelto = is_string($metodo) && $metodo !== '' ? $metodo : null;
+
+            return [$suelto ? self::sinInstrumento($suelto) : null, null, $suelto];
         }
 
         // «label» es lo que el cliente reconoce («Mastercard ·3222»); para una
         // cuenta o PSE, el nombre del banco.
-        $medio = $metodo['label'] ?? $metodo['brand'] ?? $metodo['type'] ?? $metodo['name'] ?? null;
-        $banco = $metodo['bank_name'] ?? $metodo['issuer'] ?? $metodo['brand'] ?? null;
+        // La marca manda para el catálogo: «Mastercard», «PSE», «Nequi».
+        $medio = $metodo['brand'] ?? $metodo['type'] ?? $metodo['name'] ?? $metodo['label'] ?? null;
+        // El banco sólo para cuentas y PSE. En una tarjeta repetiría la marca.
+        $banco = $metodo['bank_name'] ?? $metodo['issuer'] ?? null;
+        // Y el detalle, para la nota: la etiqueta completa con los últimos
+        // dígitos, que es lo que el cliente reconoce en su extracto.
+        $detalle = $metodo['label'] ?? null;
 
-        return [$medio ? (string) $medio : null, $banco ? (string) $banco : null];
+        if (!$detalle && ($medio || !empty($metodo['last_four']))) {
+            $detalle = trim(((string) $medio) . (!empty($metodo['last_four']) ? ' ·' . $metodo['last_four'] : ''));
+        }
+
+        return [
+            $medio ? self::sinInstrumento((string) $medio) : null,
+            $banco ? (string) $banco : null,
+            $detalle ?: null,
+        ];
     }
 
     public function getLastGatewayReference(): ?string

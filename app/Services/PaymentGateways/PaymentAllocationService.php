@@ -41,6 +41,11 @@ class PaymentAllocationService
             return null;
         }
 
+        // Red de seguridad: aunque una pasarela mande «Visa ·4242», al
+        // catálogo entra «Visa». Es lo que evita que la lista de formas de
+        // pago se llene de una fila por tarjeta.
+        $medio = \App\Services\PaymentGateways\OnePayGateway::sinInstrumento($medio);
+
         $legible = match (strtoupper($medio)) {
             'NEQUI'                 => 'Nequi',
             'PSE'                   => 'PSE',
@@ -81,7 +86,7 @@ class PaymentAllocationService
         }
     }
 
-    public function allocate(int $companyId, string $reference, float $amountPaid, string $gateway, ?string $medio = null, ?string $banco = null): void
+    public function allocate(int $companyId, string $reference, float $amountPaid, string $gateway, ?string $medio = null, ?string $banco = null, ?string $detalle = null): void
     {
         $tx = OnlinePaymentTransaction::where('reference', $reference)->first();
         if (!$tx) {
@@ -138,7 +143,7 @@ class PaymentAllocationService
         // transacción, se deshacía todo y la factura quedaba sin acreditar
         // aunque el cliente hubiera pagado. Le pasaba a todas las pasarelas.
         DB::transaction(function () use (
-            $invoices, $amountPaid, $tx, $gateway, $companyId, $medio, $banco, &$clientName, &$cabResolved
+            $invoices, $amountPaid, $tx, $gateway, $companyId, $medio, $banco, $detalle, &$clientName, &$cabResolved
         ) {
             // Bloqueo pesimista: dos webhooks simultáneos no pueden abonar dos veces.
             $locked = OnlinePaymentTransaction::whereKey($tx->id)->lockForUpdate()->first();
@@ -202,7 +207,13 @@ class PaymentAllocationService
                     // payment_logs.type es un enum: pago_completo|abono|descuento|ajuste.
                     // Escribir cualquier otra cosa hace que MySQL trunque y aborte.
                     'type'                => $fullyPaid ? 'pago_completo' : 'abono',
-                    'notes'               => 'Pago online vía ' . strtoupper($gateway) . ". Ref: {$locked->reference}",
+                    // El instrumento concreto («Mastercard ·3222») va acá y no
+                    // en el catálogo de métodos: si fuera allá, habría una
+                    // forma de pago por cada tarjeta que pase por la
+                    // plataforma y la lista quedaría impresentable.
+                    'notes'               => 'Pago online vía ' . strtoupper($gateway)
+                        . ($detalle ? " ({$detalle})" : '')
+                        . ". Ref: {$locked->reference}",
                     'payment_method_id'   => $this->medioDePasarela($companyId, $gateway, $medio, $banco),
                 ]);
             }

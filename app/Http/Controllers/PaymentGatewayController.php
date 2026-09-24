@@ -444,9 +444,10 @@ class PaymentGatewayController extends Controller
                 };
 
                 $banco = null;
+                $detalle = null;
 
                 if ($gateway instanceof \App\Services\PaymentGateways\OnePayGateway) {
-                    [$medio, $banco] = $gateway->medioYBanco($request);
+                    [$medio, $banco, $detalle] = $gateway->medioYBanco($request);
                 }
 
                 $banco ??= $gatewayName === 'wompi'
@@ -454,7 +455,7 @@ class PaymentGatewayController extends Controller
                        ?? $request->input('data.transaction.payment_method.extra.brand'))
                     : null;
 
-                $this->markInvoicePaid($company->id, $reference, $amount, $gatewayName, $medio, $banco);
+                $this->markInvoicePaid($company->id, $reference, $amount, $gatewayName, $medio, $banco, $detalle);
 
                 // Los cobros gemelos: otros links vivos por las mismas
                 // facturas. Si quedaran abiertos, el cliente que todavía
@@ -536,8 +537,8 @@ class PaymentGatewayController extends Controller
     }
 
     /** Público: lo usa también la página de retorno cuando resuelve el pago sin webhook. */
-    public function markInvoicePaid(int $companyId, string $reference, float $amountPaid, string $gateway, ?string $medio = null, ?string $banco = null): void
+    public function markInvoicePaid(int $companyId, string $reference, float $amountPaid, string $gateway, ?string $medio = null, ?string $banco = null, ?string $detalle = null): void
     {
-        app(PaymentAllocationService::class)->allocate($companyId, $reference, $amountPaid, $gateway, $medio, $banco);
+        app(PaymentAllocationService::class)->allocate($companyId, $reference, $amountPaid, $gateway, $medio, $banco, $detalle);
     }
 }
