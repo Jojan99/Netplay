@@ -75,6 +75,12 @@ class PaymentProofController extends Controller
             $query->where('bank_name', 'like', '%' . trim($request->bank) . '%');
         }
 
+        // La pestaña «aplicados solos» contra «revisados a mano».
+        if ($request->filled('aplicado_solo')) {
+            $query->where('status', 'approved')
+                ->where('raw_payload->aplicado_solo', $request->boolean('aplicado_solo'));
+        }
+
         $proofs = $query->paginate($request->get('per_page', 20));
 
         // Por qué WhatsApp entró cada comprobante: con dos instancias
@@ -88,6 +94,8 @@ class PaymentProofController extends Controller
             // Lo que el lector no pudo confirmar: la pantalla lo marca para
             // que quien revisa mire la imagen antes de aprobar.
             $p->dudosos = (array) (($p->raw_payload ?? [])['dudosos'] ?? []);
+            // Si lo aplicó la plataforma sola o lo revisó una persona.
+            $p->aplicado_solo = (bool) (($p->raw_payload ?? [])['aplicado_solo'] ?? false);
 
             return $p;
         });
@@ -289,47 +297,13 @@ class PaymentProofController extends Controller
             ], 422);
         }
 
-        if ($invoice) {
-            $baseDebt = (float) ($invoice->price_total ?? 0) - (float) ($invoice->price_discount ?? 0);
-            $currentAbone = (float) ($invoice->price_abone ?? 0);
-            $newAbone = max(0, $currentAbone + $proofAmount);
-            $invoice->price_abone = $newAbone;
-            $invoice->paid = $newAbone >= max(0, $baseDebt) ? 1 : 0;
-            $invoice->abone = $invoice->paid ? 1 : 0;
-            $invoice->paid_at = $invoice->paid ? now() : null;
-            $invoice->paid_by_user_id = $proof->user?->user_id;
-            $invoice->save();
-
-            // El pago tiene que verse en los movimientos de la factura: sin
-            // esto, un comprobante aprobado no dejaba ningún rastro contable.
-            \App\Models\PaymentLog::create([
-                'company_id'          => $proof->company_id,
-                'det_facturation_id'  => $invoice->id,
-                'cab_id'              => $invoice->cab_id,
-                'number_facture'      => $invoice->number_facture,
-                'client_name'         => trim((string) \Illuminate\Support\Facades\DB::table('user_data')
-                    ->where('user_id', $proof->user_id)
-                    ->selectRaw("TRIM(CONCAT(COALESCE(names,''),' ',COALESCE(lastname,''))) n")->value('n')),
-                'recorded_by_user_id' => $request->input('reviewed_by', Auth::id()),
-                'amount'              => $proofAmount,
-                'type'                => $invoice->paid ? 'pago_completo' : 'abono',
-                'payment_method_id'   => $this->medioDelComprobante($proof),
-                'notes'               => trim('Comprobante por WhatsApp'
-                    . ($proof->reference_number ? ". Ref: {$proof->reference_number}" : '')),
-            ]);
-        }
-
-        $proof->update([
-            'status' => 'approved',
-            'reviewed_by' => $request->input('reviewed_by', Auth::id() ?? null),
-            'reviewed_at' => now(),
-            'rejection_reason' => null,
-        ]);
-
-        $this->audit($proof, $previous, 'approved', $request->input('reason', 'Aprobado por revisión manual.'), [
-            'reviewed_by' => $request->input('reviewed_by', Auth::id() ?? null),
-            'approved_amount' => $proofAmount,
-        ]);
+        $this->aplicarYAprobar(
+            $proof,
+            $proofAmount,
+            $request->input('reviewed_by', Auth::id() ?? null),
+            $request->input('reason', 'Aprobado por revisión manual.'),
+            false,
+        );
 
         return response()->json([
             'status' => 'success',
@@ -394,6 +368,113 @@ class PaymentProofController extends Controller
             'message' => 'Pago revertido.',
             'data' => $proof->fresh(),
         ]);
+    }
+
+    /**
+     * Lo aplica solo si no hay nada que decidir.
+     *
+     * Hasta ahora TODO pasaba por revisión, incluidos los que llegan
+     * perfectos: cliente identificado, factura clara, monto leído sin dudas y
+     * referencia nueva. Mirar esos no aporta nada y hace que los que sí
+     * importan se pierdan en la pila.
+     *
+     * Si algo no cuadra —el monto no se leyó, la referencia ya se usó, el
+     * pago es viejo— sigue yendo a revisión con el motivo escrito. Aplicar de
+     * más un pago que no era cuesta mucho más que mirar un comprobante.
+     *
+     * @return array{aplicado: bool, motivos: list<string>}
+     */
+    public function aplicarSiEsConfiable(PaymentProof $proof): array
+    {
+        if ($proof->status !== 'pending') {
+            return ['aplicado' => false, 'motivos' => ['ya estaba revisado']];
+        }
+
+        $r = \App\Services\Comprobantes\ComprobanteConfiable::revisar($proof);
+
+        if (!$r['puede']) {
+            return ['aplicado' => false, 'motivos' => $r['motivos']];
+        }
+
+        $this->aplicarYAprobar(
+            $proof,
+            (float) $r['monto'],
+            null,
+            'Aplicado solo: el comprobante llegó completo y sin dudas.',
+            true,
+        );
+
+        \Illuminate\Support\Facades\Log::info('[Comprobantes] Pago aplicado solo', [
+            'comprobante' => $proof->id,
+            'empresa'     => $proof->company_id,
+            'cliente'     => $proof->user_id,
+            'monto'       => $r['monto'],
+            'referencia'  => $proof->reference_number,
+        ]);
+
+        return ['aplicado' => true, 'motivos' => []];
+    }
+
+    /**
+     * Aplica el pago a la factura, lo anota en los movimientos y aprueba.
+     *
+     * Lo usan las dos vías: la revisión a mano y la aplicación automática. El
+     * camino es exactamente el mismo —misma plata, mismo movimiento, misma
+     * auditoría— y lo único que cambia es quién lo decidió. Tenerlo en un
+     * solo lugar es lo que permite confiar en que un pago aplicado solo deja
+     * el mismo rastro que uno revisado.
+     */
+    private function aplicarYAprobar(PaymentProof $proof, float $monto, ?int $revisor, string $motivo, bool $solo): void
+    {
+        $previous = $proof->status;
+        $invoice = $proof->invoice;
+
+        if ($invoice) {
+            $baseDebt = (float) ($invoice->price_total ?? 0) - (float) ($invoice->price_discount ?? 0);
+            $currentAbone = (float) ($invoice->price_abone ?? 0);
+            $newAbone = max(0, $currentAbone + $monto);
+            $invoice->price_abone = $newAbone;
+            $invoice->paid = $newAbone >= max(0, $baseDebt) ? 1 : 0;
+            $invoice->abone = $invoice->paid ? 1 : 0;
+            $invoice->paid_at = $invoice->paid ? now() : null;
+            $invoice->paid_by_user_id = $proof->user?->user_id;
+            $invoice->save();
+
+            // El pago tiene que verse en los movimientos de la factura: sin
+            // esto, un comprobante aprobado no dejaba ningún rastro contable.
+            \App\Models\PaymentLog::create([
+                'company_id'          => $proof->company_id,
+                'det_facturation_id'  => $invoice->id,
+                'cab_id'              => $invoice->cab_id,
+                'number_facture'      => $invoice->number_facture,
+                'client_name'         => trim((string) \Illuminate\Support\Facades\DB::table('user_data')
+                    ->where('user_id', $proof->user_id)
+                    ->selectRaw("TRIM(CONCAT(COALESCE(names,''),' ',COALESCE(lastname,''))) n")->value('n')),
+                'recorded_by_user_id' => $revisor,
+                'amount'              => $monto,
+                'type'                => $invoice->paid ? 'pago_completo' : 'abono',
+                'payment_method_id'   => $this->medioDelComprobante($proof),
+                'notes'               => trim('Comprobante por WhatsApp'
+                    . ($proof->reference_number ? ". Ref: {$proof->reference_number}" : '')),
+            ]);
+        }
+
+        $proof->update([
+            'status' => 'approved',
+            'reviewed_by' => $revisor,
+            'reviewed_at' => now(),
+            'rejection_reason' => null,
+            // Queda marcado para poder separarlos en pantalla y para que
+            // cualquiera pueda revisar después qué se aplicó solo.
+            'raw_payload' => ['aplicado_solo' => $solo] + (array) ($proof->raw_payload ?? []),
+        ]);
+
+        $this->audit($proof, $previous, 'approved', $motivo, [
+            'reviewed_by'     => $revisor,
+            'approved_amount' => $monto,
+            'aplicado_solo'   => $solo,
+        ]);
+
     }
 
     private function audit(PaymentProof $proof, string $oldStatus, string $newStatus, string $reason, array $metadata = []): void

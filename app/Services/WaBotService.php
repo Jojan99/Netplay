@@ -1131,6 +1131,24 @@ class WaBotService
             throw $exception;
         }
 
+        // Si llegó completo y sin dudas, se aplica solo. Los que tienen algo
+        // que decidir siguen yendo a revisión: lo que se evita es hacer mirar
+        // los que no tienen nada que mirar.
+        $aplicado = false;
+
+        try {
+            $aplicado = app(\App\Http\Controllers\PaymentProofController::class)
+                ->aplicarSiEsConfiable($proofRecord)['aplicado'];
+        } catch (\Throwable $e) {
+            // Que falle la aplicación automática no puede perder el
+            // comprobante: queda pendiente, como siempre.
+            Log::warning('[Comprobantes] No se pudo aplicar solo', [
+                'comprobante' => $proofRecord->id, 'error' => $e->getMessage(),
+            ]);
+        }
+
+        $proofRecord = $proofRecord->fresh() ?: $proofRecord;
+
         // Aviso interno: al destino que la empresa eligió en Avisos y destinos.
         \App\Services\Crm\ComprobanteWhatsAppWeb::avisar(
             (int) $company->id,
