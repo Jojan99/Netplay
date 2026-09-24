@@ -69,7 +69,8 @@ class Tr069EnPaginaDeOnu
                     'ok'         => false,
                     'sin_pagina' => true,
                     'detalle'    => 'El equipo tomó su IP de gestión pero no publica su página: cierra todo lo que entra. '
-                        . 'No es la clave. La dirección del TR-069 le llega igual por DHCP; para que la tome hay que reiniciarlo.',
+                        . 'No es la clave, y no hay nada que cargar. La dirección del TR-069 le llega igual por DHCP; '
+                        . 'para que la tome hay que reiniciarlo.',
                 ];
             }
 

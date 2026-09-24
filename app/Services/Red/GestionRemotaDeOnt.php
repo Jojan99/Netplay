@@ -1197,7 +1197,8 @@ class GestionRemotaDeOnt
                         $registrada?->update(['gestion_en' => null]);
 
                         return ['ok' => false, 'detalle' => $r['detalle']
-                            . ' Reinicialo cuando no moleste al cliente y lo toma solo.'];
+                            . ' No hace falta la clave: este equipo no publica su página. Usá «Reiniciar equipo» '
+                            . '—el botón de al lado— cuando no moleste al cliente, y en un par de minutos aparece solo.'];
                     }
 
                     $avance('Reiniciando el equipo para que tome la dirección…');
