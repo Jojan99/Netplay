@@ -196,6 +196,80 @@ class OnePayGateway implements PaymentGatewayInterface
     }
 
     /**
+     * El estado del cobro preguntándoselo a OnePay.
+     *
+     * La usa «pagos:conciliar», que corre cada cinco minutos. Hace falta
+     * porque el aviso de OnePay se reintenta unos nueve minutos y después se
+     * rinde: si el servidor estaba caído justo en ese rato, el cliente pagó y
+     * la factura quedaba abierta para siempre. Esto la encuentra igual.
+     *
+     * @return array{status: string, amount: float, reference: ?string, medio: ?string, banco: ?string}|null
+     */
+    public function consultarTransaccion(string $transactionId): ?array
+    {
+        try {
+            $d = $this->api->verCobro($transactionId);
+        } catch (\Throwable $e) {
+            Log::warning('[OnePay] No se pudo consultar el cobro', ['id' => $transactionId, 'error' => $e->getMessage()]);
+
+            return null;
+        }
+
+        if (empty($d['status'])) {
+            return null;
+        }
+
+        [$medio, $banco, $detalle] = $this->medioDeUnCobro($transactionId, $d['method'] ?? null);
+
+        return [
+            'status'    => self::normalizar((string) $d['status']),
+            // En pesos, no en centavos: OnePay no usa centavos.
+            'amount'    => (float) ($d['amount'] ?? 0),
+            // La nuestra entera viaja en external_id; «reference» va recortada.
+            'reference' => $d['external_id'] ?? $d['reference'] ?? null,
+            'medio'     => $medio,
+            'banco'     => $banco,
+            'detalle'   => $detalle,
+        ];
+    }
+
+    /**
+     * El medio de un cobro, mirando primero lo que ya vino y si no, los
+     * intentos de pago. Es lo mismo que hace medioYBanco() con el aviso, pero
+     * partiendo de la respuesta de la API.
+     *
+     * @return array{0: ?string, 1: ?string, 2: ?string}
+     */
+    private function medioDeUnCobro(string $id, mixed $metodo): array
+    {
+        if (!is_array($metodo)) {
+            try {
+                $intentos = collect($this->api->intentosDeCobro($id)['data'] ?? []);
+                $pagado = $intentos->first(fn ($i) => in_array(($i['status'] ?? ''), ['paid', 'approved', 'succeeded'], true));
+
+                if ($pagado) {
+                    $etiqueta = $pagado['payment_method_label'] ?? $pagado['payment_method_type'] ?? null;
+
+                    return [$etiqueta ? self::sinInstrumento((string) $etiqueta) : null, null, $etiqueta];
+                }
+            } catch (\Throwable) {
+                // Sin el medio se acredita igual: el pago importa más.
+            }
+
+            return [null, null, null];
+        }
+
+        $medio   = $metodo['brand'] ?? $metodo['type'] ?? $metodo['name'] ?? null;
+        $detalle = $metodo['label'] ?? null;
+
+        return [
+            $medio ? self::sinInstrumento((string) $medio) : null,
+            $metodo['bank_name'] ?? $metodo['issuer'] ?? null,
+            $detalle,
+        ];
+    }
+
+    /**
      * Quita del nombre lo que identifica a UN instrumento concreto.
      *
      * «Mastercard ·3222» es un dato del movimiento, no una forma de pago. Si

@@ -165,6 +165,8 @@ class ConciliarPagosEnLinea extends Command
             // así el movimiento no queda «sin método».
             $r['medio'] ?? null,
             $r['banco'] ?? null,
+            // El instrumento («Mastercard ·3222») va a la nota, no al catálogo.
+            $r['detalle'] ?? null,
         );
 
         $tx->update(['status' => 'approved', 'paid_at' => now(), 'allocation_done' => true]);
