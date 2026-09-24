@@ -182,6 +182,47 @@ class SaludDeLaRed
         ];
     }
 
+    /**
+     * La potencia que tiene cada cliente AHORA, según la última medición.
+     *
+     * Hace falta porque el resumen del día es un promedio: si a las diez de la
+     * mañana un técnico limpió el conector y el enlace pasó de -29 a -22 dBm,
+     * el promedio del día sigue arrastrando las horas malas y el cliente
+     * seguía apareciendo «al borde» hasta el día siguiente. Eso hacía que la
+     * pantalla pareciera que no se actualiza.
+     *
+     * No consulta la OLT: usa la medición que el barrido ya dejó guardada (se
+     * rehace cada 15 minutos).
+     *
+     * @return array<int,array{rx: ?float, medido_en: ?string}>
+     */
+    public static function potenciaDeAhora(int $companyId): array
+    {
+        $out = [];
+
+        foreach (OltAdmin::query()->where('company_id', $companyId)->get() as $olt) {
+            $medicion = \App\Services\Olt\SenalDeLaOlt::de($olt);
+
+            foreach ($medicion['onts'] ?? [] as $ont) {
+                $u = $ont['user_id'] ?? null;
+
+                if ($u === null) {
+                    continue;
+                }
+
+                // Un cliente con dos ONT se queda con la peor: es la que le
+                // está dando problema.
+                $rx = $ont['potencia'];
+
+                if (!isset($out[$u]) || ($rx !== null && ($out[$u]['rx'] === null || $rx < $out[$u]['rx']))) {
+                    $out[$u] = ['rx' => $rx, 'medido_en' => $medicion['medido_en'] ?? null];
+                }
+            }
+        }
+
+        return $out;
+    }
+
     /** Cada puerto PON: cómo está hoy y cómo venía la semana pasada. */
     private static function puertos(int $companyId): array
     {
@@ -227,14 +268,14 @@ class SaludDeLaRed
      */
     private static function clientesAlBorde(int $companyId, string $fecha): array
     {
-        return DB::table('red_equipo_dia as e')
+        $filas = DB::table('red_equipo_dia as e')
             ->leftJoin('user_data as u', 'u.user_id', '=', 'e.user_id')
             ->join('olt_admins as o', 'o.id', '=', 'e.olt_id')
             ->where('e.company_id', $companyId)->where('e.fecha', $fecha)
             ->where('e.rx_muestras', '>', 0)
             ->whereRaw('e.rx_suma / e.rx_muestras < ?', [self::AL_BORDE])
             ->orderByRaw('e.rx_suma / e.rx_muestras')
-            ->limit(50)
+            ->limit(80)
             ->get([
                 'e.olt_id', 'o.name as olt', 'e.fsp', 'e.ont_id', 'e.user_id', 'e.serial', 'e.descripcion',
                 'e.rx_min', 'e.rx_max', 'e.muestras_offline', 'e.caidas',
@@ -242,6 +283,26 @@ class SaludDeLaRed
                 DB::raw("TRIM(CONCAT(COALESCE(u.names, ''), ' ', COALESCE(u.lastname, ''))) cliente"),
                 'u.phone',
             ])->map(fn ($x) => (array) $x)->all();
+
+        // Se cruza con la última medición: al que ya le arreglaron el enlace
+        // sale de la lista en el mismo momento, no al día siguiente.
+        $ahora = self::potenciaDeAhora($companyId);
+
+        $vivos = [];
+
+        foreach ($filas as $fila) {
+            $rx = $ahora[$fila['user_id']]['rx'] ?? null;
+
+            if ($rx !== null && $rx >= self::AL_BORDE) {
+                continue;   // ya está bien: no hay nada que ir a revisar
+            }
+
+            $fila['rx_ahora'] = $rx;
+            $fila['medido_en'] = $ahora[$fila['user_id']]['medido_en'] ?? null;
+            $vivos[] = $fila;
+        }
+
+        return $vivos;
     }
 
     /** Equipos que se apagan y prenden todo el día: casi siempre es la fibra o la energía. */

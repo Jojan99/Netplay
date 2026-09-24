@@ -68,6 +68,10 @@ class ClientesEnRiesgo
         }
 
         $deudas = self::deudas($companyId, $red->pluck('user_id')->all());
+        // Cómo está el enlace AHORA: al que ya le arreglaron la señal no tiene
+        // sentido seguir mostrándolo porque el promedio de la semana arrastra
+        // los días malos.
+        $ahora = SaludDeLaRed::potenciaDeAhora($companyId);
         $fichas = DB::table('user_data')->whereIn('user_id', $red->pluck('user_id'))
             ->get(['user_id', 'names', 'lastname', 'dni', 'phone', 'address'])
             ->keyBy('user_id');
@@ -80,6 +84,7 @@ class ClientesEnRiesgo
             $deuda    = (float) ($deudas[$r->user_id]['monto'] ?? 0);
             $ficha    = $fichas[$r->user_id] ?? null;
             $rxProm   = (int) $r->rx_muestras > 0 ? (float) $r->rx_suma / (int) $r->rx_muestras : null;
+            $rxAhora  = $ahora[$r->user_id]['rx'] ?? null;
 
             $fila = [
                 'user_id'    => (int) $r->user_id,
@@ -94,6 +99,7 @@ class ClientesEnRiesgo
                 'caidas'     => (int) $r->caidas,
                 'rx_min'     => $r->rx_min !== null ? round((float) $r->rx_min, 1) : null,
                 'rx_prom'    => $rxProm !== null ? round($rxProm, 1) : null,
+                'rx_ahora'   => $rxAhora !== null ? round($rxAhora, 1) : null,
                 'dias_bajos' => (int) $r->dias_bajos,
                 'dias'       => (int) $r->dias,
                 'deuda'      => $deuda,
@@ -106,7 +112,7 @@ class ClientesEnRiesgo
                 $apagado >= self::APAGADO_ALTO && $deuda > 0   => 'se_fue',
                 $apagado >= self::APAGADO_MEDIO && $deuda <= 0 => 'falla_sin_reportar',
                 (int) $r->caidas >= self::CAIDAS               => 'inestable',
-                self::vaAQuedarseSinLuz($rxProm, (int) $r->dias_bajos, (int) $r->dias) => 'senal_al_borde',
+                self::vaAQuedarseSinLuz($rxProm, $rxAhora, (int) $r->dias_bajos, (int) $r->dias) => 'senal_al_borde',
                 default => null,
             };
 
@@ -144,9 +150,16 @@ class ClientesEnRiesgo
      * promedio lo disimule. Por eso cuenta si le pasó la mitad de los días
      * medidos o más.
      */
-    private static function vaAQuedarseSinLuz(?float $promedio, int $diasBajos, int $dias): bool
+    private static function vaAQuedarseSinLuz(?float $promedio, ?float $ahora, int $diasBajos, int $dias): bool
     {
         if ($promedio === null) {
+            return false;
+        }
+
+        // Si la última medición ya está bien, se arregló: la semana mala es
+        // historia y no hay a quién mandar. Sin esto el cliente seguía en la
+        // lista días después de la visita y la pantalla parecía congelada.
+        if ($ahora !== null && $ahora >= self::AL_BORDE) {
             return false;
         }
 

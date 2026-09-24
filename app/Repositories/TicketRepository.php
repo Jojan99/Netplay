@@ -290,24 +290,39 @@ class TicketRepository implements TicketRepositoryInterface
     public function ticketsAbiertos(): array
     {
         $filas = Ticket::query()
+            ->join('ticket_type_services as s', 's.id', '=', 'tickets.service_id')
+            ->leftJoin('user_data as t', 't.user_id', '=', 'tickets.technical_id')
             ->where('tickets.company_id', getSessionCompanyId())
             ->whereIn('tickets.status_id', [self::POR_HACER, self::EN_CURSO])
-            ->selectRaw('tickets.user_id, tickets.status_id, COUNT(*) n, MIN(tickets.created_at) desde, MAX(tickets.id) ultimo')
-            ->groupBy('tickets.user_id', 'tickets.status_id')
-            ->get();
+            ->orderByDesc('tickets.id')
+            ->get([
+                'tickets.id', 'tickets.user_id', 'tickets.status_id', 'tickets.created_at',
+                's.name as servicio',
+                DB::raw("TRIM(CONCAT(COALESCE(t.names, ''), ' ', COALESCE(t.lastname, ''))) tecnico"),
+            ]);
 
         $out = [];
 
         foreach ($filas as $f) {
             $u = (int) $f->user_id;
-            $out[$u] ??= ['user_id' => $u, 'por_hacer' => 0, 'en_curso' => 0, 'desde' => null, 'ultimo' => null];
-            $out[$u][(int) $f->status_id === self::EN_CURSO ? 'en_curso' : 'por_hacer'] = (int) $f->n;
+            $out[$u] ??= ['user_id' => $u, 'por_hacer' => 0, 'en_curso' => 0, 'desde' => null, 'tickets' => []];
 
-            if ($out[$u]['desde'] === null || $f->desde < $out[$u]['desde']) {
-                $out[$u]['desde'] = $f->desde;
+            (int) $f->status_id === self::EN_CURSO ? $out[$u]['en_curso']++ : $out[$u]['por_hacer']++;
+
+            if ($out[$u]['desde'] === null || $f->created_at < $out[$u]['desde']) {
+                $out[$u]['desde'] = $f->created_at;
             }
 
-            $out[$u]['ultimo'] = max((int) $out[$u]['ultimo'], (int) $f->ultimo);
+            // Con cinco alcanza: la tarjeta que los muestra no es un listado.
+            if (count($out[$u]['tickets']) < 5) {
+                $out[$u]['tickets'][] = [
+                    'id'        => (int) $f->id,
+                    'status_id' => (int) $f->status_id,
+                    'servicio'  => $f->servicio,
+                    'tecnico'   => $f->tecnico ?: null,
+                    'desde'     => $f->created_at,
+                ];
+            }
         }
 
         return $out;
