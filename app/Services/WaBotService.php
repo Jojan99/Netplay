@@ -1387,13 +1387,80 @@ class WaBotService
         return (float) preg_replace('/[^\d]/', '', $amount);
     }
 
-    private function extractReference(string $text): ?string
+    /**
+     * El número de referencia del comprobante.
+     *
+     * El patrón viejo era «ref(?:erencia)?» y se mordía la cola: contra la
+     * palabra «Referencia», si no encontraba un número aceptable después,
+     * retrocedía, se quedaba con «Ref» y capturaba «erencia» como si fuera la
+     * referencia. Pasó con el pago de SULEIMA NAVARRO, cuyo comprobante decía:
+     *
+     *     Referencia
+     *     2 |M23270977
+     *
+     * y quedó guardado «erencia». Dos cosas lo arreglan: la etiqueta ahora
+     * termina en \b —«Ref» seguido de «erencia» ya no es una etiqueta
+     * válida— y, en vez de exigir que el número venga pegado, se mira el
+     * pedazo siguiente y se elige el candidato que más se parece a una
+     * referencia. El OCR mete basura en el medio («2 |») y antes eso bastaba
+     * para perder el dato.
+     */
+    /**
+     * El mejor candidato a referencia dentro de un pedazo de texto.
+     *
+     * Se prefiere lo que mezcla letras y números (M23270977 de Nequi, los
+     * códigos de Bancolombia) sobre un número pelado, y lo más largo sobre lo
+     * más corto: el OCR deja sueltos como «2» o «|» que no son referencias de
+     * nada.
+     */
+    public static function mejorReferencia(string $trozo): ?string
     {
-        if (preg_match('/(?:comprobante\s+(?:no\.?|n[uú]mero)|ref(?:erencia)?|referencia|n[uú]mero\s+de\s+operaci[oó]n)[^A-Za-z0-9]*([A-Za-z0-9-]{4,})/iu', $text, $matches)) {
-            return trim($matches[1]);
+        preg_match_all('/[A-Za-z0-9][A-Za-z0-9-]{3,}/u', $trozo, $todos);
+
+        $candidatos = array_filter($todos[0] ?? [], function (string $c) {
+            // Una referencia SIEMPRE lleva dígitos. Sin esta regla se colaba
+            // una palabra del propio comprobante —«transferencias» ganaba por
+            // ser más larga que el número de verdad— y pisaba una referencia
+            // que estaba bien.
+            if (!preg_match('/\d/', $c)) {
+                return false;
+            }
+
+            // Y una fecha suelta tampoco es una referencia.
+            return !preg_match('/^\d{1,2}[-\/]\d{1,2}([-\/]\d{2,4})?$/', $c);
+        });
+
+        if (!$candidatos) {
+            return null;
         }
 
-        if (preg_match('/(?:\b\d{6,20}\b)/', $text, $matches)) {
+        usort($candidatos, function (string $a, string $b) {
+            // Con letras Y números primero: es la forma de casi toda
+            // referencia bancaria y descarta los sueltos del OCR.
+            $mezcla = fn (string $x) => (int) (preg_match('/[A-Za-z]/', $x) && preg_match('/\d/', $x));
+
+            return [$mezcla($b), strlen($b)] <=> [$mezcla($a), strlen($a)];
+        });
+
+        return trim($candidatos[0]);
+    }
+
+    private function extractReference(string $text): ?string
+    {
+        $etiqueta = '/(?:comprobante\s+(?:no\.?|n[uú]mero)|n[uú]mero\s+de\s+(?:operaci[oó]n|aprobaci[oó]n|transacci[oó]n)|referencia|ref\.?|cus)\b/iu';
+
+        if (preg_match($etiqueta, $text, $m, PREG_OFFSET_CAPTURE)) {
+            // Lo que viene justo después de la etiqueta, que es donde está el
+            // número aunque haya un salto de línea y algún carácter suelto.
+            $cola = mb_substr(substr($text, $m[0][1] + strlen($m[0][0])), 0, 60);
+
+            if ($ref = self::mejorReferencia($cola)) {
+                return $ref;
+            }
+        }
+
+        // Sin etiqueta: un número largo suelto es lo más probable.
+        if (preg_match('/\b\d{6,20}\b/', $text, $matches)) {
             return trim($matches[0]);
         }
 
