@@ -51,6 +51,30 @@ class PaymentInitiationService
         $tag       = count($orderedIds) > 1 ? 'MULTI' : $firstInvoice->number_facture;
         $reference = $company->slug . '-' . $tag . '-' . time() . '-' . $firstInvoice->id;
 
+        // Un cobro vivo por estas mismas facturas se reusa en vez de crear
+        // otro. Si no, un cliente que pide pagar dos veces —o al que le llega
+        // el cobro por dos lados— termina con dos links por la misma deuda y
+        // puede pagarla dos veces. Se devuelve el que ya tiene.
+        if ($vivo = $this->cobroVivo($company, $orderedIds, $amount)) {
+            Log::info('Pago online reusado', [
+                'company_id' => $company->id,
+                'origin'     => $origin,
+                'reference'  => $vivo->reference,
+            ]);
+
+            return [
+                'payment_url'  => (string) $vivo->payment_url,
+                'reference'    => $vivo->reference,
+                'amount'       => (float) $vivo->amount,
+                'gateway'      => $company->pg_gateway,
+                'sandbox'      => (bool) $vivo->sandbox,
+                'breakdown'    => $this->computeBreakdown($invoices, $amount),
+                'expires_on'   => $limitDate,
+                'por_whatsapp' => false,
+                'reusado'      => true,
+            ];
+        }
+
         $userData      = DB::table('user_data')->where('user_id', $clientUserId)->first(['names', 'lastname', 'email', 'phone']);
         $customerEmail = $userData->email ?? '';
         $customerName  = trim(($userData->names ?? '') . ' ' . ($userData->lastname ?? ''));
@@ -104,6 +128,7 @@ class PaymentInitiationService
             'customer_name'          => $customerName,
             'customer_email'         => $customerEmail,
             'gateway_transaction_id' => $gateway->getLastGatewayReference(),
+            'payment_url'            => $link,
             'initiated_at'           => now(),
         ]);
 
@@ -127,6 +152,41 @@ class PaymentInitiationService
             'por_whatsapp' => $mandadoPorWhatsapp,
         ];
     }
+
+    /**
+     * Un cobro pendiente por exactamente estas facturas y este monto.
+     *
+     * Se mira sólo lo reciente: un link de hace una semana probablemente ya
+     * venció del lado de la pasarela, y devolverlo sería peor que crear uno
+     * nuevo. Tampoco se reusa si no quedó guardado el link, porque entonces no
+     * hay nada que devolver.
+     *
+     * @param  list<int>  $invoiceIds
+     */
+    private function cobroVivo(Company $company, array $invoiceIds, float $amount): ?OnlinePaymentTransaction
+    {
+        sort($invoiceIds);
+
+        return OnlinePaymentTransaction::where('company_id', $company->id)
+            ->where('gateway', $company->pg_gateway)
+            ->where('status', 'pending')
+            ->where('sandbox', (bool) $company->pg_sandbox)
+            ->whereNotNull('payment_url')
+            ->where('created_at', '>=', now()->subHours(self::HORAS_QUE_VIVE_UN_COBRO))
+            ->orderByDesc('id')
+            ->get()
+            ->first(function (OnlinePaymentTransaction $t) use ($invoiceIds, $amount) {
+                $suyas = array_map('intval', (array) ($t->invoice_ids ?? []));
+                sort($suyas);
+
+                // El monto también: un abono parcial y el total de la misma
+                // factura son dos cobros distintos y no se pueden confundir.
+                return $suyas === $invoiceIds && abs((float) $t->amount - $amount) < 0.01;
+            });
+    }
+
+    /** Cuánto vale reusar un cobro ya creado antes de hacer otro. */
+    private const HORAS_QUE_VIVE_UN_COBRO = 24;
 
     /** Cómo se repartirá el monto entre las facturas, de la más antigua a la más nueva. */
     public function computeBreakdown(Collection $invoices, float $amount): array

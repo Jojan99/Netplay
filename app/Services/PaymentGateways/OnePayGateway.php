@@ -54,7 +54,12 @@ class OnePayGateway implements PaymentGatewayInterface
             throw new OnePayError($problema);
         }
 
-        $cobro = $this->armarCobro($data);
+        // Sin teléfono ni correo: para OnePay esos campos no son datos del
+        // cliente, son «entregáselo vos». Acá el link lo entrega quien pidió
+        // el cobro —el bot en su propio chat, el portal en pantalla—, así que
+        // si además lo mandara OnePay al cliente le llegarían dos mensajes
+        // con dos links distintos y podría pagar dos veces.
+        $cobro = $this->armarCobro($data, false);
 
         // La misma referencia siempre pide el mismo cobro: si la red se corta
         // y se reintenta, OnePay devuelve el que ya creó en vez de crear otro
@@ -96,7 +101,8 @@ class OnePayGateway implements PaymentGatewayInterface
             );
         }
 
-        $cobro = $this->armarCobro($data) + ['phone' => $telefono];
+        // Acá sí entrega OnePay: es lo que se le pidió.
+        $cobro = ['phone' => $telefono] + $this->armarCobro($data, true);
 
         $plantilla ??= $this->company->pg_template_id ? (int) $this->company->pg_template_id : null;
 
@@ -349,7 +355,7 @@ class OnePayGateway implements PaymentGatewayInterface
      * @param  array<string,mixed>  $data
      * @return array<string,mixed>
      */
-    private function armarCobro(array $data): array
+    private function armarCobro(array $data, bool $entrega): array
     {
         $monto = round((float) ($data['amount'] ?? 0), 2);
 
@@ -376,12 +382,16 @@ class OnePayGateway implements PaymentGatewayInterface
             'tax'          => 0,
         ];
 
-        if (!empty($data['customer_email']) && filter_var($data['customer_email'], FILTER_VALIDATE_EMAIL)) {
-            $cobro['email'] = $data['customer_email'];
-        }
+        // Sólo cuando la entrega es de OnePay. Ver el comentario de arriba:
+        // estos dos campos son canales de envío, no datos del cliente.
+        if ($entrega) {
+            if (!empty($data['customer_email']) && filter_var($data['customer_email'], FILTER_VALIDATE_EMAIL)) {
+                $cobro['email'] = $data['customer_email'];
+            }
 
-        if ($tel = self::telefonoParaWhatsapp($data['customer_phone'] ?? null)) {
-            $cobro['phone'] = $tel;
+            if ($tel = self::telefonoParaWhatsapp($data['customer_phone'] ?? null)) {
+                $cobro['phone'] = $tel;
+            }
         }
 
         // La fecha de corte del servicio: OnePay la usa para sus recordatorios

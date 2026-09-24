@@ -18,6 +18,7 @@ class OnlinePaymentTransaction extends Model
         'customer_name',
         'customer_email',
         'gateway_transaction_id',
+        'payment_url',
         'gateway_payload',
         'allocation_done',
         'initiated_at',

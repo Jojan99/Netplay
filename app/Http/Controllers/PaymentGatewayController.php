@@ -455,6 +455,12 @@ class PaymentGatewayController extends Controller
                     : null;
 
                 $this->markInvoicePaid($company->id, $reference, $amount, $gatewayName, $medio, $banco);
+
+                // Los cobros gemelos: otros links vivos por las mismas
+                // facturas. Si quedaran abiertos, el cliente que todavía
+                // tiene el mensaje anterior en el chat podría pagar de nuevo
+                // algo que ya pagó.
+                $this->cerrarCobrosGemelos($company, $tx->fresh(), $gateway);
             }
 
             // Se notifica después de acreditar, para que el mensaje pueda
@@ -469,6 +475,63 @@ class PaymentGatewayController extends Controller
         } catch (\Throwable $e) {
             Log::error("Webhook {$gatewayName} error: " . $e->getMessage());
             return response()->json(['ok' => false], 200);
+        }
+    }
+
+    /**
+     * Cierra los otros cobros pendientes por las mismas facturas.
+     *
+     * Del lado nuestro quedan como cancelados, y en la pasarela se anulan de
+     * verdad cuando sabe hacerlo: así el link viejo deja de cobrar en vez de
+     * quedar dando vueltas en el chat del cliente.
+     */
+    private function cerrarCobrosGemelos(Company $company, ?OnlinePaymentTransaction $pagada, $gateway): void
+    {
+        if (!$pagada) {
+            return;
+        }
+
+        $suyas = array_map('intval', (array) ($pagada->invoice_ids ?? []));
+        sort($suyas);
+
+        if (!$suyas) {
+            return;
+        }
+
+        $otros = OnlinePaymentTransaction::where('company_id', $company->id)
+            ->where('status', 'pending')
+            ->where('id', '!=', $pagada->id)
+            ->where('created_at', '>=', now()->subDays(30))
+            ->get()
+            ->filter(function (OnlinePaymentTransaction $t) use ($suyas) {
+                $otras = array_map('intval', (array) ($t->invoice_ids ?? []));
+                sort($otras);
+
+                // Cualquier cobro que toque alguna de las facturas pagadas:
+                // no hace falta que el conjunto sea idéntico, porque un cobro
+                // por «las tres» también sobra si ya se pagaron las tres.
+                return (bool) array_intersect($otras, $suyas);
+            });
+
+        foreach ($otros as $t) {
+            if ($t->gateway_transaction_id && $gateway instanceof \App\Services\PaymentGateways\OnePayGateway) {
+                try {
+                    $gateway->api()->anularCobro((string) $t->gateway_transaction_id);
+                } catch (\Throwable $e) {
+                    // Que no se pueda anular allá no puede impedir cerrarlo acá.
+                    Log::info('[Pagos] No se pudo anular el cobro gemelo en la pasarela', [
+                        'cobro' => $t->reference, 'error' => $e->getMessage(),
+                    ]);
+                }
+            }
+
+            $t->update(['status' => 'cancelled']);
+
+            Log::info('[Pagos] Cobro gemelo cerrado', [
+                'pagado'   => $pagada->reference,
+                'cerrado'  => $t->reference,
+                'empresa'  => $company->id,
+            ]);
         }
     }
 
