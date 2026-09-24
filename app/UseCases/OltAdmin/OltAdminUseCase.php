@@ -1270,15 +1270,30 @@ class OltAdminUseCase
      * Only queries the OLT (SNMP → Telnet) when the DB is empty.
      * Pass ?force=1 to skip the DB and re-sync from the OLT.
      */
+    /**
+     * Las ONT tal como quedaron guardadas, con su cliente.
+     *
+     * Es lo que la pantalla necesita ver. La lectura de la OLT trae el equipo
+     * pero no a quién se le asignó: devolverla cruda hacía parecer que
+     * sincronizar borraba las asignaciones.
+     *
+     * @return list<array<string,mixed>>
+     */
+    private function ontsDeLaBase(int $oltId): array
+    {
+        return OltOnt::where('olt_id', $oltId)
+            ->with('client:id,user_id,names,lastname,dni')
+            ->orderBy('fsp')->orderBy('ont_id')
+            ->get()
+            ->map(fn ($o) => array_merge($o->toArray(), ['assigned_client' => $o->client]))
+            ->toArray();
+    }
+
     public function getAuthorizedONTs(int $oltId, bool $force = false): array
     {
         if (!$force) {
-            $dbOnts = OltOnt::where('olt_id', $oltId)
-                            ->with('client:id,user_id,names,lastname,dni')
-                            ->orderBy('fsp')->orderBy('ont_id')
-                            ->get()
-                            ->map(fn($o) => array_merge($o->toArray(), ['assigned_client' => $o->client]))
-                            ->toArray();
+            $dbOnts = $this->ontsDeLaBase($oltId);
+
             if (!empty($dbOnts)) {
                 return ['status' => 0, 'message' => count($dbOnts) . ' ONTs autorizadas (BD)', 'data' => $dbOnts];
             }
@@ -1298,14 +1313,19 @@ class OltAdminUseCase
             $onts = $this->mergeServicePorts($oltId, $onts);
             $this->syncONTsToDb($oltId, $onts);
 
-            return ['status' => 0, 'message' => count($onts) . ' ONTs autorizadas', 'data' => $onts];
+            // Se devuelve la base, no la lectura cruda: la lectura no trae el
+            // cliente de cada ONT y la pantalla lo mostraba vacío. Parecía que
+            // sincronizar borraba las asignaciones, cuando el dato estaba
+            // guardado y sano; lo que fallaba era lo que se veía.
+            return ['status' => 0, 'message' => count($onts) . ' ONTs autorizadas', 'data' => $this->ontsDeLaBase($oltId)];
         } catch (\Throwable $e) {
             if (str_contains($e->getMessage(), 'SNMP_JUMP_UNAVAILABLE')) {
                 try {
                     $onts = $this->dispatcher->dispatch($oltId, 'getAuthorizedONTs');
                     $onts = $this->mergeServicePorts($oltId, $onts);
                     $this->syncONTsToDb($oltId, $onts);
-                    return ['status' => 0, 'message' => count($onts) . ' ONTs autorizadas (Telnet)', 'data' => $onts];
+
+                    return ['status' => 0, 'message' => count($onts) . ' ONTs autorizadas (Telnet)', 'data' => $this->ontsDeLaBase($oltId)];
                 } catch (\Throwable $e2) {
                     \Log::error('OLT getAuthorizedONTs Telnet fallback error', ['olt_id' => $oltId, 'error' => $e2->getMessage()]);
                     return ['status' => 1, 'message' => 'Error: ' . $e2->getMessage(), 'data' => null];
