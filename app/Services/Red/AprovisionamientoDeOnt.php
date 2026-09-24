@@ -1430,6 +1430,14 @@ class AprovisionamientoDeOnt
         $huawei = ($d['_deviceId']['_OUI'] ?? '') === '00259E'
             || str_contains(strtoupper((string) ($d['_deviceId']['_Manufacturer'] ?? '')), 'HUAWEI');
 
+        // Si el equipo publica dónde va la VLAN de cada conexión, se le puede
+        // cargar la conexión sea de la marca que sea. Huawei lo llama
+        // X_HW_VLAN y C-Data X_CT-COM_VLANIDMark, pero el modelo es el mismo.
+        // Antes se exigía Huawei y a un C-Data se le decía «en esta marca
+        // todavía no se configura», y el cliente quedaba sin navegar con el
+        // aprovisionamiento en verde.
+        $sabeDeWan = ($huawei && $igd) || self::dialectoWan($d) !== null;
+
         // Lo que ya quedó hecho en una vuelta anterior no se repite; lo que
         // falló porque el equipo tardó (no mandó su WiFi o sus cuentas, no
         // respondió a tiempo) se pide y se vuelve a intentar solo al minuto
@@ -1439,7 +1447,7 @@ class AprovisionamientoDeOnt
         $base = array_values(array_filter($a->pasos ?? [], fn ($p) => !isset($p['clave'])));
 
         $pasos = [
-            'wan'    => fn () => $this->aplicarWan($acs, $a, $d, $huawei && $igd),
+            'wan'    => fn () => $this->aplicarWan($acs, $a, $d, $sabeDeWan),
             'mac'    => fn () => $this->registrarMac($a, $d),
             'wifi'   => fn () => $this->aplicarWifi($acs, $a, $d),
             'cuenta' => fn () => $this->aplicarCuenta($acs, $a, $d, $huawei && $igd),
@@ -1870,7 +1878,8 @@ class AprovisionamientoDeOnt
             $servicios = '';
         }
 
-        $valores = $this->valoresWan($a, $ruta, $wan, $servicios);
+        $dialecto = self::dialectoWan($d) ?? ['vlan' => 'X_HW_VLAN', 'servicios' => 'X_HW_SERVICELIST', 'lanbind' => 'X_HW_LANBIND'];
+        $valores = $this->valoresWan($a, $ruta, $wan, $servicios, $dialecto);
 
         $r = $this->alMomento($acs, $equipo, ['name' => 'setParameterValues', 'parameterValues' => $valores]);
 
@@ -1880,10 +1889,11 @@ class AprovisionamientoDeOnt
                 'reintentar' => $r['rechazada'] ? null : self::WAN];
         }
 
-        // Aparte, para que un equipo que no acepte los puertos no tumbe la conexión.
-        if ($puertos) {
+        // Aparte, para que un equipo que no acepte los puertos no tumbe la
+        // conexión. C-Data no reparte puertos por conexión: no hay qué pasar.
+        if ($puertos && ($dialecto['lanbind'] ?? null)) {
             $r = $this->alMomento($acs, $equipo, ['name' => 'setParameterValues', 'parameterValues' => array_map(
-                fn ($p) => ["{$ruta}.X_HW_LANBIND.{$p}", 'true', 'xsd:boolean'], array_keys($puertos))]);
+                fn ($p) => ["{$ruta}.{$dialecto['lanbind']}.{$p}", 'true', 'xsd:boolean'], array_keys($puertos))]);
 
             $nota .= $r['hecha']
                 ? ' Los puertos que usaba la anterior (' . implode(', ', array_keys($puertos)) . ') quedaron en la del cliente.'
@@ -1943,19 +1953,21 @@ class AprovisionamientoDeOnt
      *
      * @return list<array{0:string,1:string,2:string}>
      */
-    public function valoresWan(Aprovisionamiento $a, string $ruta, array $wan, string $servicios = ''): array
+    public function valoresWan(Aprovisionamiento $a, string $ruta, array $wan, string $servicios = '', ?array $dialecto = null): array
     {
+        $dialecto ??= ['vlan' => 'X_HW_VLAN', 'servicios' => 'X_HW_SERVICELIST'];
+
         $valores = [
             ["{$ruta}.Enable", 'true', 'xsd:boolean'],
             ["{$ruta}.ConnectionType", 'IP_Routed', 'xsd:string'],
             ["{$ruta}.NATEnabled", 'true', 'xsd:boolean'],
-            ["{$ruta}.X_HW_VLAN", (string) $wan['vlan'], 'xsd:unsignedInt'],
+            ["{$ruta}.{$dialecto['vlan']}", (string) $wan['vlan'], 'xsd:unsignedInt'],
         ];
 
         // Si ya lleva también el TR-069 ("TR069_INTERNET") se deja así: quitárselo
         // lo sacaría del servidor.
         if (!str_contains($servicios, 'TR069')) {
-            $valores[] = ["{$ruta}.X_HW_SERVICELIST", 'INTERNET', 'xsd:string'];
+            $valores[] = ["{$ruta}.{$dialecto['servicios']}", 'INTERNET', 'xsd:string'];
         }
 
         if ($wan['tipo'] === 'pppoe') {
@@ -2461,22 +2473,61 @@ class AprovisionamientoDeOnt
         return ['paso' => $titulo, 'ok' => true, 'detalle' => "{$hecho}. Se aplica en cuanto el equipo vuelva a reportar: no se le pudo avisar al momento."];
     }
 
+    /**
+     * Cómo llama cada marca a lo mismo.
+     *
+     * Huawei y C-Data usan el mismo modelo de conexiones —la VLAN y la lista
+     * de servicios en la propia conexión— pero con otro prefijo. Con los
+     * nombres de Huawei escritos a mano, a un C-Data se le contestaba «en
+     * esta marca todavía no se configura por TR-069» y el técnico tenía que
+     * ir a cargarle la conexión al equipo, uno por uno.
+     *
+     * Se decide mirando lo que el equipo publica, no la marca declarada: hay
+     * firmwares que dicen una cosa y publican otra.
+     *
+     * @param array<string,mixed> $d
+     * @return array{vlan:string, servicios:string, lanbind:?string}|null
+     */
+    public static function dialectoWan(array $d): ?array
+    {
+        foreach (self::hijos($d, self::WAN) as $i) {
+            foreach (['WANIPConnection', 'WANPPPConnection'] as $objeto) {
+                foreach (self::hijos($d, self::WAN . ".{$i}.{$objeto}") as $j) {
+                    $b = self::WAN . ".{$i}.{$objeto}.{$j}";
+
+                    if (self::v($d, "{$b}.X_HW_VLAN") !== null) {
+                        return ['vlan' => 'X_HW_VLAN', 'servicios' => 'X_HW_SERVICELIST', 'lanbind' => 'X_HW_LANBIND'];
+                    }
+
+                    if (self::v($d, "{$b}.X_CT-COM_VLANIDMark") !== null) {
+                        // C-Data no tiene lista de puertos LAN por conexión:
+                        // usa un solo campo de texto, así que no se reparten.
+                        return ['vlan' => 'X_CT-COM_VLANIDMark', 'servicios' => 'X_CT-COM_SERVICELIST', 'lanbind' => null];
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
     /** @return list<array{ruta:string, objeto:string, vlan:?int, servicios:string, nombre:string}> */
     public function conexiones(array $d): array
     {
         $lista = [];
+        $dialecto = self::dialectoWan($d) ?? ['vlan' => 'X_HW_VLAN', 'servicios' => 'X_HW_SERVICELIST'];
 
         foreach (self::hijos($d, self::WAN) as $i) {
             foreach (['WANIPConnection', 'WANPPPConnection'] as $objeto) {
                 foreach (self::hijos($d, self::WAN . ".{$i}.{$objeto}") as $j) {
                     $b = self::WAN . ".{$i}.{$objeto}.{$j}";
-                    $vlan = self::v($d, "{$b}.X_HW_VLAN");
+                    $vlan = self::v($d, "{$b}.{$dialecto['vlan']}");
 
                     $lista[] = [
                         'ruta'      => $b,
                         'objeto'    => $objeto,
                         'vlan'      => $vlan !== null && $vlan !== '' ? (int) $vlan : null,
-                        'servicios' => strtoupper((string) self::v($d, "{$b}.X_HW_SERVICELIST")),
+                        'servicios' => strtoupper((string) self::v($d, "{$b}.{$dialecto['servicios']}")),
                         'nombre'    => (string) (self::v($d, "{$b}.Name") ?: $b),
                         'dispositivo' => (string) $i,
                     ];
