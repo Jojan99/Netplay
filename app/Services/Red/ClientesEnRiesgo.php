@@ -31,6 +31,9 @@ class ClientesEnRiesgo
     /** Tantas caídas en la semana es un equipo inestable, no un apagón. */
     private const CAIDAS = 3;
 
+    /** Debajo de esto la óptica trabaja al filo. */
+    private const AL_BORDE = SaludDeLaRed::AL_BORDE;
+
     /**
      * @return array{grupos: array<string,array<string,mixed>>, medido_desde: ?string}
      */
@@ -46,12 +49,16 @@ class ClientesEnRiesgo
                 'user_id',
                 DB::raw('MAX(descripcion) descripcion'),
                 DB::raw('MAX(serial) serial'),
+                DB::raw('MAX(fsp) fsp'),
+                DB::raw('MAX(ont_id) ont_id'),
                 DB::raw('SUM(muestras) muestras'),
                 DB::raw('SUM(muestras_offline) apagadas'),
                 DB::raw('SUM(caidas) caidas'),
                 DB::raw('MIN(rx_min) rx_min'),
                 DB::raw('SUM(rx_suma) rx_suma'),
                 DB::raw('SUM(rx_muestras) rx_muestras'),
+                DB::raw('COUNT(*) dias'),
+                DB::raw('SUM(CASE WHEN rx_suma / NULLIF(rx_muestras, 0) < ' . self::AL_BORDE . ' THEN 1 ELSE 0 END) dias_bajos'),
             )
             ->groupBy('user_id')
             ->get();
@@ -72,6 +79,7 @@ class ClientesEnRiesgo
             $apagado  = (int) round((int) $r->apagadas * 100 / $muestras);
             $deuda    = (float) ($deudas[$r->user_id]['monto'] ?? 0);
             $ficha    = $fichas[$r->user_id] ?? null;
+            $rxProm   = (int) $r->rx_muestras > 0 ? (float) $r->rx_suma / (int) $r->rx_muestras : null;
 
             $fila = [
                 'user_id'    => (int) $r->user_id,
@@ -80,10 +88,14 @@ class ClientesEnRiesgo
                 'telefono'   => $ficha->phone ?? null,
                 'direccion'  => $ficha->address ?? null,
                 'serial'     => $r->serial,
+                'fsp'        => $r->fsp,
+                'ont_id'     => $r->ont_id !== null ? (int) $r->ont_id : null,
                 'apagado'    => $apagado,
                 'caidas'     => (int) $r->caidas,
                 'rx_min'     => $r->rx_min !== null ? round((float) $r->rx_min, 1) : null,
-                'rx_prom'    => (int) $r->rx_muestras > 0 ? round((float) $r->rx_suma / (int) $r->rx_muestras, 1) : null,
+                'rx_prom'    => $rxProm !== null ? round($rxProm, 1) : null,
+                'dias_bajos' => (int) $r->dias_bajos,
+                'dias'       => (int) $r->dias,
                 'deuda'      => $deuda,
                 'facturas'   => (int) ($deudas[$r->user_id]['facturas'] ?? 0),
             ];
@@ -94,7 +106,7 @@ class ClientesEnRiesgo
                 $apagado >= self::APAGADO_ALTO && $deuda > 0   => 'se_fue',
                 $apagado >= self::APAGADO_MEDIO && $deuda <= 0 => 'falla_sin_reportar',
                 (int) $r->caidas >= self::CAIDAS               => 'inestable',
-                $fila['rx_min'] !== null && $fila['rx_min'] < SaludDeLaRed::AL_BORDE => 'senal_al_borde',
+                self::vaAQuedarseSinLuz($rxProm, (int) $r->dias_bajos, (int) $r->dias) => 'senal_al_borde',
                 default => null,
             };
 
@@ -108,7 +120,7 @@ class ClientesEnRiesgo
             'se_fue'             => fn ($a, $b) => $b['deuda'] <=> $a['deuda'],
             'falla_sin_reportar' => fn ($a, $b) => $b['apagado'] <=> $a['apagado'],
             'inestable'          => fn ($a, $b) => $b['caidas'] <=> $a['caidas'],
-            'senal_al_borde'     => fn ($a, $b) => ($a['rx_min'] ?? 0) <=> ($b['rx_min'] ?? 0),
+            'senal_al_borde'     => fn ($a, $b) => ($a['rx_prom'] ?? 0) <=> ($b['rx_prom'] ?? 0),
         ];
 
         foreach ($grupos as $k => &$g) {
@@ -118,6 +130,27 @@ class ClientesEnRiesgo
         }
 
         return ['grupos' => $grupos, 'medido_desde' => $desde];
+    }
+
+    /**
+     * Si la señal de este cliente es un problema o fue un mal día.
+     *
+     * Se mira el promedio de la semana, no la peor lectura: la peor es una
+     * sola medición entre unas trescientas, y con eso solo entraban a la lista
+     * treinta y un clientes que en realidad pasan la semana en -22 dBm.
+     *
+     * Y se agrega la otra mitad de la verdad: un equipo que promedia -25 pero
+     * se va abajo del límite todos los días también está al filo, aunque el
+     * promedio lo disimule. Por eso cuenta si le pasó la mitad de los días
+     * medidos o más.
+     */
+    private static function vaAQuedarseSinLuz(?float $promedio, int $diasBajos, int $dias): bool
+    {
+        if ($promedio === null) {
+            return false;
+        }
+
+        return $promedio < self::AL_BORDE || ($dias > 0 && $diasBajos * 2 >= $dias);
     }
 
     /** @return array<string,array<string,mixed>> */

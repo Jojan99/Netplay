@@ -217,15 +217,23 @@ class SaludDeLaRed
         })->sortBy([['al_borde', 'desc'], ['rx_mediana', 'asc']])->values()->all();
     }
 
-    /** Clientes que hoy trabajaron por debajo del límite: los próximos en caerse. */
+    /**
+     * Clientes que hoy trabajaron por debajo del límite: los próximos en caerse.
+     *
+     * Se mira el PROMEDIO del día, no la peor lectura. La peor es una sola
+     * medición de las ~50 que se toman: bastaba un valor raro para meter acá a
+     * un cliente que pasó el día en -22 dBm y mandar a un técnico a revisar un
+     * enlace sano. La peor sigue a la vista, al lado, como dato.
+     */
     private static function clientesAlBorde(int $companyId, string $fecha): array
     {
         return DB::table('red_equipo_dia as e')
             ->leftJoin('user_data as u', 'u.user_id', '=', 'e.user_id')
             ->join('olt_admins as o', 'o.id', '=', 'e.olt_id')
             ->where('e.company_id', $companyId)->where('e.fecha', $fecha)
-            ->where('e.rx_min', '<', self::AL_BORDE)
-            ->orderBy('e.rx_min')
+            ->where('e.rx_muestras', '>', 0)
+            ->whereRaw('e.rx_suma / e.rx_muestras < ?', [self::AL_BORDE])
+            ->orderByRaw('e.rx_suma / e.rx_muestras')
             ->limit(50)
             ->get([
                 'e.olt_id', 'o.name as olt', 'e.fsp', 'e.ont_id', 'e.user_id', 'e.serial', 'e.descripcion',

@@ -30,6 +30,22 @@ class SenalDeLaOlt
     private const BAJA     = -29.0;
 
     /**
+     * Fuera de esta ventana la lectura no es una potencia, es basura.
+     *
+     * La tabla óptica devuelve de a ratos valores imposibles: -93,91 dBm en un
+     * equipo cuyo promedio del día es -22, o +10,96 dBm, que ninguna óptica de
+     * ONT recibe. Una sola de esas lecturas mandaba al cliente a la lista de
+     * «señal al borde» y a un técnico a revisar un enlace sano.
+     *
+     * Por debajo de -35 dBm la ONT ni siquiera habría sincronizado —la peor
+     * óptica GPON deja de ver a los -32—, y por encima de 0 dBm no hay
+     * receptor que mida eso. Lo que cae afuera se descarta: «no se pudo
+     * medir» es cierto; «-93,9 dBm» es mentira.
+     */
+    private const RX_MINIMA_CREIBLE = -35.0;
+    private const RX_MAXIMA_CREIBLE = 0.0;
+
+    /**
      * Una medición se considera al día durante 20 minutos (la revisión de
      * alertas mide cada 15), y se conserva unas horas para tener qué mostrar
      * mientras se mide de nuevo.
@@ -302,12 +318,7 @@ class SenalDeLaOlt
                             'estado'      => self::clasificar($m['potencia']),
                         ]), $mediciones);
 
-                        return array_merge($vacio, [
-                            'onts'    => $onts,
-                            'resumen' => self::resumen($onts),
-                            'por_pon' => self::porPon($onts),
-                            'peores'  => self::peores($onts),
-                        ]);
+                        return self::armar($olt, $vacio, $onts);
                     }
                 } catch (\Throwable $e) {
                     Log::info('[OLT] ZTE sin SNMP, se mide por consola', ['olt' => $olt->id, 'error' => $e->getMessage()]);
@@ -384,12 +395,7 @@ class SenalDeLaOlt
                 ]);
             }
 
-            return array_merge($vacio, [
-                'onts'    => $onts,
-                'resumen' => self::resumen($onts),
-                'por_pon' => self::porPon($onts),
-                'peores'  => self::peores($onts),
-            ]);
+            return self::armar($olt, $vacio, $onts);
         } catch (\Throwable $e) {
             Log::warning('[OLT] No se pudo leer la señal óptica', [
                 'olt' => $olt->id, 'error' => $e->getMessage(),
@@ -446,12 +452,68 @@ class SenalDeLaOlt
             return array_merge($vacio, ['error' => 'La OLT no devolvió potencias por consola.']);
         }
 
+        return self::armar($olt, $vacio, $onts);
+    }
+
+    /**
+     * El resultado de una medición, ya limpio y con dueño.
+     *
+     * Dos cosas que antes no pasaban y hacían falta:
+     *
+     *   - Se tiran las lecturas imposibles (ver RX_MINIMA_CREIBLE). Antes una
+     *     sola lectura de -93,91 dBm entraba a la base como la peor señal del
+     *     día de un cliente que estaba en -22, y ahí quedaba para siempre.
+     *   - Cada ONT sale con su cliente. La tabla óptica sólo trae el puerto y
+     *     el número de ONT; sin el cliente, desde la pantalla no se le puede
+     *     abrir la ficha ni crearle un ticket.
+     *
+     * @param  array<string,mixed>  $vacio
+     * @param  list<array<string,mixed>>  $onts
+     * @return array<string,mixed>
+     */
+    private static function armar(OltAdmin $olt, array $vacio, array $onts): array
+    {
+        $duenos = DB::table('olt_onts as oo')
+            ->leftJoin('user_data as ud', 'ud.user_id', '=', 'oo.user_data_id')
+            ->where('oo.olt_id', $olt->id)
+            ->get(['oo.fsp', 'oo.ont_id', 'ud.user_id', 'ud.names', 'ud.lastname'])
+            ->keyBy(fn ($o) => $o->fsp . ':' . $o->ont_id);
+
+        $onts = array_map(function (array $o) use ($duenos) {
+            $potencia = self::creible($o['potencia'] ?? null);
+            $dueno = $duenos[$o['fsp'] . ':' . $o['ont_id']] ?? null;
+
+            return array_merge($o, [
+                'potencia' => $potencia,
+                'estado'   => self::clasificar($potencia),
+                'user_id'  => $dueno?->user_id !== null ? (int) $dueno->user_id : null,
+                'cliente'  => $dueno && $dueno->user_id !== null
+                    ? trim(($dueno->names ?? '') . ' ' . ($dueno->lastname ?? '')) ?: null
+                    : null,
+            ]);
+        }, $onts);
+
         return array_merge($vacio, [
             'onts'    => $onts,
             'resumen' => self::resumen($onts),
             'por_pon' => self::porPon($onts),
             'peores'  => self::peores($onts),
         ]);
+    }
+
+    /**
+     * La potencia si puede ser cierta; null si no.
+     *
+     * Devolver null es decir «no se pudo medir», que es la verdad. Devolver el
+     * número que vino es inventar una avería.
+     */
+    public static function creible(?float $dbm): ?float
+    {
+        if ($dbm === null) {
+            return null;
+        }
+
+        return ($dbm >= self::RX_MINIMA_CREIBLE && $dbm <= self::RX_MAXIMA_CREIBLE) ? $dbm : null;
     }
 
     public static function olvidar(OltAdmin $olt): void
