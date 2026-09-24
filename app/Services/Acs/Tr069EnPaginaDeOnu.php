@@ -135,6 +135,28 @@ class Tr069EnPaginaDeOnu
     }
 
     /** ¿La página del equipo acepta esta cuenta? Entra, mira la página de TR-069 y sale. */
+    /**
+     * ¿Este equipo publica siquiera su página de administración?
+     *
+     * Muchos C-Data la cierran del lado de la gestión: ningún puerto web
+     * abierto. Saberlo evita informar como fallada una clave que sí quedó,
+     * sólo porque no hay por dónde mirarla.
+     */
+    public function alcanzable(int $segundos = 3): bool
+    {
+        foreach ([80, 8080, 443] as $puerto) {
+            $con = @fsockopen($this->ip, $puerto, $errno, $error, $segundos);
+
+            if ($con) {
+                fclose($con);
+
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public function aceptaCuenta(string $usuario, string $clave): bool
     {
         if (!filter_var($this->ip, FILTER_VALIDATE_IP) || $clave === '') {

@@ -19,9 +19,60 @@ use Illuminate\Support\Facades\Log;
  */
 class ClaveDeOnuPorTr069
 {
-    private const CDATA = 'InternetGatewayDevice.DeviceInfo.X_CATV_TeleComAccount';
+    /**
+     * Dónde guarda C-Data la cuenta del proveedor, según el firmware.
+     *
+     * No todos los FD5xx usan el mismo prefijo: la FD511GW-X-R371 la publica
+     * como «X_CATV_» y la FD512XWX como «X_CT-COM_». Con una sola ruta, a la
+     * segunda se le contestaba «en esta marca todavía no se cambia por
+     * TR-069» y el técnico tenía que ir al equipo a mano, cuando el equipo sí
+     * la acepta.
+     */
+    private const RUTAS_CDATA = [
+        'InternetGatewayDevice.DeviceInfo.X_CATV_TeleComAccount',
+        'InternetGatewayDevice.DeviceInfo.X_CT-COM_TeleComAccount',
+    ];
 
     private const USUARIO = 'adminisp';
+
+    /**
+     * Qué clave dice tener el equipo, releída después del cambio.
+     *
+     * Vale como confirmación sólo cuando coincide con la que se puso: si el
+     * equipo informa otra cosa —o la de fábrica— no se concluye nada.
+     */
+    private function claveQueInforma(string $acsId): ?string
+    {
+        try {
+            $d = $this->acs->dispositivo($acsId);
+        } catch (\Throwable) {
+            return null;
+        }
+
+        if (!$d) {
+            return null;
+        }
+
+        $ruta = self::rutaDeLaCuenta($d);
+
+        return $ruta ? (self::nodo($d, $ruta . '.Password')['_value'] ?? null) : null;
+    }
+
+    /**
+     * Cuál de las rutas conocidas publica de verdad este equipo.
+     *
+     * @param array<string,mixed> $d
+     */
+    private static function rutaDeLaCuenta(array $d): ?string
+    {
+        foreach (self::RUTAS_CDATA as $ruta) {
+            if (self::nodo($d, $ruta . '.Password')) {
+                return $ruta;
+            }
+        }
+
+        return null;
+    }
 
     /** La IP por la que el ACS le habla al equipo (su dirección de pedido de conexión). */
     private static function ipDeGestion(array $d): ?string
@@ -50,19 +101,23 @@ class ClaveDeOnuPorTr069
             return ['ok' => false, 'omitido' => true, 'detalle' => 'El equipo todavía no está en el servidor TR-069.'];
         }
 
-        // El equipo informa ese objeto sólo si se le pregunta.
-        if (!self::nodo($d, self::CDATA . '.Password')) {
-            try {
-                $this->acs->tarea($acsId, ['name' => 'refreshObject', 'objectName' => self::CDATA]);
-            } catch (\Throwable) {
+        $ruta = self::rutaDeLaCuenta($d);
+
+        // El equipo informa ese objeto sólo si se le pregunta. Se prueban las
+        // dos formas conocidas antes de darlo por imposible.
+        if (!$ruta) {
+            foreach (self::RUTAS_CDATA as $candidata) {
+                try {
+                    $this->acs->tarea($acsId, ['name' => 'refreshObject', 'objectName' => $candidata], 20);
+                } catch (\Throwable) {
+                }
             }
 
             $d = $this->acs->dispositivo($acsId) ?? $d;
+            $ruta = self::rutaDeLaCuenta($d);
         }
 
-        $nodo = self::nodo($d, self::CDATA . '.Password');
-
-        if (!$nodo) {
+        if (!$ruta) {
             return ['ok' => false, 'omitido' => true, 'detalle' => 'Este equipo no permite cambiar su clave de administración por TR-069.'];
         }
 
@@ -79,8 +134,8 @@ class ClaveDeOnuPorTr069
 
         try {
             $r = $this->acs->tarea($acsId, ['name' => 'setParameterValues', 'parameterValues' => [
-                [self::CDATA . '.Password', $clave, 'xsd:string'],
-                [self::CDATA . '.Enable', true, 'xsd:boolean'],
+                [$ruta . '.Password', $clave, 'xsd:string'],
+                [$ruta . '.Enable', true, 'xsd:boolean'],
             ]]);
         } catch (\Throwable $e) {
             return ['ok' => false, 'detalle' => 'El servidor TR-069 no aceptó el cambio de clave: ' . mb_substr($e->getMessage(), 0, 150)];
@@ -98,16 +153,30 @@ class ClaveDeOnuPorTr069
             return ['ok' => true, 'detalle' => 'Clave de administración de la empresa en cola: se aplica en el próximo reporte del equipo.'];
         }
 
-        // Se confirma en la página: la clave nueva tiene que entrar.
-        if (!$web) {
-            return ['ok' => false, 'detalle' => 'Clave de administración puesta por TR-069 pero sin confirmar: el servidor no llega a la página del equipo por el túnel de la empresa.'];
+        // ── Confirmar que quedó ───────────────────────────────────────────
+        //
+        // Dos formas, y la primera es la buena: preguntarle al equipo qué
+        // clave tiene ahora. La FD511GW-X-R371 no sirve para esto —la cambia
+        // pero sigue informando la de fábrica—, pero la FD512XWX devuelve la
+        // nueva, y entonces no hay nada más que comprobar.
+        sleep(2);
+
+        if (($this->claveQueInforma($acsId) ?? null) === $clave) {
+            return ['ok' => true, 'detalle' => 'Clave de administración de la empresa puesta y confirmada por el propio equipo (usuario adminisp).'];
         }
 
-        sleep(2);
+        // La segunda: entrar a su página. Muchos C-Data no la exponen del lado
+        // de la gestión —ningún puerto web abierto—, y eso NO es que la clave
+        // haya fallado: es que no hay por dónde mirar. Antes se informaba como
+        // un fracaso y mandaba al técnico a revisar un equipo que estaba bien.
+        if (!$web || !$web->alcanzable()) {
+            return ['ok' => true, 'detalle' => 'Clave de administración puesta por TR-069. No se pudo confirmar: este equipo no publica su página de administración por el túnel.'];
+        }
+
         $ok = $web->aceptaCuenta(self::USUARIO, $clave);
 
         if (!$ok) {
-            Log::error('[TR-069] La clave de administración de la ONU no quedó', ['acs_id' => $acsId]);
+            Log::warning('[TR-069] La clave de administración de la ONU no se pudo confirmar', ['acs_id' => $acsId]);
         }
 
         return [

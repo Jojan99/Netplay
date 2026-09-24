@@ -2244,9 +2244,16 @@ class AprovisionamientoDeOnt
         $titulo = 'Cuenta de administración del equipo';
         $g = GestionRemota::where('company_id', $this->companyId)->first();
 
-        // C-Data: la cuenta del proveedor (usuario fijo adminisp) va en
-        // DeviceInfo.X_CATV_TeleComAccount.
-        if (self::v($d, 'InternetGatewayDevice.DeviceInfo.X_CATV_TeleComAccount.Enable') !== null) {
+        // C-Data: la cuenta del proveedor (usuario fijo adminisp). Según el
+        // firmware la publica como «X_CATV_» o como «X_CT-COM_»: con una sola
+        // ruta, a los equipos del segundo tipo se les decía que no se podía y
+        // había que ir al equipo a mano.
+        $esCdata = self::v($d, 'InternetGatewayDevice.DeviceInfo.X_CATV_TeleComAccount.Enable') !== null
+            || self::v($d, 'InternetGatewayDevice.DeviceInfo.X_CT-COM_TeleComAccount.Enable') !== null
+            || str_contains(strtoupper((string) ($d['_deviceId']['_Manufacturer'] ?? '')), 'CDATA')
+            || ($d['_deviceId']['_OUI'] ?? '') === '80F7A6';
+
+        if ($esCdata) {
             $r = (new \App\Services\Acs\ClaveDeOnuPorTr069($this->companyId, $acs))->asegurar((string) $a->acs_id, (string) $g?->onu_admin_clave);
 
             return ['paso' => $titulo, 'ok' => $r['ok'], 'detalle' => $r['detalle']] + (($r['omitido'] ?? false) ? ['omitido' => true] : []);
