@@ -73,9 +73,24 @@ class SaludDeLaRed
 
         $puertos = 0;
 
+        // Quién tiene cliente y quién no. Un equipo apagado SIN cliente no es
+        // una caída: es un alta vieja, un equipo reemplazado o alguien que se
+        // fue. Contarlo como caída daba 40% de red abajo en Waonet cuando los
+        // clientes sin servicio eran uno.
+        $conCliente = DB::table('olt_onts')->where('olt_id', $olt->id)
+            ->whereNotNull('user_data_id')
+            ->pluck('ont_id', DB::raw("CONCAT(fsp, ':', ont_id)"))
+            ->keys()->flip();
+
         foreach (collect($onts)->groupBy('fsp') as $fsp => $delPuerto) {
             $rx = $delPuerto->pluck('potencia')->filter(fn ($p) => $p !== null)->map(fn ($p) => (float) $p)->sort()->values();
-            $offline = $delPuerto->where('status', 'offline')->count();
+
+            $apagadas = $delPuerto->where('status', 'offline');
+            $sinCliente = $apagadas->filter(fn ($o) => !isset($conCliente[$o['fsp'] . ':' . (int) $o['ont_id']]))->count();
+
+            // «offline» pasa a significar lo que la gente entiende: clientes
+            // que deberían estar navegando y no lo están.
+            $offline = $apagadas->count() - $sinCliente;
 
             DB::table('red_muestras')->insert([
                 'company_id' => $olt->company_id,
@@ -85,6 +100,7 @@ class SaludDeLaRed
                 'onts'       => $delPuerto->count(),
                 'online'     => $delPuerto->count() - $offline,
                 'offline'    => $offline,
+                'sin_cliente' => $sinCliente,
                 'al_borde'   => $rx->filter(fn ($p) => $p < self::AL_BORDE)->count(),
                 'rx_mediana' => $rx->isEmpty() ? null : $rx[intdiv($rx->count(), 2)],
                 'rx_min'     => $rx->min(),
@@ -174,7 +190,7 @@ class SaludDeLaRed
                 fn ($j) => $j->on('u.olt_id', 'm.olt_id')->on('u.fsp', 'm.fsp')->on('u.ultima', 'm.medido_en'))
             ->join('olt_admins as o', 'o.id', '=', 'm.olt_id')
             ->where('m.company_id', $companyId)
-            ->get(['m.olt_id', 'o.name as olt', 'm.fsp', 'm.onts', 'm.online', 'm.offline', 'm.al_borde', 'm.rx_mediana', 'm.rx_min', 'm.medido_en']);
+            ->get(['m.olt_id', 'o.name as olt', 'm.fsp', 'm.onts', 'm.online', 'm.offline', 'm.sin_cliente', 'm.al_borde', 'm.rx_mediana', 'm.rx_min', 'm.medido_en']);
 
         // La mediana de la semana pasada, para ver si el puerto viene cayendo.
         $antes = DB::table('red_muestras')->where('company_id', $companyId)
@@ -191,6 +207,7 @@ class SaludDeLaRed
                 'fsp'        => $p->fsp,
                 'onts'       => (int) $p->onts,
                 'offline'    => (int) $p->offline,
+                'sin_cliente' => (int) ($p->sin_cliente ?? 0),
                 'al_borde'   => (int) $p->al_borde,
                 'rx_mediana' => $p->rx_mediana !== null ? (float) $p->rx_mediana : null,
                 'rx_min'     => $p->rx_min !== null ? (float) $p->rx_min : null,

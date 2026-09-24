@@ -3,8 +3,10 @@
 namespace App\Services\Olt;
 
 use App\Models\OltAdmin;
+use App\Models\OltOnt;
 use App\Services\HuaweiSnmpReader;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -130,6 +132,7 @@ class SenalDeLaOlt
 
             if (($resultado['onts'] ?? []) !== []) {
                 Cache::put(self::clave($olt), $resultado, now()->addSeconds(self::CONSERVAR));
+                self::guardarEstado($olt, $resultado['onts']);
             }
 
             return $resultado;
@@ -139,6 +142,53 @@ class SenalDeLaOlt
 
             if ($cancelable) {
                 Cache::forget(self::claveCancelada($olt));
+            }
+        }
+    }
+
+    /**
+     * Guarda en la ficha de cada ONT si está prendida o apagada.
+     *
+     * Hasta ahora «olt_onts.status» no era un estado: lo escribía una sola vez
+     * registerONT() con «offline» al autorizar el equipo, y sólo volvía a
+     * «online» si alguien apretaba «Activar» a mano. Nadie leía nunca el
+     * estado real de la OLT. Por eso Waonet mostraba 70 de 173 apagadas
+     * cuando en la calle estaban funcionando: no estaban caídas, estaban sin
+     * releer desde el día que se dieron de alta.
+     *
+     * El dato bueno ya pasaba por acá en cada barrido y se tiraba. Se guarda
+     * de a grupos para no hacer una consulta por equipo.
+     *
+     * @param list<array<string,mixed>> $onts
+     */
+    private static function guardarEstado(OltAdmin $olt, array $onts): void
+    {
+        $porEstado = [];
+
+        foreach ($onts as $ont) {
+            $estado = $ont['status'] ?? null;
+
+            // Sin estado no se toca nada: es preferible dejar lo de antes que
+            // marcar como apagado un equipo que la OLT no supo contestar.
+            if (!in_array($estado, ['online', 'offline'], true) || !isset($ont['fsp'], $ont['ont_id'])) {
+                continue;
+            }
+
+            $porEstado[$estado][] = $ont['fsp'] . ':' . (int) $ont['ont_id'];
+        }
+
+        foreach ($porEstado as $estado => $claves) {
+            foreach (array_chunk($claves, 300) as $tanda) {
+                try {
+                    OltOnt::where('olt_id', $olt->id)
+                        ->whereIn(DB::raw("CONCAT(fsp, ':', ont_id)"), $tanda)
+                        ->where('status', '!=', $estado)
+                        ->update(['status' => $estado, 'updated_at' => now()]);
+                } catch (\Throwable $e) {
+                    Log::warning('[OLT] No se pudo guardar el estado de las ONT', [
+                        'olt' => $olt->id, 'estado' => $estado, 'error' => $e->getMessage(),
+                    ]);
+                }
             }
         }
     }
