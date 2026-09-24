@@ -1406,13 +1406,32 @@ class OltAdminUseCase
         // Eliminar de BD las ONTs que ya no existen en la OLT. Las tocadas en
         // los últimos 15 minutos se dejan: la lista de la OLT tarda en
         // mostrar una ONT recién autorizada, y borrarla perdía su cliente.
+        //
+        // Y una ONT CON CLIENTE no se borra nunca por una lectura. Vincular un
+        // cliente es una decisión de una persona; la lista de la OLT es un
+        // dato que a veces viene incompleto y no siempre coincide consigo
+        // misma: en la OLT C-Data, SNMP devuelve 64 ONT y la consola 65. La
+        // que falta se borraba con su cliente, y al operador le parecía que
+        // asignar y sincronizar deshacía su trabajo. Si el equipo de verdad
+        // ya no está, se quita a mano desde la pantalla.
         OltOnt::where('olt_id', $oltId)
             ->where('updated_at', '<', now()->subMinutes(15))
-            ->get(['id', 'fsp', 'ont_id'])
-            ->each(function ($row) use ($keys) {
-                if (!in_array($row->fsp . ':' . $row->ont_id, $keys)) {
-                    $row->delete();
+            ->get(['id', 'fsp', 'ont_id', 'user_data_id', 'serial'])
+            ->each(function ($row) use ($keys, $oltId) {
+                if (in_array($row->fsp . ':' . $row->ont_id, $keys)) {
+                    return;
                 }
+
+                if ($row->user_data_id) {
+                    \Log::info('[OLT] ONT con cliente que la lectura no vio: se conserva', [
+                        'olt_id' => $oltId, 'fsp' => $row->fsp, 'ont' => $row->ont_id,
+                        'serial' => $row->serial, 'cliente' => $row->user_data_id,
+                    ]);
+
+                    return;
+                }
+
+                $row->delete();
             });
     }
 
