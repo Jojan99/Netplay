@@ -21,6 +21,7 @@ use Illuminate\Support\Facades\Route;
 |   POST /api/webhooks/epayco
 |   POST /api/webhooks/zonapago
 |   POST /api/webhooks/efipay
+|   POST /api/webhooks/onepay
 |
 | Rutas públicas — checkout intermedio ePayco:
 |   GET  /api/payment-gateway/epayco/checkout/{token}
@@ -81,6 +82,21 @@ Route::match(['get', 'post'], 'erp/efipay/{company_slug}/{token}', [ErpRecaudaCo
 // ── Checkout intermedio ePayco (público — sin JWT) ───────────────────────────
 Route::get('payment-gateway/epayco/checkout/{token}', [PaymentGatewayController::class, 'epaycoCheckout']);
 
+// ── OnePay: cobrar por WhatsApp ─────────────────────────────────────────────
+// El envío lo hace OnePay con su canal aprobado por Meta, no el bot nuestro.
+// Con freno: cada llamada le manda un WhatsApp a un cliente de verdad, y un
+// dedo pegado en el botón son diez mensajes al mismo número.
+Route::prefix('onepay')->middleware(['jwt.verify', 'module:finance'])->group(function () {
+    Route::get('plantillas',              [\App\Http\Controllers\OnePayController::class, 'plantillas']);
+    Route::get('diagnostico',             [\App\Http\Controllers\OnePayController::class, 'diagnostico']);
+    Route::get('cobros/{tx}/estado',      [\App\Http\Controllers\OnePayController::class, 'estado'])->whereNumber('tx');
+
+    Route::post('cobrar',                 [\App\Http\Controllers\OnePayController::class, 'cobrar'])
+        ->middleware('throttle:30,1');
+    Route::post('cobros/{tx}/reenviar',   [\App\Http\Controllers\OnePayController::class, 'reenviar'])
+        ->whereNumber('tx')->middleware('throttle:20,1');
+});
+
 // ── Webhooks (públicos — llamados por las pasarelas) ─────────────────────────
 // URL preferida (por empresa): POST /api/webhooks/{gateway}/{company_slug}
 // URL legacy (fallback):       POST /api/webhooks/{gateway}
@@ -92,11 +108,13 @@ Route::prefix('webhooks')->group(function () {
         Route::post('epayco/{company_slug}',   [PaymentGatewayController::class, 'webhookEpayco']);
         Route::post('zonapago/{company_slug}', [PaymentGatewayController::class, 'webhookZonapago']);
         Route::post('efipay/{company_slug}',   [PaymentGatewayController::class, 'webhookEfipay']);
+        Route::post('onepay/{company_slug}',   [PaymentGatewayController::class, 'webhookOnepay']);
 
         Route::post('wompi',    [PaymentGatewayController::class, 'webhookWompi']);
         Route::post('epayco',   [PaymentGatewayController::class, 'webhookEpayco']);
         Route::post('zonapago', [PaymentGatewayController::class, 'webhookZonapago']);
         Route::post('efipay',   [PaymentGatewayController::class, 'webhookEfipay']);
+        Route::post('onepay',   [PaymentGatewayController::class, 'webhookOnepay']);
     });
 
     // 📥 Webhook oficial de Meta (WhatsApp Business API)

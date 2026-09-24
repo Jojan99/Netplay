@@ -13,6 +13,7 @@ class PaymentGatewayFactory
             'epayco'   => new EPaycoGateway($company),
             'zonapago' => new ZonaPagoGateway($company),
             'efipay'   => new EfiPayGateway($company),
+            'onepay'   => new OnePayGateway($company),
             default    => throw new \RuntimeException(
                 "Pasarela de pago '{$company->pg_gateway}' no configurada."
             ),
@@ -26,6 +27,10 @@ class PaymentGatewayFactory
             ['id' => 'epayco',   'name' => 'ePayco',              'fields' => ['client_id', 'private_key']],
             ['id' => 'zonapago', 'name' => 'ZonaPago',            'fields' => ['public_key', 'private_key']],
             ['id' => 'efipay',   'name' => 'EfiPay',              'fields' => ['private_key', 'events_secret', 'office_id']],
+            // OnePay manda el cobro por WhatsApp desde su propio canal: por
+            // eso lleva plantilla. El token del webhook es una cabecera fija
+            // que viaja además de la firma.
+            ['id' => 'onepay',   'name' => 'OnePay (WhatsApp, PSE, Nequi)', 'fields' => ['private_key', 'public_key', 'events_secret', 'webhook_token', 'template_id']],
         ];
     }
 }

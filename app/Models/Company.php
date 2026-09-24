@@ -57,6 +57,10 @@ class Company extends Model
         'pg_integrity_secret',
         'pg_client_id',
         'pg_office_id',
+        // OnePay: el token fijo de la cabecera del webhook y la plantilla de
+        // WhatsApp con la que manda el cobro.
+        'pg_webhook_token',
+        'pg_template_id',
         // Correo propio con Mailjet (sin esto se usa la cuenta de la plataforma)
         'mailjet_activo',
         'mailjet_api_key',
@@ -82,6 +86,7 @@ class Company extends Model
         'pg_private_key'      => 'encrypted',
         'pg_events_secret'    => 'encrypted',
         'pg_integrity_secret' => 'encrypted',
+        'pg_webhook_token'    => 'encrypted',
         'wa_access_token'     => 'encrypted',
         'mailjet_api_secret'  => 'encrypted',
 

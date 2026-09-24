@@ -38,6 +38,11 @@ class PaymentInitiationService
         string $returnTo = 'web',
         ?array $paymentMethods = null,
         ?string $customerPhone = null,
+        // OnePay puede mandarle el WhatsApp al cliente desde su propio canal
+        // aprobado por Meta. La referencia, la transacción y la conciliación
+        // son las mismas: lo único que cambia es quién entrega el link.
+        bool $porWhatsapp = false,
+        ?int $plantillaWhatsapp = null,
     ): array {
         $firstInvoice = $invoices->first();
         $orderedIds   = $invoices->pluck('id')->values()->all();
@@ -63,7 +68,7 @@ class PaymentInitiationService
         $redirectUrl .= (str_contains($redirectUrl, '?') ? '&' : '?') . 'tx=' . urlencode($reference);
 
         $gateway = PaymentGatewayFactory::make($company);
-        $link    = $gateway->generatePaymentLink([
+        $datosDelCobro = [
             'reference'      => $reference,
             'amount'         => $amount,
             'description'    => $description,
@@ -75,7 +80,17 @@ class PaymentInitiationService
             'payment_methods'=> $paymentMethods,
             // Para Nequi: el cobro le llega como notificación a ese número.
             'customer_phone' => $customerPhone ?: ($userData->phone ?? null),
-        ]);
+        ];
+
+        $mandadoPorWhatsapp = false;
+
+        if ($porWhatsapp && $gateway instanceof OnePayGateway) {
+            $cobro = $gateway->cobrarPorWhatsapp($datosDelCobro, $plantillaWhatsapp);
+            $link  = $cobro['payment_link'] ?? '';
+            $mandadoPorWhatsapp = true;
+        } else {
+            $link = $gateway->generatePaymentLink($datosDelCobro);
+        }
 
         OnlinePaymentTransaction::create([
             'company_id'             => $company->id,
@@ -107,6 +122,9 @@ class PaymentInitiationService
             'sandbox'     => (bool) $company->pg_sandbox,
             'breakdown'   => $this->computeBreakdown($invoices, $amount),
             'expires_on'  => $limitDate,
+            // Para que la pantalla sepa si el cliente ya recibió el mensaje o
+            // si todavía hay que hacerle llegar el link por otro lado.
+            'por_whatsapp' => $mandadoPorWhatsapp,
         ];
     }
 

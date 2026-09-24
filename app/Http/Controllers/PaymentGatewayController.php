@@ -50,6 +50,7 @@ class PaymentGatewayController extends Controller
                 'has_integrity_secret' => !empty($company->pg_integrity_secret),
                 'has_client_id'        => !empty($company->pg_client_id),
                 'has_office_id'        => !empty($company->pg_office_id),
+                'has_webhook_token'    => !empty($company->pg_webhook_token),
                 // Valores actuales (solo admin autenticado)
                 'public_key'           => $company->pg_public_key,
                 'private_key'          => $company->pg_private_key,
@@ -57,6 +58,8 @@ class PaymentGatewayController extends Controller
                 'integrity_secret'     => $company->pg_integrity_secret,
                 'client_id'            => $company->pg_client_id,
                 'office_id'            => $company->pg_office_id,
+                'webhook_token'        => $company->pg_webhook_token,
+                'template_id'          => $company->pg_template_id,
                 'webhook_url'          => $webhookUrl,
                 'erp_url'              => $erpUrl,
                 'erp_bearer'           => $erpUrl
@@ -74,10 +77,13 @@ class PaymentGatewayController extends Controller
     public function saveConfig(Request $request): JsonResponse
     {
         $request->validate([
-            'gateway'   => 'required|in:wompi,epayco,zonapago,efipay',
+            'gateway'   => 'required|in:wompi,epayco,zonapago,efipay,onepay',
             'sandbox'   => 'boolean',
             'active'    => 'boolean',
             'office_id' => 'nullable|string|max:32',
+            // OnePay: el token fijo del aviso y la plantilla de WhatsApp.
+            'webhook_token' => 'nullable|string|max:191',
+            'template_id'   => 'nullable|integer|min:1',
         ]);
 
         $company = Company::findOrFail(getSessionCompanyId());
@@ -88,10 +94,16 @@ class PaymentGatewayController extends Controller
             'pg_active'  => $request->boolean('active', false),
         ];
 
-        foreach (['public_key', 'private_key', 'events_secret', 'integrity_secret', 'client_id', 'office_id'] as $f) {
+        foreach (['public_key', 'private_key', 'events_secret', 'integrity_secret', 'client_id', 'office_id', 'webhook_token'] as $f) {
             if ($request->filled($f)) {
                 $data["pg_{$f}"] = $request->input($f);
             }
+        }
+
+        // La plantilla se puede borrar a propósito (vacío = que OnePay elija),
+        // así que no entra en el bucle de «sólo si viene con algo».
+        if ($request->has('template_id')) {
+            $data['pg_template_id'] = $request->input('template_id') ?: null;
         }
 
         $company->update($data);
@@ -310,6 +322,11 @@ class PaymentGatewayController extends Controller
         return $this->processWebhook($request, 'efipay', $companySlug);
     }
 
+    public function webhookOnepay(Request $request, string $companySlug = null): JsonResponse
+    {
+        return $this->processWebhook($request, 'onepay', $companySlug);
+    }
+
     private function processWebhook(Request $request, string $gatewayName, ?string $companySlug = null): JsonResponse
     {
         try {
@@ -331,6 +348,9 @@ class PaymentGatewayController extends Controller
                     'zonapago' => $request->input('referencia'),
                     'efipay'   => $request->input('checkout.payment_gateway.advanced_option.references.0')
                                   ?? $request->input('checkout.payment_referenceable.ref_payment'),
+                    'onepay'   => $request->input('payment.reference')
+                                  ?? $request->input('payment.external_id')
+                                  ?? $request->input('charge.reference'),
                     default    => null,
                 };
 
@@ -372,6 +392,7 @@ class PaymentGatewayController extends Controller
                 'epayco' => $request->input('x_ref_payco'),
                 'efipay' => $request->input('checkout.pivot.transaction_id')
                             ?? $request->input('transaction.transaction_id'),
+                'onepay' => $request->input('payment.id') ?? $request->input('charge.id'),
                 default  => null,
             };
 
@@ -416,10 +437,20 @@ class PaymentGatewayController extends Controller
                                 ?? $request->input('data.transaction.payment_method.type'),
                     'efipay' => $request->input('checkout.payment_method')
                                 ?? $request->input('transaction.payment_method'),
+                    // OnePay lo manda dentro del medio usado; a veces es un
+                    // texto suelto y a veces un objeto con su nombre.
+                    'onepay' => $request->input('payment.method.type')
+                                ?? $request->input('payment.method.name')
+                                ?? (is_string($request->input('payment.method')) ? $request->input('payment.method') : null),
                     default  => null,
                 };
 
-                $banco = $gatewayName === 'wompi'
+                $banco = $gatewayName === 'onepay'
+                    ? ($request->input('payment.method.bank_name')
+                       ?? $request->input('payment.method.issuer'))
+                    : null;
+
+                $banco ??= $gatewayName === 'wompi'
                     ? ($request->input('data.transaction.payment_method.extra.bank_name')
                        ?? $request->input('data.transaction.payment_method.extra.brand'))
                     : null;
