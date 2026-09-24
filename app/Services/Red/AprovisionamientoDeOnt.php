@@ -1513,15 +1513,37 @@ class AprovisionamientoDeOnt
 
         $mal = collect($lista)->filter(fn ($p) => !$p['ok'] && empty($p['omitido']));
 
+        // La conexión a internet no es un paso más. Si no quedó, el cliente
+        // NO NAVEGA, y da igual que el resto haya salido bien: decir «equipo
+        // aprovisionado» manda al técnico a su casa con el servicio caído.
+        //
+        // Se marcaba como «omitido» —«en esta marca todavía no se configura
+        // por TR-069»— y los omitidos no contaban como falla, así que salía
+        // en verde. Pasó con una ONU C-Data en la OLT Huawei: acceso de
+        // gestión puesto, WiFi puesto, y sin internet.
+        $wan = collect($lista)->first(fn ($p) => ($p['clave'] ?? null) === 'wan'
+            || str_starts_with(mb_strtolower((string) ($p['paso'] ?? '')), 'conexión a internet'));
+
+        $sinInternet = !empty($datos['wan']) && $wan && !($wan['ok'] ?? false);
+
         $a->fill([
             'datos'    => $datos,
             'pasos'    => $lista,
-            'estado'   => $mal->isEmpty() ? 'listo' : 'con_errores',
-            'detalle'  => $mal->isEmpty() ? 'Equipo aprovisionado.' : ($mal->count() === 1 ? 'Un paso no se aplicó.' : "{$mal->count()} pasos no se aplicaron."),
+            'estado'   => ($mal->isEmpty() && !$sinInternet) ? 'listo' : 'con_errores',
+            'detalle'  => match (true) {
+                $sinInternet => 'El cliente NO navega: falta cargarle la conexión al equipo. '
+                    . rtrim((string) ($wan['detalle'] ?? ''), '.') . '.',
+                $mal->isEmpty()   => 'Equipo aprovisionado.',
+                $mal->count() === 1 => 'Un paso no se aplicó.',
+                default           => "{$mal->count()} pasos no se aplicaron.",
+            },
             'listo_en' => now(),
         ])->save();
 
-        if ($mal->isEmpty()) {
+        // La IP prestada se suelta sólo cuando el equipo quedó andando de
+        // verdad: si le falta la conexión, todavía la necesita para que se le
+        // pueda entrar y terminarla.
+        if ($mal->isEmpty() && !$sinInternet) {
             $this->soltarIpPrestada($a);
         }
     }
