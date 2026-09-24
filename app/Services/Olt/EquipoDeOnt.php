@@ -132,18 +132,47 @@ class EquipoDeOnt
         return url('/storage/' . $ruta) . '?v=' . time();
     }
 
+    /**
+     * Quita la foto propia de la empresa. El catálogo común no se toca: es de
+     * todas, y una empresa no puede dejar sin foto a las demás.
+     */
     public static function borrarFoto(int $companyId, string $fabricante, string $modelo): void
     {
-        while ($ruta = self::rutaFoto($companyId, $fabricante, $modelo)) {
+        while ($ruta = self::rutaFoto($companyId, $fabricante, $modelo, true)) {
             Storage::disk('public')->delete($ruta);
         }
     }
 
-    private static function rutaFoto(int $companyId, string $fabricante, string $modelo): ?string
-    {
-        $base = "onts/{$companyId}/" . self::nombre($fabricante, $modelo);
+    /**
+     * Dónde vive la foto de un modelo, mirando primero la de la empresa.
+     *
+     * Un HG8145V5 es el mismo aparato en todas las empresas de la plataforma:
+     * no tiene sentido que cada una suba la misma foto. Así que hay un
+     * catálogo común y, encima, lo que cada empresa quiera poner —porque
+     * algunas rotulan sus equipos o les ponen su propia carcasa—.
+     *
+     * Ni Huawei ni C-Data publican una API de imágenes como MikroTik, así que
+     * el catálogo se llena a mano; pero se llena UNA VEZ para todos. Doce
+     * modelos cubren toda la plataforma y tres cubren el 76%.
+     */
+    private const CATALOGO = 'onts/catalogo';
 
-        foreach (['jpg', 'jpeg', 'png', 'webp'] as $ext) {
+    private static function rutaFoto(int $companyId, string $fabricante, string $modelo, bool $soloDeLaEmpresa = false): ?string
+    {
+        $nombre = self::nombre($fabricante, $modelo);
+        $carpetas = $soloDeLaEmpresa ? ["onts/{$companyId}"] : ["onts/{$companyId}", self::CATALOGO];
+
+        foreach ($carpetas as $carpeta) {
+            foreach (['jpg', 'jpeg', 'png', 'webp'] as $ext) {
+                if (Storage::disk('public')->exists("{$carpeta}/{$nombre}.{$ext}")) {
+                    return "{$carpeta}/{$nombre}.{$ext}";
+                }
+            }
+        }
+
+        $base = "onts/{$companyId}/" . $nombre;
+
+        foreach ([] as $ext) {
             if (Storage::disk('public')->exists("{$base}.{$ext}")) {
                 return "{$base}.{$ext}";
             }
