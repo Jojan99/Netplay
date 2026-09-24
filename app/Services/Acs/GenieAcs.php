@@ -145,13 +145,25 @@ class GenieAcs
      * @param  array<string,mixed>  $tarea
      * @return array{hecha:bool, en_cola:bool, estado:int}
      */
-    public function tarea(string $id, array $tarea, int $espera = 45): array
+    /**
+     * Cuánto se le da al equipo para abrir sesión tras el aviso.
+     *
+     * Eran 8 segundos, que alcanzan para un Huawei pero no para un C-Data:
+     * medido contra una FD512XWX, tarda unos 19 y con 8 nunca llegaba. Cada
+     * intento fallaba y el reaplicar se iba a seis minutos dando vueltas.
+     *
+     * Subirlo no cuesta nada a los equipos rápidos: GenieACS contesta apenas
+     * el equipo responde, no espera el tope.
+     */
+    private const ESPERA_EQUIPO = 30000;
+
+    public function tarea(string $id, array $tarea, int $espera = 45, int $esperaDelEquipo = self::ESPERA_EQUIPO): array
     {
         $firma = ['name' => (string) ($tarea['name'] ?? ''), 'objeto' => self::objetoDe($tarea), 'en' => now()->subSeconds(2)->toIso8601String()];
 
         // El _id ya trae caracteres codificados (%2D, %C2…): se vuelve a
         // codificar entero para que GenieACS lo reciba tal como lo guarda.
-        $url = "{$this->base}/devices/" . rawurlencode($id) . '/tasks?timeout=8000&connection_request';
+        $url = "{$this->base}/devices/" . rawurlencode($id) . '/tasks?timeout=' . $esperaDelEquipo . '&connection_request';
 
         // Avisarle al equipo puede tardar (equipos lentos, enlaces con demora).
         // Se espera bastante más que los 8 s de la tarea y, si ni así contesta,

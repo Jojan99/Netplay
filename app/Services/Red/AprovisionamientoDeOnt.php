@@ -1964,6 +1964,13 @@ class AprovisionamientoDeOnt
             ["{$ruta}.{$dialecto['vlan']}", (string) $wan['vlan'], 'xsd:unsignedInt'],
         ];
 
+        // El modo de etiquetado, donde la marca lo tenga aparte. Ver el
+        // comentario en dialectoWan(): sin esto la VLAN queda escrita pero el
+        // equipo manda sin etiqueta y el cliente no conecta nunca.
+        if (!empty($dialecto['modo_vlan'])) {
+            $valores[] = ["{$ruta}.{$dialecto['modo_vlan']}", (string) $dialecto['modo_vlan_valor'], 'xsd:unsignedInt'];
+        }
+
         // Si ya lleva también el TR-069 ("TR069_INTERNET") se deja así: quitárselo
         // lo sacaría del servidor.
         if (!str_contains($servicios, 'TR069')) {
@@ -2502,7 +2509,20 @@ class AprovisionamientoDeOnt
                     if (self::v($d, "{$b}.X_CT-COM_VLANIDMark") !== null) {
                         // C-Data no tiene lista de puertos LAN por conexión:
                         // usa un solo campo de texto, así que no se reparten.
-                        return ['vlan' => 'X_CT-COM_VLANIDMark', 'servicios' => 'X_CT-COM_SERVICELIST', 'lanbind' => null];
+                                        return [
+                            'vlan' => 'X_CT-COM_VLANIDMark',
+                            'servicios' => 'X_CT-COM_SERVICELIST',
+                            // C-Data no reparte puertos LAN por conexión.
+                            'lanbind' => null,
+                            // Y sin esto NO ETIQUETA. Poner la VLAN no alcanza:
+                            // el modo es lo que le dice que mande la trama
+                            // etiquetada. Sin él, el equipo manda sin etiqueta,
+                            // la OLT espera la 109 y el PPPoE no llega a
+                            // ningún lado: «Disconnected» sin un solo error,
+                            // como si ni lo intentara.
+                            'modo_vlan' => 'X_CT-COM_VLANMode',
+                            'modo_vlan_valor' => '2',
+                        ];
                     }
                 }
             }
