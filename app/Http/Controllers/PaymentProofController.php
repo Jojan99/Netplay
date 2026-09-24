@@ -85,6 +85,10 @@ class PaymentProofController extends Controller
         $proofs->getCollection()->transform(function ($p) use ($lineas) {
             $p->linea_nombre = $p->wa_linea_id ? ($lineas[$p->wa_linea_id] ?? null) : null;
 
+            // Lo que el lector no pudo confirmar: la pantalla lo marca para
+            // que quien revisa mire la imagen antes de aprobar.
+            $p->dudosos = (array) (($p->raw_payload ?? [])['dudosos'] ?? []);
+
             return $p;
         });
 
@@ -205,13 +209,16 @@ class PaymentProofController extends Controller
             return false;
         }
 
-        $texto = app(\App\Services\WaBotService::class)->extractTextFromProof($ruta);
+        // La imagen se lee de tres formas y se comparan. Un dato que no
+        // confirma al menos una segunda lectura queda marcado como dudoso:
+        // así la pantalla lo pregunta en vez de dar por cierto un número que
+        // el lector no pudo ver bien.
+        $d = app(\App\Services\WaBotService::class)->detallesConConsenso($ruta);
+        $texto = $d['ocr_text'] ?? null;
 
         if (!$texto) {
             return false;
         }
-
-        $d = app(\App\Services\WaBotService::class)->extractPaymentProofDetails($texto);
 
         // Al corregir mandan los datos nuevos; al completar, sólo se llena lo
         // que estaba vacío.
@@ -225,6 +232,12 @@ class PaymentProofController extends Controller
             'reference_number' => $elegir('reference_number', $d['reference'] ?? null),
             'bank_name'        => $elegir('bank_name', $d['bank_name'] ?? null),
             'ocr_text'         => $texto,
+            // Qué no se pudo confirmar, para que la pantalla lo avise y el
+            // operador mire la imagen antes de aprobar.
+            'raw_payload'      => array_filter([
+                'dudosos'  => $d['dudosos'] ?? [],
+                'lecturas' => $d['lecturas'] ?? null,
+            ]) + (array) ($proof->raw_payload ?? []),
         ], fn ($v) => $v !== null));
 
         return true;

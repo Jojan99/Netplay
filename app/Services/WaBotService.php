@@ -1289,18 +1289,122 @@ class WaBotService
     }
 
     /** Público: lo reusa también el flujo de comprobantes de WhatsApp Web. */
+    /**
+     * Las formas en que se lee un comprobante.
+     *
+     * Cada «psm» le dice a Tesseract cómo suponer que está ordenado el texto:
+     * 6 un bloque parejo, 4 una columna, 11 texto suelto. En un comprobante
+     * legible las tres dan lo mismo; en una foto de pantalla rota cada una da
+     * un número distinto, y eso es justo lo que hace falta saber.
+     *
+     * Las tres juntas tardan lo mismo que una sola (~5 s): el tiempo se va en
+     * cargar el modelo, no en leer.
+     */
+    private const FORMAS_DE_LEER = ['6', '4', '11'];
+
+    /**
+     * Lee el comprobante de varias formas y devuelve todos los textos.
+     *
+     * @return list<string>
+     */
+    public function pasadasDeOcr(string $path): array
+    {
+        $textos = [];
+
+        foreach (self::FORMAS_DE_LEER as $psm) {
+            try {
+                $process = new Process(['tesseract', $path, 'stdout', '-l', 'spa', '--psm', $psm]);
+                $process->setTimeout(30);
+                $process->run();
+
+                if ($process->isSuccessful() && trim($process->getOutput()) !== '') {
+                    $textos[] = trim($process->getOutput());
+                }
+            } catch (\Throwable $exception) {
+                Log::warning('[WaBotService] OCR no disponible para comprobante', [
+                    'psm' => $psm, 'error' => $exception->getMessage(),
+                ]);
+            }
+        }
+
+        return $textos;
+    }
+
     public function extractTextFromProof(string $path): ?string
     {
-        try {
-            $process = new Process(['tesseract', $path, 'stdout', '-l', 'spa', '--psm', '6']);
-            $process->setTimeout(30);
-            $process->run();
+        // El más largo: es el que más texto reconoció, y es el que se guarda
+        // para poder releer después sin volver a abrir la imagen.
+        $textos = $this->pasadasDeOcr($path);
 
-            return $process->isSuccessful() ? trim($process->getOutput()) : null;
-        } catch (\Throwable $exception) {
-            Log::warning('[WaBotService] OCR no disponible para comprobante', ['error' => $exception->getMessage()]);
+        if (!$textos) {
             return null;
         }
+
+        usort($textos, fn ($a, $b) => strlen($b) <=> strlen($a));
+
+        return $textos[0];
+    }
+
+    /**
+     * Los datos del comprobante, leyéndolo de tres formas y comparando.
+     *
+     * Un dato sólo se da por bueno si al menos dos lecturas coinciden. Con una
+     * sola pasada, una foto movida devolvía «70.008» donde la imagen decía
+     * «70.000» —una grieta en la pantalla partía los ceros— y ese número se
+     * guardaba como si fuera cierto. Ahora, cuando las lecturas no se ponen de
+     * acuerdo, el dato viaja marcado como dudoso y la pantalla lo pregunta en
+     * vez de inventarlo.
+     *
+     * @return array<string,mixed> los campos de siempre, más «dudosos»: la
+     *                             lista de los que nadie pudo confirmar.
+     */
+    public function detallesConConsenso(string $path): array
+    {
+        $textos = $this->pasadasDeOcr($path);
+
+        if (!$textos) {
+            return ['dudosos' => ['amount', 'payment_date', 'reference'], 'ocr_text' => null];
+        }
+
+        $lecturas = array_map(fn (string $t) => $this->extractPaymentProofDetails($t), $textos);
+
+        $final = [];
+        $dudosos = [];
+
+        foreach (['amount', 'payment_date', 'reference', 'bank_name', 'recipient'] as $campo) {
+            $votos = [];
+
+            foreach ($lecturas as $l) {
+                $v = $l[$campo] ?? null;
+
+                if ($v === null || $v === '') {
+                    continue;
+                }
+
+                $clave = is_float($v) ? (string) round($v, 2) : (string) $v;
+                $votos[$clave] = ['valor' => $v, 'n' => ($votos[$clave]['n'] ?? 0) + 1];
+            }
+
+            if (!$votos) {
+                $final[$campo] = null;
+                continue;
+            }
+
+            uasort($votos, fn ($a, $b) => $b['n'] <=> $a['n']);
+            $ganador = reset($votos);
+
+            $final[$campo] = $ganador['valor'];
+
+            // Nadie lo confirmó: una sola lectura lo vio, o cada una vio algo
+            // distinto. El monto es el que más importa, porque es plata.
+            if ($ganador['n'] < 2 && count($lecturas) > 1) {
+                $dudosos[] = $campo;
+            }
+        }
+
+        usort($textos, fn ($a, $b) => strlen($b) <=> strlen($a));
+
+        return $final + ['dudosos' => $dudosos, 'ocr_text' => $textos[0], 'lecturas' => count($lecturas)];
     }
 
     /** Público: lo reusa también el flujo de comprobantes de WhatsApp Web. */
@@ -1442,7 +1546,41 @@ class WaBotService
             return [$mezcla($b), strlen($b)] <=> [$mezcla($a), strlen($a)];
         });
 
-        return trim($candidatos[0]);
+        return self::enderezarReferencia(trim($candidatos[0]));
+    }
+
+    /**
+     * Arregla las confusiones típicas del OCR cuando el formato es conocido.
+     *
+     * Nequi numera sus envíos con M y ocho dígitos. Si sale «MO02197268» —una
+     * O donde va un cero— son nueve caracteres después de la M y el dato queda
+     * mal para siempre: es el número con el que el cliente reclama. Sólo se
+     * endereza cuando el resultado encaja exactamente en el formato; si queda
+     * cualquier otra cosa, se deja lo leído y no se inventa nada.
+     */
+    public static function enderezarReferencia(string $ref): string
+    {
+        if (!preg_match('/^M/i', $ref)) {
+            return $ref;
+        }
+
+        $cuerpo = substr($ref, 1);
+
+        // O y o son ceros; I y l son unos; S puede ser 5. Sólo en el cuerpo,
+        // que en Nequi es todo numérico.
+        $probable = strtr($cuerpo, ['O' => '0', 'o' => '0', 'I' => '1', 'l' => '1', 'S' => '5']);
+
+        // Con la corrección quedan justo ocho dígitos: era eso.
+        if (preg_match('/^\d{8}$/', $probable)) {
+            return 'M' . $probable;
+        }
+
+        // Nueve dígitos con un cero de más al principio: el OCR duplicó.
+        if (preg_match('/^0(\d{8})$/', $probable, $m)) {
+            return 'M' . $m[1];
+        }
+
+        return $ref;
     }
 
     private function extractReference(string $text): ?string
