@@ -239,6 +239,8 @@ Route::prefix('management')->middleware('empresa.propia')->group(function () {
         Route::get('/{oltId}/puertos',               [\App\Http\Controllers\PuertosDeOltController::class, 'resumen'])->whereNumber('oltId');
         // Vincular en tanda las ONT con sus clientes.
         Route::middleware('role:admin')->group(function () {
+            // Clientes que necesitan una decisión, cruzando red con cartera.
+            Route::get('/clientes-en-riesgo', [OltAdminController::class, 'clientesEnRiesgo']);
             Route::get('/vinculos/propuestas', [OltAdminController::class, 'propuestasDeVinculo']);
             Route::post('/vinculos/aplicar',   [OltAdminController::class, 'aplicarVinculos']);
         });

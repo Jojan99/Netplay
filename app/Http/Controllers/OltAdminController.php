@@ -393,6 +393,25 @@ class OltAdminController extends Controller
     }
 
     /**
+     * GET /management/red/clientes-en-riesgo
+     *
+     * Los clientes que necesitan una decisión, separados por cuál. Cruza lo
+     * que la red sabe de cada equipo con lo que la cartera sabe del cliente:
+     * un equipo apagado y con deuda no es lo mismo que uno apagado y al día,
+     * y hoy se veían iguales.
+     */
+    public function clientesEnRiesgo(): JsonResponse
+    {
+        $companyId = (int) getSessionCompanyId();
+
+        if (!$companyId) {
+            return standardApiReponse('Sesión sin empresa asociada', null, 1, JsonResponse::HTTP_UNAUTHORIZED);
+        }
+
+        return standardApiReponse('OK', \App\Services\Red\ClientesEnRiesgo::de($companyId), 0, JsonResponse::HTTP_OK);
+    }
+
+    /**
      * GET /management/olt/vinculos/propuestas?olt_id=
      * Qué ONT se pueden vincular con qué cliente, y con cuánta certeza.
      */

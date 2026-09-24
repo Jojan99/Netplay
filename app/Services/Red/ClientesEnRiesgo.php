@@ -1,0 +1,187 @@
+<?php
+
+namespace App\Services\Red;
+
+use Illuminate\Support\Facades\DB;
+
+/**
+ * Los clientes que necesitan una decisión, separados por cuál.
+ *
+ * Hoy se ven todos iguales: una lista de deudores y, aparte, una de señal
+ * mala. Pero no son lo mismo y no se hace lo mismo con ellos.
+ *
+ * Un cliente cuyo equipo lleva días apagado Y debe plata no es cartera: ya se
+ * fue y nadie se dio cuenta. Perseguirlo es tiempo perdido y la deuda que
+ * sigue creciendo en el papel no la va a pagar nadie. En cambio, un cliente
+ * apagado que está al día tiene una falla que no reportó, y va a llamar
+ * enojado —o se va a ir callado—.
+ *
+ * La plataforma ya guarda todo esto todos los días. Sólo no lo decía.
+ */
+class ClientesEnRiesgo
+{
+    /** Cuántos días atrás se mira. Menos de esto es ruido de un corte de luz. */
+    private const DIAS = 7;
+
+    /** Apagado más que esto es «no está usando el servicio». */
+    private const APAGADO_ALTO = 85;
+
+    private const APAGADO_MEDIO = 50;
+
+    /** Tantas caídas en la semana es un equipo inestable, no un apagón. */
+    private const CAIDAS = 3;
+
+    /**
+     * @return array{grupos: array<string,array<string,mixed>>, medido_desde: ?string}
+     */
+    public static function de(int $companyId): array
+    {
+        $desde = now()->subDays(self::DIAS)->toDateString();
+
+        $red = DB::table('red_equipo_dia')
+            ->where('company_id', $companyId)
+            ->where('fecha', '>=', $desde)
+            ->whereNotNull('user_id')
+            ->select(
+                'user_id',
+                DB::raw('MAX(descripcion) descripcion'),
+                DB::raw('MAX(serial) serial'),
+                DB::raw('SUM(muestras) muestras'),
+                DB::raw('SUM(muestras_offline) apagadas'),
+                DB::raw('SUM(caidas) caidas'),
+                DB::raw('MIN(rx_min) rx_min'),
+                DB::raw('SUM(rx_suma) rx_suma'),
+                DB::raw('SUM(rx_muestras) rx_muestras'),
+            )
+            ->groupBy('user_id')
+            ->get();
+
+        if ($red->isEmpty()) {
+            return ['grupos' => self::vacios(), 'medido_desde' => null];
+        }
+
+        $deudas = self::deudas($companyId, $red->pluck('user_id')->all());
+        $fichas = DB::table('user_data')->whereIn('user_id', $red->pluck('user_id'))
+            ->get(['user_id', 'names', 'lastname', 'dni', 'phone', 'address'])
+            ->keyBy('user_id');
+
+        $grupos = self::vacios();
+
+        foreach ($red as $r) {
+            $muestras = max(1, (int) $r->muestras);
+            $apagado  = (int) round((int) $r->apagadas * 100 / $muestras);
+            $deuda    = (float) ($deudas[$r->user_id]['monto'] ?? 0);
+            $ficha    = $fichas[$r->user_id] ?? null;
+
+            $fila = [
+                'user_id'    => (int) $r->user_id,
+                'nombre'     => $ficha ? trim(($ficha->names ?? '') . ' ' . ($ficha->lastname ?? '')) : ($r->descripcion ?: '—'),
+                'cedula'     => $ficha->dni ?? null,
+                'telefono'   => $ficha->phone ?? null,
+                'direccion'  => $ficha->address ?? null,
+                'serial'     => $r->serial,
+                'apagado'    => $apagado,
+                'caidas'     => (int) $r->caidas,
+                'rx_min'     => $r->rx_min !== null ? round((float) $r->rx_min, 1) : null,
+                'rx_prom'    => (int) $r->rx_muestras > 0 ? round((float) $r->rx_suma / (int) $r->rx_muestras, 1) : null,
+                'deuda'      => $deuda,
+                'facturas'   => (int) ($deudas[$r->user_id]['facturas'] ?? 0),
+            ];
+
+            // El orden importa: cada cliente cae en UN grupo, el más grave, y
+            // así la lista no se repite ni hay que decidir dos veces.
+            $grupo = match (true) {
+                $apagado >= self::APAGADO_ALTO && $deuda > 0   => 'se_fue',
+                $apagado >= self::APAGADO_MEDIO && $deuda <= 0 => 'falla_sin_reportar',
+                (int) $r->caidas >= self::CAIDAS               => 'inestable',
+                $fila['rx_min'] !== null && $fila['rx_min'] < SaludDeLaRed::AL_BORDE => 'senal_al_borde',
+                default => null,
+            };
+
+            if ($grupo) {
+                $grupos[$grupo]['clientes'][] = $fila;
+            }
+        }
+
+        // Cada grupo por lo que más duele primero.
+        $orden = [
+            'se_fue'             => fn ($a, $b) => $b['deuda'] <=> $a['deuda'],
+            'falla_sin_reportar' => fn ($a, $b) => $b['apagado'] <=> $a['apagado'],
+            'inestable'          => fn ($a, $b) => $b['caidas'] <=> $a['caidas'],
+            'senal_al_borde'     => fn ($a, $b) => ($a['rx_min'] ?? 0) <=> ($b['rx_min'] ?? 0),
+        ];
+
+        foreach ($grupos as $k => &$g) {
+            usort($g['clientes'], $orden[$k]);
+            $g['cuantos'] = count($g['clientes']);
+            $g['deuda']   = array_sum(array_column($g['clientes'], 'deuda'));
+        }
+
+        return ['grupos' => $grupos, 'medido_desde' => $desde];
+    }
+
+    /** @return array<string,array<string,mixed>> */
+    private static function vacios(): array
+    {
+        return [
+            'se_fue' => [
+                'titulo'  => 'Ya no están',
+                'que_es'  => 'Llevan días con el equipo apagado y deben plata. No es cartera: se fueron y la deuda sigue creciendo en el papel.',
+                'que_hacer' => 'Confirmá y dales de baja. Perseguir este cobro es tiempo perdido.',
+                'tono'    => 'danger',
+                'clientes' => [], 'cuantos' => 0, 'deuda' => 0,
+            ],
+            'falla_sin_reportar' => [
+                'titulo'  => 'Falla que nadie reportó',
+                'que_es'  => 'Están al día pero su equipo pasa apagado. Tienen un problema y no lo dijeron.',
+                'que_hacer' => 'Llamalos antes de que llamen ellos. Es el que se va callado.',
+                'tono'    => 'warn',
+                'clientes' => [], 'cuantos' => 0, 'deuda' => 0,
+            ],
+            'inestable' => [
+                'titulo'  => 'Se cae y vuelve',
+                'que_es'  => 'El equipo se desconecta varias veces por semana. El cliente lo nota aunque no llame.',
+                'que_hacer' => 'Revisá acometida, roseta y corriente. Suele ser el cable de la casa.',
+                'tono'    => 'warn',
+                'clientes' => [], 'cuantos' => 0, 'deuda' => 0,
+            ],
+            'senal_al_borde' => [
+                'titulo'  => 'Señal al borde',
+                'que_es'  => 'Reciben menos luz de la que deberían. Todavía andan, pero van a fallar.',
+                'que_hacer' => 'Visita preventiva: conector sucio, curva forzada o empalme flojo.',
+                'tono'    => 'info',
+                'clientes' => [], 'cuantos' => 0, 'deuda' => 0,
+            ],
+        ];
+    }
+
+    /** @param list<int> $userIds @return array<int,array{monto:float,facturas:int}> */
+    private static function deudas(int $companyId, array $userIds): array
+    {
+        if (!$userIds) {
+            return [];
+        }
+
+        $filas = \App\Models\DetFacturation::join('cab_facturations as cab', 'cab.id', '=', 'det_facturations.cab_id')
+            ->where('cab.company_id', $companyId)
+            ->whereIn('cab.user_id', $userIds)
+            ->where('det_facturations.paid', 0)
+            ->select('cab.user_id', 'det_facturations.*')
+            ->get();
+
+        $out = [];
+
+        foreach ($filas as $f) {
+            $saldo = $f->outstanding();
+
+            if ($saldo <= 0) {
+                continue;
+            }
+
+            $out[$f->user_id]['monto']    = ($out[$f->user_id]['monto'] ?? 0) + $saldo;
+            $out[$f->user_id]['facturas'] = ($out[$f->user_id]['facturas'] ?? 0) + 1;
+        }
+
+        return $out;
+    }
+}
