@@ -23,6 +23,43 @@ class ReceiveConversationMessageUseCase
  * Mensaje por id externo de WhatsApp, dentro de la empresa si se conoce.
  * Sin empresa se busca global, como antes (luego el webhook se rechaza igual).
  */
+/**
+ * La conversación abierta de ese teléfono, si la hay.
+ *
+ * El bot contesta al mismo número por el que escribió el cliente, así que
+ * alcanza con buscar su ficha. No se crea nada: si todavía no hay
+ * conversación es porque el mensaje del cliente no llegó, y la respuesta del
+ * bot sola no cuenta ninguna historia.
+ */
+private function conversacionDelTelefono(int $companyId, string $telefono): ?int
+{
+    $solo = preg_replace('/\D+/', '', $telefono);
+
+    if ($solo === '') {
+        return null;
+    }
+
+    // Con y sin el 57: las fichas viejas lo guardaron de las dos formas y el
+    // servicio manda el jid completo.
+    $formas = array_values(array_unique([$solo, ltrim($solo, '57'), '57' . ltrim($solo, '57')]));
+
+    $cliente = DB::table('crm_customers')
+        ->where('company_id', $companyId)
+        ->whereIn(DB::raw("REPLACE(REPLACE(REPLACE(phone,' ',''),'+',''),'-','')"), $formas)
+        ->value('id');
+
+    if (!$cliente) {
+        return null;
+    }
+
+    return DB::table('crm_conversations')
+        ->where('company_id', $companyId)
+        ->where('customer_id', $cliente)
+        ->whereIn('status', ['new', 'in_progress'])
+        ->orderByDesc('id')
+        ->value('id');
+}
+
 private function mensajePorExternalId(string $externalId, $companyId, array $cols): ?object
 {
     $q = DB::table('crm_messages as m')->where('m.external_id', $externalId);
@@ -129,6 +166,63 @@ public function execute(array $payload): array
         }
 
         return ['status' => 'ok', 'event' => 'message.edited'];
+    }
+
+    // Lo que el bot le contestó al cliente.
+    //
+    // Sin esto, el agente abría la conversación y veía sólo lo que escribió
+    // el cliente: «Buenas tardes», «María Fernanda altuve 1043136391»,
+    // «Gracias». Las preguntas del bot no estaban en ninguna parte, así que
+    // no había forma de entender por qué mandó su cédula ni qué le habían
+    // prometido. El hilo llegaba cortado a la mitad.
+    if ($payload['event'] === 'bot.message') {
+        $d = $payload['data'];
+        $telefono = (string) ($d['phone'] ?? $d['jid'] ?? '');
+        $texto = trim((string) ($d['content'] ?? ''));
+
+        if ($telefono === '' || $texto === '') {
+            return ['status' => 'ignored', 'event' => 'bot.message', 'reason' => 'sin_datos'];
+        }
+
+        $conversacion = $this->conversacionDelTelefono($companyId, $telefono);
+
+        if (!$conversacion) {
+            // Todavía no hay conversación: la abre el primer mensaje del
+            // cliente, que siempre llega antes que la respuesta del bot.
+            return ['status' => 'ignored', 'event' => 'bot.message', 'reason' => 'sin_conversacion'];
+        }
+
+        // El mismo texto dos veces seguidas es un reintento del servicio, no
+        // dos mensajes: el bot repite si la primera entrega no se confirmó.
+        $repetido = DB::table('crm_messages')
+            ->where('conversation_id', $conversacion)
+            ->where('sender_type', 'bot')
+            ->where('content', $texto)
+            ->where('created_at', '>=', now()->subMinutes(2))
+            ->exists();
+
+        if ($repetido) {
+            return ['status' => 'ignored', 'event' => 'bot.message', 'reason' => 'repetido'];
+        }
+
+        $id = DB::table('crm_messages')->insertGetId([
+            'conversation_id' => $conversacion,
+            'sender_type'     => 'bot',
+            'message_type'    => 'text',
+            'content'         => $texto,
+            'external_id'     => $d['messageId'] ?? null,
+            'created_at'      => now(),
+            'updated_at'      => now(),
+        ]);
+
+        DB::table('crm_conversations')->where('id', $conversacion)
+            ->update(['last_message_at' => now(), 'updated_at' => now()]);
+
+        if ($mensaje = \App\Models\CrmMessage::find($id)) {
+            broadcast(new \App\Events\NewMessageEvent($mensaje, $conversacion));
+        }
+
+        return ['status' => 'ok', 'event' => 'bot.message', 'conversation_id' => $conversacion];
     }
 
     // Votos de encuesta (descifrados por el servicio Node)

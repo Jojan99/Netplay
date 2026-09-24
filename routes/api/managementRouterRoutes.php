@@ -296,6 +296,15 @@ Route::prefix('management')->middleware('empresa.propia')->group(function () {
         [\App\Http\Controllers\Crm\ComprobanteWaWebController::class, 'store']
     )->withoutMiddleware('jwt.verify')->middleware(['clave.maestra', 'throttle:120,1']);
 
+    // 🔗 Asociar el número a un cliente de la plataforma.
+    //
+    // La gente escribe desde el celular de la hija, del vecino o del trabajo:
+    // ese número no está en ninguna ficha y el agente atiende a ciegas, sin
+    // saber qué plan tiene ni qué debe.
+    Route::get('crm/clientes-para-vincular', [ConversationController::class, 'buscarClienteParaVincular']);
+    Route::post('conversations/{conversationId}/vincular-cliente', [ConversationController::class, 'vincularCliente']);
+    Route::delete('conversations/{conversationId}/vincular-cliente', [ConversationController::class, 'desvincularCliente']);
+
     // 🔁 Transferir conversación
     Route::post(
         'conversations/{conversationId}/transfer',

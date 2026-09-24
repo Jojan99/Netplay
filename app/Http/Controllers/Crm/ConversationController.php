@@ -859,6 +859,126 @@ public function updateCustomerName(int $conversationId, Request $request): JsonR
 }
 
 /* =====================================================================
+ * ASOCIAR EL NÚMERO A UN CLIENTE DE LA PLATAFORMA
+ * =================================================================== */
+
+/**
+ * Busca clientes para asociarle este número.
+ *
+ * La gente escribe desde el celular de la hija, del vecino o del trabajo, y
+ * ese número no está en ninguna ficha: el agente atiende a ciegas, sin saber
+ * qué plan tiene ni qué debe. Esto le deja buscar por nombre, cédula o
+ * teléfono y vincularlo.
+ */
+public function buscarClienteParaVincular(Request $request): JsonResponse
+{
+    $request->validate(['q' => 'required|string|min:3|max:80']);
+
+    $q = trim((string) $request->input('q'));
+    $companyId = (int) getSessionCompanyId();
+
+    $clientes = DB::table('user_data as u')
+        ->join('cab_facturations as cab', 'cab.user_id', '=', 'u.user_id')
+        ->where('cab.company_id', $companyId)
+        ->where(function ($w) use ($q) {
+            $w->where('u.names', 'like', "%{$q}%")
+              ->orWhere('u.lastname', 'like', "%{$q}%")
+              ->orWhere('u.dni', 'like', "%{$q}%")
+              ->orWhere('u.phone', 'like', "%{$q}%")
+              ->orWhereRaw("CONCAT(u.names, ' ', u.lastname) LIKE ?", ["%{$q}%"]);
+        })
+        ->distinct()
+        ->limit(15)
+        ->get(['u.user_id', 'u.names', 'u.lastname', 'u.dni', 'u.phone', 'u.address', 'u.active']);
+
+    return response()->json([
+        'ok'   => true,
+        'data' => $clientes->map(fn ($c) => [
+            'user_id'   => (int) $c->user_id,
+            'nombre'    => trim(($c->names ?? '') . ' ' . ($c->lastname ?? '')),
+            'cedula'    => $c->dni,
+            'telefono'  => $c->phone,
+            'direccion' => $c->address,
+            'activo'    => (bool) $c->active,
+        ])->values(),
+    ]);
+}
+
+/**
+ * Deja este número apuntando a un cliente de la plataforma.
+ *
+ * No le toca el teléfono a la ficha del cliente: el número desde el que
+ * escribió puede ser prestado, y pisarle el suyo le rompería el cobro y los
+ * avisos. Sólo se vincula la conversación.
+ */
+public function vincularCliente(int $conversationId, Request $request): JsonResponse
+{
+    $request->validate(['user_id' => 'required|integer|exists:users,id']);
+
+    $companyId = (int) getSessionCompanyId();
+    $userId = (int) $request->input('user_id');
+
+    $conv = DB::table('crm_conversations')
+        ->where('id', $conversationId)->where('company_id', $companyId)
+        ->first(['id', 'customer_id']);
+
+    if (!$conv || !$conv->customer_id) {
+        return response()->json(['ok' => false, 'message' => 'Conversación no encontrada'], 404);
+    }
+
+    // Que el cliente sea de esta empresa: su facturación lo dice.
+    $esDeLaEmpresa = DB::table('cab_facturations')
+        ->where('company_id', $companyId)->where('user_id', $userId)->exists();
+
+    if (!$esDeLaEmpresa) {
+        return response()->json(['ok' => false, 'message' => 'Ese cliente no es de esta empresa'], 403);
+    }
+
+    $ficha = DB::table('user_data')->where('user_id', $userId)
+        ->first(['names', 'lastname', 'dni']);
+
+    $nombre = trim(($ficha->names ?? '') . ' ' . ($ficha->lastname ?? ''));
+
+    DB::table('crm_customers')->where('id', $conv->customer_id)->update([
+        'user_id'    => $userId,
+        'dni'        => $ficha->dni ?? null,
+        // El nombre real en vez de «Cliente WhatsApp»: es lo que ve el agente
+        // en la lista antes de abrir la conversación.
+        'name'       => $nombre ?: 'Cliente',
+        'updated_at' => now(),
+    ]);
+
+    Log::info('[CRM] Número asociado a un cliente', [
+        'empresa' => $companyId, 'conversacion' => $conversationId, 'cliente' => $userId,
+    ]);
+
+    return response()->json([
+        'ok'      => true,
+        'message' => 'Número asociado a ' . ($nombre ?: 'el cliente'),
+        'data'    => ['user_id' => $userId, 'nombre' => $nombre, 'cedula' => $ficha->dni ?? null],
+    ]);
+}
+
+/** Quita la asociación, si se vinculó al cliente equivocado. */
+public function desvincularCliente(int $conversationId): JsonResponse
+{
+    $companyId = (int) getSessionCompanyId();
+
+    $customerId = DB::table('crm_conversations')
+        ->where('id', $conversationId)->where('company_id', $companyId)
+        ->value('customer_id');
+
+    if (!$customerId) {
+        return response()->json(['ok' => false, 'message' => 'Conversación no encontrada'], 404);
+    }
+
+    DB::table('crm_customers')->where('id', $customerId)
+        ->update(['user_id' => null, 'dni' => null, 'updated_at' => now()]);
+
+    return response()->json(['ok' => true, 'message' => 'Asociación quitada']);
+}
+
+/* =====================================================================
  * CREAR TICKET DESDE CONVERSACIÓN
  * =================================================================== */
 public function createTicketFromConversation(int $conversationId, Request $request): JsonResponse
