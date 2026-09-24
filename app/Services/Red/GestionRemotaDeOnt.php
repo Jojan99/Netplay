@@ -1304,7 +1304,7 @@ class GestionRemotaDeOnt
         try {
             $crudo = strtoupper((string) preg_replace('/[^0-9A-Za-z]/', '', $serial));
             $ficha = \App\Services\Acs\GenieAcs::deEmpresa($this->companyId)->dispositivos(
-                ['_deviceId._SerialNumber' => ['$in' => array_values(array_unique([$crudo, \App\Services\Acs\EquiposDelAcs::serial($serial)]))]],
+                ['_deviceId._SerialNumber' => ['$in' => \App\Services\Acs\EquiposDelAcs::serialesPosibles((string) $serial)]],
                 ['_id', '_lastInform'],
             )[0] ?? null;
         } catch (\Throwable $e) {

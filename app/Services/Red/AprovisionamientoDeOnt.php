@@ -487,7 +487,7 @@ class AprovisionamientoDeOnt
             $acs = GenieAcs::deEmpresa($companyId);
             $crudo = strtoupper((string) preg_replace('/[^0-9A-Za-z]/', '', $ont->serial));
             $id = $acs->dispositivos(
-                ['_deviceId._SerialNumber' => ['$in' => array_values(array_unique([$crudo, EquiposDelAcs::serial($ont->serial)]))]], ['_id']
+                ['_deviceId._SerialNumber' => ['$in' => EquiposDelAcs::serialesPosibles((string) $ont->serial)]], ['_id']
             )[0]['_id'] ?? null;
             $d = $id ? $acs->dispositivo($id) : null;
         } catch (\Throwable) {
@@ -615,7 +615,7 @@ class AprovisionamientoDeOnt
         try {
             $crudo = strtoupper((string) preg_replace('/[^0-9A-Za-z]/', '', $ont->serial));
             $ficha = GenieAcs::deEmpresa($companyId)->dispositivos(
-                ['_deviceId._SerialNumber' => ['$in' => array_values(array_unique([$crudo, EquiposDelAcs::serial($ont->serial)]))]],
+                ['_deviceId._SerialNumber' => ['$in' => EquiposDelAcs::serialesPosibles((string) $ont->serial)]],
                 ['_id', '_lastInform'],
             )[0] ?? null;
             $enAcs = $ficha['_id'] ?? null;
@@ -1596,7 +1596,7 @@ class AprovisionamientoDeOnt
     private function buscarEnElAcs(GenieAcs $acs, Aprovisionamiento $a): ?string
     {
         $crudo = strtoupper((string) preg_replace('/[^0-9A-Za-z]/', '', $a->serial));
-        $series = array_values(array_unique([$crudo, EquiposDelAcs::serial($a->serial)]));
+        $series = EquiposDelAcs::serialesPosibles((string) $a->serial);
 
         $filas = $acs->dispositivos(['_deviceId._SerialNumber' => ['$in' => $series]], ['_id', '_lastInform']);
         usort($filas, fn ($x, $y) => strcmp((string) ($y['_lastInform'] ?? ''), (string) ($x['_lastInform'] ?? '')));

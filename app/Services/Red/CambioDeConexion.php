@@ -1794,7 +1794,7 @@ class CambioDeConexion
     public static function buscarEnElAcs(GenieAcs $acs, string $serial): ?string
     {
         $crudo = strtoupper((string) preg_replace('/[^0-9A-Za-z]/', '', $serial));
-        $filas = $acs->dispositivos(['_deviceId._SerialNumber' => ['$in' => array_values(array_unique([$crudo, EquiposDelAcs::serial($serial)]))]], ['_id', '_lastInform']);
+        $filas = $acs->dispositivos(['_deviceId._SerialNumber' => ['$in' => EquiposDelAcs::serialesPosibles((string) $serial)]], ['_id', '_lastInform']);
         usort($filas, fn ($x, $y) => strcmp((string) ($y['_lastInform'] ?? ''), (string) ($x['_lastInform'] ?? '')));
 
         return isset($filas[0]['_id']) ? (string) $filas[0]['_id'] : null;

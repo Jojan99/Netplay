@@ -967,6 +967,10 @@ class EquiposDelAcs
     }
 
     /** Serial comparable: GPON "HWTC1234ABCD" → "485754431234ABCD", MAC sin separadores. */
+    /**
+     * El serial en la forma en que lo guarda la OLT: las cuatro letras de la
+     * marca pasadas a hexadecimal. «HWTC12345678» queda «4857544312345678».
+     */
     public static function serial(string $s): string
     {
         $k = strtoupper(preg_replace('/[^0-9A-Za-z]/', '', $s));
@@ -976,6 +980,46 @@ class EquiposDelAcs
         }
 
         return $k;
+    }
+
+    /**
+     * El mismo serial en las dos formas: como lo dice la OLT y como lo dice
+     * el equipo.
+     *
+     * La OLT entrega el serial con la marca en hexadecimal
+     * («44463144A6BDC32A») y el equipo se presenta al TR-069 con la marca en
+     * letras («DF1DA6BDC32A»). serial() convertía una sola dirección —de
+     * letras a hexadecimal—, así que cuando la plataforma partía del
+     * hexadecimal nunca encontraba nada.
+     *
+     * Eso dejó un aprovisionamiento de PruebaJojan esperando diez minutos por
+     * un equipo que ya estaba en el ACS y se reportaba cada minuto.
+     *
+     * @return list<string> sin repetidos, para buscar con «$in».
+     */
+    public static function serialesPosibles(string $s): array
+    {
+        $k = strtoupper(preg_replace('/[^0-9A-Za-z]/', '', $s));
+        $formas = [$k, self::serial($k)];
+
+        // Al revés: 16 hexadecimales cuyos primeros cuatro bytes son una
+        // marca escrita en hexadecimal. Las marcas llevan dígitos —«DF1D»,
+        // «DF1E»— así que no alcanza con exigir letras, pero sí se exige al
+        // menos una: un serial que de casualidad sea todo dígitos no se
+        // convierte en cualquier cosa.
+        if (preg_match('/^([0-9A-F]{8})([0-9A-F]{8})$/', $k, $m)) {
+            $marca = @hex2bin($m[1]);
+
+            if (is_string($marca)) {
+                $marca = strtoupper($marca);
+
+                if (preg_match('/^[A-Z0-9]{4}$/', $marca) && preg_match('/[A-Z]/', $marca)) {
+                    $formas[] = $marca . $m[2];
+                }
+            }
+        }
+
+        return array_values(array_unique(array_filter($formas)));
     }
 
     private static function fabricante(string $crudo): string
