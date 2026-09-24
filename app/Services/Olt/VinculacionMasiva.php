@@ -36,6 +36,7 @@ class VinculacionMasiva
         $conOnt   = $this->clientesConOnt();
 
         $propuestas = [];
+        $huerfanas = [];
         $sinCandidato = 0;
         $ambiguas = 0;
 
@@ -44,6 +45,23 @@ class VinculacionMasiva
 
             if (!$candidato) {
                 $sinCandidato++;
+
+                // Se devuelven igual, para poder asignarlas a mano. Antes sólo
+                // se contaban y la pantalla no las mostraba: las 55 ONT de la
+                // OLT CDATA quedaban invisibles —no tienen descripción con qué
+                // adivinar el cliente— y por eso su ficha decía «sin equipo
+                // asignado» aunque la ONT estuviera ahí, con su serial y todo.
+                $huerfanas[] = [
+                    'id'          => (int) $ont->id,
+                    'olt'         => $ont->olt,
+                    'olt_id'      => (int) $ont->olt_id,
+                    'fsp'         => $ont->fsp,
+                    'ont_id'      => (int) $ont->ont_id,
+                    'serial'      => $ont->serial,
+                    'description' => $ont->description,
+                    'estado'      => $ont->status,
+                ];
+
                 continue;
             }
 
@@ -83,8 +101,12 @@ class VinculacionMasiva
 
         usort($propuestas, fn ($a, $b) => [self::peso($a['confianza']), $a['ont']['fsp']] <=> [self::peso($b['confianza']), $b['ont']['fsp']]);
 
+        usort($huerfanas, fn ($a, $b) => [$a['olt'], $a['fsp'], $a['ont_id']] <=> [$b['olt'], $b['fsp'], $b['ont_id']]);
+
         return [
             'propuestas'    => $propuestas,
+            // Las que no se pueden adivinar: van aparte para asignarlas a mano.
+            'huerfanas'     => $huerfanas,
             'resumen'       => [
                 'sin_cliente'   => count($this->ontsSinCliente($oltId)),
                 'con_propuesta' => count($propuestas),

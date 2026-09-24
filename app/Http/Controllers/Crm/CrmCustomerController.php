@@ -33,23 +33,36 @@ class CrmCustomerController extends Controller
         return DB::table('crm_conversations as c')
             ->join('crm_customers as cu', 'cu.id', '=', 'c.customer_id')
             ->where('c.id', $conversationId)
-            ->select(['c.id', 'c.company_id', 'c.provider', 'c.customer_id', 'c.status', 'cu.phone', 'cu.name as customer_name'])
+            ->select(['c.id', 'c.company_id', 'c.provider', 'c.customer_id', 'c.status', 'cu.phone',
+                      'cu.name as customer_name', 'cu.user_id as vinculado_a_mano'])
             ->when(\App\Services\WhatsApp\LineasDeWhatsApp::enConversaciones(), fn ($q) => $q->addSelect('c.wa_linea_id'))
             ->first();
     }
 
-    private function ispUser(string $phone, int $companyId): ?object
+    /**
+     * El cliente de la plataforma detrás de esta conversación.
+     *
+     * Primero el que alguien asoció a mano: la gente escribe desde el celular
+     * de la hija, del vecino o del trabajo, y ese número no coincide con
+     * ninguna ficha por más que se busque. Cuando el agente lo vinculó, esa
+     * decisión manda sobre cualquier coincidencia de teléfono.
+     */
+    private function ispUser(string $phone, int $companyId, ?int $vinculado = null): ?object
     {
         $clean  = preg_replace('/[^0-9]/', '', $phone);
         $last10 = substr($clean, -10);
-        if (strlen($last10) < 7) return null;
+
+        if (!$vinculado && strlen($last10) < 7) return null;
 
         return DB::table('user_data as ud')
             ->leftJoin('internet_plans as ip', 'ip.id', '=', 'ud.internet_plans_id')
             ->leftJoin('internet_status as ist', 'ist.id', '=', 'ud.status_internet_id')
             ->leftJoin('tabla_ips as tip', 'tip.id', '=', 'ud.ip_assignment_id')
             ->where('ud.company_id', $companyId)
-            ->where(fn($q) => $q->where('ud.phone', 'like', '%' . $last10)->orWhere('ud.phone', $clean))
+            ->when($vinculado, fn ($q) => $q->where('ud.user_id', $vinculado))
+            ->when(!$vinculado, fn ($q) => $q->where(
+                fn ($w) => $w->where('ud.phone', 'like', '%' . $last10)->orWhere('ud.phone', $clean)
+            ))
             ->orderByDesc('ud.id')
             ->first([
                 'ud.user_id', 'ud.names', 'ud.lastname', 'ud.dni', 'ud.address', 'ud.email', 'ud.phone',
@@ -87,7 +100,7 @@ class CrmCustomerController extends Controller
         if (!$conv) return response()->json(['ok' => false, 'error' => 'Conversación no encontrada'], 404);
 
         $company = Company::find($conv->company_id);
-        $user    = $this->ispUser($conv->phone, (int)$conv->company_id);
+        $user    = $this->ispUser($conv->phone, (int)$conv->company_id, $conv->vinculado_a_mano ? (int)$conv->vinculado_a_mano : null);
 
         $previous = DB::table('crm_conversations')
             ->where('customer_id', $conv->customer_id)->where('id', '!=', $conv->id)->count();
@@ -172,7 +185,7 @@ class CrmCustomerController extends Controller
         $conv = $this->conversation($conversationId);
         if (!$conv) return response()->json(['ok' => false, 'error' => 'Conversación no encontrada'], 404);
 
-        $user = $this->ispUser($conv->phone, (int)$conv->company_id);
+        $user = $this->ispUser($conv->phone, (int)$conv->company_id, $conv->vinculado_a_mano ? (int)$conv->vinculado_a_mano : null);
         $owns = $user && DB::table('det_facturations as d')->join('cab_facturations as cab', 'cab.id', '=', 'd.cab_id')
             ->where('d.id', $request->invoice_id)->where('cab.user_id', $user->user_id)->where('cab.company_id', $conv->company_id)->exists();
         if (!$owns) return response()->json(['ok' => false, 'error' => 'La factura no pertenece a este cliente'], 422);
@@ -239,7 +252,7 @@ class CrmCustomerController extends Controller
         if (!$company || !$company->pg_active || !$company->pg_gateway) {
             return response()->json(['ok' => false, 'error' => 'La empresa no tiene pasarela de pago activa'], 422);
         }
-        $user = $this->ispUser($conv->phone, (int)$conv->company_id);
+        $user = $this->ispUser($conv->phone, (int)$conv->company_id, $conv->vinculado_a_mano ? (int)$conv->vinculado_a_mano : null);
         if (!$user) return response()->json(['ok' => false, 'error' => 'Este número no está vinculado a un cliente'], 422);
 
         $invoiceIds = $request->filled('invoice_id') ? [(int)$request->invoice_id] : null;
@@ -264,7 +277,7 @@ class CrmCustomerController extends Controller
     {
         $conv = $this->conversation($conversationId);
         if (!$conv) return response()->json(['ok' => false, 'error' => 'Conversación no encontrada'], 404);
-        $user = $this->ispUser($conv->phone, (int)$conv->company_id);
+        $user = $this->ispUser($conv->phone, (int)$conv->company_id, $conv->vinculado_a_mano ? (int)$conv->vinculado_a_mano : null);
         if (!$user) return response()->json(['ok' => false, 'error' => 'Este número no está vinculado a un cliente'], 422);
 
         $content = sprintf("Estado técnico (%s)\nCliente: %s\nPlan: %s\nIP: %s\nEstado: %s\nDirección: %s",
