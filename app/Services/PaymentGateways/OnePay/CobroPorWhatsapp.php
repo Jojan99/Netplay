@@ -202,13 +202,19 @@ class CobroPorWhatsapp
      */
     private function facturasPorCobrar(Company $company, int $userId, array $ids)
     {
-        $q = DetFacturation::where('company_id', $company->id)->where('user_id', $userId);
+        // La factura no sabe de quién es ni de qué empresa: eso vive en su
+        // cabecera. Sin esta unión se le podría cobrar a un cliente una
+        // factura de otra empresa, que es el peor error posible acá.
+        $q = DetFacturation::join('cab_facturations', 'cab_facturations.id', '=', 'det_facturations.cab_id')
+            ->where('cab_facturations.company_id', $company->id)
+            ->where('cab_facturations.user_id', $userId)
+            ->select('det_facturations.*');
 
         if ($ids) {
-            $q->whereIn('id', $ids);
+            $q->whereIn('det_facturations.id', $ids);
         }
 
-        $facturas = $q->orderBy('date_facturation')->get();
+        $facturas = $q->orderBy('det_facturations.date_facturation')->get();
 
         if ($ids && $facturas->count() !== count(array_unique($ids))) {
             throw new OnePayError('Alguna de las facturas elegidas no existe, es de otro cliente o está anulada.');

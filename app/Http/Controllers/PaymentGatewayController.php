@@ -437,18 +437,17 @@ class PaymentGatewayController extends Controller
                                 ?? $request->input('data.transaction.payment_method.type'),
                     'efipay' => $request->input('checkout.payment_method')
                                 ?? $request->input('transaction.payment_method'),
-                    // OnePay lo manda dentro del medio usado; a veces es un
-                    // texto suelto y a veces un objeto con su nombre.
-                    'onepay' => $request->input('payment.method.type')
-                                ?? $request->input('payment.method.name')
-                                ?? (is_string($request->input('payment.method')) ? $request->input('payment.method') : null),
+                    // OnePay: lo resuelve la pasarela, porque su aviso no
+                    // siempre trae el medio y a veces hay que ir a buscarlo.
+                    'onepay' => null,
                     default  => null,
                 };
 
-                $banco = $gatewayName === 'onepay'
-                    ? ($request->input('payment.method.bank_name')
-                       ?? $request->input('payment.method.issuer'))
-                    : null;
+                $banco = null;
+
+                if ($gateway instanceof \App\Services\PaymentGateways\OnePayGateway) {
+                    [$medio, $banco] = $gateway->medioYBanco($request);
+                }
 
                 $banco ??= $gatewayName === 'wompi'
                     ? ($request->input('data.transaction.payment_method.extra.bank_name')

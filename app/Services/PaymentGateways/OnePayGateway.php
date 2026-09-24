@@ -161,8 +161,12 @@ class OnePayGateway implements PaymentGatewayInterface
 
     public function getInvoiceReference(Request $request): string
     {
-        return (string) ($request->input('payment.reference')
-            ?? $request->input('payment.external_id')
+        // external_id primero: es el que lleva nuestra referencia entera.
+        // «reference» es la que ve el cliente y va recortada a 30 caracteres,
+        // así que no sirve para encontrar la transacción.
+        return (string) ($request->input('payment.external_id')
+            ?? $request->input('charge.external_id')
+            ?? $request->input('payment.reference')
             ?? $request->input('charge.reference')
             ?? '');
     }
@@ -201,6 +205,71 @@ class OnePayGateway implements PaymentGatewayInterface
             'payment.created'                   => 'pending',
             default                             => self::normalizar($estado),
         };
+    }
+
+    /**
+     * Con qué pagó el cliente: el medio y, si lo hay, el banco.
+     *
+     * El aviso de OnePay no siempre trae «payment.method» —con tarjeta a veces
+     * sí, con los medios de prueba no viene nunca—, así que cuando falta se le
+     * pregunta a la API por ese cobro. Sin esto el movimiento queda «sin
+     * método» en el historial y nadie sabe cómo pagó el cliente.
+     *
+     * @return array{0: ?string, 1: ?string} medio, banco
+     */
+    public function medioYBanco(Request $request): array
+    {
+        $metodo = $request->input('payment.method') ?? $request->input('charge.method');
+
+        if (!is_array($metodo)) {
+            $id = $request->input('payment.id') ?? $request->input('charge.id');
+
+            // Los dos sueltos: en algunos avisos vienen así, sin el objeto.
+            $suelto = $request->input('payment.payment_method_label')
+                ?? $request->input('payment.payment_method_type');
+
+            if (!$suelto && $id) {
+                try {
+                    $metodo = $this->api->verCobro((string) $id)['method'] ?? null;
+                } catch (\Throwable $e) {
+                    Log::info('[OnePay] No se pudo leer el medio de pago', ['cobro' => $id, 'error' => $e->getMessage()]);
+                }
+            } elseif ($suelto) {
+                return [(string) $suelto, null];
+            }
+        }
+
+        // Ni en el aviso ni en el cobro: entonces en los intentos de pago,
+        // que es donde queda el medio con el que se pagó de verdad.
+        if (!is_array($metodo)) {
+            $id = $request->input('payment.id') ?? $request->input('charge.id');
+
+            if ($id) {
+                try {
+                    $intentos = collect($this->api->intentosDeCobro((string) $id)['data'] ?? []);
+                    $pagado = $intentos->first(fn ($i) => in_array(($i['status'] ?? ''), ['paid', 'approved', 'succeeded'], true))
+                        ?? $intentos->last();
+
+                    if ($pagado) {
+                        return [
+                            $pagado['payment_method_label'] ?? $pagado['payment_method_type'] ?? null,
+                            $pagado['payment_method_type'] ?? null,
+                        ];
+                    }
+                } catch (\Throwable $e) {
+                    Log::info('[OnePay] No se pudieron leer los intentos de pago', ['cobro' => $id, 'error' => $e->getMessage()]);
+                }
+            }
+
+            return [is_string($metodo) && $metodo !== '' ? $metodo : null, null];
+        }
+
+        // «label» es lo que el cliente reconoce («Mastercard ·3222»); para una
+        // cuenta o PSE, el nombre del banco.
+        $medio = $metodo['label'] ?? $metodo['brand'] ?? $metodo['type'] ?? $metodo['name'] ?? null;
+        $banco = $metodo['bank_name'] ?? $metodo['issuer'] ?? $metodo['brand'] ?? null;
+
+        return [$medio ? (string) $medio : null, $banco ? (string) $banco : null];
     }
 
     public function getLastGatewayReference(): ?string
@@ -253,6 +322,28 @@ class OnePayGateway implements PaymentGatewayInterface
     }
 
     /**
+     * La referencia corta que ve el cliente, dentro de los 30 caracteres.
+     *
+     * Se arma del concepto («Factura #1234» → «Factura-1234») porque es lo que
+     * el cliente reconoce en su extracto. Si no queda nada legible, se usa la
+     * cola de la nuestra, que es única por la marca de tiempo.
+     */
+    public static function referenciaVisible(string $nuestra, string $concepto): string
+    {
+        $limpio = trim((string) preg_replace('/-+/', '-', preg_replace('/[^A-Za-z0-9]+/', '-', \Illuminate\Support\Str::ascii($concepto))), '-');
+
+        if (strlen($limpio) >= 4 && strlen($limpio) <= 30) {
+            return $limpio;
+        }
+
+        if (strlen($limpio) > 30) {
+            return substr($limpio, 0, 30);
+        }
+
+        return substr($nuestra, -30);
+    }
+
+    /**
      * El cuerpo del cobro, con todo lo que OnePay sabe aprovechar.
      *
      * @param  array<string,mixed>  $data
@@ -266,14 +357,19 @@ class OnePayGateway implements PaymentGatewayInterface
             throw new OnePayError('El monto del cobro tiene que ser mayor que cero.');
         }
 
+        $nuestra = (string) $data['reference'];
+
         $cobro = [
             // En unidades enteras: OnePay NO usa centavos.
             'amount'       => $monto,
             'currency'     => 'COP',
             'title'        => mb_substr((string) ($data['description'] ?? 'Pago de servicio'), 0, 60),
-            'reference'    => (string) $data['reference'],
-            // Para poder encontrar el cobro desde nuestro lado y al revés.
-            'external_id'  => (string) $data['reference'],
+            // OnePay admite 30 caracteres acá y la nuestra es más larga
+            // (empresa + factura + marca de tiempo + id). Ésta es la que ve el
+            // cliente, así que se le pone algo legible; la que manda para
+            // reconocer el pago es external_id, que va entera.
+            'reference'    => self::referenciaVisible($nuestra, (string) ($data['description'] ?? '')),
+            'external_id'  => $nuestra,
             'redirect_url' => (string) ($data['redirect_url'] ?? ''),
             // El impuesto lo lleva la factura, no el cobro: sin esto OnePay
             // asume 19 % y el cliente ve un desglose que no es el suyo.
@@ -304,7 +400,7 @@ class OnePayGateway implements PaymentGatewayInterface
         // rastro de quién lo generó. OnePay los quiere como lista, no objeto.
         $cobro['metadata'] = [
             ['key' => 'netvula_empresa',    'value' => (string) $this->company->id],
-            ['key' => 'netvula_referencia', 'value' => (string) $data['reference']],
+            ['key' => 'netvula_referencia', 'value' => $nuestra],
         ];
 
         return $cobro;

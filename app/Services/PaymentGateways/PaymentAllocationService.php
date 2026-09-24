@@ -132,8 +132,13 @@ class PaymentAllocationService
         $clientName  = 'Portal (online)';
         $cabResolved = false;
 
+        // $medio y $banco faltaban acá y se usan adentro (el medio con el que
+        // pagó el cliente). En la consola eso es sólo un aviso, pero en el
+        // servidor Laravel lo convierte en excepción: saltaba dentro de la
+        // transacción, se deshacía todo y la factura quedaba sin acreditar
+        // aunque el cliente hubiera pagado. Le pasaba a todas las pasarelas.
         DB::transaction(function () use (
-            $invoices, $amountPaid, $tx, $gateway, $companyId, &$clientName, &$cabResolved
+            $invoices, $amountPaid, $tx, $gateway, $companyId, $medio, $banco, &$clientName, &$cabResolved
         ) {
             // Bloqueo pesimista: dos webhooks simultáneos no pueden abonar dos veces.
             $locked = OnlinePaymentTransaction::whereKey($tx->id)->lockForUpdate()->first();

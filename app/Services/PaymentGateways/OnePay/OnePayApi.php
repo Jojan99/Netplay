@@ -63,6 +63,20 @@ class OnePayApi
         ]), Str::uuid()->toString());
     }
 
+    /**
+     * Los intentos de pago de un cobro.
+     *
+     * Acá vive el medio con el que se pagó de verdad
+     * («payment_method_label»). El cobro en sí lo trae a veces y a veces no,
+     * así que ésta es la fuente que no falla.
+     *
+     * @return array<string,mixed>
+     */
+    public function intentosDeCobro(string $id): array
+    {
+        return $this->llamar('get', "/payments/{$id}/intents");
+    }
+
     /** @return array<string,mixed> */
     public function anularCobro(string $id): array
     {
