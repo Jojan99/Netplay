@@ -59,10 +59,24 @@ class Tr069EnPaginaDeOnu
         }
 
         if ($pagina === null) {
+            // No es lo mismo «la clave está mal» que «no hay página». Muchas
+            // ONU cierran todo lo que entra por el lado de la gestión: el
+            // equipo pide su IP por DHCP y la renueva —o sea que está vivo—
+            // pero no contesta ni un ping. Decirle al operador que cargue la
+            // clave correcta lo manda a buscar una que jamás habría servido.
+            if (!$this->alcanzable()) {
+                return [
+                    'ok'         => false,
+                    'sin_pagina' => true,
+                    'detalle'    => 'El equipo tomó su IP de gestión pero no publica su página: cierra todo lo que entra. '
+                        . 'No es la clave. La dirección del TR-069 le llega igual por DHCP; para que la tome hay que reiniciarlo.',
+                ];
+            }
+
             return [
                 'ok'      => false,
-                'detalle' => 'No se pudo entrar a la página del equipo con la cuenta de administrador de ONU de la empresa '
-                    . 'ni con la de fábrica. Cargá la correcta en Acceso remoto → Aprovisionamiento.',
+                'detalle' => 'Se llega a la página del equipo pero no se pudo entrar, ni con la cuenta de administrador de ONU '
+                    . 'de la empresa ni con la de fábrica. Cargá la correcta en Acceso remoto → Aprovisionamiento.',
             ];
         }
 

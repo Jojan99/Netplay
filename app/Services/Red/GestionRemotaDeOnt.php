@@ -1187,6 +1187,32 @@ class GestionRemotaDeOnt
 
                 $r['detalle'] .= ' · ' . $tr['detalle'];
 
+                // El equipo no publica su página: cierra todo lo que entra.
+                // No es la clave y no hay nada que cargar. Pero la dirección
+                // del TR-069 le llega por DHCP igual, y esos equipos la toman
+                // al reiniciarse. Se le reinicia en vez de dejarlo a medias y
+                // mandar a alguien a mirarlo.
+                if (!($tr['ok'] ?? false) && ($tr['sin_pagina'] ?? false)) {
+                    if (!$reiniciarSiHaceFalta) {
+                        $registrada?->update(['gestion_en' => null]);
+
+                        return ['ok' => false, 'detalle' => $r['detalle']
+                            . ' Reinicialo cuando no moleste al cliente y lo toma solo.'];
+                    }
+
+                    $avance('Reiniciando el equipo para que tome la dirección…');
+
+                    try {
+                        $re = app(OltTelnetDispatcher::class)->dispatch($oltId, 'reiniciarOnt', ['fsp' => $fsp, 'ont_id' => $ontId]);
+                        $tr['ok'] = (bool) ($re['ok'] ?? false);
+                        $r['detalle'] .= $tr['ok']
+                            ? ' Se lo reinició: toma la dirección en un par de minutos y aparece solo en Router TR-069.'
+                            : ' No se pudo reiniciar: ' . ($re['detalle'] ?? 'la OLT no aceptó la orden.');
+                    } catch (\Throwable $e) {
+                        $r['detalle'] .= ' No se pudo reiniciar: ' . \App\Services\Olt\EstadoDeUnaOnt::explicar($e->getMessage());
+                    }
+                }
+
                 // Sin el TR-069 encendido el equipo no se reporta: no cuenta
                 // como hecho, así «Poner al día» lo vuelve a intentar.
                 if (!($tr['ok'] ?? false)) {
