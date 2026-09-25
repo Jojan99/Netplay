@@ -49,6 +49,9 @@ class InstallationOrder extends Model
         'wifi_password',
         'olt_id',
         'vlan',
+        'line_profile_id',
+        'srv_profile_id',
+        'onu_type',
         'grupo_facturacion',
 
         // Lo que quedó instalado

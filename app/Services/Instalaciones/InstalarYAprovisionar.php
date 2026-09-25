@@ -81,6 +81,11 @@ class InstalarYAprovisionar
                     trim(($orden->client_name ?: 'CLIENTE'))
                 ),
                 'vlan'        => $orden->vlan,
+                // Los que se eligieron al tomar el pedido. Sin esto la OLT usa
+                // sus perfiles por defecto, que no siempre son los que van.
+                'line_profile_id' => $orden->line_profile_id,
+                'srv_profile_id'  => $orden->srv_profile_id,
+                'onu_type'        => $orden->onu_type,
             ]);
         } catch (\Throwable $e) {
             $anotar('Autorizar la ONT', false, $e->getMessage());

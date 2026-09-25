@@ -80,6 +80,11 @@ class InstallationOrderController extends Controller
             'router_id' => ['nullable', $this->deLaEmpresa('conection_routers')],
             'olt_id' => ['nullable', $this->deLaEmpresa('olt_admins')],
             'vlan' => 'nullable|integer|min:1|max:4094',
+            // Los perfiles con los que se autoriza la ONT: se eligen de los que
+            // la OLT tiene sincronizados, no se escriben a mano.
+            'line_profile_id' => 'nullable|integer|min:0',
+            'srv_profile_id' => 'nullable|integer|min:0',
+            'onu_type' => 'nullable|string|max:60',
             // La ñ y las tildes las rechaza el equipo, y el SSID y la clave se
             // mandan juntos: uno malo hace fallar los dos.
             'wifi_ssid' => 'nullable|string|max:32|regex:/^[A-Za-z0-9\-_. ]+$/',
@@ -153,6 +158,11 @@ class InstallationOrderController extends Controller
             'router_id' => ['nullable', $this->deLaEmpresa('conection_routers')],
             'olt_id' => ['nullable', $this->deLaEmpresa('olt_admins')],
             'vlan' => 'nullable|integer|min:1|max:4094',
+            // Los perfiles con los que se autoriza la ONT: se eligen de los que
+            // la OLT tiene sincronizados, no se escriben a mano.
+            'line_profile_id' => 'nullable|integer|min:0',
+            'srv_profile_id' => 'nullable|integer|min:0',
+            'onu_type' => 'nullable|string|max:60',
             // La ñ y las tildes las rechaza el equipo, y el SSID y la clave se
             // mandan juntos: uno malo hace fallar los dos.
             'wifi_ssid' => 'nullable|string|max:32|regex:/^[A-Za-z0-9\-_. ]+$/',
