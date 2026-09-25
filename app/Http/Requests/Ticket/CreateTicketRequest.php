@@ -31,15 +31,20 @@ class CreateTicketRequest extends FormRequest
             'id' => 'int',
             // Cliente y técnico: usuarios de la empresa de la sesión
             'user_id' => ['int', Rule::exists('users', 'id')->where('company_id', getSessionCompanyId())],
-            'address' => 'required|string',
+            // Dirección, cédula y teléfono son del cliente, no del formulario:
+            // si no llegan, el repositorio los saca de su ficha. Pedirlos
+            // obligatorios hacía que un cliente sin dirección cargada no
+            // pudiera tener ticket, y que el formulario de la ficha mostrara
+            // un campo que después se ignoraba.
+            'address' => 'nullable|string',
             'date' => 'required|string',
             'type_service' => 'required|int',
             'priority' => 'required|int',
             'status' => 'int',
             'tecnichal' => ['required', 'int', Rule::exists('users', 'id')->where('company_id', getSessionCompanyId())],
             'observation' => 'required|string',
-            'cedula' => 'required|string',
-            'phone' => 'required|string',
+            'cedula' => 'nullable|string',
+            'phone' => 'nullable|string',
             'technician_name' => 'string',
             'client_name' => 'string',
             'notify_group' => 'nullable|boolean',

@@ -44,19 +44,26 @@ class TicketRepository implements TicketRepositoryInterface
 
     public function createTicket(CreateTicketRequest $data): int
     {
-        // Cliente y técnico ya validados por empresa en CreateTicketRequest
+        // Dirección, cédula y teléfono salen de la ficha del cliente cuando no
+        // vienen: son datos suyos, no del formulario. Así ninguna pantalla
+        // tiene que pedirlos —el de la ficha era un campo que se ignoraba— y un
+        // cliente al que le falta la dirección igual puede tener ticket.
+        $ficha = $data->user_id
+            ? DB::table('user_data')->where('user_id', $data->user_id)->first(['address', 'dni', 'phone'])
+            : null;
+
         $ticket = Ticket::create([
             'company_id'      => getSessionCompanyId(),
             'user_id'         => $data->user_id,
-            'address'         => $data->address,
+            'address'         => trim((string) ($data->address ?: $ficha->address ?? '')) ?: 'Sin dirección',
             'date'            => $data->date,
             'service_id'      => $data->type_service,
             'priority_id'     => $data->priority,
             'status_id'       => 1,
             'technical_id'    => $data->tecnichal,
             'observation'     => $data->observation,
-            'cedula'          => $data->cedula,
-            'phone'           => $data->phone,
+            'cedula'          => trim((string) ($data->cedula ?: $ficha->dni ?? '')) ?: null,
+            'phone'           => trim((string) ($data->phone ?: $ficha->phone ?? '')) ?: null,
             'user_created_id' => $data->log_id,
             'reopened_count'  => 0,
         ]);
