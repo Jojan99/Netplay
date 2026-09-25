@@ -371,6 +371,8 @@ class OltAdminController extends Controller
             'fsp'          => 'required|string',
             'ont_id'       => 'required|integer',
             'user_data_id' => 'nullable|integer',
+            // Confirmación de que se le puede soltar el equipo que ya tenía.
+            'liberar_anterior' => 'nullable|boolean',
         ]);
 
         $r = $this->uc->assignClientToOnt(
@@ -378,6 +380,7 @@ class OltAdminController extends Controller
             $request->input('fsp'),
             (int) $request->input('ont_id'),
             $request->input('user_data_id') !== null ? (int) $request->input('user_data_id') : null,
+            $request->boolean('liberar_anterior'),
         );
         return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
     }

@@ -2037,7 +2037,20 @@ class OltAdminUseCase
      * Asignar (o desasignar) un cliente a una ONT registrada.
      * user_data_id = null → desasignar.
      */
-    public function assignClientToOnt(int $oltId, string $fsp, int $ontId, ?int $userDataId): array
+    /**
+     * Pone (o quita) el cliente de una ONT.
+     *
+     * Un cliente tiene UN equipo: `ontDelCliente()` y la ficha usan `first()`,
+     * así que si queda con dos, cuál se ve es cuestión de suerte. Ya pasó —hay
+     * un cliente con la ONT de otro encima de la suya—, y pasa justamente
+     * cuando se cambia un equipo de dueño sin soltar el anterior.
+     *
+     * Por eso, si el cliente ya tiene otra ONT, no se asigna a ciegas: se
+     * avisa cuál es y se espera que lo confirmen con $liberarAnterior.
+     *
+     * @param ?int $userDataId  users.id (la columna se llama user_data_id por historia)
+     */
+    public function assignClientToOnt(int $oltId, string $fsp, int $ontId, ?int $userDataId, bool $liberarAnterior = false): array
     {
         $ont = OltOnt::where('olt_id', $oltId)
                      ->where('fsp', $fsp)
@@ -2048,15 +2061,59 @@ class OltAdminUseCase
             return ['status' => 1, 'message' => 'ONT no encontrada en la base de datos.', 'data' => null];
         }
 
+        if (!$userDataId) {
+            $anterior = $ont->user_data_id;
+            $ont->update(['user_data_id' => null]);
+
+            return [
+                'status'  => 0,
+                'message' => 'La ONT quedó libre: ya se le puede asignar a otro cliente.',
+                'data'    => ['ont' => $ont->fresh(), 'cliente_anterior' => $anterior],
+            ];
+        }
+
         // El cliente también tiene que ser de la empresa (la OLT ya la valida la ruta).
-        // Ojo: pese al nombre, olt_onts.user_data_id guarda users.id.
-        if ($userDataId && !\App\Models\User::where('id', $userDataId)->where('company_id', getSessionCompanyId())->exists()) {
+        if (!\App\Models\User::where('id', $userDataId)->where('company_id', getSessionCompanyId())->exists()) {
             return ['status' => 1, 'message' => 'Cliente no encontrado.', 'data' => null];
         }
 
-        $ont->update(['user_data_id' => $userDataId]);
+        $otras = OltOnt::where('user_data_id', $userDataId)
+            ->where(fn ($q) => $q->where('olt_id', '!=', $oltId)->orWhere('fsp', '!=', $fsp)->orWhere('ont_id', '!=', $ontId))
+            ->with('olt:id,name')
+            ->get();
 
-        return ['status' => 0, 'message' => $userDataId ? 'Cliente asignado correctamente.' : 'Cliente desasignado.', 'data' => $ont->fresh()];
+        if ($otras->isNotEmpty() && !$liberarAnterior) {
+            $lista = $otras->map(fn ($o) => trim(($o->olt->name ?? 'OLT') . ' ' . $o->fsp . ':' . $o->ont_id))->implode(', ');
+
+            return [
+                'status'  => 1,
+                'message' => 'Ese cliente ya tiene otro equipo asignado (' . $lista . '). Un cliente sólo puede tener uno.',
+                'data'    => ['ya_tiene' => $otras->map(fn ($o) => [
+                    'olt'     => $o->olt->name ?? null,
+                    'fsp'     => $o->fsp,
+                    'ont_id'  => $o->ont_id,
+                    'serial'  => $o->serial,
+                ])->values()],
+            ];
+        }
+
+        $soltadas = 0;
+
+        DB::transaction(function () use ($otras, $liberarAnterior, $ont, $userDataId, &$soltadas) {
+            if ($liberarAnterior && $otras->isNotEmpty()) {
+                $soltadas = OltOnt::whereIn('id', $otras->pluck('id'))->update(['user_data_id' => null]);
+            }
+
+            $ont->update(['user_data_id' => $userDataId]);
+        });
+
+        return [
+            'status'  => 0,
+            'message' => $soltadas
+                ? 'Cliente asignado. Se soltó el equipo que tenía antes, que queda libre.'
+                : 'Cliente asignado correctamente.',
+            'data'    => ['ont' => $ont->fresh(), 'soltadas' => $soltadas],
+        ];
     }
 
     /**
