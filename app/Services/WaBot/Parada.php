@@ -13,6 +13,12 @@ class Parada
     private function __construct(
         /** El bloque que está esperando respuesta, o null si no espera nada. */
         public readonly ?string $bloque,
+        /**
+         * En qué flujo quedó. Puede no ser el que arrancó: un bloque «Ir a otro
+         * flujo» cambia de flujo a mitad de camino, y la sesión tiene que
+         * guardar el nuevo o la respuesta del cliente se buscaría en el viejo.
+         */
+        public readonly ?string $flujo,
         /** @var array<string,mixed> Las variables como quedaron. */
         public readonly array $datos,
         public readonly bool $termino,
@@ -22,20 +28,20 @@ class Parada
     }
 
     /** @param array<string,mixed> $datos */
-    public static function esperando(string $bloque, array $datos): self
+    public static function esperando(string $bloque, array $datos, ?string $flujo = null): self
     {
-        return new self($bloque, $datos, false);
+        return new self($bloque, $flujo, $datos, false);
     }
 
     /** @param array<string,mixed> $datos */
-    public static function terminada(array $datos): self
+    public static function terminada(array $datos, ?string $flujo = null): self
     {
-        return new self(null, $datos, true);
+        return new self(null, $flujo, $datos, true);
     }
 
     /** @param array<string,mixed> $datos */
-    public static function transferida(array $datos, string $area): self
+    public static function transferida(array $datos, string $area, ?string $flujo = null): self
     {
-        return new self(null, $datos, true, $area);
+        return new self(null, $flujo, $datos, true, $area);
     }
 }

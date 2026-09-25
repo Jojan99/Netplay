@@ -64,7 +64,7 @@ class MotorDeFlujos
         $flujo = $this->flujo($flujoId);
 
         if (!$flujo) {
-            return Parada::terminada($datos);
+            return Parada::terminada($datos, $flujoId);
         }
 
         return $this->correr($flujo, $this->primerBloque($flujo), $datos);
@@ -80,7 +80,7 @@ class MotorDeFlujos
         $flujo = $this->flujo($flujoId);
 
         if (!$flujo) {
-            return Parada::terminada($datos);
+            return Parada::terminada($datos, $flujoId);
         }
 
         $bloque = $this->bloque($flujo, $bloqueId);
@@ -94,7 +94,7 @@ class MotorDeFlujos
         $resuelto = $this->recibir($flujo, $bloque, $datos, $respuesta);
 
         if ($resuelto === null) {
-            return Parada::esperando((string) $bloque['id'], $datos);
+            return Parada::esperando((string) $bloque['id'], $datos, $flujoId);
         }
 
         [$siguiente, $datos] = $resuelto;
@@ -120,22 +120,43 @@ class MotorDeFlujos
                     'flujo'   => $flujo['id'] ?? null,
                 ]);
 
-                return Parada::terminada($datos);
+                return Parada::terminada($datos, (string) ($flujo['id'] ?? ''));
+            }
+
+            // Salto a otro flujo: es lo que permite armar el bot por piezas
+            // —un flujo para identificar al cliente, otro para cobrar— en vez
+            // de un solo dibujo gigante.
+            if ((string) ($bloque['type'] ?? '') === 'goto') {
+                $destino = $this->flujo((string) ($bloque['flow_id'] ?? ''));
+
+                if (!$destino || ($destino['id'] ?? null) === ($flujo['id'] ?? null)) {
+                    Log::info('[BotFlujos] «Ir a otro flujo» sin destino válido', ['flujo' => $bloque['flow_id'] ?? null]);
+
+                    return Parada::terminada($datos, (string) ($flujo['id'] ?? ''));
+                }
+
+                $flujo = $destino;
+                $bloque = $this->primerBloque($destino);
+
+                continue;
             }
 
             $paso = $this->ejecutar($flujo, $bloque, $datos);
             $datos = $paso->datos;
+            $idFlujo = (string) ($flujo['id'] ?? '');
 
             if ($paso->espera || $paso->termina || $paso->transferir) {
                 return $paso->espera
-                    ? Parada::esperando((string) $bloque['id'], $datos)
-                    : ($paso->transferir ? Parada::transferida($datos, $paso->transferir) : Parada::terminada($datos));
+                    ? Parada::esperando((string) $bloque['id'], $datos, $idFlujo)
+                    : ($paso->transferir
+                        ? Parada::transferida($datos, $paso->transferir, $idFlujo)
+                        : Parada::terminada($datos, $idFlujo));
             }
 
             $bloque = $this->bloque($flujo, $paso->siguiente);
         }
 
-        return Parada::terminada($datos);
+        return Parada::terminada($datos, (string) ($flujo['id'] ?? ''));
     }
 
     /**
@@ -282,7 +303,7 @@ class MotorDeFlujos
                 );
 
                 if ($coincide) {
-                    $datos[(string) ($bloque['variable_name'] ?: 'opcion')] = $opcion['title'] ?? $id;
+                    $datos[(string) ($bloque['variable_name'] ?? '' ?: 'opcion')] = $opcion['title'] ?? $id;
 
                     return [$opcion['next_step'] ?? ($bloque['next_step'] ?? null), $datos];
                 }
@@ -301,14 +322,14 @@ class MotorDeFlujos
 
             if ($problema !== null) {
                 $this->canal->texto($this->rellenar(
-                    (string) ($bloque['validation_message'] ?: $problema),
+                    (string) ($bloque['validation_message'] ?? '' ?: $problema),
                     $datos,
                 ));
 
                 return null;
             }
 
-            $datos[(string) ($bloque['variable_name'] ?: 'respuesta')] = $limpia;
+            $datos[(string) ($bloque['variable_name'] ?? '' ?: 'respuesta')] = $limpia;
 
             return [$bloque['next_step'] ?? null, $datos];
         }
@@ -403,7 +424,7 @@ class MotorDeFlujos
         }
 
         $this->canal->texto($this->rellenar(
-            (string) ($bloque['error_message'] ?: 'No pude consultar esa información ahora. Probá en un rato.'),
+            (string) ($bloque['error_message'] ?? '' ?: 'No pude consultar esa información ahora. Probá en un rato.'),
             $datos,
         ));
 
@@ -444,7 +465,7 @@ class MotorDeFlujos
             }
 
             $this->canal->texto($this->rellenar(
-                (string) ($bloque['error_message'] ?: 'No encontré ese dato en nuestros registros.'),
+                (string) ($bloque['error_message'] ?? '' ?: 'No encontré ese dato en nuestros registros.'),
                 $datos,
             ));
 

@@ -451,7 +451,10 @@ class WaBotService
     private function guardarParada(Company $company, string $phone, string $flow, \App\Services\WaBot\Parada $parada): void
     {
         if ($parada->bloque !== null) {
-            $this->createSession($company->id, $phone, $flow, $parada->bloque, $parada->datos);
+            // El flujo puede no ser el que arrancó: un bloque «Ir a otro flujo»
+            // cambia de flujo, y si se guardara el viejo la próxima respuesta
+            // del cliente se buscaría en el lugar equivocado.
+            $this->createSession($company->id, $phone, $parada->flujo ?: $flow, $parada->bloque, $parada->datos);
 
             return;
         }

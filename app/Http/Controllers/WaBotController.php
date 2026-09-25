@@ -132,6 +132,8 @@ class WaBotController extends Controller
             'data' => [
                 'mensajes'   => $canal->mensajes(),
                 'paso'       => $parada->bloque,
+                // Puede haber saltado a otro flujo por el camino.
+                'flujo'      => $parada->flujo ?: $flujo,
                 'datos'      => $parada->datos,
                 'terminado'  => $parada->termino,
                 'transferir' => $parada->transferirA,
