@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Consola;
 use App\Http\Controllers\Controller;
 use App\Models\PlataformaUsuario;
 use App\Services\Plataforma\AccesoConsola;
+use App\Services\Plataforma\SegundoFactor;
 use App\Services\Plataforma\Bitacora;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -28,6 +29,15 @@ class ConsolaAccesoController extends Controller
         ]);
 
         $r = AccesoConsola::entrar($datos['email'], $datos['password'], $request);
+
+        // La contraseña estuvo bien pero falta el código del authenticator.
+        if (!$r['token'] && !empty($r['pase'])) {
+            return response()->json([
+                'message' => 'Poné el código de tu authenticator.',
+                'error'   => 0,
+                'data'    => ['falta_codigo' => true, 'pase' => $r['pase']],
+            ]);
+        }
 
         if (!$r['token']) {
             Log::warning('[Consola] intento de ingreso fallido', [
@@ -53,6 +63,127 @@ class ConsolaAccesoController extends Controller
                 'plataforma' => config('plataforma.nombre', 'Netvula'),
             ],
         ]);
+    }
+
+    /**
+     * POST /api/consola/login/codigo  { pase, codigo }
+     *
+     * El segundo paso. Acepta tanto el código del authenticator como uno de
+     * recuperación: quien perdió el teléfono tiene que poder entrar, y por la
+     * misma puerta.
+     */
+    public function loginConCodigo(Request $request): JsonResponse
+    {
+        $datos = $request->validate([
+            'pase'   => 'required|string|max:80',
+            'codigo' => 'required|string|max:20',
+        ]);
+
+        $r = SegundoFactor::comprobar($datos['pase'], $datos['codigo'], $request);
+
+        if (!$r['usuario']) {
+            return response()->json(['message' => $r['motivo'], 'data' => null, 'error' => 1], JsonResponse::HTTP_OK);
+        }
+
+        $usuario = $r['usuario'];
+        $token = AccesoConsola::abrirSesion($usuario, $request);
+
+        Bitacora::anotarComo($usuario, 'consola.ingreso', null, [
+            'ip' => $request->ip(), 'con_recuperacion' => $r['era_recuperacion'],
+        ]);
+
+        $respuesta = response()->json([
+            'message' => 'Adentro.',
+            'error'   => 0,
+            'data'    => [
+                'token'      => $token,
+                'expira_en'  => (int) config('plataforma.consola_minutos', 480) * 60,
+                'usuario'    => ['id' => $usuario->id, 'nombre' => $usuario->nombre, 'email' => $usuario->email],
+                'plataforma' => config('plataforma.nombre', 'Netvula'),
+                // Para que la pantalla insista en generar códigos nuevos: sin
+                // ninguno, perder el teléfono es quedarse afuera.
+                'uso_recuperacion'   => $r['era_recuperacion'],
+                'recuperacion_queda' => SegundoFactor::recuperacionesQueQuedan($usuario),
+            ],
+        ]);
+
+        // El equipo queda recordado 30 días para no pedir el código cada vez.
+        if ($galleta = SegundoFactor::galleta()) {
+            $respuesta->withCookie($galleta);
+        }
+
+        return $respuesta;
+    }
+
+    /** GET /api/consola/2fa — cómo está hoy. */
+    public function verSegundoFactor(Request $request): JsonResponse
+    {
+        $u = $request->attributes->get('consola_usuario');
+
+        return response()->json(['message' => 'OK', 'error' => 0, 'data' => [
+            'activo'             => $u->tieneSegundoFactor(),
+            'activo_en'          => $u->totp_activo_en,
+            'recuperacion_queda' => SegundoFactor::recuperacionesQueQuedan($u),
+        ]]);
+    }
+
+    /**
+     * POST /api/consola/2fa/preparar — el secreto y el QR.
+     *
+     * No queda activo todavía: si se activara antes de confirmar y la app
+     * quedó mal configurada, el usuario se queda afuera de su propia consola.
+     */
+    public function prepararSegundoFactor(Request $request): JsonResponse
+    {
+        $u = $request->attributes->get('consola_usuario');
+
+        return response()->json([
+            'message' => 'Escaneá el código con tu authenticator.',
+            'error'   => 0,
+            'data'    => SegundoFactor::preparar($u),
+        ]);
+    }
+
+    /** POST /api/consola/2fa/confirmar  { codigo } */
+    public function confirmarSegundoFactor(Request $request): JsonResponse
+    {
+        $datos = $request->validate(['codigo' => 'required|string|max:10']);
+        $u = $request->attributes->get('consola_usuario');
+
+        $r = SegundoFactor::confirmar($u, $datos['codigo']);
+
+        if (!$r['ok']) {
+            return response()->json(['message' => $r['motivo'], 'data' => null, 'error' => 1], JsonResponse::HTTP_OK);
+        }
+
+        Bitacora::anotarComo($u, 'consola.2fa.activado', null, ['ip' => $request->ip()]);
+
+        return response()->json([
+            'message' => 'Listo. Guardá estos códigos: son la única forma de entrar si perdés el teléfono.',
+            'error'   => 0,
+            'data'    => ['codigos' => $r['codigos']],
+        ]);
+    }
+
+    /**
+     * POST /api/consola/2fa/quitar  { password }
+     *
+     * Pide la contraseña de nuevo a propósito: si alguien se encuentra una
+     * sesión abierta, no puede desarmar la protección sin saber la clave.
+     */
+    public function quitarSegundoFactor(Request $request): JsonResponse
+    {
+        $datos = $request->validate(['password' => 'required|string|max:200']);
+        $u = $request->attributes->get('consola_usuario');
+
+        if (!\Illuminate\Support\Facades\Hash::check($datos['password'], (string) $u->password)) {
+            return response()->json(['message' => 'Esa no es tu contraseña.', 'data' => null, 'error' => 1], JsonResponse::HTTP_OK);
+        }
+
+        SegundoFactor::quitar($u);
+        Bitacora::anotarComo($u, 'consola.2fa.desactivado', null, ['ip' => $request->ip()]);
+
+        return response()->json(['message' => 'Authenticator desactivado.', 'error' => 0, 'data' => null]);
     }
 
     /** GET /api/consola/yo */

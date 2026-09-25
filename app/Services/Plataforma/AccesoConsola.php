@@ -53,7 +53,10 @@ class AccesoConsola
      * no distingue "no existe" de "clave incorrecta": no hay razón para
      * ayudar a adivinar quién trabaja en Netvula.
      *
-     * @return array{token:?string, usuario:?PlataformaUsuario, motivo:?string}
+     * Con el authenticator activo devuelve `pase` en vez de `token`: falta el
+     * segundo paso.
+     *
+     * @return array{token:?string, usuario:?PlataformaUsuario, motivo:?string, pase?:string}
      */
     public static function entrar(string $email, string $clave, Request $request): array
     {
@@ -74,6 +77,18 @@ class AccesoConsola
 
         if (!$usuario->activo) {
             return ['token' => null, 'usuario' => null, 'motivo' => 'Esa cuenta está desactivada.'];
+        }
+
+        // Con authenticator, la contraseña ya no entrega la sesión: entrega un
+        // pase corto que sólo sirve para presentar el código. Así una
+        // contraseña robada no alcanza para entrar.
+        if (SegundoFactor::haceFalta($usuario, $request)) {
+            return [
+                'token'   => null,
+                'usuario' => $usuario,
+                'motivo'  => null,
+                'pase'    => SegundoFactor::abrirPase($usuario),
+            ];
         }
 
         return ['token' => self::abrirSesion($usuario, $request), 'usuario' => $usuario, 'motivo' => null];

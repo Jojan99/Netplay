@@ -37,6 +37,8 @@ Route::domain($host)->prefix('consola')->group(function () {
 
     // ── Ingreso (sin sesión) ────────────────────────────────────────────
     Route::post('login', [ConsolaAccesoController::class, 'login'])->middleware('throttle:login');
+    // El segundo paso: el código del authenticator (o uno de recuperación).
+    Route::post('login/codigo', [ConsolaAccesoController::class, 'loginConCodigo'])->middleware('throttle:login');
 
     // ── Todo lo demás, con sesión de consola ────────────────────────────
     Route::middleware('consola')->group(function () {
@@ -44,6 +46,12 @@ Route::domain($host)->prefix('consola')->group(function () {
         Route::get('yo',      [ConsolaAccesoController::class, 'yo']);
         Route::post('logout', [ConsolaAccesoController::class, 'logout']);
         Route::put('clave',   [ConsolaAccesoController::class, 'cambiarClave']);
+
+        // ── Authenticator ───────────────────────────────────────────────
+        Route::get('2fa',            [ConsolaAccesoController::class, 'verSegundoFactor']);
+        Route::post('2fa/preparar',  [ConsolaAccesoController::class, 'prepararSegundoFactor']);
+        Route::post('2fa/confirmar', [ConsolaAccesoController::class, 'confirmarSegundoFactor']);
+        Route::post('2fa/quitar',    [ConsolaAccesoController::class, 'quitarSegundoFactor']);
 
         // ── Tablero y empresas ──────────────────────────────────────────
         Route::get('tablero',  [ConsolaController::class, 'tablero']);
