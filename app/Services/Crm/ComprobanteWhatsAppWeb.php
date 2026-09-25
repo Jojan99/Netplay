@@ -119,18 +119,38 @@ class ComprobanteWhatsAppWeb
             ],
         ]);
 
+        // Si el comprobante no tiene nada raro, se aplica solo.
+        //
+        // Esto ya existía pero sólo en el camino del bot de Meta, y todo el
+        // tráfico real entra por acá: por eso los pagos quedaban esperando
+        // aprobación a mano aunque estuvieran perfectos.
+        $aplicado = false;
+
+        try {
+            $aplicado = app(\App\Http\Controllers\PaymentProofController::class)
+                ->aplicarSiEsConfiable($proof)['aplicado'] ?? false;
+        } catch (\Throwable $e) {
+            // Que no se pueda aplicar solo no puede perder el comprobante:
+            // queda registrado y alguien lo revisa.
+            Log::warning('[Comprobante WhatsApp Web] No se pudo aplicar solo', [
+                'proof_id' => $proof->id, 'error' => $e->getMessage(),
+            ]);
+        }
+
         Log::info('[Comprobante WhatsApp Web] Registrado', [
             'proof_id'   => $proof->id,
             'company_id' => $companyId,
             'user_id'    => $cliente->user_id,
             'referencia' => $proof->reference_number,
+            'aplicado_solo' => $aplicado,
         ]);
 
-        self::avisar($companyId, trim($cliente->names . ' ' . $cliente->lastname), $proof, 'WhatsApp Web');
+        self::avisar($companyId, trim($cliente->names . ' ' . $cliente->lastname), $proof->fresh(), 'WhatsApp Web');
 
         return [
             'ok'       => true,
             'proof_id' => (int) $proof->id,
+            'aplicado' => $aplicado,
             'cliente'  => trim($cliente->names . ' ' . $cliente->lastname),
         ];
     }
