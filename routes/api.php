@@ -5,6 +5,9 @@ use Illuminate\Support\Facades\Route;
 
 // Comprobantes de pago: solo administración y contabilidad.
 Route::middleware(['api', 'role:admin,contador'])->group(function () {
+    // Va antes de '/{id}': si no, «automatico» se lee como un id.
+    Route::match(['get', 'post'], '/payment-proofs/automatico', [\App\Http\Controllers\PaymentProofController::class, 'automatico']);
+    Route::post('/payment-proofs/aplicar-pendientes', [\App\Http\Controllers\PaymentProofController::class, 'aplicarPendientes']);
     Route::get('/payment-proofs', [\App\Http\Controllers\PaymentProofController::class, 'index']);
     Route::get('/payment-proofs/{id}', [\App\Http\Controllers\PaymentProofController::class, 'show']);
     Route::post('/payment-proofs/{id}/suspicious', [\App\Http\Controllers\PaymentProofController::class, 'markSuspicious']);

@@ -35,6 +35,87 @@ class PaymentProofController extends Controller
         return $proof;
     }
 
+    /**
+     * GET  /api/payment-proofs/automatico   — cómo está
+     * POST /api/payment-proofs/automatico   { activo }
+     *
+     * Si los comprobantes que pasan la revisión se aplican solos a la factura.
+     * Es una decisión de cada ISP: hay quien prefiere mirar cada pago antes de
+     * tocar una factura, y estaba escrita en el código.
+     */
+    public function automatico(Request $request): JsonResponse
+    {
+        $empresa = \App\Models\Company::find(getSessionCompanyId());
+
+        if (!$empresa) {
+            return response()->json(['status' => 'error', 'message' => 'No se encontró la empresa.'], 404);
+        }
+
+        if ($request->isMethod('post')) {
+            $request->validate(['activo' => 'required|boolean']);
+
+            $empresa->aplicar_pagos_solo = $request->boolean('activo');
+            $empresa->save();
+
+            \Log::info('[Comprobantes] Aplicación automática ' . ($empresa->aplicar_pagos_solo ? 'encendida' : 'apagada'), [
+                'company_id' => $empresa->id, 'user_id' => getSessionUserId(),
+            ]);
+        }
+
+        // Cuántos esperando se aplicarían ahora mismo: es lo que se quiere
+        // saber antes de encenderlo.
+        $listos = 0;
+        $monto = 0.0;
+
+        foreach (PaymentProof::where('company_id', $empresa->id)->where('status', 'pending')->get() as $p) {
+            $r = \App\Services\Comprobantes\ComprobanteConfiable::revisar($p);
+
+            if ($r['puede']) {
+                $listos++;
+                $monto += (float) $r['monto'];
+            }
+        }
+
+        return response()->json([
+            'status' => 'ok',
+            'data'   => [
+                'activo'         => (bool) $empresa->aplicar_pagos_solo,
+                'listos'         => $listos,
+                'monto_listos'   => round($monto, 2),
+            ],
+        ]);
+    }
+
+    /**
+     * POST /api/payment-proofs/aplicar-pendientes
+     *
+     * Aplica de una los que ya estaban esperando y pasan la revisión. Se pide
+     * expresamente: encender el automático no toca lo que quedó atrás, porque
+     * mover plata vieja sin avisar no es algo que deba pasar solo.
+     */
+    public function aplicarPendientes(): JsonResponse
+    {
+        $aplicados = 0;
+        $monto = 0.0;
+
+        foreach (PaymentProof::where('company_id', getSessionCompanyId())->where('status', 'pending')->get() as $p) {
+            $r = $this->aplicarSiEsConfiable($p);
+
+            if ($r['aplicado'] ?? false) {
+                $aplicados++;
+                $monto += (float) ($p->fresh()->detected_amount ?? 0);
+            }
+        }
+
+        return response()->json([
+            'status'  => 'ok',
+            'message' => $aplicados
+                ? "Se aplicaron {$aplicados} comprobante(s) por $ " . number_format($monto, 0, ',', '.')
+                : 'No había ninguno listo para aplicar.',
+            'data'    => ['aplicados' => $aplicados, 'monto' => $monto],
+        ]);
+    }
+
     public function index(Request $request): JsonResponse
     {
         $query = $this->scoped()->with(['user', 'invoice', 'audits'])->orderByDesc('created_at');
@@ -388,6 +469,13 @@ class PaymentProofController extends Controller
     {
         if ($proof->status !== 'pending') {
             return ['aplicado' => false, 'motivos' => ['ya estaba revisado']];
+        }
+
+        // La empresa decide si quiere que se apliquen solos. Apagado, el
+        // comprobante queda esperando que alguien lo mire, que es lo que
+        // pasaba antes de que esto existiera.
+        if (!\App\Models\Company::where('id', $proof->company_id)->value('aplicar_pagos_solo')) {
+            return ['aplicado' => false, 'motivos' => ['la aplicación automática está apagada']];
         }
 
         $r = \App\Services\Comprobantes\ComprobanteConfiable::revisar($proof);

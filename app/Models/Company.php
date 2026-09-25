@@ -51,6 +51,8 @@ class Company extends Model
         'pg_gateway',
         'pg_sandbox',
         'pg_active',
+        // Si los comprobantes limpios se aplican solos a la factura.
+        'aplicar_pagos_solo',
         'pg_public_key',
         'pg_private_key',
         'pg_events_secret',
