@@ -40,11 +40,23 @@ class AutoBillingCommand extends Command
         foreach ($schedules as $schedule) {
             $this->info("Ejecutando: Empresa {$schedule->company_id} | Grupo {$schedule->grupo} | Día factura: {$schedule->billing_day}");
 
+            // El canal sale de lo que la empresa tiene encendido. Antes iba
+            // siempre 'whatsapp' —el valor por omisión del comando— así que
+            // ninguna factura salió nunca por correo desde el proceso
+            // automático, aunque la empresa tuviera el correo activado.
+            $canal = $this->canalDe($schedule->company);
+
+            if (!$canal) {
+                $this->warn("Empresa {$schedule->company_id}: sin WhatsApp ni correo activados, no se envía nada.");
+                Log::warning('[AUTO_BILLING] Sin canal de envío', ['company_id' => $schedule->company_id]);
+            }
+
             try {
                 Artisan::call('post:create', [
                     'company_id'  => $schedule->company_id,
                     'periodo'     => $schedule->grupo,
                     'billing_day' => $schedule->billing_day,
+                    '--channel'   => $canal ?: 'whatsapp',
                 ]);
 
                 Log::info('[AUTO_BILLING] Proceso ejecutado', [
@@ -52,6 +64,7 @@ class AutoBillingCommand extends Command
                     'grupo'       => $schedule->grupo,
                     'billing_day' => $schedule->billing_day,
                     'hora'        => $hour,
+                    'canal'       => $canal,
                 ]);
 
             } catch (\Throwable $e) {
@@ -66,5 +79,31 @@ class AutoBillingCommand extends Command
 
         $this->info('Proceso automático finalizado.');
         return Command::SUCCESS;
+    }
+
+    /**
+     * Por dónde manda las facturas esta empresa.
+     *
+     * Lo decide lo que tiene encendido, no un valor fijo del comando. Si el
+     * correo está activado pero la empresa no tiene su cuenta propia de envío,
+     * igual se intenta: el servicio lo anota como «correo no configurado», que
+     * es una queja visible, en vez de no intentarlo nunca y que nadie se
+     * entere.
+     */
+    private function canalDe(?\App\Models\Company $empresa): ?string
+    {
+        if (!$empresa) {
+            return null;
+        }
+
+        $wa = (bool) $empresa->whatsapp_enabled;
+        $correo = (bool) $empresa->email_enabled;
+
+        return match (true) {
+            $wa && $correo => 'both',
+            $wa            => 'whatsapp',
+            $correo        => 'email',
+            default        => null,
+        };
     }
 }

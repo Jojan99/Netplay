@@ -157,7 +157,9 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
 
             $fecha = date('Y-m-d', strtotime('+1 days'));
             $waService = $waEnabled ? new WhatsAppService($companyId, true) : null;
-            $humanizer = new WhatsAppMessageHumanizerService();
+            // Con la empresa: el texto lleva su nombre y su tono. Sin pasarla
+            // salía el de fábrica.
+            $humanizer = new WhatsAppMessageHumanizerService($company);
             $emailService = new InvoiceEmailService($company);
 
             $waMessages = [];
@@ -172,8 +174,20 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
                         $phone = trim($phone);
                         if (empty($phone)) continue;
 
+                        // Van las dos formas porque hay dos caminos de envío y
+                        // el mensaje se arma antes de saber cuál se usa: Meta
+                        // manda una plantilla con parámetros, y la línea propia
+                        // (Baileys) un texto suelto.
+                        //
+                        // Desde el 2026-09-02 se armaba sólo la de Meta y el
+                        // servicio de la línea propia rechazaba todo por venir
+                        // sin 'message': Waonet quedó con 134 de 134 facturas
+                        // sin enviar y en el registro figuraba «batch
+                        // encolado», sin un solo error.
                         $waMessages[] = [
-                            'number' => $phone,
+                            'number'     => $phone,
+                            'message'    => $this->invoiceWhatsappText($user, $humanizer, $fecha),
+                            'type'       => 'text',
                             'parameters' => $this->invoiceTemplateParameters($user, $company, $fecha),
                             // Los botones de URL con variable llevan el enlace
                             // firmado de esta factura; sin esto abrirían la
@@ -217,10 +231,17 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
                 $waResult = $company?->wa_provider === 'meta'
                     ? $this->sendMetaInvoiceTemplateBatch($waMessages, $companyId)
                     : $waService->sendBulk($waMessages);
-                Log::info('[WA_BILLING] Batch encolado en whatsapp-service', [
+                $encolados = (int) ($waResult['queued'] ?? 0);
+                $rechazados = (int) ($waResult['invalid'] ?? 0);
+
+                // Que el servicio rechace mensajes no es información: es que
+                // las facturas no llegaron. Antes salía como INFO y el proceso
+                // de Waonet se dio por bueno con 134 de 134 sin enviar.
+                Log::log($rechazados > 0 ? 'error' : 'info', '[WA_BILLING] Batch entregado al servicio de WhatsApp', [
                     'company_id' => $companyId,
-                    'queued' => $waResult['queued'] ?? 0,
-                    'invalid' => $waResult['invalid'] ?? 0,
+                    'queued'     => $encolados,
+                    'invalid'    => $rechazados,
+                    'total'      => count($waMessages),
                 ]);
                 $this->writeBillingLog($companyId, $Periodo, $waMessages, $waResult, null, 'whatsapp');
             }
@@ -461,6 +482,27 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
         $pdf->render();
 
         return $pdf->output();
+    }
+
+    /**
+     * El texto de la factura para una línea propia (Baileys).
+     *
+     * Usa el mismo total que la plantilla de Meta —precio menos descuento—
+     * para que al cliente le llegue lo mismo por cualquiera de los dos
+     * caminos.
+     */
+    private function invoiceWhatsappText(array $user, WhatsAppMessageHumanizerService $humanizer, string $dueDate): string
+    {
+        $total = max(0, (float) ($user['price_total'] ?? $user['monthly_price'] ?? 0) - (float) ($user['price_discount'] ?? 0));
+
+        return $humanizer->generateInvoiceMessage([
+            'names'              => $user['names'] ?? '',
+            'lastname'           => $user['lastname'] ?? '',
+            'number_bill'        => $user['number_facture'] ?? '',
+            'monthly_price'      => '$' . number_format($total, 0, ',', '.') . ' COP',
+            'date_finish_bill'   => $dueDate,
+            'billing_electronic' => $user['billing_electronic'] ?? 0,
+        ]);
     }
 
     private function invoiceTemplateParameters(array $user, Company $company, string $dueDate): array
