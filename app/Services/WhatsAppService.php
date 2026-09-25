@@ -189,6 +189,17 @@ class WhatsAppService
         return $this->delegate(__FUNCTION__, func_get_args());
     }
 
+    /**
+     * Calla al bot de esa línea con ese número (sólo la línea propia).
+     *
+     * El bot de Baileys corre en el servicio de Node y lee su propia lista de
+     * pausas: anotarla sólo en nuestra base no lo detiene.
+     */
+    public function setBotPaused(string $phone, bool $paused): array
+    {
+        return $this->delegate(__FUNCTION__, func_get_args());
+    }
+
     // ── HELPER ESTÁTICO ──────────────────────────────
     /**
      * Verifica si un usuario tiene WhatsApp habilitado (campo user_data.whatsapp_enabled).

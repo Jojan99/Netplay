@@ -639,7 +639,7 @@ public function execute(array $payload): array
     // corresponde saludar, ni avisar que está fuera de horario, ni asignarla a
     // otro, ni dejar que el bot le hable encima al cliente.
     if ($deAgente) {
-        $this->calmarAlBot((int) $companyId, (string) $phone, (string) ($provider ?? 'netplay'));
+        $this->calmarAlBot((int) $companyId, (string) $phone, (string) ($provider ?? 'netplay'), $lineaId, $instanceId ?? null);
 
         DB::table('crm_conversations')->where('id', $conversationId)
             ->where('status', 'new')
@@ -732,7 +732,7 @@ public function execute(array $payload): array
  * respondiendo por su cuenta: el cliente recibiría dos conversaciones a la vez.
  * Es la misma pausa que usa «pasar a un agente».
  */
-private function calmarAlBot(int $companyId, string $phone, string $provider): void
+private function calmarAlBot(int $companyId, string $phone, string $provider, ?int $lineaId = null, ?string $instanceId = null): void
 {
     try {
         DB::table('wa_bot_pauses')->updateOrInsert(
@@ -741,6 +741,25 @@ private function calmarAlBot(int $companyId, string $phone, string $provider): v
         );
     } catch (\Throwable $e) {
         Log::warning('[CRM] No se pudo pausar el bot', ['phone' => $phone, 'error' => $e->getMessage()]);
+    }
+
+    // Anotarlo en la base no alcanza: el bot de la línea propia corre en el
+    // servicio de Node y lee SU propia lista. Sin este aviso la pausa existía
+    // en la plataforma y el bot seguía contestando igual, que es como si no
+    // hubiera pausa.
+    if ($provider !== 'netplay') {
+        return;
+    }
+
+    try {
+        (new WhatsAppService(
+            $companyId,
+            false,
+            'netplay',
+            $instanceId ?: Lineas::instanciaDeConversacion($lineaId, $companyId),
+        ))->setBotPaused($phone, true);
+    } catch (\Throwable $e) {
+        Log::warning('[CRM] No se pudo avisarle al servicio de WhatsApp', ['phone' => $phone, 'error' => $e->getMessage()]);
     }
 }
 
