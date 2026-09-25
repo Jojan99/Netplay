@@ -88,13 +88,25 @@ class CodigoDeUnSoloUso
      */
     public static function direccion(string $secreto, string $cuenta, string $emisor): string
     {
-        return 'otpauth://totp/' . rawurlencode($emisor . ':' . $cuenta) . '?' . http_build_query([
+        // Los dos puntos que separan emisor y cuenta van LITERALES, y la
+        // arroba también. Escapando la etiqueta entera —«Netvula%3Ano-reply%40…»—
+        // varias apps contestan «no se puede escanear este código QR»: el
+        // separador deja de reconocerse.
+        $etiqueta = self::parte($emisor) . ':' . self::parte($cuenta);
+
+        return 'otpauth://totp/' . $etiqueta . '?' . http_build_query([
             'secret' => $secreto,
             'issuer' => $emisor,
             'algorithm' => 'SHA1',
             'digits' => self::DIGITOS,
             'period' => self::VENTANA,
         ]);
+    }
+
+    /** Un trozo de la etiqueta: escapado, pero dejando la arroba a la vista. */
+    private static function parte(string $texto): string
+    {
+        return str_replace(['%40', '%20'], ['@', '%20'], rawurlencode(trim($texto)));
     }
 
     /**
