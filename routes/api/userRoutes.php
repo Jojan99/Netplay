@@ -23,6 +23,8 @@ Route::prefix('user')->group(function () {
         Route::get('{id}/en-router', [UserController::class, 'enRouter'])->whereNumber('id');
         // Facturación electrónica del cliente (cobra por la pasarela).
         Route::post('{id}/facturacion-electronica', [UserController::class, 'facturacionElectronica'])->whereNumber('id');
+        // Trato especial: el descuento que se le aplica todos los meses.
+        Route::post('{id}/descuento', [UserController::class, 'guardarDescuento'])->whereNumber('id');
     });
 
     // Admin y contador: consultar clientes y generar PDF

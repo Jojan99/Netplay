@@ -286,6 +286,11 @@ class UserRepository implements UserRepositoryInterface
                 'user_data.control_velocidad',
                 'user_data.pppoe_user',
                 'user_data.pppoe_profile',
+                // El trato especial: la ficha lo muestra y lo deja cambiar.
+                'user_data.descuento_tipo',
+                'user_data.descuento_valor',
+                'user_data.descuento_motivo',
+                'user_data.descuento_hasta',
                 DB::raw("COALESCE(tabla_ips.ip, '') AS ip_address"),
                 DB::raw("COALESCE(tabla_ips.ip, '') AS ip")
             )

@@ -43,6 +43,11 @@ class UserData extends Authenticatable
         'pppoe_user',
         'pppoe_password',
         'pppoe_profile',
+        // Trato especial: el descuento de cada mes.
+        'descuento_tipo',
+        'descuento_valor',
+        'descuento_motivo',
+        'descuento_hasta',
     ];
 
      /**
@@ -57,5 +62,7 @@ class UserData extends Authenticatable
         // Es la credencial con la que el cliente entra a la red: no queda en
         // claro en la base.
         'pppoe_password' => 'encrypted',
+        'descuento_valor' => 'float',
+        'descuento_hasta' => 'date:Y-m-d',
     ];
 }

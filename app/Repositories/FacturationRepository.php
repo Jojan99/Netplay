@@ -31,7 +31,9 @@ class FacturationRepository implements FacturationRepositoryInterface
     {
         $companyId = $companyId ?? getSessionCompanyId();
         return CabFacturation::select('internet_plans.monthly_price','cab_facturations.id',
-            'cab_facturations.user_id','cab_facturations.date_init_facturation','cab_facturations.created_at')
+            'cab_facturations.user_id','cab_facturations.date_init_facturation','cab_facturations.created_at',
+            // El trato especial del cliente: lo aplica createProcesoDetFacturation.
+            'user_data.descuento_tipo','user_data.descuento_valor','user_data.descuento_motivo','user_data.descuento_hasta')
             ->join('user_data', 'user_data.user_id', '=', 'cab_facturations.user_id')
             ->join('users', 'users.id', '=', 'user_data.user_id')
             ->join('internet_plans', 'internet_plans.id', '=', 'user_data.internet_plans_id')
@@ -50,7 +52,8 @@ class FacturationRepository implements FacturationRepositoryInterface
     {
         $companyId = getSessionCompanyId();
         return CabFacturation::select('internet_plans.monthly_price','cab_facturations.id',
-            'cab_facturations.user_id','cab_facturations.date_init_facturation','cab_facturations.created_at')
+            'cab_facturations.user_id','cab_facturations.date_init_facturation','cab_facturations.created_at',
+            'user_data.descuento_tipo','user_data.descuento_valor','user_data.descuento_motivo','user_data.descuento_hasta')
             ->join('user_data', 'user_data.user_id', '=', 'cab_facturations.user_id')
             ->join('users', 'users.id', '=', 'user_data.user_id')
             ->join('internet_plans', 'internet_plans.id', '=', 'user_data.internet_plans_id')
@@ -220,6 +223,9 @@ class FacturationRepository implements FacturationRepositoryInterface
                 'paid'                    => 0,
                 'create_facture_manual'   => $data['create_facture_manual'],
                 'porcentage_discount'     => $data['porcentage_discount'],
+                // Por qué se le descontó: dentro de un año nadie se acuerda, y
+                // es lo primero que se pregunta al revisar una factura vieja.
+                'observacion'             => $data['observacion'] ?? null,
             ]);
         });
     }

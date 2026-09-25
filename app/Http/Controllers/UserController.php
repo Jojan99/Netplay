@@ -53,6 +53,55 @@ class UserController extends Controller
             ['billing_electronic' => (int) $cab->billing_electronic], 0, JsonResponse::HTTP_OK);
     }
 
+    /**
+     * El trato especial del cliente: el descuento que se le aplica en cada
+     * factura, sin que nadie tenga que acordarse todos los meses.
+     *
+     * Tocar plata pide su propia ruta: si viajara dentro del formulario
+     * general de la ficha se guardaría sin que nadie lo revise, y un cero de
+     * más en el porcentaje sale caro.
+     */
+    public function guardarDescuento(int $id, Request $request): object
+    {
+        $request->validate([
+            'descuento_tipo'   => 'nullable|in:porcentaje,valor',
+            'descuento_valor'  => 'nullable|numeric|min:0|max:99999999',
+            'descuento_motivo' => 'nullable|string|max:160',
+            'descuento_hasta'  => 'nullable|date',
+        ]);
+
+        // UserData no tiene relación con users; la empresa se comprueba contra
+        // la tabla, que es lo que separa a un cliente de otra empresa.
+        $ficha = \App\Models\UserData::where('user_id', $id)
+            ->whereIn('user_id', fn ($q) => $q->select('id')->from('users')->where('company_id', getSessionCompanyId()))
+            ->first();
+
+        if (!$ficha) {
+            return standardApiReponse('Ese cliente no existe en tu empresa.', null, 1, JsonResponse::HTTP_OK);
+        }
+
+        $tipo = $request->input('descuento_tipo') ?: null;
+        $valor = (float) $request->input('descuento_valor', 0);
+        $hasta = $request->input('descuento_hasta') ?: null;
+
+        if ($problema = \App\Services\Facturacion\DescuentoDelCliente::problema($tipo, $valor, $hasta)) {
+            return standardApiReponse($problema, null, 1, JsonResponse::HTTP_OK);
+        }
+
+        $ficha->descuento_tipo   = $tipo;
+        $ficha->descuento_valor  = $tipo ? $valor : 0;
+        $ficha->descuento_motivo = $tipo ? ($request->input('descuento_motivo') ?: null) : null;
+        $ficha->descuento_hasta  = $tipo ? $hasta : null;
+        $ficha->save();
+
+        return standardApiReponse(
+            $tipo ? 'Descuento guardado: se aplica desde la próxima factura.' : 'Descuento quitado.',
+            $ficha->only(['descuento_tipo', 'descuento_valor', 'descuento_motivo', 'descuento_hasta']),
+            0,
+            JsonResponse::HTTP_OK,
+        );
+    }
+
     /** Clientes eliminados de la empresa, para poder reinstalarlos. */
     public function eliminados(Request $request, \App\Services\Clientes\ClientesEliminados $eliminados): object
     {

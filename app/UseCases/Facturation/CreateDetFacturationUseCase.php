@@ -10,6 +10,7 @@ use App\Repositories\Interfaces\GeneratePdfRepositoryInterface;
 use App\UseCases\Facturation\Interfaces\CreateDetFacturationUseCaseInterface;
 use App\UseCases\GeneratePdf\Interfaces\GeneratePdfUseCaseInterface;
 use Illuminate\Database\QueryException;
+use App\Services\Facturacion\DescuentoDelCliente;
 use Carbon\Carbon;
 use DateTime;
 
@@ -67,17 +68,23 @@ class CreateDetFacturationUseCase implements CreateDetFacturationUseCaseInterfac
                 // error_log(json_decode($data1));
                 foreach ($data1 as $value) {
 
+                    $trato = DescuentoDelCliente::paraFactura($value, (float) $data['priceTotal']);
+
                     $data['cab_id'] = $value['id'];
                     $data['date_facturation'] = $data_fecha;
                     $data['date_create_facturation'] = $data_fecha;
                     $data['price_total'] = $data['priceTotal'];
                     $data['total'] = 1;
-                    $data['porcentage_discount'] = 0;
+                    $data['porcentage_discount'] = $trato['porcentaje'];
                     $data['days_facture'] = 0;
-                    $data['discount'] = 0;
-                    $data['price_discount'] = 0;
+                    $data['discount'] = $trato['monto'] > 0 ? 1 : 0;
+                    $data['price_discount'] = $trato['monto'];
                     $data['paid'] = 0;
                     $data['create_facture_manual'] = 1;
+
+                    if ($trato['monto'] > 0) {
+                        $data['observacion'] = trim('Descuento fijo del cliente' . ($trato['motivo'] ? ': ' . $trato['motivo'] : ''));
+                    }
 
                     $this->facturationRepository->createDetFacturation($data);
                 }
@@ -165,17 +172,26 @@ class CreateDetFacturationUseCase implements CreateDetFacturationUseCaseInterfac
                     $precioFinal = $value['monthly_price'];
                 }
 
+                // El trato especial del cliente, si tiene uno vigente. Antes esto
+                // iba en cero siempre y el descuento había que ponerlo a mano
+                // factura por factura, cada mes.
+                $trato = DescuentoDelCliente::paraFactura($value, (float) $precioFinal);
+
                 $data['cab_id']                  = $value['id'];
                 $data['date_facturation']         = $data_fecha;
                 $data['date_create_facturation']  = $data_fecha;
                 $data['price_total']              = $precioFinal;
                 $data['total']                    = 1;
-                $data['porcentage_discount']      = 0;
+                $data['porcentage_discount']      = $trato['porcentaje'];
                 $data['days_facture']             = ($diasDesdeCreacion < 20) ? $diasDesdeCreacion : 30;
-                $data['discount']                 = 0;
-                $data['price_discount']           = 0;
+                $data['discount']                 = $trato['monto'] > 0 ? 1 : 0;
+                $data['price_discount']           = $trato['monto'];
                 $data['paid']                     = 0;
                 $data['create_facture_manual']    = 0;
+
+                if ($trato['monto'] > 0) {
+                    $data['observacion'] = trim('Descuento fijo del cliente' . ($trato['motivo'] ? ': ' . $trato['motivo'] : ''));
+                }
 
                 // Idempotencia: no crear det si ya existe uno para este cab en el mismo mes/año
                 [$yyyy, $mm] = explode('-', substr($data_fecha, 0, 7));
