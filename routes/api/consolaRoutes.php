@@ -39,6 +39,9 @@ Route::domain($host)->prefix('consola')->group(function () {
     Route::post('login', [ConsolaAccesoController::class, 'login'])->middleware('throttle:login');
     // El segundo paso: el código del authenticator (o uno de recuperación).
     Route::post('login/codigo', [ConsolaAccesoController::class, 'loginConCodigo'])->middleware('throttle:login');
+    // Passkey: entra sin contraseña ni código, con la huella del dispositivo.
+    Route::post('login/passkey/opciones', [ConsolaAccesoController::class, 'opcionesDePasskey'])->middleware('throttle:login');
+    Route::post('login/passkey',          [ConsolaAccesoController::class, 'loginConPasskey'])->middleware('throttle:login');
 
     // ── Todo lo demás, con sesión de consola ────────────────────────────
     Route::middleware('consola')->group(function () {
@@ -52,6 +55,12 @@ Route::domain($host)->prefix('consola')->group(function () {
         Route::post('2fa/preparar',  [ConsolaAccesoController::class, 'prepararSegundoFactor']);
         Route::post('2fa/confirmar', [ConsolaAccesoController::class, 'confirmarSegundoFactor']);
         Route::post('2fa/quitar',    [ConsolaAccesoController::class, 'quitarSegundoFactor']);
+
+        // ── Passkeys ────────────────────────────────────────────────────
+        Route::get('passkeys',           [ConsolaAccesoController::class, 'verPasskeys']);
+        Route::post('passkeys/opciones', [ConsolaAccesoController::class, 'opcionesDeAltaDePasskey']);
+        Route::post('passkeys',          [ConsolaAccesoController::class, 'guardarPasskey']);
+        Route::delete('passkeys/{id}',   [ConsolaAccesoController::class, 'borrarPasskey'])->whereNumber('id');
 
         // ── Tablero y empresas ──────────────────────────────────────────
         Route::get('tablero',  [ConsolaController::class, 'tablero']);

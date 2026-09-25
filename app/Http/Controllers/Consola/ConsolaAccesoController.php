@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Consola;
 use App\Http\Controllers\Controller;
 use App\Models\PlataformaUsuario;
 use App\Services\Plataforma\AccesoConsola;
+use App\Services\Plataforma\Passkeys;
 use App\Services\Plataforma\SegundoFactor;
 use App\Services\Plataforma\Bitacora;
 use Illuminate\Http\JsonResponse;
@@ -113,6 +114,97 @@ class ConsolaAccesoController extends Controller
         }
 
         return $respuesta;
+    }
+
+    // ── Passkeys ────────────────────────────────────────────────────────
+
+    /** POST /api/consola/login/passkey/opciones — el desafío, sin pedir correo. */
+    public function opcionesDePasskey(): JsonResponse
+    {
+        return response()->json(['message' => 'OK', 'error' => 0, 'data' => Passkeys::opcionesParaEntrar()]);
+    }
+
+    /** POST /api/consola/login/passkey  { pase, respuesta } */
+    public function loginConPasskey(Request $request): JsonResponse
+    {
+        $datos = $request->validate([
+            'pase'      => 'required|string|max:80',
+            'respuesta' => 'required|string|max:20000',
+        ]);
+
+        $r = Passkeys::entrar($datos['pase'], $datos['respuesta'], $request);
+
+        if (!$r['usuario']) {
+            Log::warning('[Consola] passkey rechazada', ['ip' => $request->ip()]);
+
+            return response()->json(['message' => $r['motivo'], 'data' => null, 'error' => 1], JsonResponse::HTTP_OK);
+        }
+
+        $usuario = $r['usuario'];
+        $token = AccesoConsola::abrirSesion($usuario, $request);
+
+        Bitacora::anotarComo($usuario, 'consola.ingreso', null, ['ip' => $request->ip(), 'con' => 'passkey']);
+
+        return response()->json([
+            'message' => 'Adentro.',
+            'error'   => 0,
+            'data'    => [
+                'token'      => $token,
+                'expira_en'  => (int) config('plataforma.consola_minutos', 480) * 60,
+                'usuario'    => ['id' => $usuario->id, 'nombre' => $usuario->nombre, 'email' => $usuario->email],
+                'plataforma' => config('plataforma.nombre', 'Netvula'),
+            ],
+        ]);
+    }
+
+    /** GET /api/consola/passkeys — las que tiene registradas. */
+    public function verPasskeys(Request $request): JsonResponse
+    {
+        $u = $request->attributes->get('consola_usuario');
+
+        return response()->json(['message' => 'OK', 'error' => 0, 'data' => Passkeys::deUsuario($u)]);
+    }
+
+    /** POST /api/consola/passkeys/opciones — para registrar una nueva. */
+    public function opcionesDeAltaDePasskey(Request $request): JsonResponse
+    {
+        $u = $request->attributes->get('consola_usuario');
+
+        return response()->json(['message' => 'OK', 'error' => 0, 'data' => Passkeys::opcionesParaRegistrar($u)]);
+    }
+
+    /** POST /api/consola/passkeys  { respuesta, nombre? } */
+    public function guardarPasskey(Request $request): JsonResponse
+    {
+        $datos = $request->validate([
+            'respuesta' => 'required|string|max:20000',
+            'nombre'    => 'nullable|string|max:110',
+        ]);
+
+        $u = $request->attributes->get('consola_usuario');
+        $r = Passkeys::guardar($u, $datos['respuesta'], $datos['nombre'] ?? null);
+
+        if (!$r['ok']) {
+            return response()->json(['message' => $r['motivo'], 'data' => null, 'error' => 1], JsonResponse::HTTP_OK);
+        }
+
+        Bitacora::anotarComo($u, 'consola.passkey.alta', null, ['ip' => $request->ip()]);
+
+        return response()->json(['message' => 'Passkey guardada.', 'error' => 0, 'data' => Passkeys::deUsuario($u)]);
+    }
+
+    /** DELETE /api/consola/passkeys/{id} */
+    public function borrarPasskey(Request $request, int $id): JsonResponse
+    {
+        $u = $request->attributes->get('consola_usuario');
+
+        if (!Passkeys::borrar($u, $id)) {
+            return response()->json(['message' => 'Esa passkey no es tuya o ya no está.', 'data' => null, 'error' => 1], JsonResponse::HTTP_OK);
+        }
+
+        Bitacora::anotarComo($u, 'consola.passkey.baja', null, ['ip' => $request->ip()]);
+
+        return response()->json(['message' => 'Passkey eliminada.', 'error' => 0, 'data' => Passkeys::deUsuario($u)]);
     }
 
     /** GET /api/consola/2fa — cómo está hoy. */
