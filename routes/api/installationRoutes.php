@@ -10,6 +10,8 @@ Route::prefix('installations')->middleware('module:installations')->group(functi
     Route::get('/plans', [InstallationOrderController::class, 'plans']);
     Route::get('/payment-methods', [InstallationOrderController::class, 'paymentMethods']);
     Route::get('/technicians', [InstallationOrderController::class, 'availableTechnicians']);
+    // Va antes de '/{id}': si no, «por-cedula» se lee como un id.
+    Route::get('/por-cedula/{dni}', [InstallationOrderController::class, 'porCedula']);
     Route::get('/{id}', [InstallationOrderController::class, 'show']);
     Route::put('/{id}', [InstallationOrderController::class, 'update']);
     Route::delete('/{id}', [InstallationOrderController::class, 'destroy']);
@@ -17,6 +19,9 @@ Route::prefix('installations')->middleware('module:installations')->group(functi
     Route::post('/{id}/confirm', [InstallationOrderController::class, 'confirm']);
     Route::post('/{id}/start', [InstallationOrderController::class, 'start']);
     Route::post('/{id}/complete', [InstallationOrderController::class, 'complete']);
+    // Lo que hace el técnico en la calle: elegir el equipo y dejar todo listo.
+    Route::get('/{id}/equipos',      [InstallationOrderController::class, 'equiposDisponibles']);
+    Route::post('/{id}/provisionar', [InstallationOrderController::class, 'provisionar']);
     Route::post('/{id}/cancel', [InstallationOrderController::class, 'cancel']);
     
     Route::put('/{id}/payment', [InstallationOrderController::class, 'updatePayment']);

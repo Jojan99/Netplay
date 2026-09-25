@@ -36,6 +36,29 @@ class InstallationOrder extends Model
         'assigned_by',
         'started_at',
         'finished_at',
+
+        // Cómo se conecta el cliente: lo acuerda la oficina al tomar el pedido
+        // para que el técnico no tenga que llamar desde la casa.
+        'connection_type',
+        'pppoe_user',
+        'pppoe_password',
+        'pppoe_profile',
+        'ip_asignada',
+        'router_id',
+        'wifi_ssid',
+        'wifi_password',
+        'olt_id',
+        'vlan',
+        'grupo_facturacion',
+
+        // Lo que quedó instalado
+        'ont_serial',
+        'ont_fsp',
+        'ont_id',
+        'inventory_id',
+        'aprovisionamiento_id',
+        'provisioned_at',
+        'provision_detalle',
     ];
 
     protected $casts = [
@@ -47,6 +70,11 @@ class InstallationOrder extends Model
         'installation_cost' => 'decimal:2',
         'commission_amount' => 'decimal:2',
         'technician_ids' => 'array',
+        'provisioned_at' => 'datetime',
+        'provision_detalle' => 'array',
+        // Son credenciales de red del cliente: no quedan en claro en la base.
+        'pppoe_password' => 'encrypted',
+        'wifi_password' => 'encrypted',
     ];
 
     public function company()

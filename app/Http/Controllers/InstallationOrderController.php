@@ -252,6 +252,117 @@ class InstallationOrderController extends Controller
         ]);
     }
 
+    // ── Lo que hace el técnico en la calle ──────────────────────────────
+
+    /**
+     * GET /api/installations/{id}/equipos
+     *
+     * Las ONT que la OLT de esa orden está viendo sin autorizar, más los
+     * renglones de inventario con stock.
+     *
+     * El técnico elige de la lista en vez de escribir el serial: no se
+     * equivoca al tipear y, sobre todo, que el equipo aparezca ahí ya prueba
+     * que está conectado y encendido.
+     */
+    public function equiposDisponibles(int $id)
+    {
+        $orden = InstallationOrder::where('company_id', getSessionCompanyId())->findOrFail($id);
+
+        if (!$orden->olt_id) {
+            return response()->json([
+                'status'  => 'error',
+                'message' => 'La orden no dice por qué OLT entra este cliente. Completala desde Instalaciones.',
+            ], 422);
+        }
+
+        try {
+            $r = app(\App\UseCases\OltAdmin\OltAdminUseCase::class)->getUnauthorizedONTs((int) $orden->olt_id);
+            $sinAutorizar = $r['data'] ?? [];
+        } catch (\Throwable $e) {
+            return response()->json([
+                'status'  => 'error',
+                'message' => 'No se pudo preguntarle a la OLT: ' . $e->getMessage(),
+            ], 502);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data'   => [
+                'onts'       => $sinAutorizar,
+                'inventario' => \App\Services\Instalaciones\EquipoDelInventario::ontsConStock((int) $orden->company_id),
+                'aprovisiona' => (bool) \App\Models\GestionRemota::where('company_id', $orden->company_id)->value('aprovisionar'),
+            ],
+        ]);
+    }
+
+    /**
+     * POST /api/installations/{id}/provisionar
+     * Body: { fsp, ont_id, serial, inventory_id? }
+     *
+     * Da de alta al cliente, autoriza el equipo, se lo asigna, lo descuenta
+     * del inventario y —si la empresa lo tiene encendido— deja programada la
+     * configuración. Todo en un paso, desde la casa del cliente.
+     */
+    public function provisionar(Request $request, int $id)
+    {
+        $datos = $request->validate([
+            'fsp'          => 'required|string|max:20',
+            'ont_id'       => 'required|integer|min:0',
+            'serial'       => 'required|string|max:40',
+            'inventory_id' => 'nullable|integer',
+        ]);
+
+        $orden = InstallationOrder::where('company_id', getSessionCompanyId())->findOrFail($id);
+
+        $r = \App\Services\Instalaciones\InstalarYAprovisionar::hacer($orden, $datos, getSessionUserId());
+
+        return response()->json([
+            'status'  => $r['ok'] ? 'success' : 'error',
+            'message' => $r['message'],
+            'data'    => ['pasos' => $r['pasos'], 'avisos' => $r['avisos']] + $r['data'],
+        ], $r['ok'] ? 200 : 422);
+    }
+
+    /**
+     * GET /api/installations/por-cedula/{dni}
+     *
+     * Lo que ya se sabe de ese cliente por su orden de instalación, para que
+     * el alta en Clientes se llene sola. Se cargó una vez al tomar el pedido:
+     * volver a escribirlo es donde aparecen las diferencias.
+     */
+    public function porCedula(string $dni)
+    {
+        $orden = InstallationOrder::where('company_id', getSessionCompanyId())
+            ->where('client_dni', trim($dni))
+            ->whereIn('status', ['pending', 'confirmed', 'in_progress', 'completed'])
+            ->orderByDesc('id')
+            ->first();
+
+        if (!$orden) {
+            return response()->json(['status' => 'success', 'data' => null, 'message' => 'Sin orden de instalación para esa cédula.']);
+        }
+
+        return response()->json(['status' => 'success', 'data' => [
+            'installation_id'   => $orden->id,
+            'names'             => $orden->client_name,
+            'dni'               => $orden->client_dni,
+            'phone'             => $orden->client_phone,
+            'email'             => $orden->client_email,
+            'address'           => $orden->address,
+            'neighborhood'      => $orden->neighborhood,
+            'internet_plans_id' => $orden->internet_plan_id,
+            'connection_type'   => $orden->connection_type,
+            'pppoe_user'        => $orden->pppoe_user,
+            'pppoe_profile'     => $orden->pppoe_profile,
+            'ip_assignment_id'  => $orden->ip_asignada,
+            'router_id'         => $orden->router_id,
+            'vlan'              => $orden->vlan,
+            'group'             => $orden->grupo_facturacion,
+            'wifi_ssid'         => $orden->wifi_ssid,
+            'estado_orden'      => $orden->status,
+        ]]);
+    }
+
     public function cancel(Request $request, $id)
     {
         $installation = InstallationOrder::where('company_id', getSessionCompanyId())
