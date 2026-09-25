@@ -258,8 +258,23 @@ class WaBotService
 
         $wa = new WhatsAppService($company->id, false, 'meta');
 
-        // Meta admite máximo 3 botones; con más opciones hay que usar lista.
-        if (count($options) > 3) {
+        // Texto numerado: lo elige quien no quiere botones (o para un número
+        // que todavía no tiene la plantilla aprobada).
+        if ($config->menu_type === 'text') {
+            $lineas = [];
+
+            foreach ($options as $index => $opt) {
+                $lineas[] = ($opt['key'] ?? ($index + 1)) . '. ' . ($opt['label'] ?? $opt['title'] ?? 'Opción');
+            }
+
+            $this->sendTextMessage($company, $to, $menuText . "\n\n" . implode("\n", $lineas));
+
+            return;
+        }
+
+        // Lista si se pidió expresamente, o cuando hay más de 3 opciones: Meta
+        // no admite un cuarto botón.
+        if ($config->menu_type === 'list' || count($options) > 3) {
             $rows = [];
             foreach ($options as $index => $opt) {
                 $rows[] = [
@@ -344,6 +359,15 @@ class WaBotService
         string $message,
         array $payload = []
     ): bool {
+        // Si la conversación está dentro de un flujo dibujado, lo sigue el
+        // motor. Los cuatro de abajo están escritos a mano y quedan como
+        // respaldo: son los que ya funcionaban antes del constructor.
+        $config = WaBotConfig::where('company_id', $company->id)->first();
+
+        if ($config && $this->seguirFlujoDibujado($company, $config, $session, $phone, $message)) {
+            return true;
+        }
+
         return match ($session->current_flow) {
             'consultar_factura'  => $this->handleConsultarFactura($company, $session, $phone, $message),
             'consultar_revision' => $this->handleConsultarRevision($company, $session, $phone, $message),
@@ -351,6 +375,97 @@ class WaBotService
             'pagar_factura'      => $this->handlePagarFactura($company, $session, $phone, $message),
             default              => false,
         };
+    }
+
+    // ── Los flujos que se dibujan en el constructor ─────────────────────────
+
+    /**
+     * El motor, apuntando a WhatsApp y dejando constancia en el CRM.
+     *
+     * Lo que el bot dice tiene que quedar en la conversación: si después entra
+     * un agente, necesita ver lo que el cliente ya escuchó.
+     */
+    private function motorDeFlujos(Company $company, WaBotConfig $config, string $phone): \App\Services\WaBot\MotorDeFlujos
+    {
+        return new \App\Services\WaBot\MotorDeFlujos(
+            $company,
+            is_array($config->flows) ? $config->flows : [],
+            new \App\Services\WaBot\CanalDeWhatsapp(
+                $company,
+                $phone,
+                fn (string $texto) => $this->recordBotConversationMessage($company, $phone, 'system', $texto),
+            ),
+        );
+    }
+
+    /** Lo que el flujo sabe antes de preguntar nada. */
+    private function datosDeArranque(Company $company, string $phone): array
+    {
+        $datos = ['telefono' => $phone, 'empresa' => $company->name];
+
+        // Si ya se comprobó quién es, el flujo no tiene por qué volver a
+        // pedirle la cédula.
+        if ($conocido = WaIdentity::lookup($company->id, $phone)) {
+            $datos['cedula'] = $conocido->dni;
+        }
+
+        return $datos;
+    }
+
+    private function arrancarFlujoDibujado(Company $company, WaBotConfig $config, string $phone, string $flow): bool
+    {
+        $motor = $this->motorDeFlujos($company, $config, $phone);
+
+        if (!$motor->tiene($flow)) {
+            return false;
+        }
+
+        $this->guardarParada($company, $phone, $flow, $motor->arrancar($flow, $this->datosDeArranque($company, $phone)));
+
+        return true;
+    }
+
+    private function seguirFlujoDibujado(
+        Company $company,
+        WaBotConfig $config,
+        WaBotSession $session,
+        string $phone,
+        string $message
+    ): bool {
+        $motor = $this->motorDeFlujos($company, $config, $phone);
+        $flow = (string) $session->current_flow;
+
+        if (!$motor->tiene($flow)) {
+            return false;
+        }
+
+        $datos = is_array($session->data) ? $session->data : [];
+        $datos['telefono'] = $phone;
+
+        $this->guardarParada($company, $phone, $flow, $motor->seguir($flow, $session->current_step, $datos, $message));
+
+        return true;
+    }
+
+    /** Deja la conversación donde el motor la dejó. */
+    private function guardarParada(Company $company, string $phone, string $flow, \App\Services\WaBot\Parada $parada): void
+    {
+        if ($parada->bloque !== null) {
+            $this->createSession($company->id, $phone, $flow, $parada->bloque, $parada->datos);
+
+            return;
+        }
+
+        if ($parada->transferirA !== null) {
+            // El bot se calla con este número hasta que alguien lo reactive: si
+            // siguiera contestando, le hablaría encima al agente.
+            DB::table('wa_bot_pauses')->updateOrInsert(
+                ['company_id' => $company->id, 'provider' => 'meta', 'phone' => $phone],
+                ['paused_at' => now(), 'updated_at' => now(), 'created_at' => now()],
+            );
+        }
+
+        $this->clearSession($company->id, $phone);
     }
 
     /**
@@ -430,6 +545,15 @@ class WaBotService
 
     private function startFlow(Company $company, string $phone, string $flow): bool
     {
+        // Lo que se dibujó en el constructor manda. Va antes que todo para que
+        // se pueda reemplazar un flujo de fábrica por uno propio sin tocar
+        // código; si no hay nada dibujado con ese nombre, sigue de largo.
+        $config = WaBotConfig::where('company_id', $company->id)->first();
+
+        if ($config && $this->arrancarFlujoDibujado($company, $config, $phone, $flow)) {
+            return true;
+        }
+
         // A quien ya se comprobó no se le vuelve a pedir la cédula: se entra
         // derecho al flujo con la que dejó registrada.
         if (in_array($flow, self::FLUJOS_CON_CEDULA, true)

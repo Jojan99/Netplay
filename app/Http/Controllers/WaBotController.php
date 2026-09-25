@@ -2,7 +2,10 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Company;
 use App\Models\WaBotConfig;
+use App\Services\WaBot\CanalSimulado;
+use App\Services\WaBot\MotorDeFlujos;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -76,6 +79,64 @@ class WaBotController extends Controller
         $config->save();
 
         return response()->json(['ok' => true, 'data' => $config]);
+    }
+
+    /**
+     * POST /api/company/whatsapp/bot-config/probar
+     *
+     * Corre un flujo sin mandar nada por WhatsApp y devuelve lo que el cliente
+     * habría recibido. Es lo que hace comprobable el constructor: antes, para
+     * saber si un flujo servía había que publicarlo y escribirle desde un
+     * teléfono de verdad.
+     *
+     * No guarda sesión: el estado (en qué bloque quedó y qué variables lleva)
+     * va y vuelve en la petición, así probar no le toca nada a nadie.
+     */
+    public function probar(Request $request): JsonResponse
+    {
+        $request->validate([
+            'flow_id' => 'required|string|max:100',
+            'flows'   => 'required|array',
+            'paso'    => 'nullable|string|max:100',
+            'datos'   => 'nullable|array',
+            'mensaje' => 'nullable|string|max:500',
+        ]);
+
+        $empresa = Company::find(getSessionCompanyId());
+
+        if (!$empresa) {
+            return response()->json(['ok' => false, 'error' => 'No se encontró la empresa de la sesión.'], 422);
+        }
+
+        $canal = new CanalSimulado();
+        $motor = new MotorDeFlujos($empresa, $request->input('flows', []), $canal);
+        $flujo = (string) $request->input('flow_id');
+
+        if (!$motor->tiene($flujo)) {
+            return response()->json([
+                'ok'    => false,
+                'error' => 'Ese flujo no tiene bloques o está desactivado.',
+            ], 422);
+        }
+
+        $datos = (array) $request->input('datos', []);
+        $datos['telefono'] ??= '573000000000';
+        $paso = $request->input('paso');
+
+        $parada = $paso
+            ? $motor->seguir($flujo, $paso, $datos, (string) $request->input('mensaje', ''))
+            : $motor->arrancar($flujo, $datos);
+
+        return response()->json([
+            'ok' => true,
+            'data' => [
+                'mensajes'   => $canal->mensajes(),
+                'paso'       => $parada->bloque,
+                'datos'      => $parada->datos,
+                'terminado'  => $parada->termino,
+                'transferir' => $parada->transferirA,
+            ],
+        ]);
     }
 
     /**

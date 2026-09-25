@@ -154,6 +154,8 @@ Route::prefix('company')->group(function () {
             Route::get('bot-config',  [\App\Http\Controllers\WaBotController::class, 'getConfig']);
             Route::put('bot-config',  [\App\Http\Controllers\WaBotController::class, 'updateConfig']);
             Route::delete('bot-config', [\App\Http\Controllers\WaBotController::class, 'deleteConfig']);
+            // Probar un flujo sin escribirle a nadie, desde el constructor.
+            Route::post('bot-config/probar', [\App\Http\Controllers\WaBotController::class, 'probar']);
         });
     });
 });
