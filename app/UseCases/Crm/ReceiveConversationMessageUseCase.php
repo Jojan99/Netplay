@@ -246,6 +246,16 @@ public function execute(array $payload): array
 
     $data = $payload['data'];
 
+    /**
+     * ¿Lo escribió el agente desde el teléfono o WhatsApp Web?
+     *
+     * WhatsApp sincroniza a todos los dispositivos también lo que sale. Esos
+     * mensajes antes se descartaban en el servicio de WhatsApp, así que la
+     * conversación del CRM quedaba con un hueco: quien la retomaba no sabía
+     * qué se le había contestado al cliente.
+     */
+    $deAgente = (bool) ($data['fromMe'] ?? false);
+
     Log::info('[Mensaje campos disponibles]', [
         'type'   => $data['type'] ?? null,
         'keys'   => array_keys($data),
@@ -555,10 +565,37 @@ public function execute(array $payload): array
     // ─── Guardar mensaje ───
     $mimeType = $data['mimetype'] ?? $data['mime_type'] ?? $data['mimeType'] ?? null;
 
+    // Lo que el CRM manda vuelve como mensaje propio: WhatsApp se lo
+    // sincroniza a todos los dispositivos, incluido el nuestro. Sin esto cada
+    // respuesta del panel se vería dos veces.
+    //
+    // No se puede comparar por el id del mensaje porque el CRM no guarda el que
+    // le devuelve WhatsApp al enviar; se compara por contenido dentro de una
+    // ventana corta, que es lo que alcanza: nadie manda el mismo texto dos
+    // veces en el mismo minuto por dos caminos distintos.
+    if ($deAgente && $content !== null && $content !== '') {
+        $eco = DB::table('crm_messages')
+            ->where('conversation_id', $conversationId)
+            ->where('sender_type', 'agent')
+            ->where('content', $content)
+            ->where('created_at', '>=', now()->subMinutes(3))
+            ->exists();
+
+        if ($eco) {
+            Log::info('[CRM] Eco de un mensaje propio, ya estaba guardado', ['conversation_id' => $conversationId]);
+
+            return ['conversation_id' => $conversationId, 'status' => 'eco_propio'];
+        }
+    }
+
     $message = $this->repository->storeMessage([
         'conversation_id' => $conversationId,
         'wa_linea_id'     => $lineaId,
-        'sender_type'     => 'customer',
+        // Lo que sale desde el teléfono o WhatsApp Web lo escribió el agente,
+        // no el cliente: si entrara como 'customer' la conversación se leería
+        // al revés.
+        'sender_type'     => $deAgente ? 'agent' : 'customer',
+        'agent_signature' => $deAgente ? 'Desde WhatsApp' : null,
         'message_type'    => $type,
         'content'         => $content,
         'media_url'       => $mediaUrl,
@@ -577,7 +614,7 @@ public function execute(array $payload): array
     // Sin bienvenida, sin aviso de fuera de horario y sin asignar agente: la
     // conversación la lleva el asistente hasta que la pase a una persona. La
     // respuesta se arma después de contestarle al webhook (la IA tarda).
-    if (!$esGrupo && $provider === 'netplay') {
+    if (!$esGrupo && !$deAgente && $provider === 'netplay') {
         try {
             $caso = \App\Models\CobranzaCaso::conversandoCon((int) $companyId, (string) $phone);
 
@@ -596,6 +633,27 @@ public function execute(array $payload): array
         } catch (\Throwable $e) {
             Log::warning('[Cobranza] No se pudo pasar el mensaje al asistente', ['phone' => $phone, 'error' => $e->getMessage()]);
         }
+    }
+
+    // El agente contestó desde afuera: la conversación ya está atendida. No
+    // corresponde saludar, ni avisar que está fuera de horario, ni asignarla a
+    // otro, ni dejar que el bot le hable encima al cliente.
+    if ($deAgente) {
+        $this->calmarAlBot((int) $companyId, (string) $phone, (string) ($provider ?? 'netplay'));
+
+        DB::table('crm_conversations')->where('id', $conversationId)
+            ->where('status', 'new')
+            ->update(['status' => 'in_progress', 'updated_at' => now()]);
+
+        broadcast(new NewMessageEvent($message, $conversationId));
+        broadcast(new InboxUpdatedEvent(
+            $conversationId,
+            (string) DB::table('crm_conversations')->where('id', $conversationId)->value('status'),
+            'agent',
+            $provider,
+        ));
+
+        return ['conversation_id' => $conversationId, 'status' => 'processed', 'origen' => 'agente_externo'];
     }
 
     $settings = \App\Support\CrmSettings::for((int)$companyId);
@@ -665,6 +723,25 @@ public function execute(array $payload): array
         'conversation_id' => $conversationId,
         'status'          => 'processed',
     ];
+}
+
+/**
+ * Calla al bot con ese número.
+ *
+ * Si una persona está contestando desde su teléfono, el bot no puede seguir
+ * respondiendo por su cuenta: el cliente recibiría dos conversaciones a la vez.
+ * Es la misma pausa que usa «pasar a un agente».
+ */
+private function calmarAlBot(int $companyId, string $phone, string $provider): void
+{
+    try {
+        DB::table('wa_bot_pauses')->updateOrInsert(
+            ['company_id' => $companyId, 'provider' => $provider, 'phone' => $phone],
+            ['paused_at' => now(), 'updated_at' => now(), 'created_at' => now()],
+        );
+    } catch (\Throwable $e) {
+        Log::warning('[CRM] No se pudo pausar el bot', ['phone' => $phone, 'error' => $e->getMessage()]);
+    }
 }
 
 /**
