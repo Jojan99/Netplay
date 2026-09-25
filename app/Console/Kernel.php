@@ -93,6 +93,13 @@ class Kernel extends ConsoleKernel
         // un fallo de permisos ahí tumbaría el programador entero. Solapar no
         // hace daño, porque la sesión se borra al avisar y la segunda pasada
         // ya no la encuentra.
+        // Avisa antes de facturar si las facturas no van a poder salir. Waonet
+        // emitió 134 y no le llegó nada a nadie: el problema no fue no poder,
+        // fue enterarse después.
+        $schedule->command('facturacion:revisar-canales')
+            ->dailyAt('08:15')
+            ->user('www-data');
+
         // El estado de las líneas sólo se refrescaba al abrir la pantalla de la
         // empresa, así que el panel mostraba caídas líneas que estaban
         // conectadas y enviando.

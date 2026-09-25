@@ -218,11 +218,9 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
                         'status' => 1,
                     ];
                 }
-                // El envío masivo de facturas va por WhatsApp de Meta con una
-                // plantilla aprobada; es el único camino que Meta permite para
-                // escribirle primero a un cliente. La línea propia sirve para
-                // conversar, no para mandar 134 facturas de una.
-                $impedimento = $this->porQueNoSePuedeMandarPorWhatsapp($company, $companyId);
+                // La misma comprobación que usa el aviso previo, para que no
+                // puedan decir cosas distintas sobre lo mismo.
+                $impedimento = \App\Services\Facturacion\CanalDeFacturacion::porQueNoPuedeWhatsapp($company);
 
                 if ($impedimento) {
                     Log::error('[WA_BILLING] No se enviaron las facturas por WhatsApp', [
@@ -263,14 +261,14 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
                 // de la plataforma: son las facturas de su ISP, con su remitente
                 // y su reputación de envío. Sin cuenta propia no se manda, y se
                 // dice por qué en vez de anotar un aviso por cada factura.
-                if (!\App\Services\Correo\Correo::tieneCuentaPropia($company)) {
+                if (\App\Services\Facturacion\CanalDeFacturacion::porQueNoPuedeCorreo($company)) {
                     Log::error('[EMAIL_BILLING] No se enviaron las facturas por correo', [
                         'company_id' => $companyId,
-                        'motivo'     => 'sin cuenta de correo propia activa',
+                        'motivo'     => \App\Services\Facturacion\CanalDeFacturacion::porQueNoPuedeCorreo($company),
                         'facturas'   => count($emailInvoices),
                     ]);
 
-                    $noSePudo[] = 'por correo: esta empresa no tiene su cuenta de envío activa y verificada. El correo de la plataforma no se usa para las facturas de un ISP.';
+                    $noSePudo[] = 'por correo: ' . \App\Services\Facturacion\CanalDeFacturacion::porQueNoPuedeCorreo($company);
                     $emailInvoices = [];
                 } else {
                     $emailResult = $emailService->sendBulkInvoices($emailInvoices);
@@ -536,39 +534,6 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
             $dueDate,
             $company->invoice_business_name ?: $company->name,
         ];
-    }
-
-    /**
-     * Qué le falta a la empresa para poder mandar facturas por WhatsApp, o
-     * null si puede.
-     *
-     * El envío masivo tiene dos requisitos y ninguno es opcional: WhatsApp de
-     * Meta y una plantilla aprobada. Meta sólo deja escribirle primero a un
-     * cliente con una plantilla que revisó; la línea propia sirve para
-     * conversar, no para mandar cientos de facturas.
-     *
-     * Antes esto no se comprobaba: el proceso intentaba igual por la línea
-     * propia, el servicio rechazaba todo y quedaba anotado como «batch
-     * encolado». Waonet tuvo 134 de 134 facturas sin enviar y nadie se enteró
-     * hasta que un cliente preguntó.
-     */
-    private function porQueNoSePuedeMandarPorWhatsapp(?Company $company, int $companyId): ?string
-    {
-        if ($company?->wa_provider !== 'meta') {
-            return 'esta empresa no tiene WhatsApp de Meta activo. El envío masivo sólo funciona con la API oficial: la línea propia no puede escribirle primero a un cliente.';
-        }
-
-        try {
-            $meta = new \App\Services\MetaWhatsAppService($companyId);
-
-            if (!$meta->isInvoiceTemplateApproved()) {
-                return "la plantilla «{$meta->invoiceTemplateName()}» no está aprobada por Meta. Mientras no lo esté, Meta rechaza el envío.";
-            }
-        } catch (\Throwable $e) {
-            return 'no se pudo comprobar la plantilla con Meta: ' . $e->getMessage();
-        }
-
-        return null;
     }
 
     private function sendMetaInvoiceTemplateBatch(array $messages, int $companyId): array
