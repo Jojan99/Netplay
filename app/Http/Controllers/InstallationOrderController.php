@@ -68,6 +68,22 @@ class InstallationOrderController extends Controller
             'address' => 'required|string|max:500',
             'neighborhood' => 'nullable|string|max:255',
             'internet_plan_id' => ['nullable', $this->deLaEmpresa('internet_plans')],
+            // El servicio y la conexión que se acordaron al tomar el pedido.
+            // Viajan con la orden hasta la calle: es lo que el técnico aplica
+            // sin llamar a la oficina.
+            'grupo_facturacion' => 'nullable|integer|in:1,2,3',
+            'connection_type' => 'nullable|in:pppoe,static',
+            'pppoe_user' => 'nullable|string|max:120',
+            'pppoe_password' => 'nullable|string|max:120',
+            'pppoe_profile' => 'nullable|string|max:120',
+            'ip_asignada' => 'nullable|ip',
+            'router_id' => ['nullable', $this->deLaEmpresa('conection_routers')],
+            'olt_id' => ['nullable', $this->deLaEmpresa('olt_admins')],
+            'vlan' => 'nullable|integer|min:1|max:4094',
+            // La ñ y las tildes las rechaza el equipo, y el SSID y la clave se
+            // mandan juntos: uno malo hace fallar los dos.
+            'wifi_ssid' => 'nullable|string|max:32|regex:/^[A-Za-z0-9\-_. ]+$/',
+            'wifi_password' => 'nullable|string|min:8|max:63|regex:/^[A-Za-z0-9\-_.@#$%&*+=!?():,]+$/',
             'scheduled_date' => 'required|date',
             'scheduled_time' => 'required',
             'installation_cost' => 'nullable|numeric|min:0',
@@ -125,6 +141,22 @@ class InstallationOrderController extends Controller
             'address' => 'sometimes|string|max:500',
             'neighborhood' => 'nullable|string|max:255',
             'internet_plan_id' => ['nullable', $this->deLaEmpresa('internet_plans')],
+            // El servicio y la conexión que se acordaron al tomar el pedido.
+            // Viajan con la orden hasta la calle: es lo que el técnico aplica
+            // sin llamar a la oficina.
+            'grupo_facturacion' => 'nullable|integer|in:1,2,3',
+            'connection_type' => 'nullable|in:pppoe,static',
+            'pppoe_user' => 'nullable|string|max:120',
+            'pppoe_password' => 'nullable|string|max:120',
+            'pppoe_profile' => 'nullable|string|max:120',
+            'ip_asignada' => 'nullable|ip',
+            'router_id' => ['nullable', $this->deLaEmpresa('conection_routers')],
+            'olt_id' => ['nullable', $this->deLaEmpresa('olt_admins')],
+            'vlan' => 'nullable|integer|min:1|max:4094',
+            // La ñ y las tildes las rechaza el equipo, y el SSID y la clave se
+            // mandan juntos: uno malo hace fallar los dos.
+            'wifi_ssid' => 'nullable|string|max:32|regex:/^[A-Za-z0-9\-_. ]+$/',
+            'wifi_password' => 'nullable|string|min:8|max:63|regex:/^[A-Za-z0-9\-_.@#$%&*+=!?():,]+$/',
             'scheduled_date' => 'sometimes|date',
             'scheduled_time' => 'sometimes',
             'installation_cost' => 'nullable|numeric|min:0',
