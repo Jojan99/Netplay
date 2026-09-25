@@ -164,6 +164,8 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
 
             $waMessages = [];
             $emailInvoices = [];
+            /** Lo que no se pudo entregar y por qué, para contarlo al final. */
+            $noSePudo = [];
             $remainingEmails = $this->remainingEmailLimit($companyId, $emailDailyLimit);
 
             foreach ($generatePdf as $user) {
@@ -174,20 +176,8 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
                         $phone = trim($phone);
                         if (empty($phone)) continue;
 
-                        // Van las dos formas porque hay dos caminos de envío y
-                        // el mensaje se arma antes de saber cuál se usa: Meta
-                        // manda una plantilla con parámetros, y la línea propia
-                        // (Baileys) un texto suelto.
-                        //
-                        // Desde el 2026-09-02 se armaba sólo la de Meta y el
-                        // servicio de la línea propia rechazaba todo por venir
-                        // sin 'message': Waonet quedó con 134 de 134 facturas
-                        // sin enviar y en el registro figuraba «batch
-                        // encolado», sin un solo error.
                         $waMessages[] = [
                             'number'     => $phone,
-                            'message'    => $this->invoiceWhatsappText($user, $humanizer, $fecha),
-                            'type'       => 'text',
                             'parameters' => $this->invoiceTemplateParameters($user, $company, $fecha),
                             // Los botones de URL con variable llevan el enlace
                             // firmado de esta factura; sin esto abrirían la
@@ -228,40 +218,89 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
                         'status' => 1,
                     ];
                 }
-                $waResult = $company?->wa_provider === 'meta'
-                    ? $this->sendMetaInvoiceTemplateBatch($waMessages, $companyId)
-                    : $waService->sendBulk($waMessages);
-                $encolados = (int) ($waResult['queued'] ?? 0);
-                $rechazados = (int) ($waResult['invalid'] ?? 0);
+                // El envío masivo de facturas va por WhatsApp de Meta con una
+                // plantilla aprobada; es el único camino que Meta permite para
+                // escribirle primero a un cliente. La línea propia sirve para
+                // conversar, no para mandar 134 facturas de una.
+                $impedimento = $this->porQueNoSePuedeMandarPorWhatsapp($company, $companyId);
 
-                // Que el servicio rechace mensajes no es información: es que
-                // las facturas no llegaron. Antes salía como INFO y el proceso
-                // de Waonet se dio por bueno con 134 de 134 sin enviar.
-                Log::log($rechazados > 0 ? 'error' : 'info', '[WA_BILLING] Batch entregado al servicio de WhatsApp', [
-                    'company_id' => $companyId,
-                    'queued'     => $encolados,
-                    'invalid'    => $rechazados,
-                    'total'      => count($waMessages),
-                ]);
-                $this->writeBillingLog($companyId, $Periodo, $waMessages, $waResult, null, 'whatsapp');
+                if ($impedimento) {
+                    Log::error('[WA_BILLING] No se enviaron las facturas por WhatsApp', [
+                        'company_id' => $companyId,
+                        'motivo'     => $impedimento,
+                        'facturas'   => count($waMessages),
+                    ]);
+
+                    $this->writeBillingLog($companyId, $Periodo, $waMessages,
+                        ['queued' => 0, 'invalid' => 0, 'chunks' => 0, 'motivo' => $impedimento], $impedimento, 'whatsapp');
+
+                    // No se corta el proceso: con el canal en «ambos», que
+                    // WhatsApp no pueda no es razón para no mandar los correos.
+                    $noSePudo[] = 'por WhatsApp: ' . $impedimento;
+                    $waMessages = [];
+                } else {
+                    $waResult = $this->sendMetaInvoiceTemplateBatch($waMessages, $companyId);
+                    $encolados = (int) ($waResult['queued'] ?? 0);
+                    $rechazados = (int) ($waResult['invalid'] ?? 0);
+
+                    // Que el servicio rechace mensajes no es información: es
+                    // que las facturas no llegaron. Antes salía como INFO y el
+                    // proceso de Waonet se dio por bueno con 134 sin enviar.
+                    Log::log($rechazados > 0 ? 'error' : 'info', '[WA_BILLING] Batch entregado a Meta', [
+                        'company_id' => $companyId,
+                        'queued'     => $encolados,
+                        'invalid'    => $rechazados,
+                        'total'      => count($waMessages),
+                    ]);
+                    $this->writeBillingLog($companyId, $Periodo, $waMessages, $waResult, null, 'whatsapp');
+                }
             }
 
             // Enviar por Correo
             $emailResult = ['sent' => 0, 'failed' => 0, 'errors' => []];
             if ($emailEnabled && in_array($sendChannel, ['email', 'both']) && count($emailInvoices) > 0) {
-                $emailResult = $emailService->sendBulkInvoices($emailInvoices);
-                Log::info('[EMAIL_BILLING] Envío masivo completado', [
-                    'company_id' => $companyId,
-                    'sent' => $emailResult['sent'],
-                    'failed' => $emailResult['failed'],
-                ]);
-                $this->writeBillingLog($companyId, $Periodo, $emailInvoices, $emailResult, null, 'email');
+                // El correo masivo sale de la cuenta de la empresa, nunca de la
+                // de la plataforma: son las facturas de su ISP, con su remitente
+                // y su reputación de envío. Sin cuenta propia no se manda, y se
+                // dice por qué en vez de anotar un aviso por cada factura.
+                if (!\App\Services\Correo\Correo::tieneCuentaPropia($company)) {
+                    Log::error('[EMAIL_BILLING] No se enviaron las facturas por correo', [
+                        'company_id' => $companyId,
+                        'motivo'     => 'sin cuenta de correo propia activa',
+                        'facturas'   => count($emailInvoices),
+                    ]);
 
-                // Marcar facturas enviadas exitosamente para control de lote diario
-                if (!empty($emailResult['successful_ids'])) {
-                    DetFacturation::whereIn('id', $emailResult['successful_ids'])
-                        ->update(['email_sent_at' => now()]);
+                    $noSePudo[] = 'por correo: esta empresa no tiene su cuenta de envío activa y verificada. El correo de la plataforma no se usa para las facturas de un ISP.';
+                    $emailInvoices = [];
+                } else {
+                    $emailResult = $emailService->sendBulkInvoices($emailInvoices);
+
+                    Log::log(($emailResult['failed'] ?? 0) > 0 ? 'error' : 'info', '[EMAIL_BILLING] Envío masivo completado', [
+                        'company_id' => $companyId,
+                        'sent'       => $emailResult['sent'] ?? 0,
+                        'failed'     => $emailResult['failed'] ?? 0,
+                    ]);
+
+                    $this->writeBillingLog($companyId, $Periodo, $emailInvoices, $emailResult, null, 'email');
+
+                    // Las enviadas se marcan, para el control del lote diario.
+                    if (!empty($emailResult['successful_ids'])) {
+                        DetFacturation::whereIn('id', $emailResult['successful_ids'])
+                            ->update(['email_sent_at' => now()]);
+                    }
                 }
+            }
+
+            // Las facturas quedaron creadas igual; lo que puede haber fallado
+            // es la entrega, y eso tiene que decirse. Un proceso que no entregó
+            // nada no puede contestar lo mismo que uno que salió bien.
+            if ($noSePudo) {
+                return [
+                    'message'  => 'Las facturas se generaron, pero no se enviaron ' . implode(' · ', $noSePudo),
+                    'status'   => 1,
+                    'whatsapp' => $waResult,
+                    'email'    => $emailResult,
+                ];
             }
 
             return [
@@ -484,27 +523,6 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
         return $pdf->output();
     }
 
-    /**
-     * El texto de la factura para una línea propia (Baileys).
-     *
-     * Usa el mismo total que la plantilla de Meta —precio menos descuento—
-     * para que al cliente le llegue lo mismo por cualquiera de los dos
-     * caminos.
-     */
-    private function invoiceWhatsappText(array $user, WhatsAppMessageHumanizerService $humanizer, string $dueDate): string
-    {
-        $total = max(0, (float) ($user['price_total'] ?? $user['monthly_price'] ?? 0) - (float) ($user['price_discount'] ?? 0));
-
-        return $humanizer->generateInvoiceMessage([
-            'names'              => $user['names'] ?? '',
-            'lastname'           => $user['lastname'] ?? '',
-            'number_bill'        => $user['number_facture'] ?? '',
-            'monthly_price'      => '$' . number_format($total, 0, ',', '.') . ' COP',
-            'date_finish_bill'   => $dueDate,
-            'billing_electronic' => $user['billing_electronic'] ?? 0,
-        ]);
-    }
-
     private function invoiceTemplateParameters(array $user, Company $company, string $dueDate): array
     {
         $total = max(0, (float) ($user['price_total'] ?? $user['monthly_price'] ?? 0) - (float) ($user['price_discount'] ?? 0));
@@ -518,6 +536,39 @@ class GeneratePdfUseCase implements GeneratePdfUseCaseInterface
             $dueDate,
             $company->invoice_business_name ?: $company->name,
         ];
+    }
+
+    /**
+     * Qué le falta a la empresa para poder mandar facturas por WhatsApp, o
+     * null si puede.
+     *
+     * El envío masivo tiene dos requisitos y ninguno es opcional: WhatsApp de
+     * Meta y una plantilla aprobada. Meta sólo deja escribirle primero a un
+     * cliente con una plantilla que revisó; la línea propia sirve para
+     * conversar, no para mandar cientos de facturas.
+     *
+     * Antes esto no se comprobaba: el proceso intentaba igual por la línea
+     * propia, el servicio rechazaba todo y quedaba anotado como «batch
+     * encolado». Waonet tuvo 134 de 134 facturas sin enviar y nadie se enteró
+     * hasta que un cliente preguntó.
+     */
+    private function porQueNoSePuedeMandarPorWhatsapp(?Company $company, int $companyId): ?string
+    {
+        if ($company?->wa_provider !== 'meta') {
+            return 'esta empresa no tiene WhatsApp de Meta activo. El envío masivo sólo funciona con la API oficial: la línea propia no puede escribirle primero a un cliente.';
+        }
+
+        try {
+            $meta = new \App\Services\MetaWhatsAppService($companyId);
+
+            if (!$meta->isInvoiceTemplateApproved()) {
+                return "la plantilla «{$meta->invoiceTemplateName()}» no está aprobada por Meta. Mientras no lo esté, Meta rechaza el envío.";
+            }
+        } catch (\Throwable $e) {
+            return 'no se pudo comprobar la plantilla con Meta: ' . $e->getMessage();
+        }
+
+        return null;
     }
 
     private function sendMetaInvoiceTemplateBatch(array $messages, int $companyId): array
