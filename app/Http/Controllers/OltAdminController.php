@@ -362,6 +362,31 @@ class OltAdminController extends Controller
     }
 
     /**
+     * POST /management/olt/{oltId}/ont/description
+     * Body: { fsp, ont_id, description }
+     *
+     * Le cambia el nombre a la ONT en la OLT, sin que nadie tenga que entrar
+     * por telnet a hacer «ont modify».
+     */
+    public function cambiarDescripcionDeOnt(Request $request, int $oltId): JsonResponse
+    {
+        $request->validate([
+            'fsp'         => 'required|string',
+            'ont_id'      => 'required|integer',
+            'description' => 'required|string|max:64',
+        ]);
+
+        $r = $this->uc->cambiarDescripcionDeOnt(
+            $oltId,
+            $request->input('fsp'),
+            (int) $request->input('ont_id'),
+            (string) $request->input('description'),
+        );
+
+        return standardApiReponse($r['message'], $r['data'], $r['status'], JsonResponse::HTTP_OK);
+    }
+
+    /**
      * POST /management/olt/{oltId}/ont/assign-client
      * Body: { fsp, ont_id, user_data_id (nullable) }
      */

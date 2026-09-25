@@ -200,6 +200,7 @@ class OltTelnetDispatcher
             'transferONT'       => $driver->transferONT($p['from_fsp'], (int) $p['ont_id'], $p['to_fsp']),
             'deactivateONT'     => $driver->deactivateONT($p['fsp'], (int) $p['ont_id']),
             'activateONT'       => $driver->activateONT($p['fsp'], (int) $p['ont_id']),
+            'cambiarDescripcion' => $driver->cambiarDescripcion($p['fsp'], (int) $p['ont_id'], (string) $p['descripcion']),
             'getLineProfiles'   => $driver->getLineProfiles(),
             'getSrvProfiles'    => $driver->getSrvProfiles(),
             'runCommand'        => $driver->runCommand($p['command']),

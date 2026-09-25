@@ -103,6 +103,20 @@ interface OltDriverInterface
      */
     public function activateONT(string $fsp, int $ontId): bool;
 
+    /**
+     * Cambia el nombre con el que la OLT identifica a la ONT.
+     *
+     * Es el texto que se ve en toda la plataforma y en la consola de la OLT:
+     * cuando un equipo cambia de dueño queda con el nombre del anterior, y
+     * corregirlo obligaba a entrar por telnet.
+     *
+     * Cada marca lo dice a su manera (Huawei «ont modify P ID desc», C-Data
+     * «ont description P ID», ZTE «name» dentro de la interfaz de la ONU), y
+     * ninguna acepta lo mismo en cuanto a espacios: la descripción llega ya
+     * saneada desde el caso de uso.
+     */
+    public function cambiarDescripcion(string $fsp, int $ontId, string $descripcion): bool;
+
     /** Send a raw CLI command and return the output. */
     public function runCommand(string $command): string;
 

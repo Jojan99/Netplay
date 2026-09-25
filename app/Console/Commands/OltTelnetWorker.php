@@ -50,7 +50,7 @@ class OltTelnetWorker extends Command
 
     private const WRITE_METHODS = [
         'registerONT', 'deleteONT', 'assignToClient',
-        'transferONT', 'deactivateONT', 'activateONT',
+        'transferONT', 'deactivateONT', 'activateONT', 'cambiarDescripcion',
         // Cambia la configuración: si no se guarda, vuelve atrás al reiniciar.
         'cambiarAutoAutorizacion', 'prepararVlanDeGestion', 'darGestionAOnt',
         'prepararPerfilDeLinea', 'crearServidorTr069', 'asignarServidorTr069',
@@ -423,6 +423,7 @@ class OltTelnetWorker extends Command
                                    ),
             'deactivateONT'     => $this->driver->deactivateONT($p['fsp'], (int) $p['ont_id']),
             'activateONT'       => $this->driver->activateONT($p['fsp'], (int) $p['ont_id']),
+            'cambiarDescripcion' => $this->driver->cambiarDescripcion($p['fsp'], (int) $p['ont_id'], (string) $p['descripcion']),
             'runCommand'        => $this->driver->runCommand($p['command']),
             'capacidades'       => method_exists($this->driver, 'capacidades')
                                        ? $this->driver->capacidades() : null,

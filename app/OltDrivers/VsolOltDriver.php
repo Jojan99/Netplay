@@ -402,6 +402,20 @@ class VsolOltDriver extends DriverBase
         return !$this->fallo($salida);
     }
 
+    /** VSOL: «onu N description TEXTO» dentro del puerto PON, sin espacios. */
+    public function cambiarDescripcion(string $fsp, int $ontId, string $descripcion): bool
+    {
+        $this->entrarAlPuerto($fsp);
+        $salida = $this->cmd(sprintf(
+            'onu %d description %s',
+            $ontId,
+            substr(preg_replace('/\s+/', '-', $descripcion), 0, 32),
+        ), 15);
+        $this->volverAlPrompt();
+
+        return !$this->fallo($salida);
+    }
+
     public function getLineProfiles(): array
     {
         $this->volverAlPrompt();

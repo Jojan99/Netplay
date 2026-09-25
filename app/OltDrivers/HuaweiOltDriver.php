@@ -1490,6 +1490,41 @@ public function parseServicePorts(string $output): array
             || stripos($output, 'Succeeded') !== false;
     }
 
+    /**
+     * «ont modify P ID desc TEXTO», dentro de la interfaz del puerto.
+     *
+     * Sin comillas: este firmware las guarda como parte del texto y la ONT
+     * termina llamándose «"JUAN"». Por eso el caso de uso manda el texto sin
+     * espacios.
+     */
+    public function cambiarDescripcion(string $fsp, int $ontId, string $descripcion): bool
+    {
+        [$frame, $slot, $port] = $this->parseFsp($fsp);
+
+        $this->resetToPrompt();
+
+        $this->ssh->write("enable\n");
+        $this->ssh->read('/[>#$]\s*$/');
+        $this->ssh->write("config\n");
+        $this->ssh->read('/[>#$]\s*$/');
+
+        $this->ssh->write("interface gpon {$frame}/{$slot}\n");
+        $this->ssh->read('/[>#$]\s*$/');
+
+        $this->ssh->write("ont modify {$port} {$ontId} desc {$descripcion}\n");
+        $salida = $this->collectOutput();
+
+        $this->ssh->write("quit\n");
+        $this->ssh->read('/[>#$]\s*$/');
+
+        // La OLT no dice «success» en este comando: devuelve el prompt y nada
+        // más. Se da por bueno mientras no se queje.
+        return stripos($salida, 'Failure') === false
+            && stripos($salida, 'Error') === false
+            && stripos($salida, 'Unknown command') === false
+            && stripos($salida, 'Parameter error') === false;
+    }
+
     // ── Parsing helpers ───────────────────────────────────────────────────
 
     private function parseUnauthONTs(string $raw): array

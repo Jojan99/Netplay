@@ -701,6 +701,23 @@ class ZteOltDriver extends DriverBase
         return !$this->fallo($salida);
     }
 
+    /**
+     * En ZTE el nombre se pone dentro de la interfaz de la ONU, con «name».
+     * No admite espacios, así que van guiones bajos.
+     */
+    public function cambiarDescripcion(string $fsp, int $ontId, string $descripcion): bool
+    {
+        $salida = $this->cmds([
+            'configure terminal',
+            'interface ' . $this->onu($fsp, $ontId),
+            'name ' . substr(preg_replace('/\s+/', '_', $descripcion), 0, 32),
+        ], 20);
+
+        $this->volverAlPrompt();
+
+        return !$this->fallo($salida);
+    }
+
     /** El tipo de ONU para la próxima alta (el modelo real, p. ej. F680V6.0.06). */
     public function usarTipoOnu(?string $tipo): void
     {

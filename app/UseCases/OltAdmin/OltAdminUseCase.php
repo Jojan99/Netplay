@@ -2117,6 +2117,79 @@ class OltAdminUseCase
     }
 
     /**
+     * Le cambia el nombre a una ONT, en la OLT y en la base.
+     *
+     * Es lo que quedaba pendiente al mover un equipo de un cliente a otro: la
+     * ONT seguía llamándose como el dueño anterior en toda la plataforma y en
+     * la consola, y arreglarlo obligaba a entrar por telnet a hacer
+     * «ont modify», que es justo lo que no queremos que nadie tenga que hacer.
+     *
+     * El texto se sanea acá y no en cada driver: ninguna de las cuatro marcas
+     * acepta lo mismo —espacios, acentos y comillas dan problemas en todas—,
+     * así que se manda lo que todas entienden.
+     */
+    public function cambiarDescripcionDeOnt(int $oltId, string $fsp, int $ontId, string $descripcion): array
+    {
+        $texto = self::descripcionParaLaOlt($descripcion);
+
+        if ($texto === '') {
+            return ['status' => 1, 'message' => 'El nombre no puede quedar vacío.', 'data' => null];
+        }
+
+        try {
+            $ok = $this->dispatcher->dispatch($oltId, 'cambiarDescripcion', [
+                'fsp'         => $fsp,
+                'ont_id'      => $ontId,
+                'descripcion' => $texto,
+            ]);
+        } catch (\Throwable $e) {
+            \Log::warning('[OLT] No se pudo cambiar la descripción', [
+                'olt' => $oltId, 'fsp' => $fsp, 'ont' => $ontId, 'error' => $e->getMessage(),
+            ]);
+
+            return ['status' => 1, 'message' => 'La OLT no aceptó el cambio: ' . $e->getMessage(), 'data' => null];
+        }
+
+        if (!$ok) {
+            return ['status' => 1, 'message' => 'La OLT rechazó el cambio de nombre.', 'data' => null];
+        }
+
+        OltOnt::where('olt_id', $oltId)->where('fsp', $fsp)->where('ont_id', $ontId)
+            ->update(['description' => $texto]);
+
+        // Las listas se sirven de caché: sin esto el nombre viejo seguiría a la
+        // vista y parecería que no se guardó.
+        Cache::forget("olt:{$oltId}:auth_onts");
+        Cache::forget("olt:{$oltId}:unauth_onts");
+        \App\Services\Olt\SenalDeLaOlt::olvidar(\App\Models\OltAdmin::find($oltId));
+
+        return [
+            'status'  => 0,
+            'message' => $texto === trim($descripcion)
+                ? 'Nombre cambiado en la OLT.'
+                : "Nombre cambiado en la OLT como «{$texto}» (la OLT no admite espacios ni acentos).",
+            'data'    => ['description' => $texto],
+        ];
+    }
+
+    /**
+     * El nombre tal como lo tolera cualquier OLT.
+     *
+     * Las cuatro marcas guardan las comillas como parte del texto y ninguna
+     * lleva bien los espacios ni los acentos: una ONT terminaba llamándose
+     * «"JOSÉ PÉREZ"». Se deja lo que todas entienden y se corta a 32, que es
+     * el tope más bajo de los equipos que tenemos.
+     */
+    public static function descripcionParaLaOlt(string $texto): string
+    {
+        $limpio = \Illuminate\Support\Str::ascii(trim($texto));
+        $limpio = preg_replace('/[^A-Za-z0-9 _.\-]/', '', $limpio);
+        $limpio = preg_replace('/\s+/', '_', trim((string) $limpio));
+
+        return substr(trim((string) $limpio, '_'), 0, 32);
+    }
+
+    /**
      * Obtener el equipo ONT asignado a un cliente.
      */
     public function getOntByUserId(int $userDataId): array

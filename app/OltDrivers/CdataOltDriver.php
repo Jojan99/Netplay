@@ -2477,6 +2477,17 @@ class CdataOltDriver extends DriverBase
         return !$this->fallo($salida);
     }
 
+    public function cambiarDescripcion(string $fsp, int $ontId, string $descripcion): bool
+    {
+        $puerto = $this->entrarAlPuerto($fsp);
+        $this->ponerDescripcion($puerto, $ontId, $descripcion);
+        $this->volverAlPrompt();
+
+        // ponerDescripcion ya reintenta con el texto plano si la primera forma
+        // no le gusta; que llegue hasta acá es que alguna entró.
+        return true;
+    }
+
     public function getLineProfiles(): array
     {
         $this->volverAlPrompt();
