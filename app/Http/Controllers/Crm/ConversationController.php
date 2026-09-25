@@ -637,19 +637,19 @@ public function forwardMessage(Request $request, ConversationRepositoryInterface
 
         // Reenviar según tipo
         if ($source->message_type === 'text') {
-            $wa->mensajeInformativo($phone, $forwardPrefix . "↪ " . $source->content);
+            $enviado = $wa->mensajeInformativo($phone, $forwardPrefix . "↪ " . $source->content);
         } elseif ($source->message_type === 'image' && $source->media_url) {
-            $wa->sendImage($phone, $source->media_url, $forwardPrefix . ($source->content ?? ''));
+            $enviado = $wa->sendImage($phone, $source->media_url, $forwardPrefix . ($source->content ?? ''));
         } elseif ($source->message_type === 'document' && $source->media_url) {
             $filename = basename(parse_url($source->media_url, PHP_URL_PATH)) ?: 'documento';
-            $wa->sendDocument($phone, $source->media_url, $filename, $forwardPrefix . ($source->content ?? ''));
+            $enviado = $wa->sendDocument($phone, $source->media_url, $filename, $forwardPrefix . ($source->content ?? ''));
         } elseif ($source->message_type === 'video' && $source->media_url) {
-            $wa->sendVideo($phone, $source->media_url, $forwardPrefix . ($source->content ?? ''));
+            $enviado = $wa->sendVideo($phone, $source->media_url, $forwardPrefix . ($source->content ?? ''));
         } elseif ($source->message_type === 'audio' && $source->media_url) {
-            $wa->sendAudio($phone, $source->media_url);
+            $enviado = $wa->sendAudio($phone, $source->media_url);
         } else {
             // Fallback para cualquier otro tipo sin media
-            $wa->mensajeInformativo($phone, $forwardPrefix . ($source->content ?? '[Mensaje reenviado]'));
+            $enviado = $wa->mensajeInformativo($phone, $forwardPrefix . ($source->content ?? '[Mensaje reenviado]'));
         }
 
         // Guardar mensaje reenviado
@@ -661,6 +661,9 @@ public function forwardMessage(Request $request, ConversationRepositoryInterface
             'media_url'         => $source->media_url ?? null,
             'is_forwarded'      => true,
             'forwarded_from_id' => $source->id,
+            // Con el id de WhatsApp se reconoce el eco de este mismo mensaje
+            // cuando vuelva sincronizado desde el teléfono.
+            'external_id'       => \App\Services\Cobranza\Mensajero::idDe($enviado),
         ]);
 
         broadcast(new NewMessageEvent($msg, (int)$targetConvId));

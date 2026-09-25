@@ -338,7 +338,7 @@ TXT;
         $linea = $this->linea();
         $instancia = $linea?->instance_id;
 
-        app(Mensajero::class)->enviar($companyId, $instancia, (string) $this->caso->telefono, $texto);
+        $idDeWhatsapp = app(Mensajero::class)->enviar($companyId, $instancia, (string) $this->caso->telefono, $texto);
 
         $repo = app(ConversationRepositoryInterface::class);
         $conversacion = $this->caso->conversation_id ?: $repo->getOrCreateConversationByPhone(
@@ -352,6 +352,9 @@ TXT;
             'message_type'    => 'text',
             'content'         => $texto,
             'status'          => 'sent',
+            // El id de WhatsApp: con él se reconoce el eco de este mismo
+            // mensaje cuando vuelve sincronizado, y se siguen los acuses.
+            'external_id'     => $idDeWhatsapp,
         ]);
         $msg->agent_signature = mb_substr((string) $this->cfg->nombre_asistente, 0, 200);
         $msg->save();

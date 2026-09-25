@@ -344,7 +344,7 @@ class Herramientas
 
             $url = asset('storage/' . $ruta);
 
-            app(Mensajero::class)->enviarImagen(
+            $idDeWhatsapp = app(Mensajero::class)->enviarImagen(
                 (int) $this->caso->company_id,
                 $linea?->instance_id,
                 (string) $this->caso->telefono,
@@ -365,6 +365,8 @@ class Herramientas
                     'content'         => 'Código QR para pagar',
                     'status'          => 'sent',
                     'agent_signature' => mb_substr((string) $this->cfg->nombre_asistente, 0, 200),
+                    // Para reconocer su eco cuando WhatsApp lo sincronice.
+                    'external_id'     => $idDeWhatsapp,
                     'created_at'      => now(),
                     'updated_at'      => now(),
                 ]);

@@ -93,6 +93,15 @@ class Kernel extends ConsoleKernel
         // un fallo de permisos ahí tumbaría el programador entero. Solapar no
         // hace daño, porque la sesión se borra al avisar y la segunda pasada
         // ya no la encuentra.
+        // El estado de las líneas sólo se refrescaba al abrir la pantalla de la
+        // empresa, así que el panel mostraba caídas líneas que estaban
+        // conectadas y enviando.
+        $schedule->command('wa:sincronizar-lineas')
+            ->everyFiveMinutes()
+            ->user('www-data')
+            ->withoutOverlapping(10)
+            ->runInBackground();
+
         $schedule->command('wa:cerrar-sesiones-inactivas')
             ->everyMinute()
             ->user('www-data');
