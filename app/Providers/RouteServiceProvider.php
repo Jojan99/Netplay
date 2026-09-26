@@ -57,6 +57,7 @@ class RouteServiceProvider extends ServiceProvider
                     require base_path('routes/api/egresosRoutes.php');
                     require base_path('routes/api/carteraRoutes.php');
                     require base_path('routes/api/cobranzaRoutes.php');
+                    require base_path('routes/api/conciliacionPagosRoutes.php');
                     require base_path('routes/api/atajosRoutes.php');
                     require base_path('routes/api/ticketRoutes.php');
                     require base_path('routes/api/broadcastingRoutes.php');

@@ -33,6 +33,9 @@ use Illuminate\Support\Facades\DB;
  */
 class AplicarPagoALasFacturas
 {
+    /** Cuántos días hacia atrás se busca un pago igual antes de aplicar otro. */
+    private const DIAS_PARA_DUPLICADO = 10;
+
     /** detId => lo que la simulación ya abonó en esta corrida. */
     private array $virtual = [];
 
@@ -48,7 +51,7 @@ class AplicarPagoALasFacturas
     /**
      * @return array{estado: string, user_id: ?int, cliente: ?string, movimientos: list<array<string,mixed>>, sobrante: float, detalle: ?string}
      */
-    public function pagar(string $cedula, float $monto, string $marca): array
+    public function pagar(string $cedula, float $monto, string $marca, bool $forzar = false): array
     {
         $vacio = fn (string $estado, ?string $detalle = null, ?int $userId = null, ?string $cliente = null) => [
             'estado' => $estado, 'user_id' => $userId, 'cliente' => $cliente,
@@ -74,6 +77,36 @@ class AplicarPagoALasFacturas
 
         $userId = (int) $clientes[0]->user_id;
         $nombre = trim($clientes[0]->names . ' ' . $clientes[0]->lastname);
+
+        // ── ¿Ya se le aplicó este mismo pago? ────────────────────────────────
+        //
+        // La marca de cada pago evita repetir DENTRO de un lote, pero no si la misma
+        // lista se vuelve a pegar como lote nuevo: a quien tenga otras facturas
+        // pendientes se le aplicaría de nuevo, y eso es plata cobrada dos veces. Si a
+        // este cliente ya se le aplicó, en un lote de estos, un pago de exactamente
+        // este valor hace poco, la fila se detiene hasta que alguien diga que sí.
+        if (!$forzar) {
+            $lote = explode(' · ', $marca)[0];
+
+            $previo = DB::table('payment_logs as pl')
+                ->join('cab_facturations as cb', 'cb.id', '=', 'pl.cab_id')
+                ->where('pl.company_id', $this->companyId)
+                ->where('cb.user_id', $userId)
+                ->where('pl.notes', 'like', 'Lote %')
+                ->where('pl.notes', 'not like', $lote . ' · %')
+                ->where('pl.created_at', '>=', now()->subDays(self::DIAS_PARA_DUPLICADO))
+                ->groupBy('pl.notes')
+                ->havingRaw('ABS(SUM(pl.amount) - ?) < 0.01', [$monto])
+                ->selectRaw('pl.notes, MAX(pl.created_at) as cuando')
+                ->orderByDesc('cuando')->first();
+
+            if ($previo) {
+                $cuando = Carbon::parse($previo->cuando)->format('d/m/Y');
+                $donde = trim(explode(' · ', $previo->notes)[0]);
+
+                return $vacio('posible_duplicado', "A este cliente ya se le aplicó un pago de \$" . number_format($monto, 0, ',', '.') . " el {$cuando} ({$donde}). Si es otro pago, fuércelo.", $userId, $nombre);
+            }
+        }
 
         // ── Qué debe ────────────────────────────────────────────────────────
         // Con DB::table y no con el modelo: el modelo esconde las anuladas por un
