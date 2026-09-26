@@ -45,10 +45,20 @@ class InstalarYAprovisionar
             return self::falla('Esa instalación ya está terminada.', $pasos, $avisos);
         }
 
-        $olt = OltAdmin::find($orden->olt_id);
+        // La orden propone; el técnico, que está mirando el equipo, decide. La
+        // instalación se planea en la oficina y cuando llega a la casa el
+        // cliente a veces sale por otro nodo o por otra VLAN: si se impusiera
+        // lo planeado, la ONT quedaría autorizada donde no navega.
+        $real = self::loQueVaAUsar($orden, $equipo);
+
+        $olt = OltAdmin::find($real['olt_id']);
 
         if (!$olt) {
-            return self::falla('La orden no dice por qué OLT entra este cliente. Completala antes de instalar.', $pasos, $avisos);
+            return self::falla('No se indicó por qué OLT entra este cliente. Selecciónela antes de instalar.', $pasos, $avisos);
+        }
+
+        if ($real['cambios']) {
+            $anotar('El técnico corrigió el plan', true, implode(' · ', $real['cambios']));
         }
 
         // ── 1. El cliente ───────────────────────────────────────────────────
@@ -80,12 +90,12 @@ class InstalarYAprovisionar
                 'description' => \App\UseCases\OltAdmin\OltAdminUseCase::descripcionParaLaOlt(
                     trim(($orden->client_name ?: 'CLIENTE'))
                 ),
-                'vlan'        => $orden->vlan,
-                // Los que se eligieron al tomar el pedido. Sin esto la OLT usa
-                // sus perfiles por defecto, que no siempre son los que van.
-                'line_profile_id' => $orden->line_profile_id,
-                'srv_profile_id'  => $orden->srv_profile_id,
-                'onu_type'        => $orden->onu_type,
+                'vlan'        => $real['vlan'],
+                // Sin esto la OLT usa sus perfiles por defecto, que no siempre
+                // son los que van para el plan que se le vendió.
+                'line_profile_id' => $real['line_profile_id'],
+                'srv_profile_id'  => $real['srv_profile_id'],
+                'onu_type'        => $real['onu_type'],
             ]);
         } catch (\Throwable $e) {
             $anotar('Autorizar la ONT', false, $e->getMessage());
@@ -136,7 +146,7 @@ class InstalarYAprovisionar
                 $ontId,
                 $serial,
                 $userId,
-                $orden->vlan ? (int) $orden->vlan : null,
+                $real['vlan'] ? (int) $real['vlan'] : null,
                 self::loQuePidioElCliente($orden),
             );
         } catch (\Throwable $e) {
@@ -156,13 +166,20 @@ class InstalarYAprovisionar
         $orden->fill([
             'user_data_id'         => $userId,
             'status'               => 'completed',
+            // Queda lo que se usó, no lo que se había planeado: si mañana hay
+            // que revisar por qué este cliente sale por acá, la orden lo dice.
+            'olt_id'               => $real['olt_id'],
+            'vlan'                 => $real['vlan'],
+            'line_profile_id'      => $real['line_profile_id'],
+            'srv_profile_id'       => $real['srv_profile_id'],
+            'onu_type'             => $real['onu_type'],
             'ont_serial'           => $serial,
             'ont_fsp'              => $equipo['fsp'],
             'ont_id'               => $ontId,
             'inventory_id'         => $inv['inventory_id'],
             'aprovisionamiento_id' => $aprovisionamiento['aprovisionamiento'] ?? null,
             'provisioned_at'       => now(),
-            'provision_detalle'    => ['pasos' => $pasos, 'avisos' => $avisos],
+            'provision_detalle'    => ['pasos' => $pasos, 'avisos' => $avisos, 'cambios' => $real['cambios']],
             'finished_at'          => $orden->finished_at ?: now(),
         ])->save();
 
@@ -179,6 +196,57 @@ class InstalarYAprovisionar
                 'ont'                => ['fsp' => $equipo['fsp'], 'ont_id' => $ontId, 'serial' => $serial],
                 'aprovisionamiento'  => $aprovisionamiento['aprovisionamiento'] ?? null,
             ],
+        ];
+    }
+
+    /**
+     * Con qué se va a autorizar: lo de la orden, salvo lo que el técnico cambió.
+     *
+     * Devuelve además qué cambió, en palabras, para que quede anotado en la
+     * orden. Sin eso, mañana nadie sabe si la VLAN 120 fue una decisión del
+     * técnico o un error de carga.
+     *
+     * @param  array<string,mixed>  $equipo
+     * @return array{olt_id: ?int, vlan: ?int, line_profile_id: ?int, srv_profile_id: ?int, onu_type: ?string, cambios: list<string>}
+     */
+    private static function loQueVaAUsar(InstallationOrder $orden, array $equipo): array
+    {
+        $cambios = [];
+
+        $elegir = function (string $campo, string $comoSeLlama, ?callable $formato = null) use ($orden, $equipo, &$cambios) {
+            $planeado = $orden->$campo;
+            $delTecnico = $equipo[$campo] ?? null;
+
+            if ($delTecnico === null || $delTecnico === '') {
+                return $planeado;
+            }
+
+            if ((string) $delTecnico !== (string) $planeado) {
+                $antes = ($planeado === null || $planeado === '')
+                    ? 'sin definir'
+                    : ($formato ? $formato($planeado) : $planeado);
+
+                $cambios[] = "{$comoSeLlama}: {$antes} → " . ($formato ? $formato($delTecnico) : $delTecnico);
+            }
+
+            return $delTecnico;
+        };
+
+        $nombreDeOlt = fn ($id) => OltAdmin::where('id', $id)->value('name') ?: "OLT {$id}";
+
+        $olt  = $elegir('olt_id', 'OLT', $nombreDeOlt);
+        $vlan = $elegir('vlan', 'VLAN');
+        $line = $elegir('line_profile_id', 'perfil de línea');
+        $srv  = $elegir('srv_profile_id', 'perfil de servicio');
+        $onu  = $elegir('onu_type', 'tipo de ONU');
+
+        return [
+            'olt_id'          => $olt ? (int) $olt : null,
+            'vlan'            => $vlan ? (int) $vlan : null,
+            'line_profile_id' => ($line === null || $line === '') ? null : (int) $line,
+            'srv_profile_id'  => ($srv === null || $srv === '') ? null : (int) $srv,
+            'onu_type'        => $onu ?: null,
+            'cambios'         => $cambios,
         ];
     }
 

@@ -310,19 +310,40 @@ class InstallationOrderController extends Controller
      * equivoca al tipear y, sobre todo, que el equipo aparezca ahí ya prueba
      * que está conectado y encendido.
      */
-    public function equiposDisponibles(int $id)
+    /**
+     * Todo lo que el técnico necesita para instalar, en una sola consulta.
+     *
+     * Está en la calle con datos móviles: pedirle cuatro peticiones para armar
+     * la pantalla es media instalación esperando.
+     *
+     * Con `olt_id` responde por otra OLT sin tocar la orden. Pasa seguido: la
+     * orden se toma en la oficina y cuando el técnico llega el cliente sale por
+     * otro nodo. Si el equipo no aparece en la lista, es que está en otra OLT.
+     */
+    public function equiposDisponibles(Request $request, int $id)
     {
         $orden = InstallationOrder::where('company_id', getSessionCompanyId())->findOrFail($id);
 
-        if (!$orden->olt_id) {
+        $oltId = (int) ($request->integer('olt_id') ?: $orden->olt_id);
+
+        if (!$oltId) {
             return response()->json([
                 'status'  => 'error',
-                'message' => 'La orden no dice por qué OLT entra este cliente. Completala desde Instalaciones.',
+                'message' => 'La orden no dice por qué OLT entra este cliente. Complétela desde Instalaciones.',
             ], 422);
         }
 
+        // Que la OLT sea de la empresa: el id llega del navegador.
+        $olt = \App\Models\OltAdmin::where('company_id', $orden->company_id)->find($oltId);
+
+        if (!$olt) {
+            return response()->json(['status' => 'error', 'message' => 'Esa OLT no es de esta empresa.'], 422);
+        }
+
+        $casoDeUso = app(\App\UseCases\OltAdmin\OltAdminUseCase::class);
+
         try {
-            $r = app(\App\UseCases\OltAdmin\OltAdminUseCase::class)->getUnauthorizedONTs((int) $orden->olt_id);
+            $r = $casoDeUso->getUnauthorizedONTs($oltId);
             $sinAutorizar = $r['data'] ?? [];
         } catch (\Throwable $e) {
             return response()->json([
@@ -331,24 +352,93 @@ class InstallationOrderController extends Controller
             ], 502);
         }
 
+        // Los perfiles y las capacidades son de la OLT que se está mirando, no
+        // de la que traía la orden.
+        $perfiles = ['line' => [], 'srv' => []];
+        $capacidades = [];
+
+        try {
+            $p = $casoDeUso->getProfiles($oltId);
+            $perfiles = ['line' => $p['data']['line'] ?? [], 'srv' => $p['data']['srv'] ?? []];
+            $capacidades = $casoDeUso->capacidades($oltId)['data'] ?? $casoDeUso->capacidades($oltId);
+        } catch (\Throwable $e) {
+            \Log::warning('[Instalación] No se pudieron leer los perfiles de la OLT', ['olt' => $oltId, 'error' => $e->getMessage()]);
+        }
+
         return response()->json([
             'status' => 'success',
             'data'   => [
-                'onts'       => $sinAutorizar,
-                'inventario' => \App\Services\Instalaciones\EquipoDelInventario::ontsConStock((int) $orden->company_id),
+                'onts'        => $sinAutorizar,
+                'inventario'  => \App\Services\Instalaciones\EquipoDelInventario::ontsConStock((int) $orden->company_id),
                 'aprovisiona' => (bool) \App\Models\GestionRemota::where('company_id', $orden->company_id)->value('aprovisionar'),
+
+                // Para poder corregir en el terreno lo que se planeó en la oficina.
+                'olts'        => \App\Models\OltAdmin::where('company_id', $orden->company_id)
+                                    ->get(['id', 'name', 'brand', 'model', 'host', 'ont_lineprofile_id', 'ont_srvprofile_id'])
+                                    ->map(fn ($o) => $o->toArray())->all(),
+                'olt_id'      => $oltId,
+                'perfiles'    => $perfiles,
+                'capacidades' => $capacidades,
+                'vlans'       => $this->vlansDelRouter($orden),
+
+                // Lo que trae la orden: es lo que se propone, no lo que se impone.
+                'plan'        => [
+                    'olt_id'          => $orden->olt_id ? (int) $orden->olt_id : null,
+                    'vlan'            => $orden->vlan ? (int) $orden->vlan : null,
+                    'line_profile_id' => $orden->line_profile_id ? (int) $orden->line_profile_id : null,
+                    'srv_profile_id'  => $orden->srv_profile_id ? (int) $orden->srv_profile_id : null,
+                    'onu_type'        => $orden->onu_type,
+                ],
             ],
         ]);
     }
 
     /**
-     * POST /api/installations/{id}/provisionar
-     * Body: { fsp, ont_id, serial, inventory_id? }
+     * Las VLAN del router por donde puede salir el cliente.
      *
-     * Da de alta al cliente, autoriza el equipo, se lo asigna, lo descuenta
-     * del inventario y —si la empresa lo tiene encendido— deja programada la
-     * configuración. Todo en un paso, desde la casa del cliente.
+     * Si el router no contesta se devuelve vacío y el técnico escribe el número
+     * a mano: quedarse sin instalar porque el MikroTik no respondió es peor.
+     *
+     * @return list<array<string,mixed>>
      */
+    private function vlansDelRouter(InstallationOrder $orden): array
+    {
+        try {
+            $r = app(\App\UseCases\ManagementRouter\Interfaces\GetIpAvaliblesUseCaseInterface::class)
+                ->getLanSegments($orden->router_id ? (int) $orden->router_id : null);
+
+            $filas = array_values((array) ($r['data'] ?? []));
+
+            // Una entrada por VLAN, con su número: es lo que la OLT necesita.
+            $porVlan = [];
+
+            foreach ($filas as $f) {
+                $f = (array) $f;
+                $nombre = (string) ($f['names'] ?? '');
+
+                preg_match('/\d+/', $nombre, $m);
+                $vlan = isset($f['vlan_id']) && $f['vlan_id'] ? (int) $f['vlan_id'] : (int) ($m[0] ?? 0);
+
+                if (!$vlan || isset($porVlan[$vlan])) continue;
+
+                $porVlan[$vlan] = [
+                    'vlan'      => $vlan,
+                    'nombre'    => $nombre,
+                    'red'       => $f['network'] ?? null,
+                    'clientes'  => isset($f['clientes']) ? (int) $f['clientes'] : null,
+                ];
+            }
+
+            ksort($porVlan);
+
+            return array_values($porVlan);
+        } catch (\Throwable $e) {
+            \Log::warning('[Instalación] No se pudieron leer las VLAN del router', ['orden' => $orden->id, 'error' => $e->getMessage()]);
+
+            return [];
+        }
+    }
+
     public function provisionar(Request $request, int $id)
     {
         $datos = $request->validate([
@@ -356,6 +446,15 @@ class InstallationOrderController extends Controller
             'ont_id'       => 'required|integer|min:0',
             'serial'       => 'required|string|max:40',
             'inventory_id' => 'nullable|integer',
+
+            // Lo que el técnico corrige estando en la casa: la orden se tomó
+            // en la oficina y a veces el cliente sale por otro nodo u otra
+            // VLAN. Si no viene, se usa lo que traía la orden.
+            'olt_id'          => ['nullable', $this->deLaEmpresa('olt_admins')],
+            'vlan'            => 'nullable|integer|min:1|max:4094',
+            'line_profile_id' => 'nullable|integer|min:0',
+            'srv_profile_id'  => 'nullable|integer|min:0',
+            'onu_type'        => 'nullable|string|max:60',
         ]);
 
         $orden = InstallationOrder::where('company_id', getSessionCompanyId())->findOrFail($id);
