@@ -23,7 +23,7 @@ use Illuminate\Support\Facades\Route;
 | demás grupos de rutas.
 |
 | El token de la consola es opaco y vive en `plataforma_sesiones`: un JWT del
-| panel no vale acá, y uno de la consola no es un JWT válido allá.
+| panel no vale aquí, y uno de la consola no es un JWT válido allá.
 */
 
 $host = strtolower(trim((string) config('plataforma.consola_host', '')));

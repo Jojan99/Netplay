@@ -84,7 +84,7 @@ class CreateUserDataUseCase implements CreateUserDataUseCaseInterface
                         // con un alta PPPoE cuyo tipo no llegaba al servidor.
                         if (empty($data['ip_assignment_id'])) {
                             return [
-                                'message' => 'Falta la IP: un cliente de IP fija necesita una IP asignada. Si se conecta por PPPoE, elegí ese tipo de conexión.',
+                                'message' => 'Falta la IP: un cliente de IP fija necesita una IP asignada. Si se conecta por PPPoE, seleccione ese tipo de conexión.',
                                 'status'  => 1,
                                 'data'    => 'IP_REQUIRED',
                             ];

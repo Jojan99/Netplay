@@ -13,7 +13,7 @@ use Tymon\JWTAuth\Facades\JWTAuth;
  * No es un tour de burbujas sobre la pantalla: es una lista de las cosas que
  * una empresa necesita dejar listas para operar, y cada paso se marca solo
  * mirando si el dato existe de verdad. Así la guía sirve igual para quien
- * recién entra y para quien ya lleva la mitad hecha, y nunca dice "completá
+ * recién entra y para quien ya lleva la mitad hecha, y nunca dice "complete
  * esto" sobre algo que ya está cargado.
  */
 class OnboardingController extends Controller
@@ -112,8 +112,8 @@ class OnboardingController extends Controller
         return [
             [
                 'clave'       => 'facturacion',
-                'titulo'      => 'Completá los datos de tu empresa',
-                'detalle'     => 'Razón social, NIT, dirección y logo. Es lo que sale impreso en cada factura que emitís.',
+                'titulo'      => 'Complete los datos de su empresa',
+                'detalle'     => 'Razón social, NIT, dirección y logo. Es lo que sale impreso en cada factura que emite.',
                 'ruta'        => '/dashboard/billing-config',
                 'boton'       => 'Configurar facturación',
                 'hecho'       => $datosFacturacion,
@@ -121,8 +121,8 @@ class OnboardingController extends Controller
             ],
             [
                 'clave'       => 'planes',
-                'titulo'      => 'Cargá tus planes de internet',
-                'detalle'     => 'La velocidad y el precio de cada plan. Sin esto no vas a poder asignarle un servicio a un cliente.',
+                'titulo'      => 'Cargue sus planes de internet',
+                'detalle'     => 'La velocidad y el precio de cada plan. Sin esto no podrá asignarle un servicio a un cliente.',
                 'ruta'        => '/dashboard/planes-internet',
                 'boton'       => 'Crear planes',
                 'hecho'       => $planes > 0,
@@ -133,8 +133,8 @@ class OnboardingController extends Controller
                 // después permite darle servicio y cortarlo por mora. Cargar
                 // clientes sin MikroTik deja el control de red a mano.
                 'clave'       => 'mikrotik',
-                'titulo'      => 'Conectá tu MikroTik',
-                'detalle'     => 'Cargá el router con su IP, usuario y contraseña. Es lo que después deja asignar ancho de banda y suspender por mora sin tocar nada a mano.',
+                'titulo'      => 'Conecte su MikroTik',
+                'detalle'     => 'Cargue el router con su IP, usuario y contraseña. Es lo que después deja asignar ancho de banda y suspender por mora sin tocar nada a mano.',
                 'ruta'        => '/dashboard/mikrotik',
                 'boton'       => 'Agregar MikroTik',
                 'hecho'       => $routers > 0,
@@ -145,8 +145,8 @@ class OnboardingController extends Controller
                 // necesita, pero quien usa PPPoE tiene que montarlo antes de
                 // cargar clientes o no van a poder conectarse.
                 'clave'       => 'pppoe',
-                'titulo'      => 'Elegí cómo se conectan tus clientes',
-                'detalle'     => 'Si repartís IP fija ya está todo listo. Si trabajás con PPPoE, dejá el router preparado desde acá: se crea el rango de direcciones, el perfil y el servidor en un paso.',
+                'titulo'      => 'Seleccione cómo se conectan sus clientes',
+                'detalle'     => 'Si reparte IP fija ya está todo listo. Si trabaja con PPPoE, deje el router preparado desde aquí: se crea el rango de direcciones, el perfil y el servidor en un paso.',
                 'ruta'        => '/dashboard/mikrotik',
                 'boton'       => 'Configurar PPPoE',
                 'hecho'       => $routers > 0,
@@ -155,8 +155,8 @@ class OnboardingController extends Controller
             ],
             [
                 'clave'       => 'clientes',
-                'titulo'      => 'Registrá tus clientes',
-                'detalle'     => 'Podés cargarlos de a uno o importarlos. Cada cliente queda con su plan, su dirección y su estado de servicio.',
+                'titulo'      => 'Registre sus clientes',
+                'detalle'     => 'Puede cargarlos de a uno o importarlos. Cada cliente queda con su plan, su dirección y su estado de servicio.',
                 'ruta'        => '/dashboard/usuario',
                 'boton'       => 'Ir a clientes',
                 'hecho'       => $clientes > 0,
@@ -168,8 +168,8 @@ class OnboardingController extends Controller
                 // no se emiten. La facturación del período se dispara desde
                 // Configuración de facturación, pestaña Grupos de facturación.
                 'clave'       => 'facturar',
-                'titulo'      => 'Generá tu primera facturación',
-                'detalle'     => 'En Grupos de facturación definís el día de corte y con “Ejecutar ahora” emitís las facturas del período, listas para enviarse por WhatsApp o correo.',
+                'titulo'      => 'Genere su primera facturación',
+                'detalle'     => 'En Grupos de facturación define el día de corte y con “Ejecutar ahora” emite las facturas del período, listas para enviarse por WhatsApp o correo.',
                 'ruta'        => '/dashboard/billing-config',
                 'boton'       => 'Ir a facturación',
                 'hecho'       => $facturas > 0,
@@ -177,8 +177,8 @@ class OnboardingController extends Controller
             ],
             [
                 'clave'       => 'whatsapp',
-                'titulo'      => 'Conectá WhatsApp',
-                'detalle'     => 'Escaneás un QR y desde ahí salen las facturas, los avisos de mora y la bandeja de conversaciones con tus clientes.',
+                'titulo'      => 'Conecte WhatsApp',
+                'detalle'     => 'Escanea un QR y desde ahí salen las facturas, los avisos de mora y la bandeja de conversaciones con sus clientes.',
                 'ruta'        => '/dashboard/whatsapp',
                 'boton'       => 'Conectar WhatsApp',
                 // La api_key se aprovisiona sola al registrarse, así que no
@@ -189,8 +189,8 @@ class OnboardingController extends Controller
             ],
             [
                 'clave'       => 'equipo',
-                'titulo'      => 'Sumá a tu equipo',
-                'detalle'     => 'Creá los usuarios de tus técnicos y administrativos, y decidí qué módulos ve cada perfil.',
+                'titulo'      => 'Sume a su equipo',
+                'detalle'     => 'Cree los usuarios de sus técnicos y administrativos, y decida qué módulos ve cada perfil.',
                 'ruta'        => '/dashboard/staff',
                 'boton'       => 'Gestionar staff',
                 'hecho'       => $staff > 1,

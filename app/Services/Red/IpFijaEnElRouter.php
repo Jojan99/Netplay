@@ -129,7 +129,7 @@ class IpFijaEnElRouter
 
         // Entre que se listaron las IP y se guardó, otro pudo quedársela.
         if ($otro = self::clienteConIp($this->companyId, $ip, $userId)) {
-            return $no("La IP {$ip} ya la tiene {$otro['nombre']} en la plataforma. Elegí otra.");
+            return $no("La IP {$ip} ya la tiene {$otro['nombre']} en la plataforma. Seleccione otra.");
         }
 
         $redes = self::redesDe($this->api, $interfaz);
@@ -154,7 +154,7 @@ class IpFijaEnElRouter
                     continue;
                 }
 
-                return $no("La IP {$ip} está en el router a nombre de {$r['identidad']['nombre']}. Elegí otra.");
+                return $no("La IP {$ip} está en el router a nombre de {$r['identidad']['nombre']}. Seleccione otra.");
             }
 
             if ($r['estado'] === 'ambiguo') {

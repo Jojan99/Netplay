@@ -13,13 +13,13 @@ use Throwable;
  *
  * Cada aviso es un "evento" con su clave (ticket_support, payment…) y cada
  * empresa decide a qué grupo o número va, con varios destinos si quiere. Las
- * alertas de la red se configuran acá también (alerta_red, alerta_resumen)
+ * alertas de la red se configuran aquí también (alerta_red, alerta_resumen)
  * pero las manda AvisosAlGrupo, que necesita saber si el envío salió para no
  * repetir una alerta ya avisada.
  */
 class NotificationRouterService
 {
-    /** Eventos de red: se listan y se configuran acá, pero los manda AvisosAlGrupo. */
+    /** Eventos de red: se listan y se configuran aquí, pero los manda AvisosAlGrupo. */
     public const EVENTOS_DE_RED = ['alerta_red', 'alerta_resumen'];
 
     /**
@@ -105,7 +105,7 @@ class NotificationRouterService
 
     /**
      * Todo lo que la plataforma puede avisar, agrupado como lo entiende el
-     * dueño del ISP. El panel dibuja esta lista tal cual: si acá se agrega un
+     * dueño del ISP. El panel dibuja esta lista tal cual: si aquí se agrega un
      * evento, aparece solo en la pantalla.
      *
      * @return list<array{clave:string, seccion:string, titulo:string, icono:string, cuando:string, solo_grupo:bool}>

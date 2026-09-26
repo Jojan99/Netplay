@@ -62,6 +62,8 @@ class InstallationOrderController extends Controller
     {
         $validated = $request->validate([
             'client_name' => 'required|string|max:255',
+            'client_firstname' => 'nullable|string|max:255',
+            'client_lastname' => 'nullable|string|max:255',
             'client_dni' => 'required|string|max:50',
             'client_phone' => 'required|string|max:20',
             'client_email' => 'nullable|email',
@@ -140,6 +142,8 @@ class InstallationOrderController extends Controller
         
         $validated = $request->validate([
             'client_name' => 'sometimes|string|max:255',
+            'client_firstname' => 'nullable|string|max:255',
+            'client_lastname' => 'nullable|string|max:255',
             'client_dni' => 'sometimes|string|max:50',
             'client_phone' => 'sometimes|string|max:20',
             'client_email' => 'nullable|email',
@@ -387,6 +391,8 @@ class InstallationOrderController extends Controller
         return response()->json(['status' => 'success', 'data' => [
             'installation_id'   => $orden->id,
             'names'             => $orden->client_name,
+            'firstname'         => $orden->client_firstname,
+            'lastname'          => $orden->client_lastname,
             'dni'               => $orden->client_dni,
             'phone'             => $orden->client_phone,
             'email'             => $orden->client_email,

@@ -39,27 +39,27 @@ class CreateStaffRequest extends FormRequest
      */
     public function messages(): array
     {
-        $clave = 'La contraseña debe tener al menos 10 caracteres e incluir mayúsculas, minúsculas y números. Podés usar el botón «Generar».';
+        $clave = 'La contraseña debe tener al menos 10 caracteres e incluir mayúsculas, minúsculas y números. Puede usar el botón «Generar».';
 
         return [
-            'names.required'      => 'Escribí el nombre del usuario.',
+            'names.required'      => 'Escriba el nombre del usuario.',
             'names.max'           => 'El nombre no puede pasar de 255 caracteres.',
-            'lastname.required'   => 'Escribí el apellido del usuario.',
+            'lastname.required'   => 'Escriba el apellido del usuario.',
             'lastname.max'        => 'El apellido no puede pasar de 255 caracteres.',
-            'email.required'      => 'Escribí el correo electrónico.',
-            'email.email'         => 'El correo no es válido: revisá que tenga el formato usuario@empresa.com.',
+            'email.required'      => 'Escriba el correo electrónico.',
+            'email.email'         => 'El correo no es válido: revise que tenga el formato usuario@empresa.com.',
             'email.max'           => 'El correo no puede pasar de 255 caracteres.',
-            'username.required'   => 'Escribí el usuario con el que va a entrar al sistema.',
+            'username.required'   => 'Escriba el usuario con el que va a entrar al sistema.',
             'username.regex'      => 'El usuario sólo admite letras, números, punto, guion y guion bajo (sin espacios ni tildes).',
             'username.max'        => 'El usuario no puede pasar de 100 caracteres.',
-            'password.required'   => 'Escribí una contraseña para la cuenta.',
+            'password.required'   => 'Escriba una contraseña para la cuenta.',
             'password.min'        => $clave,
             'password.mixed'      => $clave,
             'password.numbers'    => $clave,
             'password.letters'    => $clave,
-            'profile_id.required' => 'Elegí el rol del usuario (Administrador, Técnico o Contador).',
-            'profile_id.integer'  => 'Elegí el rol del usuario (Administrador, Técnico o Contador).',
-            'profile_id.exists'   => 'Ese rol no existe en esta empresa: elegí uno de la lista.',
+            'profile_id.required' => 'Seleccione el rol del usuario (Administrador, Técnico o Contador).',
+            'profile_id.integer'  => 'Seleccione el rol del usuario (Administrador, Técnico o Contador).',
+            'profile_id.exists'   => 'Ese rol no existe en esta empresa: seleccione uno de la lista.',
         ];
     }
 

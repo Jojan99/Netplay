@@ -13,6 +13,8 @@ class InstallationOrder extends Model
         'company_id',
         'user_data_id',
         'client_name',
+        'client_firstname',
+        'client_lastname',
         'client_dni',
         'client_phone',
         'client_email',

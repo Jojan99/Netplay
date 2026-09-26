@@ -29,16 +29,16 @@ class TemplateEmailCompanyConfirmation
         <body>
           <div class='container'>
             <div class='header'>
-              <h2>Confirma tu empresa en Netvula</h2>
+              <h2>Confirma su empresa en Netvula</h2>
             </div>
             <div class='content'>
               <p>Hola, <strong>" . htmlspecialchars($companyName) . "</strong>.</p>
-              <p>Tu empresa ha sido registrada exitosamente en la plataforma <strong>Netvula</strong>.</p>
-              <p>Para activar tu cuenta y comenzar a operar, por favor confirma tu correo electrónico haciendo clic en el siguiente botón:</p>
+              <p>Su empresa ha sido registrada exitosamente en la plataforma <strong>Netvula</strong>.</p>
+              <p>Para activar su cuenta y comenzar a operar, por favor confirma su correo electrónico haciendo clic en el siguiente botón:</p>
               <p style='text-align:center;'>
                 <a href='" . htmlspecialchars($confirmUrl) . "' class='btn'>Confirmar correo</a>
               </p>
-              <p>Si el botón no funciona, copia y pega este enlace en tu navegador:</p>
+              <p>Si el botón no funciona, copia y pega este enlace en su navegador:</p>
               <p style='word-break:break-all; color:#1a73e8;'>" . htmlspecialchars($confirmUrl) . "</p>
               <p>Este enlace expira en <strong>24 horas</strong>.</p>
               <p>Si no solicitaste este registro, ignora este correo.</p>
@@ -53,9 +53,9 @@ class TemplateEmailCompanyConfirmation
         // Correo de la plataforma: sale siempre de no-reply@netvula.com a nombre de Netvula.
         $resultado = Correo::plataforma()->enviar(
             ['email' => $toEmail, 'nombre' => $companyName],
-            'Confirma tu empresa en Netvula',
+            'Confirma su empresa en Netvula',
             $html,
-            "Confirma tu empresa: {$confirmUrl}",
+            "Confirma su empresa: {$confirmUrl}",
         );
 
         if (!$resultado['ok']) {

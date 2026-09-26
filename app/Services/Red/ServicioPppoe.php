@@ -148,7 +148,7 @@ class ServicioPppoe
             ->keyBy('user_data_id');
 
         // MikroTik guarda en el mismo lugar las credenciales de PPPoE y las de
-        // las VPN —L2TP, PPTP, SSTP, OpenVPN—. Acá interesan sólo las de
+        // las VPN —L2TP, PPTP, SSTP, OpenVPN—. Aquí interesan sólo las de
         // clientes: la cuenta de la VPN del propio ISP no es un abonado.
         $secrets = array_filter(
             $this->leer($api, '/ppp/secret/print'),

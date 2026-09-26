@@ -291,7 +291,7 @@ class EjecutarImportacion
      *
      * Se crea con el mismo camino que una factura manual del panel
      * (FacturationRepository: prefijo y consecutivo por empresa), nunca se
-     * envía desde acá y queda anotada en la fila para el reporte.
+     * envía desde aquí y queda anotada en la fila para el reporte.
      *
      * @param  array<string,mixed> $d
      * @return array{id:int, numero:string, valor:float}|null

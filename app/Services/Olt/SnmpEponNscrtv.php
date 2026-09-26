@@ -12,7 +12,7 @@ use App\Services\HuaweiSnmpReader;
  * "EasyPath Ethernet-PON"— y otros fabricantes que comparten ese firmware, así
  * que el lector se elige por la presencia de la tabla y no por la marca.
  *
- * Todo lo de acá está verificado contra una C-Data EPON real con 64 ONU:
+ * Todo lo de aquí está verificado contra una C-Data EPON real con 64 ONU:
  *
  *   17409.2.3.4.1.1.<col>.<ifIndex>        tabla de ONU
  *       7   MAC (6 octetos): en EPON la ONU se identifica por MAC, no por serial

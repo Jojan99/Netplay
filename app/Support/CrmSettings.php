@@ -9,9 +9,9 @@ use Illuminate\Support\Facades\DB;
 class CrmSettings
 {
     // {empresa} se reemplaza por el nombre de la empresa al enviarlo (ver defaultWelcome).
-    public const DEFAULT_WELCOME = "👋 Hola, gracias por contactar a *{empresa}*.\n\nEn breve uno de nuestros asesores continuará la conversación contigo.";
+    public const DEFAULT_WELCOME = "👋 Hola, gracias por contactar a *{empresa}*.\n\nEn breve uno de nuestros asesores continuará la conversación con usted.";
     public const DEFAULT_IDENTIFICACION = \App\Services\Crm\PuertaIdentificacion::PREGUNTA_POR_DEFECTO;
-    public const DEFAULT_OFF_HOURS = "🕒 Gracias por escribirnos. En este momento estamos fuera del horario de atención; te responderemos apenas retomemos. Si es una emergencia del servicio, dejanos el detalle y lo priorizamos.";
+    public const DEFAULT_OFF_HOURS = "🕒 Gracias por escribirnos. En este momento estamos fuera del horario de atención; le responderemos apenas retomemos. Si es una emergencia del servicio, dejanos el detalle y lo priorizamos.";
 
     public static function for(int $companyId): array
     {

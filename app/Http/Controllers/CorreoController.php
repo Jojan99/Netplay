@@ -12,7 +12,7 @@ use Illuminate\Http\Request;
  * Correo (Mailjet) de la empresa en sesión.
  *
  * Por defecto los correos salen de la cuenta de la plataforma
- * (no-reply@netvula.com) con el nombre de la empresa. Acá el administrador
+ * (no-reply@netvula.com) con el nombre de la empresa. Aquí el administrador
  * puede conectar la cuenta de Mailjet propia de su empresa.
  */
 class CorreoController extends Controller
@@ -59,7 +59,7 @@ class CorreoController extends Controller
             if (!$key || !$secret || !$desde) {
                 return response()->json([
                     'status'  => 1,
-                    'message' => 'Para activar tu propio correo necesitás la API Key, la Secret Key y el correo remitente.',
+                    'message' => 'Para activar su propio correo necesita la API Key, la Secret Key y el correo remitente.',
                 ], 422);
             }
 
@@ -87,7 +87,7 @@ class CorreoController extends Controller
         return response()->json([
             'status'  => 0,
             'message' => $company->mailjet_activo
-                ? 'Listo: tus correos ahora salen desde tu propia cuenta de Mailjet.'
+                ? 'Listo: sus correos ahora salen desde su propia cuenta de Mailjet.'
                 : 'Configuración guardada. Los correos salen desde ' . Correo::remitentePlataforma() . '.',
             'data'    => $this->estado($company->fresh()),
         ]);
@@ -102,7 +102,7 @@ class CorreoController extends Controller
         $destino = trim((string) $request->input('email')) ?: trim((string) User::where('id', getSessionUserId())->value('email'));
 
         if (!filter_var($destino, FILTER_VALIDATE_EMAIL)) {
-            return response()->json(['status' => 1, 'message' => 'Indicá a qué correo enviamos la prueba.'], 422);
+            return response()->json(['status' => 1, 'message' => 'Indique a qué correo enviamos la prueba.'], 422);
         }
 
         $correo = Correo::deEmpresa($company);
@@ -112,7 +112,7 @@ class CorreoController extends Controller
         $html = "<p>Hola,</p>"
             . "<p>Esta es una prueba de correo de <strong>" . e($nombre) . "</strong>.</p>"
             . "<p>Salió desde <strong>" . e($remitente['email']) . "</strong> ("
-            . ($remitente['origen'] === Correo::PROPIA ? 'la cuenta de Mailjet de tu empresa' : 'la cuenta de correo de Netvula') . ")."
+            . ($remitente['origen'] === Correo::PROPIA ? 'la cuenta de Mailjet de su empresa' : 'la cuenta de correo de Netvula') . ")."
             . ($remitente['responder_a'] ? " Las respuestas llegan a " . e($remitente['responder_a']) . "." : '')
             . "</p>"
             . "<p>Si recibiste este mensaje, el envío de facturas y avisos por correo va a funcionar.</p>";
@@ -122,7 +122,7 @@ class CorreoController extends Controller
         return response()->json([
             'status'  => $resultado['ok'] ? 0 : 1,
             'message' => $resultado['ok']
-                ? "Correo de prueba enviado a {$destino}. Revisá la bandeja (y el spam)."
+                ? "Correo de prueba enviado a {$destino}. Revise la bandeja (y el spam)."
                 : 'No se pudo enviar: ' . $resultado['detalle'],
             'data'    => [
                 'enviado'    => $resultado['ok'],
@@ -147,7 +147,7 @@ class CorreoController extends Controller
 
         return response()->json([
             'status'  => 0,
-            'message' => 'Cuenta de Mailjet desconectada. Tus correos vuelven a salir desde ' . Correo::remitentePlataforma() . '.',
+            'message' => 'Cuenta de Mailjet desconectada. Sus correos vuelven a salir desde ' . Correo::remitentePlataforma() . '.',
             'data'    => $this->estado($company->fresh()),
         ]);
     }

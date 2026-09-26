@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\DB;
  * Clientes eliminados y su reinstalación.
  *
  * Eliminar un cliente en Netvula no borra nada: deja user_data.active = 0 y le
- * quita el servicio. Acá se listan esos clientes para poder volver a darles de
+ * quita el servicio. Aquí se listan esos clientes para poder volver a darles de
  * alta cuando piden reinstalación, con el aviso de lo que no vuelve solo (la
  * configuración del MikroTik y la IP, que puede haber quedado para otro).
  */
@@ -108,7 +108,7 @@ class ClientesEliminados
         // se reinstala y se dice por qué.
         if ($accion === 'mantener') {
             if (!$cliente->ip) {
-                return ['message' => 'No tenía IP para mantener: elegí una.', 'data' => null, 'status' => 1];
+                return ['message' => 'No tenía IP para mantener: seleccione una.', 'data' => null, 'status' => 1];
             }
 
             $r = $this->revisar($userId, $companyId, (string) $cliente->ip, null, (int) $cliente->router_id);
@@ -124,7 +124,7 @@ class ClientesEliminados
             $interfaz = trim((string) ($eleccion['interfaz'] ?? ''));
 
             if ($ip === '' || $interfaz === '') {
-                return ['message' => 'Para cambiarle la IP elegí la VLAN y la IP.', 'data' => null, 'status' => 1];
+                return ['message' => 'Para cambiarle la IP seleccione la VLAN y la IP.', 'data' => null, 'status' => 1];
             }
 
             $r = $this->revisar($userId, $companyId, $ip, $interfaz, (int) $cliente->router_id);
@@ -180,7 +180,7 @@ class ClientesEliminados
         }
 
         if (!DB::table('cab_facturations')->where('user_id', $userId)->exists()) {
-            $avisos[] = 'No tiene grupo de facturación: revisá la ficha para que vuelva a facturarse.';
+            $avisos[] = 'No tiene grupo de facturación: revise la ficha para que vuelva a facturarse.';
         }
 
         DB::table('user_data')->where('user_id', $userId)->where('company_id', $companyId)->update($cambios);

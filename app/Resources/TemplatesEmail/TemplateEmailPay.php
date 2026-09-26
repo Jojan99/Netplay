@@ -73,9 +73,9 @@ class TemplateEmailPay
           <h2>Pago Exitoso: ".$e($id_facture)."</h2>
         </div>
         <div class='content'>
-          <h1>¡Gracias por tu pago! Valor</h1>
+          <h1>¡Gracias por su pago! Valor</h1>
           <a><strong>Sr. (es): </strong>" . $e($data['names'] ?? '') . " " . $e($data['lastname'] ?? '') . "</a>
-          <p>Hemos recibido tu pago con éxito. Ahora puedes disfrutar de nuestros servicios sin interrupciones.</p>
+          <p>Hemos recibido su pago con éxito. Ahora puedes disfrutar de nuestros servicios sin interrupciones.</p>
           <a><strong>Valor: </strong>" . $e($price) ."</a>
           <p>Si tienes alguna pregunta, no dudes en contactarnos.</p>
         </div>

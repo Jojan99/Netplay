@@ -81,7 +81,7 @@ class OltAdminController extends Controller
         $olt = \App\Models\OltAdmin::where('id', $oltId)->where('company_id', (int) getSessionCompanyId())->first();
 
         if (!$olt) {
-            return standardApiReponse('Esa OLT no es de tu empresa.', null, 1, JsonResponse::HTTP_NOT_FOUND);
+            return standardApiReponse('Esa OLT no es de su empresa.', null, 1, JsonResponse::HTTP_NOT_FOUND);
         }
 
         $habia = \App\Services\Olt\SenalDeLaOlt::cancelar($olt);

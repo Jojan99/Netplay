@@ -430,7 +430,7 @@ class EquiposDelAcs
 
         $valores = [];
 
-        // Acá pasa todo: la ficha del cliente, el portal y el aprovisionamiento.
+        // Aquí pasa todo: la ficha del cliente, el portal y el aprovisionamiento.
         // La revisión va en este punto y no sólo en cada formulario, para que
         // ninguna ruta nueva se salte la regla sin que nadie se dé cuenta.
         if ($ssid !== null && $ssid !== '') {
@@ -503,7 +503,7 @@ class EquiposDelAcs
     private function exigirPropio(string $id): void
     {
         if (!$this->propio($id)) {
-            throw new \InvalidArgumentException('Ese equipo no es de tu empresa.');
+            throw new \InvalidArgumentException('Ese equipo no es de su empresa.');
         }
     }
 
@@ -594,7 +594,7 @@ class EquiposDelAcs
             '_id', '_deviceId', '_lastInform', '_lastBoot', '_registered',
             'InternetGatewayDevice.WANDevice', 'InternetGatewayDevice.DeviceInfo.SoftwareVersion',
             // La MAC de la ONT: las C-Data EPON se registran en la OLT por MAC y
-            // en el ACS con otro serial (DF1E-…); por acá se emparejan.
+            // en el ACS con otro serial (DF1E-…); por aquí se emparejan.
             'InternetGatewayDevice.ManagementServer.mac', 'InternetGatewayDevice.X_CATV_UserInfo.UserName',
             'Device.PPP.Interface', 'Device.IP.Interface', 'Device.DeviceInfo.SoftwareVersion',
         ]));

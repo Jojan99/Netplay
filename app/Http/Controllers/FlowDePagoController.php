@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\Log;
  * La puerta por la que Meta habla con la pantalla de pago del chat.
  *
  * Todo entra y sale cifrado, y la respuesta es texto plano en base64 (no JSON):
- * así lo espera Meta. Un error acá se ve en el teléfono del cliente como
+ * así lo espera Meta. Un error aquí se ve en el teléfono del cliente como
  * «algo salió mal», sin más detalle, así que cada falla queda registrada de
  * este lado con su motivo.
  */

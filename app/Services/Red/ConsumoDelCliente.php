@@ -272,7 +272,7 @@ class ConsumoDelCliente
             ->first(['ud.router_id', 'ud.connection_type', 'ud.pppoe_user', 't.ip']);
 
         if (!$cliente || (!$cliente->ip && !$cliente->pppoe_user)) {
-            return ['ok' => false, 'detalle' => 'Tu servicio no tiene una conexión registrada para medir.'];
+            return ['ok' => false, 'detalle' => 'Su servicio no tiene una conexión registrada para medir.'];
         }
 
         $pppoe = $cliente->connection_type === 'pppoe' && $cliente->pppoe_user;
@@ -294,7 +294,7 @@ class ConsumoDelCliente
             }
         }
 
-        return ['ok' => false, 'detalle' => 'Tu conexión no aparece activa en este momento. Si no tienes internet, reporta la falla.'];
+        return ['ok' => false, 'detalle' => 'Su conexión no aparece activa en este momento. Si no tienes internet, reporta la falla.'];
     }
 
     /** @return iterable<ConectionRouter> primero el que ya lo encontró, después el suyo, después el resto */

@@ -34,7 +34,7 @@ class InvoiceLinkController extends Controller
             Log::warning('Factura por enlace: token inválido', ['ip' => $request->ip()]);
 
             return response()->view('payment.link_message', [
-                'message' => 'Este enlace no es válido o ya venció. Escríbenos y te mandamos tu factura.',
+                'message' => 'Este enlace no es válido o ya venció. Escríbenos y le mandamos su factura.',
             ], 404);
         }
 
@@ -51,7 +51,7 @@ class InvoiceLinkController extends Controller
             ]);
 
             return response()->view('payment.link_message', [
-                'message' => 'No pudimos abrir tu factura en este momento. Intenta de nuevo en unos minutos.',
+                'message' => 'No pudimos abrir su factura en este momento. Intenta de nuevo en unos minutos.',
             ], 200);
         }
     }

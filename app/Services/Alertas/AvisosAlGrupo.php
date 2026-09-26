@@ -268,7 +268,7 @@ class AvisosAlGrupo
     /** El mismo texto que ve el grupo al quedar asociado, desde el panel o el comando. */
     public static function textoDeConfirmacion(): string
     {
-        return "✅ Grupo asociado. Acá van a llegar las alertas de la red: cortes de puerto, OLT o túnel caídos, clientes caídos por fibra y señal crítica, más un resumen cada mañana.";
+        return "✅ Grupo asociado. Aquí van a llegar las alertas de la red: cortes de puerto, OLT o túnel caídos, clientes caídos por fibra y señal crítica, más un resumen cada mañana.";
     }
 
     /** Mensaje de prueba al asociar el grupo. */

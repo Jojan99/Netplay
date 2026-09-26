@@ -14,7 +14,7 @@ use App\Services\Correo\Correo;
  * cuenta de envío propia de la empresa, porque son las facturas de su ISP y
  * van con su remitente.
  *
- * Vive acá y no dentro del proceso de facturación porque hacen falta dos
+ * Vive aquí y no dentro del proceso de facturación porque hacen falta dos
  * respuestas distintas a la misma pregunta: una al momento de facturar, para
  * explicar por qué no salió, y otra días antes, para avisar a tiempo. Si cada
  * una lo comprobara por su lado, tarde o temprano dirían cosas distintas.

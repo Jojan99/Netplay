@@ -12,7 +12,7 @@ use Symfony\Component\Process\Process;
  *
  * El cliente tiene que leer SU contrato, no una transcripción: la transcripción
  * a HTML sale como una lista de etiquetas sueltas ("NOMBRE / RAZÓN SOCIAL",
- * "INDENTI- Tipo: No.") y no se parece al papel que firma. Acá se dibuja el PDF
+ * "INDENTI- Tipo: No.") y no se parece al papel que firma. Aquí se dibuja el PDF
  * de verdad y se muestran las hojas como imágenes.
  *
  * El PNG se reduce a paleta sin difuminado antes de guardarlo: un contrato es

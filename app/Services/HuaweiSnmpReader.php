@@ -173,7 +173,7 @@ public function getOntInfo(string $fsp, int $ontId): array
     [$frame, $slot, $port] = $this->parseFsp($fsp);
 
     // Primero obtenemos el ifIndex del puerto GPON usando snmpwalk cache o tabla
-    // Esto depende de tu implementación, pero normalmente mapeas 0/0/2 → 4194304256
+    // Esto depende de su implementación, pero normalmente mapeas 0/0/2 → 4194304256
     $ifIndex = $this->getIfIndexByFsp($fsp); // debes implementar este método o tener un array de mapeo
 
     if (!$ifIndex) {

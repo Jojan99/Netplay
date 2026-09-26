@@ -17,7 +17,7 @@ class OltAdminRequest extends FormRequest
     {
         return [
             'name'               => 'required|string',
-            // Las marcas válidas son las que tienen driver: si acá se acepta una
+            // Las marcas válidas son las que tienen driver: si aquí se acepta una
             // que la fábrica no atiende, la OLT se guarda y después ninguna
             // consulta funciona.
             'brand'              => ['required', Rule::in(array_column(FabricaDeDrivers::marcas(), 'valor'))],
@@ -25,7 +25,7 @@ class OltAdminRequest extends FormRequest
             'port'               => 'nullable|integer',
             'username'           => 'required|string',
             // Al editar se manda vacía para dejar la que ya está guardada: si
-            // acá siguiera siendo obligatoria, ningún cambio se podría guardar
+            // aquí siguiera siendo obligatoria, ningún cambio se podría guardar
             // sin volver a escribir la contraseña de la OLT.
             'password'           => $this->creando() ? 'required|string' : 'nullable|string',
             'access_mode'        => 'required|in:direct,jump',

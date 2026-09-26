@@ -49,7 +49,7 @@ class SignInController extends Controller
 
         if ($enSubdominio && !$empresaDelSitio) {
             return standardApiReponse(
-                'Esta dirección no corresponde a ninguna empresa registrada. Revisá el enlace.',
+                'Esta dirección no corresponde a ninguna empresa registrada. Revise el enlace.',
                 ApiResponseConstants::DATA_NULL,
                 ApiResponseConstants::ERROR,
                 JsonResponse::HTTP_OK
@@ -87,10 +87,10 @@ class SignInController extends Controller
             $pendiente = $equipo->firstWhere('active', 0);
 
             // La cuenta dada de baja también queda en active = 0, pero decirle
-            // "confirmá tu correo" la manda a buscar un correo que no existe.
+            // "confirme su correo" la manda a buscar un correo que no existe.
             if ($pendiente && (int) $pendiente->status === 1) {
                 return standardApiReponse(
-                    'Esta cuenta fue dada de baja por un administrador de la empresa. Si es un error, pedile que la reactive desde Equipo de trabajo.',
+                    'Esta cuenta fue dada de baja por un administrador de la empresa. Si es un error, solicítele que la reactive desde Equipo de trabajo.',
                     ApiResponseConstants::DATA_NULL,
                     ApiResponseConstants::ERROR,
                     JsonResponse::HTTP_OK
@@ -100,7 +100,7 @@ class SignInController extends Controller
             if ($pendiente) {
                 $empresa = DB::table('companies')->where('id', $pendiente->company_id)->first(['name', 'active', 'email']);
                 return standardApiReponse(
-                    'Tu cuenta todavía no está confirmada. Te enviamos un correo a ' . ($empresa->email ?? $pendiente->email) . ' para activarla; revisá también la carpeta de spam.',
+                    'Su cuenta todavía no está confirmada. Le enviamos un correo a ' . ($empresa->email ?? $pendiente->email) . ' para activarla; revise también la carpeta de spam.',
                     ['needs_confirmation' => true, 'email' => $empresa->email ?? $pendiente->email, 'username' => $request->user],
                     ApiResponseConstants::ERROR,
                     JsonResponse::HTTP_OK
@@ -109,7 +109,7 @@ class SignInController extends Controller
 
             if ($coinciden->isNotEmpty()) {
                 return standardApiReponse(
-                    'Este acceso es para el equipo de la empresa. Si sos cliente, ingresá por el portal de clientes.',
+                    'Este acceso es para el equipo de la empresa. Si sos cliente, ingrese por el portal de clientes.',
                     ['portal' => true],
                     ApiResponseConstants::ERROR,
                     JsonResponse::HTTP_OK
@@ -128,7 +128,7 @@ class SignInController extends Controller
             $empresas = \App\Models\Company::whereIn('id', $activos->pluck('company_id'))->orderBy('name')->get(['name', 'subdomain']);
 
             return standardApiReponse(
-                'Tu usuario está en más de una empresa. Elegí a cuál querés entrar.',
+                'Su usuario está en más de una empresa. Seleccione a cuál quiere entrar.',
                 ['elegir_empresa' => $empresas->map(fn ($e) => ['nombre' => $e->name, 'subdominio' => $e->subdomain])->values()],
                 ApiResponseConstants::ERROR,
                 JsonResponse::HTTP_OK
@@ -145,7 +145,7 @@ class SignInController extends Controller
         // corriendo. Sólo se cierra el panel del operador.
         if (self::empresaSuspendida((int) $authenticatedUser->company_id)) {
             return standardApiReponse(
-                'El acceso de tu empresa a la plataforma está suspendido. Escribinos para reactivarlo.',
+                'El acceso de su empresa a la plataforma está suspendido. Escribinos para reactivarlo.',
                 ApiResponseConstants::DATA_NULL,
                 ApiResponseConstants::ERROR,
                 JsonResponse::HTTP_OK
@@ -172,7 +172,7 @@ class SignInController extends Controller
                 $vale = app(\App\Services\AccesoDirectoService::class)->emitirParaUsuario($authenticatedUser, $minutos);
 
                 return standardApiReponse(
-                    'Entrando a tu empresa…',
+                    'Entrando a su empresa…',
                     ['ir_a' => $destino . '/entrar?vale=' . urlencode($vale)],
                     ApiResponseConstants::SUCCESS
                 );

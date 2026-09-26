@@ -14,7 +14,7 @@ use Illuminate\Support\Facades\Schema;
  * aquélla —en WispHub, el nombre del servicio: "juliethye", "brayanca"— y
  * quedaban invisibles: no se los podía suspender, reactivar, ni ver su estado.
  *
- * Acá vive el único criterio, en orden de confianza:
+ * Aquí vive el único criterio, en orden de confianza:
  *
  *   1. El documento (comment con los mismos dígitos que la cédula).
  *   2. El nombre que tenía en la plataforma de origen (clientes_externos).

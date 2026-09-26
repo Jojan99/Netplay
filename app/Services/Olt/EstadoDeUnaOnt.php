@@ -169,7 +169,7 @@ class EstadoDeUnaOnt
             str_starts_with($error, 'No se pudo llegar a la OLT')
                 => trim(preg_replace('/\s*\[[^\]]*\]\s*$/', '', $error)),
             str_contains($error, 'timed out'), str_contains($error, 'Timeout'), str_contains($error, 'Unable to connect')
-                => 'No se pudo llegar a la OLT: la conexión con el nodo se está cortando. Probá de nuevo en un momento.',
+                => 'No se pudo llegar a la OLT: la conexión con el nodo se está cortando. Pruebe de nuevo en un momento.',
             str_contains($error, 'session limit'), str_contains($error, 'Reenter')
                 => 'La OLT tiene todas sus sesiones ocupadas. Se liberan solas en unos minutos.',
             default => 'La OLT no respondió: ' . $error,

@@ -328,13 +328,13 @@ final class CompatibilidadDeOnt
 
     public static function queHacerAMano(): string
     {
-        return 'Activá el TR-069 en la página del equipo (conexión de internet → TR-069, dirección del servidor '
+        return 'Active el TR-069 en la página del equipo (conexión de internet → TR-069, dirección del servidor '
             . config('services.genieacs.url_equipos') . ', aviso periódico cada 300 s) y el aprovisionamiento sigue solo en cuanto se reporte.';
     }
 
     public static function queHacerSiNoAparece(): string
     {
-        return 'Se intenta igual. Si en 15 minutos no aparece en el TR-069, activá el TR-069 en la página del equipo (dirección del servidor '
+        return 'Se intenta igual. Si en 15 minutos no aparece en el TR-069, active el TR-069 en la página del equipo (dirección del servidor '
             . config('services.genieacs.url_equipos') . ') y el aprovisionamiento sigue solo.';
     }
 }

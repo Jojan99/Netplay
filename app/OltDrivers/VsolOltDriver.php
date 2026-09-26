@@ -347,7 +347,7 @@ class VsolOltDriver extends DriverBase
     {
         $this->entrarAlPuerto($fsp);
 
-        // El servicio lo lleva el perfil srv; acá sólo se ata la ONU al perfil
+        // El servicio lo lleva el perfil srv; aquí sólo se ata la ONU al perfil
         // que corresponde a la VLAN del cliente, si existe uno con ese nombre.
         $intento = $this->primeraQueSirva([
             sprintf('onu %d srv-profile name srv_vlan_%d', $ontId, $vlan),

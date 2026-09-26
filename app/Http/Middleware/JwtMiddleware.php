@@ -27,14 +27,14 @@ class JwtMiddleware
             // El panel y su API son para operadores. Portal y panel emiten el
             // mismo tipo de token, así que con el suyo un cliente podía llamar
             // cualquier ruta del panel. El portal vive en /api/client con su
-            // propio middleware y no pasa por acá.
+            // propio middleware y no pasa por aquí.
             if ($user && self::esCliente($user)) {
                 return $this->soloOperadores();
             }
 
             // Empresa suspendida por Netvula: el token que ya tenía tampoco
             // sirve. Sólo cierra el panel del operador; el portal de sus
-            // clientes vive en jwt.client y no pasa por acá.
+            // clientes vive en jwt.client y no pasa por aquí.
             if ($user && $this->empresaSuspendida($user)) {
                 return $this->empresaCerrada();
             }
@@ -99,7 +99,7 @@ class JwtMiddleware
      * ¿La empresa del usuario está suspendida por la plataforma?
      *
      * Cierra el panel del operador y nada más: el portal de sus clientes va
-     * por jwt.client y no pasa por acá, y la consola de Netvula vive en otra
+     * por jwt.client y no pasa por aquí, y la consola de Netvula vive en otra
      * dirección con sus propios usuarios, así que suspender una empresa no
      * deja a nadie de Netvula afuera.
      */
@@ -124,7 +124,7 @@ class JwtMiddleware
     private function empresaCerrada()
     {
         return response()->json([
-            'message' => 'El acceso de tu empresa a la plataforma está suspendido. Escribinos para reactivarlo.',
+            'message' => 'El acceso de su empresa a la plataforma está suspendido. Escribinos para reactivarlo.',
             'data'    => null,
             'error'   => 1,
         ], 403);

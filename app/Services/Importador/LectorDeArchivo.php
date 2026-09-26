@@ -26,8 +26,8 @@ class LectorDeArchivo
         $tabla = match ($ext) {
             'xlsx'        => self::leerXlsx($ruta),
             'csv', 'txt'  => self::leerCsv($ruta),
-            'xls'         => throw new \RuntimeException('El archivo .xls (Excel 97-2003) no se puede leer. Abrilo en Excel y guardalo como .xlsx o .csv.'),
-            default       => throw new \RuntimeException('Formato no admitido. Subí el archivo en .xlsx o .csv.'),
+            'xls'         => throw new \RuntimeException('El archivo .xls (Excel 97-2003) no se puede leer. Abrilo en Excel y guárdelo como .xlsx o .csv.'),
+            default       => throw new \RuntimeException('Formato no admitido. Suba el archivo en .xlsx o .csv.'),
         };
 
         return self::separarEncabezado($tabla);

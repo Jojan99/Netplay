@@ -214,7 +214,7 @@ class OltTelnetWorker extends Command
         $this->connection = $factory->connect($olt);
 
         // Si la OLT rechaza la sesión (sin cupos, o pidiendo usuario otra vez),
-        // el driver lanza en su constructor. Sin cerrar acá, el socket quedaba
+        // el driver lanza en su constructor. Sin cerrar aquí, el socket quedaba
         // abierto ocupando uno de los pocos cupos que tiene el equipo.
         try {
             $this->driver = FabricaDeDrivers::para($olt, $this->connection);

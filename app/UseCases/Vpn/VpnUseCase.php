@@ -78,7 +78,7 @@ class VpnUseCase
 
             return [
                 'status'  => 0,
-                'message' => 'Túnel creado. Pegá el script en el router para levantarlo.',
+                'message' => 'Túnel creado. Pegue el script en el router para levantarlo.',
                 'data'    => [
                     'tunel'  => $creado['tunel'],
                     'script' => ScriptMikrotik::para(
@@ -235,7 +235,7 @@ class VpnUseCase
             return [
                 'status'  => 1,
                 'message' => "La IP de la OLT ({$ipReal}) no está en las redes de este túnel ("
-                    . implode(', ', $tunel->redes_remotas ?? []) . '). Agregá la red y volvé a intentar.',
+                    . implode(', ', $tunel->redes_remotas ?? []) . '). Agregue la red y vuelva a intentar.',
                 'data'    => null,
             ];
         }
@@ -247,7 +247,7 @@ class VpnUseCase
                 return [
                     'status'  => 1,
                     'message' => "El túnel está configurado pero {$olt->host} todavía no responde. "
-                        . 'Verificá que el script ya se aplicó en el router y que el túnel está saludando.',
+                        . 'Verifique que el script ya se aplicó en el router y que el túnel está saludando.',
                     'data'    => null,
                 ];
             }

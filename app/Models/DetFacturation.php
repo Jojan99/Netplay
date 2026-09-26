@@ -60,7 +60,7 @@ class DetFacturation extends Authenticatable
     /**
      * Saldo pendiente de la factura.
      *
-     * Ojo con la convención de columnas, es fácil equivocarse:
+     * Atención con la convención de columnas, es fácil equivocarse:
      *   price_abone → monto abonado (dinero)
      *   abone       → bandera 0/1 de "tiene abono", NO es un monto
      */

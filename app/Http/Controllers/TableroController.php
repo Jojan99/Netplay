@@ -11,14 +11,14 @@ use Tymon\JWTAuth\Facades\JWTAuth;
 /**
  * El tablero de inicio, armado por cada usuario.
  *
- * Acá sólo viven los paneles elegidos y su orden. Cada panel pide sus propios
+ * Aquí sólo viven los paneles elegidos y su orden. Cada panel pide sus propios
  * datos a la pantalla que ya los tenía, así que agregar uno nuevo no toca este
  * controlador: basta con sumarlo a PANELES para que se pueda guardar.
  */
 class TableroController extends Controller
 {
     /**
-     * Los paneles que existen. Lo que no esté acá no se guarda, así una
+     * Los paneles que existen. Lo que no esté aquí no se guarda, así una
      * sesión vieja o un curioso no meten cualquier cosa en la fila.
      */
     public const PANELES = [
@@ -79,7 +79,7 @@ class TableroController extends Controller
             ],
         );
 
-        return standardApiReponse('Tu tablero quedó guardado.', ['paneles' => $paneles], 0, JsonResponse::HTTP_OK);
+        return standardApiReponse('Su tablero quedó guardado.', ['paneles' => $paneles], 0, JsonResponse::HTTP_OK);
     }
 
     /** DELETE api/company/tablero — volver al de fábrica. */

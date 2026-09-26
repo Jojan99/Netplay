@@ -264,7 +264,7 @@ class CrmCustomerController extends Controller
             return response()->json(['ok' => false, 'error' => 'No se pudo generar el link de pago'], 502);
         }
 
-        $text = $request->input('message') ?: "Podés pagar en línea desde este enlace seguro:\n{$url}";
+        $text = $request->input('message') ?: "Puede pagar en línea desde este enlace seguro:\n{$url}";
         if ($request->boolean('send', true)) {
             $sendText->execute((int)$conv->id, $text, getSessionUserId());
         }

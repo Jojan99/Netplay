@@ -78,7 +78,7 @@ class ContractController extends Controller
             }
         }
 
-        // El mismo helper que la página de firma: lo que se ve acá es literalmente
+        // El mismo helper que la página de firma: lo que se ve aquí es literalmente
         // lo que verá el cliente.
         $html = \App\Support\VariablesContrato::pintar($contenido, $valores);
 
@@ -705,7 +705,7 @@ class ContractController extends Controller
         $allHtml = preg_replace('/<p[^>]*>\s*[_-]{5,}\s*<\/p>/i', '<hr>', $allHtml);
 
         // HTML limpio con clases semánticas, SIN inline styles. La nota de ayuda
-        // que se metía acá terminaba impresa en la página de firma, con las
+        // que se metía aquí terminaba impresa en la página de firma, con las
         // variables del ejemplo reemplazadas por los datos del cliente: la ayuda
         // va en la pantalla del panel, nunca dentro del contrato.
         return '<div class="contract-body">' . $allHtml . '</div>';

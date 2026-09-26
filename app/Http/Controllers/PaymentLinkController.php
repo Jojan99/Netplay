@@ -106,11 +106,11 @@ class PaymentLinkController extends Controller
         };
 
         [$title, $message] = match ($status) {
-            'approved'  => ['¡Pago confirmado!', 'Ya registramos tu pago y tu factura queda al día. Te enviamos el comprobante por WhatsApp.'],
+            'approved'  => ['¡Pago confirmado!', 'Ya registramos su pago y su factura queda al día. Le enviamos el comprobante por WhatsApp.'],
             'declined',
-            'failed'    => ['El pago no se completó', 'No se te hizo ningún cobro y tu factura sigue pendiente. Puedes intentarlo de nuevo con otro medio de pago.'],
-            'cancelled' => ['Pago anulado', 'La transacción fue anulada. Si el dinero salió de tu cuenta, se te devuelve automáticamente.'],
-            default     => ['Estamos confirmando tu pago', 'Puede tardar unos minutos. Te avisamos por WhatsApp apenas se acredite; no necesitas volver a pagar.'],
+            'failed'    => ['El pago no se completó', 'No se le hizo ningún cobro y su factura sigue pendiente. Puedes intentarlo de nuevo con otro medio de pago.'],
+            'cancelled' => ['Pago anulado', 'La transacción fue anulada. Si el dinero salió de su cuenta, se le devuelve automáticamente.'],
+            default     => ['Estamos confirmando su pago', 'Puede tardar unos minutos. Le avisamos por WhatsApp apenas se acredite; no necesitas volver a pagar.'],
         };
 
         $volverAlChat = $waNumber

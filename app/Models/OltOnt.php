@@ -19,7 +19,7 @@ class OltOnt extends Model
         'status',
         'service_ports',
         'synced_at',
-        // Cuándo se le dio acceso remoto. Sin estar acá, update() lo
+        // Cuándo se le dio acceso remoto. Sin estar aquí, update() lo
         // descartaba en silencio y el equipo seguía figurando como pendiente.
         'gestion_en',
     ];
@@ -38,7 +38,7 @@ class OltOnt extends Model
     public function client(): BelongsTo
     {
         // user_data_id stores users.id (auth table), so owner key is user_id
-        // Ojo con el nombre: olt_onts.user_data_id guarda el id de USUARIO
+        // Atención con el nombre: olt_onts.user_data_id guarda el id de USUARIO
         // (users.id), no el de la ficha (user_data.id). Por eso la relación
         // cruza contra user_data.user_id. Todo lo que escribe o lee esta
         // columna tiene que usar el id de usuario.

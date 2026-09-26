@@ -90,7 +90,7 @@ class ClientAuthController extends Controller
             $empresas = \App\Models\Company::whereIn('id', $clientes->pluck('company_id'))->orderBy('name')->get(['name', 'subdomain']);
 
             return response()->json([
-                'message' => 'Tenés servicio con más de una empresa. Elegí cuál querés consultar.',
+                'message' => 'Tiene servicio con más de una empresa. Seleccione cuál quiere consultar.',
                 'data'    => ['elegir_empresa' => $empresas->map(fn ($e) => ['nombre' => $e->name, 'subdominio' => $e->subdomain])->values()],
                 'status'  => ApiResponseConstants::ERROR,
             ], JsonResponse::HTTP_OK);

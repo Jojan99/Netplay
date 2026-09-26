@@ -46,7 +46,7 @@ class SendNotificationUseCase implements SendNotificationUseCaseInterface
                 $nombreEmpresa = trim((string) $empresa->invoice_business_name) ?: trim((string) $empresa->name);
                 $mediosPago = trim((string) $empresa->invoice_payment_info);
                 $bloquePago = $mediosPago !== ''
-                    ? "Recuerda que puedes realizar tus pagos por estos medios:\n\n{$mediosPago}\n\n"
+                    ? "Recuerda que puedes realizar sus pagos por estos medios:\n\n{$mediosPago}\n\n"
                     : '';
 
                 $whatsapp = new WhatsAppService('u99eyqpz5jwn5h4w', 'instance106490');
@@ -61,11 +61,11 @@ class SendNotificationUseCase implements SendNotificationUseCaseInterface
                     
                 
                     // Prepara el mensaje a enviar
-$message = "¡Hola! *{$value->names} {$value->lastname}* te informamos que tu servicio de internet está próximo a ser suspendido por mora 🚫
+$message = "¡Hola! *{$value->names} {$value->lastname}* le informamos que su servicio de internet está próximo a ser suspendido por mora 🚫
                 
-Tu saldo actual es de *{$value->price_total}* con *{$value->monthPedding}* meses pendientes.
+Su saldo actual es de *{$value->price_total}* con *{$value->monthPedding}* meses pendientes.
                                         
-{$bloquePago}Estar siempre al día con tu factura evita suspensiones de servicio y reportes negativos en centrales de riesgo.
+{$bloquePago}Estar siempre al día con su factura evita suspensiones de servicio y reportes negativos en centrales de riesgo.
 
 *Si ya ha cancelado, por favor ignore este mensaje.* 
 

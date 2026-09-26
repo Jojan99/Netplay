@@ -66,7 +66,7 @@ class SenalDeLaOlt
      * Sólo se mide si el operador lo pide («Medir ahora», $refrescar): abrir
      * una pantalla ya no dispara un barrido. La revisión de alertas de cada 15
      * minutos (medirSiHaceFalta) sigue midiendo por su cuenta y deja guardada
-     * la medición que se muestra acá.
+     * la medición que se muestra aquí.
      *
      * @return array<string,mixed>
      */
@@ -172,7 +172,7 @@ class SenalDeLaOlt
      * cuando en la calle estaban funcionando: no estaban caídas, estaban sin
      * releer desde el día que se dieron de alta.
      *
-     * El dato bueno ya pasaba por acá en cada barrido y se tiraba. Se guarda
+     * El dato bueno ya pasaba por aquí en cada barrido y se tiraba. Se guarda
      * de a grupos para no hacer una consulta por equipo.
      *
      * @param list<array<string,mixed>> $onts

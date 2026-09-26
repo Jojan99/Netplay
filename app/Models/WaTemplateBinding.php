@@ -112,7 +112,7 @@ class WaTemplateBinding extends Model
         'referencia'       => ['label' => 'Comprobante del pago',    'example' => '594192'],
         'medio_pago'       => ['label' => 'Medio de pago',           'example' => 'Nequi'],
         'saldo'            => ['label' => 'Saldo que queda',         'example' => '$0'],
-        'estado_facturas'  => ['label' => 'Estado de las facturas',  'example' => 'tu factura quedó pagada'],
+        'estado_facturas'  => ['label' => 'Estado de las facturas',  'example' => 'su factura quedó pagada'],
         'empresa'          => ['label' => 'Nombre de la empresa',    'example' => 'Netplay'],
         'soporte'          => ['label' => 'Teléfono de soporte',     'example' => '3245127869'],
         'fecha'            => ['label' => 'Fecha del pago',          'example' => '06/09/2026'],

@@ -17,7 +17,7 @@ use Illuminate\Support\Facades\Log;
  * equipo del inventario y dejar el WiFi puesto. El técnico hacía la parte
  * física y el resto quedaba para después —o se olvidaba—.
  *
- * Acá va en un solo paso, con el orden que importa: si algo falla a mitad, lo
+ * Aquí va en un solo paso, con el orden que importa: si algo falla a mitad, lo
  * que ya se hizo queda anotado y se puede retomar, porque deshacer una
  * autorización en la OLT con el cliente esperando es peor que seguir.
  *

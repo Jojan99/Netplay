@@ -137,7 +137,7 @@ class CambioDeConexion
             return ['modo' => 'sin_ont', 'motivo' => 'El cliente no tiene ONT.'];
         }
 
-        $aMano = 'Cargá el cambio en el equipo (o que lo haga un técnico) y después aplicalo acá con «sólo el router».';
+        $aMano = 'Cargue el cambio en el equipo (o que lo haga un técnico) y después aplicalo aquí con «sólo el router».';
         $no = fn (string $motivo, ?string $queHacer = null) => ['modo' => 'no_se_puede', 'motivo' => $motivo, 'que_hacer' => $queHacer ?? $aMano, 'ont' => $ont];
 
         $acs = GenieAcs::deEmpresa($this->companyId);
@@ -146,7 +146,7 @@ class CambioDeConexion
             $acsId = self::buscarEnElAcs($acs, (string) $ont->serial);
             $d = $acsId ? $acs->dispositivo($acsId) : null;
         } catch (\Throwable $e) {
-            return $no('No se pudo consultar el servidor TR-069 (' . mb_substr($e->getMessage(), 0, 80) . '): no se tocó nada.', 'Probá de nuevo en unos minutos.');
+            return $no('No se pudo consultar el servidor TR-069 (' . mb_substr($e->getMessage(), 0, 80) . '): no se tocó nada.', 'Pruebe de nuevo en unos minutos.');
         }
 
         if (!$acsId || !$d) {
@@ -206,7 +206,7 @@ class CambioDeConexion
 
         if (!$porInternet) {
             return ['modo' => 'no_responde', 'motivo' => $alcance['motivo'] . ' Último reporte: ' . self::haceCuanto($d['_lastInform'] ?? null) . '. No se tocó nada.',
-                'que_hacer' => 'Revisá que el equipo esté encendido y probá de nuevo en unos minutos, o cargá el cambio en el equipo y aplicalo con «sólo el router».'] + $base;
+                'que_hacer' => 'Revise que el equipo esté encendido y pruebe de nuevo en unos minutos, o cargue el cambio en el equipo y aplicalo con «sólo el router».'] + $base;
         }
 
         // La conexión nueva se arma al lado de la que tiene (que sigue con el
@@ -436,7 +436,7 @@ class CambioDeConexion
 
         // Ya confirmado (router, TR-069): el cliente anda con lo nuevo.
         if (in_array($c['fase'], ['router', 'tr069', 'p_tr069', 'p_reporte', 'p_vieja', 'p_fin'], true) && $this->vencida($c, 30)) {
-            $this->terminar($a, 'con_errores', 'El cliente anda con ' . self::texto($c['a']) . ', pero no se pudo terminar (' . $texto . '): revisá que en el router no quede ' . self::texto($c['de']) . '.');
+            $this->terminar($a, 'con_errores', 'El cliente anda con ' . self::texto($c['a']) . ', pero no se pudo terminar (' . $texto . '): revise que en el router no quede ' . self::texto($c['de']) . '.');
 
             return;
         }
@@ -577,7 +577,7 @@ class CambioDeConexion
         } catch (\Throwable $e) {
             if ($this->vencida($c, self::ESPERA_ROUTER_MIN)) {
                 $this->terminar($a, 'con_errores', 'El cliente ya anda con ' . self::texto($c['a']) . ', pero no se pudo sacar del router ' . self::texto($c['de'])
-                    . ' (' . mb_substr($e->getMessage(), 0, 80) . '): sacalo a mano.');
+                    . ' (' . mb_substr($e->getMessage(), 0, 80) . '): retírelo a mano.');
 
                 return;
             }
@@ -639,7 +639,7 @@ class CambioDeConexion
 
         if ($this->vencida($c, self::ESPERA_TR069_MIN)) {
             $this->paso($a, 'Gestión temporal', false, $ultimo ?? '');
-            $this->terminar($a, 'con_errores', 'Conexión cambiada y funcionando, pero falta quitar la gestión temporal (' . ($ultimo ?? '') . '). Tocá «Reintentar».');
+            $this->terminar($a, 'con_errores', 'Conexión cambiada y funcionando, pero falta quitar la gestión temporal (' . ($ultimo ?? '') . '). Toque «Reintentar».');
 
             return;
         }
@@ -913,7 +913,7 @@ class CambioDeConexion
         if ($this->vencida($c, self::ESPERA_REPORTE_NUEVA_MIN)) {
             $acs->quitarEtiqueta((string) $a->acs_id, self::ETIQUETA_RAPIDO);
             $this->terminar($a, 'con_errores', 'El cliente navega por la conexión nueva, pero el equipo no volvió a reportar al TR-069 en '
-                . self::ESPERA_REPORTE_NUEVA_MIN . ' minutos. No se borró la conexión de antes ni se tocó el router (quedan las dos): revisá el equipo antes de seguir.');
+                . self::ESPERA_REPORTE_NUEVA_MIN . ' minutos. No se borró la conexión de antes ni se tocó el router (quedan las dos): revise el equipo antes de seguir.');
 
             return;
         }
@@ -1655,7 +1655,7 @@ class CambioDeConexion
     {
         $c = $this->c($a);
 
-        return 'Revisá el cliente: en el router tiene que quedar sólo ' . self::texto($c['de'])
+        return 'Revise el cliente: en el router tiene que quedar sólo ' . self::texto($c['de'])
             . ' y la ONT con ' . AprovisionamientoDeOnt::resumenWan($c['wan_anterior']) . '.';
     }
 

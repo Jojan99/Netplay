@@ -173,7 +173,7 @@ class ClientesEnRiesgo
             'se_fue' => [
                 'titulo'  => 'Ya no están',
                 'que_es'  => 'Llevan días con el equipo apagado y deben plata. No es cartera: se fueron y la deuda sigue creciendo en el papel.',
-                'que_hacer' => 'Confirmá y dales de baja. Perseguir este cobro es tiempo perdido.',
+                'que_hacer' => 'Confirme y dales de baja. Perseguir este cobro es tiempo perdido.',
                 'tono'    => 'danger',
                 'clientes' => [], 'cuantos' => 0, 'deuda' => 0,
             ],
@@ -187,7 +187,7 @@ class ClientesEnRiesgo
             'inestable' => [
                 'titulo'  => 'Se cae y vuelve',
                 'que_es'  => 'El equipo se desconecta varias veces por semana. El cliente lo nota aunque no llame.',
-                'que_hacer' => 'Revisá acometida, roseta y corriente. Suele ser el cable de la casa.',
+                'que_hacer' => 'Revise acometida, roseta y corriente. Suele ser el cable de la casa.',
                 'tono'    => 'warn',
                 'clientes' => [], 'cuantos' => 0, 'deuda' => 0,
             ],

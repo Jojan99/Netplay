@@ -53,7 +53,7 @@ class SendNotificationRememberUseCase implements SendNotificationRememberUseCase
             $nombreEmpresa = trim((string) $empresa->invoice_business_name) ?: trim((string) $empresa->name);
             $mediosPago = trim((string) $empresa->invoice_payment_info);
             $bloquePago = $mediosPago !== ''
-                ? "Recuerda que puedes realizar tus pagos por estos medios:\n\n{$mediosPago}\n\n"
+                ? "Recuerda que puedes realizar sus pagos por estos medios:\n\n{$mediosPago}\n\n"
                 : '';
 
             $getUserPeriode1 = $this->generatePdfRepository->getperiodeNotificationRemenber((int) $empresa->id);
@@ -105,9 +105,9 @@ class SendNotificationRememberUseCase implements SendNotificationRememberUseCase
                             $phone,
                             $nombreArchivo,
                             $pdfFilePath,
-                            '¡Hola! Sr_o_Sra '.$user['dni'].' '.$nombrMensaje.', te informamos que tu factura de servicio de internet ya está lista, tu fecha limite de pago es 31/08/2024, si ya realizaste tu pago envíanos el comprobante.
+                            '¡Hola! Sr_o_Sra '.$user['dni'].' '.$nombrMensaje.', le informamos que su factura de servicio de internet ya está lista, su fecha limite de pago es 31/08/2024, si ya realizaste su pago envíanos el comprobante.
 
-' . $bloquePago . 'Recuerda que estar al día con tu factura evita suspensiones de servicio.
+' . $bloquePago . 'Recuerda que estar al día con su factura evita suspensiones de servicio.
 
 *Si ya pago y envio el comprobante de pago por favor omitir este mensaje*.
 
@@ -188,7 +188,7 @@ Gracias por preferirnos, somos ' . $nombreEmpresa
         // $saldoTotal = $user['monthly_price'] - $user['price_discount'];
 
         // Crea un PDF individual y devuelve su contenido
-        // Aquí puedes usar Dompdf, TCPDF, o cualquier otra biblioteca de tu elección
+        // Aquí puedes usar Dompdf, TCPDF, o cualquier otra biblioteca de su elección
         $options = new Options();
         $options->set('isHtml5ParserEnabled', true);
         $options->set('isPhpEnabled', true);

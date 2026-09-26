@@ -11,7 +11,7 @@ use Illuminate\Validation\Rule;
 /**
  * Las novedades que Netvula les muestra a las empresas.
  *
- * Se escriben acá, quedan en borrador hasta que se publican, y desde ese
+ * Se escriben aquí, quedan en borrador hasta que se publican, y desde ese
  * momento aparecen en el panel de cada empresa que tenga el módulo.
  */
 class ConsolaNovedadesController extends Controller

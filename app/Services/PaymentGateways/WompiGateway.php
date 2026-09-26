@@ -22,7 +22,7 @@ class WompiGateway implements PaymentGatewayInterface
         $integrity   = $this->buildIntegrityHash($data['reference'], $amountCents);
 
         // Un solo medio: se crea la transacción directo y el cliente cae en el
-        // banco, sin la pantalla de "elegí cómo pagar". Es lo que hace que un
+        // banco, sin la pantalla de "seleccione cómo pagar". Es lo que hace que un
         // botón de WhatsApp se sienta un botón y no un formulario.
         if (($data['payment_methods'] ?? []) === ['NEQUI'] && !empty($data['customer_phone'])) {
             $push = $this->cobroPorNequi($data, $amountCents, $integrity);
@@ -72,7 +72,7 @@ class WompiGateway implements PaymentGatewayInterface
      * Wompi no publica el límite por API, así que se usa uno conservador: por
      * encima de esto el cliente vería un checkout «solo Nequi» que le rebota,
      * y es preferible mandarlo a la lista completa de medios. Para una factura
-     * de internet nunca se alcanza; está acá por si se cobran varios meses
+     * de internet nunca se alcanza; está aquí por si se cobran varios meses
      * juntos.
      */
     private const NEQUI_TOPE = 2000000.0;
@@ -159,8 +159,8 @@ class WompiGateway implements PaymentGatewayInterface
             'modo'    => $pruebas ? 'pruebas' : 'producción',
             'llave'   => $esDePrueba ? 'de pruebas (pub_test_)' : 'de producción (pub_prod_)',
             'que_hacer' => $pruebas
-                ? 'Poné las llaves de pruebas o desactivá el modo pruebas.'
-                : 'Poné las llaves de producción (pub_prod_ y prv_prod_) o volvé a activar el modo pruebas.',
+                ? 'Ingrese las llaves de pruebas o desactive el modo pruebas.'
+                : 'Ingrese las llaves de producción (pub_prod_ y prv_prod_) o vuelva a activar el modo pruebas.',
         ]);
     }
 
@@ -196,7 +196,7 @@ class WompiGateway implements PaymentGatewayInterface
                 'payment_method'       => [
                     'type'                => 'BANCOLOMBIA_TRANSFER',
                     'user_type'           => 'PERSON',
-                    'payment_description' => mb_substr((string) ($data['description'] ?? 'Pago de tu servicio'), 0, 64),
+                    'payment_description' => mb_substr((string) ($data['description'] ?? 'Pago de su servicio'), 0, 64),
                     'ecommerce_url'       => url('/'),
                 ] + ($this->company->pg_sandbox ? ['sandbox_status' => 'APPROVED'] : []),
             ]);

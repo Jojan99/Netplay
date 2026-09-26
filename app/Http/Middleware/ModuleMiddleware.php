@@ -44,7 +44,7 @@ class ModuleMiddleware
         }
 
         return response()->json([
-            'message' => 'Tu perfil no tiene permiso para esta sección.',
+            'message' => 'Su perfil no tiene permiso para esta sección.',
             'data'    => null,
             'error'   => 1,
         ], JsonResponse::HTTP_FORBIDDEN);

@@ -55,7 +55,7 @@ class OnePayGateway implements PaymentGatewayInterface
         }
 
         // Sin teléfono ni correo: para OnePay esos campos no son datos del
-        // cliente, son «entregáselo vos». Acá el link lo entrega quien pidió
+        // cliente, son «entregáselo usted». Aquí el link lo entrega quien pidió
         // el cobro —el bot en su propio chat, el portal en pantalla—, así que
         // si además lo mandara OnePay al cliente le llegarían dos mensajes
         // con dos links distintos y podría pagar dos veces.
@@ -101,7 +101,7 @@ class OnePayGateway implements PaymentGatewayInterface
             );
         }
 
-        // Acá sí entrega OnePay: es lo que se le pidió.
+        // Aquí sí entrega OnePay: es lo que se le pidió.
         $cobro = ['phone' => $telefono] + $this->armarCobro($data, true);
 
         $plantilla ??= $this->company->pg_template_id ? (int) $this->company->pg_template_id : null;
@@ -185,7 +185,7 @@ class OnePayGateway implements PaymentGatewayInterface
     /**
      * El monto pagado, en pesos.
      *
-     * OnePay ya lo manda en pesos: acá no se divide por cien. Es justo lo
+     * OnePay ya lo manda en pesos: aquí no se divide por cien. Es justo lo
      * contrario de Wompi, y es el error más fácil de cometer en este archivo.
      */
     public function getAmountPaid(Request $request): float
@@ -415,7 +415,7 @@ class OnePayGateway implements PaymentGatewayInterface
      * El celular en el formato que pide OnePay, o null si no sirve.
      *
      * Un número mal formado no da error al crear el cobro: OnePay lo acepta y
-     * el WhatsApp no le llega a nadie. Por eso se revisa acá y se avisa, en
+     * el WhatsApp no le llega a nadie. Por eso se revisa aquí y se avisa, en
      * vez de dar por bueno un cobro que el cliente nunca va a ver.
      */
     public static function telefonoParaWhatsapp(?string $crudo): ?string
@@ -484,7 +484,7 @@ class OnePayGateway implements PaymentGatewayInterface
             'amount'       => $monto,
             'currency'     => 'COP',
             'title'        => mb_substr((string) ($data['description'] ?? 'Pago de servicio'), 0, 60),
-            // OnePay admite 30 caracteres acá y la nuestra es más larga
+            // OnePay admite 30 caracteres aquí y la nuestra es más larga
             // (empresa + factura + marca de tiempo + id). Ésta es la que ve el
             // cliente, así que se le pone algo legible; la que manda para
             // reconocer el pago es external_id, que va entera.

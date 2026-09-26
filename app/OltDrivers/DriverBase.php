@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\Log;
  *
  * Cada marca cambia los comandos, pero la mecánica de la consola es la misma:
  * entrar, salir del paginador, mandar un comando y leer hasta el prompt. Eso
- * vive acá para que un driver nuevo sólo tenga que escribir sus comandos.
+ * vive aquí para que un driver nuevo sólo tenga que escribir sus comandos.
  *
  * El driver de Huawei es anterior a esta clase y mantiene su propia mecánica;
  * no se toca para no arriesgar el equipo que ya está en producción.

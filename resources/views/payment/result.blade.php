@@ -99,9 +99,9 @@
 
         <p class="foot">
             @if ($autoReturn)
-                Te llevamos de vuelta en unos segundos.
+                Le llevamos de vuelta en unos segundos.
             @else
-                Si tienes dudas, escríbenos y con gusto te ayudamos.
+                Si tienes dudas, escríbenos y con gusto le ayudamos.
             @endif
         </p>
     </div>

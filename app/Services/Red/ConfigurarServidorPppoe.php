@@ -16,7 +16,7 @@ use RouterOS\Query;
  * puerta de enlace, y un servidor escuchando en la interfaz por donde llegan
  * los clientes.
  *
- * Acá se hace todo junto y en el orden correcto. Es idempotente: si algo ya
+ * Aquí se hace todo junto y en el orden correcto. Es idempotente: si algo ya
  * existe se actualiza en vez de duplicarse, así se puede volver a correr sin
  * romper lo que ya andaba.
  */
@@ -541,7 +541,7 @@ class ConfigurarServidorPppoe
 
     /**
      * Crea el PPPoE de las VLAN elegidas con lo que propone
-     * {@see propuestaPorVlan()}. Lo recalcula acá: los rangos no se toman de
+     * {@see propuestaPorVlan()}. Lo recalcula aquí: los rangos no se toman de
      * lo que manda el navegador.
      *
      * @param  list<string>  $interfaces
@@ -694,7 +694,7 @@ class ConfigurarServidorPppoe
     /**
      * El perfil: de dónde salen las IP y cuál es la puerta de enlace.
      *
-     * La velocidad no se fija acá sino en el perfil de cada plan; este es el
+     * La velocidad no se fija aquí sino en el perfil de cada plan; este es el
      * perfil base con el que arranca todo el mundo.
      */
     private function perfil(string $nombre, string $gateway, string $pool): void

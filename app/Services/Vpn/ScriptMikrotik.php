@@ -51,7 +51,7 @@ class ScriptMikrotik
         $l[] = '#  Netvula · túnel de gestión: ' . $tunel->nombre;
         $l[] = '#  Generado ' . now()->format('d/m/Y H:i');
         $l[] = '#';
-        $l[] = '#  Pegá todo este bloque en la terminal del router.';
+        $l[] = '#  Pegue todo este bloque en la terminal del router.';
         $l[] = '#  Requiere RouterOS 7.1 o superior (WireGuard).';
         $l[] = '#  Se puede volver a ejecutar: primero limpia lo que dejó antes.';
         $l[] = '# ─────────────────────────────────────────────────────────────';
@@ -99,7 +99,7 @@ class ScriptMikrotik
         $l[] = '    comment="' . $etiqueta . '";';
         $l[] = '';
         $l[] = '# 3. El servidor de Netvula como par. El keepalive hace que el';
-        $l[] = '#    router sea quien marca: no hay que abrir ningún puerto acá.';
+        $l[] = '#    router sea quien marca: no hay que abrir ningún puerto aquí.';
         $l[] = '/interface/wireguard/peers add interface="' . $iface . '" \\';
         $l[] = '    public-key="' . $servidor->clave_publica . '" \\';
 
@@ -157,8 +157,8 @@ class ScriptMikrotik
 
             $l[] = '';
         } else {
-            $l[] = '# 5. Sin redes de gestión declaradas: no se agrega NAT. Cargá la';
-            $l[] = '#    red de la OLT en la plataforma y volvé a generar el script.';
+            $l[] = '# 5. Sin redes de gestión declaradas: no se agrega NAT. Cargue la';
+            $l[] = '#    red de la OLT en la plataforma y vuelva a generar el script.';
             $l[] = '';
         }
 

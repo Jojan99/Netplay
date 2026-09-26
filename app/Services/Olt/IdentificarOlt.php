@@ -69,7 +69,7 @@ class IdentificarOlt
         // Sin sysDescr ni sysObjectID el equipo no contestó SNMP: se dice eso
         // en vez de seguir y romper más abajo con un error de tipos.
         if ($descripcion === null && $objectId === null) {
-            throw new \RuntimeException('La OLT no responde por SNMP. Revisá que tenga SNMP habilitado y la comunidad y versión configuradas.');
+            throw new \RuntimeException('La OLT no responde por SNMP. Revise que tenga SNMP habilitado y la comunidad y versión configuradas.');
         }
 
         $marca = self::marcaDesdeObjectId($objectId) ?: self::marcaDesdeTexto($descripcion);

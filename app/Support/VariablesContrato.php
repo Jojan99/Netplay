@@ -7,7 +7,7 @@ namespace App\Support;
  *
  * Antes la lista vivía repetida en tres sitios (el panel, el preview del PDF y
  * buildFieldValues) y ya no coincidían entre sí: el panel ofrecía variables que
- * el backend no reemplazaba nunca. Acá queda una sola lista, con el grupo, la
+ * el backend no reemplazaba nunca. Aquí queda una sola lista, con el grupo, la
  * explicación para el dueño del ISP y un valor de ejemplo para las vistas
  * previas. Las claves son las mismas de siempre ({{nombre}}, {{dni}}…), así que
  * las plantillas ya guardadas siguen funcionando igual.

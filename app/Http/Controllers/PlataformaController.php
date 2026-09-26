@@ -21,7 +21,7 @@ class PlataformaController extends Controller
      * GET /api/plataforma/sitio[?empresa=netplay]
      *
      * En netplay.netvula.com devuelve la empresa. En la raíz se puede pedir
-     * una con ?empresa=: sirve para el enlace de "entrá a tu empresa" y para
+     * una con ?empresa=: sirve para el enlace de "ingrese a su empresa" y para
      * probar antes de que exista el DNS comodín.
      */
     public function sitio(Request $request): JsonResponse
@@ -132,7 +132,7 @@ class PlataformaController extends Controller
             $sub = $this->dominio->libreDesde((string) $request->query('nombre'));
         }
 
-        $problema = $sub === '' ? 'Escribí la dirección que querés.' : $this->dominio->problemaCon($sub);
+        $problema = $sub === '' ? 'Escriba la dirección que quiere.' : $this->dominio->problemaCon($sub);
 
         return response()->json([
             'message' => $problema ?? 'Disponible',
@@ -185,7 +185,7 @@ class PlataformaController extends Controller
         Log::info('[Subdominio] cambiado', ['company_id' => $empresa->id, 'antes' => $anterior, 'ahora' => $sub]);
 
         return response()->json([
-            'message' => 'Listo: tu empresa ahora entra por ' . $sub . '.' . $this->dominio->dominioBase(),
+            'message' => 'Listo: su empresa ahora entra por ' . $sub . '.' . $this->dominio->dominioBase(),
             'error'   => 0,
             'data'    => ['subdominio' => $sub, 'direccion' => $sub . '.' . $this->dominio->dominioBase()],
         ]);
@@ -211,7 +211,7 @@ class PlataformaController extends Controller
             return response()->json(['message' => 'Código de referido válido', 'error' => 0, 'data' => [
                 'tipo'    => 'referido',
                 'valido'  => true,
-                'detalle' => 'Te invita ' . ($empresa->name ?? 'otra empresa') . '.',
+                'detalle' => 'Le invita ' . ($empresa->name ?? 'otra empresa') . '.',
             ]]);
         }
 

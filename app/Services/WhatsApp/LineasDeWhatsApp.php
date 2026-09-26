@@ -16,7 +16,7 @@ use Illuminate\Support\Facades\Schema;
  * entraba por la segunda línea no resolvía empresa y se perdía, y responder un
  * chat de esa línea habría salido desde otro número.
  *
- * Acá vive la traducción instancia ↔ empresa ↔ línea. companies.wa_instance_id
+ * Aquí vive la traducción instancia ↔ empresa ↔ línea. companies.wa_instance_id
  * se mantiene sincronizado con la línea principal para no romper nada de lo que
  * ya envía por ahí (facturas, avisos, campañas).
  *

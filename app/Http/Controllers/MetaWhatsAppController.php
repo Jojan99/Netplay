@@ -168,12 +168,12 @@ class MetaWhatsAppController extends Controller
         // Las plantillas del catálogo del sistema no se pueden borrar: son las
         // que la plataforma usa para avisar fuera de la ventana de 24 h, y
         // volver a crearlas obliga a esperar otra revisión de Meta. Se protege
-        // acá y no solo escondiendo el botón, porque esconderlo no impide la
+        // aquí y no solo escondiendo el botón, porque esconderlo no impide la
         // llamada a la API.
         if (\App\Support\PlantillasSemilla::esDelSistema($name)) {
             return response()->json([
                 'ok'    => false,
-                'error' => 'Esa plantilla la usa el sistema para sus avisos automáticos y no se puede eliminar. Si querés otra redacción, creá una propia y asignala en Avisos automáticos.',
+                'error' => 'Esa plantilla la usa el sistema para sus avisos automáticos y no se puede eliminar. Si quiere otra redacción, cree una propia y asignala en Avisos automáticos.',
             ], 422);
         }
 

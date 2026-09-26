@@ -6,7 +6,7 @@
     <meta charset="UTF-8">
     <title>Factura</title>
     <style>
-        /* Estilos CSS para tu factura */
+        /* Estilos CSS para su factura */
     </style>
 </head>
 <body>
@@ -20,7 +20,7 @@
     </div>
     <h2>Factura de Venta</h2>
 
-    <!-- Resto de tu contenido Blade aquí -->
+    <!-- Resto de su contenido Blade aquí -->
 
 </body>
 </html>

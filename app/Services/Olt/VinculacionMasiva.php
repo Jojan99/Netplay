@@ -14,7 +14,7 @@ use Illuminate\Support\Facades\Log;
  * pero nunca se guardó: de 541 ONT sólo 14 tenían cliente, y sin ese vínculo
  * la ficha no muestra el equipo ni el cliente ve su WiFi en el portal.
  *
- * Acá se proponen las parejas y las confirma una persona. Nada se vincula
+ * Aquí se proponen las parejas y las confirma una persona. Nada se vincula
  * solo: un equipo en el cliente equivocado manda a un técnico a otra casa.
  */
 class VinculacionMasiva
@@ -183,12 +183,12 @@ class VinculacionMasiva
             $cliente = $clientes[$par['user_id']] ?? null;
 
             if (!$ont) {
-                $errores[] = "La ONT {$par['ont']} no es de tu empresa.";
+                $errores[] = "La ONT {$par['ont']} no es de su empresa.";
                 continue;
             }
 
             if (!$cliente) {
-                $errores[] = "El cliente {$par['user_id']} no es de tu empresa.";
+                $errores[] = "El cliente {$par['user_id']} no es de su empresa.";
                 continue;
             }
 
@@ -350,7 +350,7 @@ class VinculacionMasiva
             return [
                 'user_id'   => (int) $contienen[0],
                 'confianza' => 'baja',
-                'motivo'    => 'Hay ' . count($contienen) . ' clientes con ese nombre: elegí cuál',
+                'motivo'    => 'Hay ' . count($contienen) . ' clientes con ese nombre: seleccione cuál',
                 'ambiguo'   => true,
                 // Para que la pantalla ofrezca los dos y no haya que adivinar.
                 'candidatos' => array_map(fn ($id) => [

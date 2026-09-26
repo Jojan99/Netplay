@@ -249,7 +249,7 @@ class FacturationController extends Controller
     public function revertirPago(Request $request, int $detId, FacturationRepositoryInterface $repo): object
     {
         if (!$this->puedeTocarPagos()) {
-            return standardApiReponse('No tenés permiso para revertir pagos.', null, 1, JsonResponse::HTTP_FORBIDDEN);
+            return standardApiReponse('No tiene permiso para revertir pagos.', null, 1, JsonResponse::HTTP_FORBIDDEN);
         }
 
         $request->validate(['motivo' => 'required|string|max:255']);
@@ -263,7 +263,7 @@ class FacturationController extends Controller
     public function anularFactura(Request $request, int $detId, FacturationRepositoryInterface $repo): object
     {
         if (!$this->puedeTocarPagos()) {
-            return standardApiReponse('No tenés permiso para anular facturas.', null, 1, JsonResponse::HTTP_FORBIDDEN);
+            return standardApiReponse('No tiene permiso para anular facturas.', null, 1, JsonResponse::HTTP_FORBIDDEN);
         }
 
         $request->validate(['motivo' => 'required|string|max:255']);

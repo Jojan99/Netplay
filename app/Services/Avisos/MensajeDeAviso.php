@@ -11,7 +11,7 @@ use Throwable;
  * Arma los avisos internos que la plataforma manda al WhatsApp de la empresa.
  *
  * Antes cada lugar escribía el suyo a mano y salía una pila de emojis, uno por
- * renglón. Acá se arma siempre igual: un título, el nombre de la empresa y los
+ * renglón. Aquí se arma siempre igual: un título, el nombre de la empresa y los
  * datos en renglones "Etiqueta: valor". Los campos vacíos no se muestran, las
  * fechas van en formato colombiano y la plata con puntos de mil.
  *

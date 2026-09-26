@@ -234,12 +234,12 @@ class Correo
             $respuesta = $mj->get(Resources::$Sender, ['filters' => ['Limit' => 1000]]);
         } catch (\Throwable $e) {
             Log::warning('[Correo] no se pudo consultar Mailjet al probar llaves', ['error' => $e->getMessage()]);
-            return $r(false, false, false, 'No pudimos conectarnos con Mailjet. Intentá de nuevo en unos minutos.');
+            return $r(false, false, false, 'No pudimos conectarnos con Mailjet. Intente de nuevo en unos minutos.');
         }
 
         $http = (int) $respuesta->getStatus();
         if ($http === 401 || $http === 403) {
-            return $r(false, false, false, 'Mailjet rechazó las llaves: revisá que la API Key y la Secret Key estén bien copiadas.');
+            return $r(false, false, false, 'Mailjet rechazó las llaves: revise que la API Key y la Secret Key estén bien copiadas.');
         }
         if (!$respuesta->success()) {
             return $r(false, false, false, 'Mailjet respondió con un error (' . self::errorHttp($http) . ').');
@@ -263,7 +263,7 @@ class Correo
             return $r(true, true, true, "Llaves correctas y {$como} está validado en Mailjet.");
         }
         if ($estadoCorreo !== null || $estadoDominio !== null) {
-            return $r(false, true, false, "Las llaves funcionan, pero {$desdeEmail} todavía no está validado en Mailjet. Abrí el correo de confirmación que te mandó Mailjet o validá el dominio en Senders & Domains.");
+            return $r(false, true, false, "Las llaves funcionan, pero {$desdeEmail} todavía no está validado en Mailjet. Abra el correo de confirmación que le mandó Mailjet o valide el dominio en Senders & Domains.");
         }
         return $r(false, true, false, "Las llaves funcionan, pero {$desdeEmail} no está agregado como remitente en Mailjet. Agregalo en Account settings → Senders & Domains y validalo.");
     }

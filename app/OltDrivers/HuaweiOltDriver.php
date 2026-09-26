@@ -145,7 +145,7 @@ class HuaweiOltDriver implements OltDriverInterface
 
         // La OLT contesta "System is busy" cuando está ocupada con otra cosa
         // —sobre todo mientras guarda la configuración en flash— y ella misma
-        // pide reintentar. Se hace acá en vez de dejarle el reintento al
+        // pide reintentar. Se hace aquí en vez de dejarle el reintento al
         // operador, que no tiene por qué saber que es pasajero.
         $intentos = 0;
         $output   = '';
@@ -278,7 +278,7 @@ class HuaweiOltDriver implements OltDriverInterface
 
         if ($esperado !== '' && !str_contains($limpio, $esperado)) {
             throw new \RuntimeException(
-                "La OLT no devolvió la lista de {$esperado}: respondió otra cosa. Probá de nuevo en unos segundos."
+                "La OLT no devolvió la lista de {$esperado}: respondió otra cosa. Pruebe de nuevo en unos segundos."
             );
         }
 
@@ -1200,7 +1200,7 @@ public function parseServicePorts(string $output): array
 
             $salida = $this->runCommand('quit');
 
-            // Por si igual pregunta: nunca se cierra la sesión desde acá.
+            // Por si igual pregunta: nunca se cierra la sesión desde aquí.
             if (preg_match('/\(y\/n\)/i', $salida)) {
                 $this->runCommand('n');
                 return;
@@ -1325,7 +1325,7 @@ public function parseServicePorts(string $output): array
             ));
 
             // Vale sólo lo que aparece en la lista del equipo: si el número
-            // estaba tomado por otro, la OLT lo rechazó y acá no figura.
+            // estaba tomado por otro, la OLT lo rechazó y aquí no figura.
             $tiene = $suyo($listar());
         }
 
@@ -1928,7 +1928,7 @@ public function parseServicePorts(string $output): array
             }
 
             // 🔥 paginado
-            // Una confirmación (y/n) no se contesta acá: decide quien mandó el
+            // Una confirmación (y/n) no se contesta aquí: decide quien mandó el
             // comando. Esperar un prompt que no llega colgaba la lectura.
             if (preg_match('/\(y\/n\)[^\n]*$/i', $chunk)) {
                 break;

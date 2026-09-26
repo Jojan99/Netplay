@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\Log;
  *
  * ZTE nombra los puertos como gpon-olt_<frame>/<slot>/<port> y las ONU como
  * gpon-onu_<frame>/<slot>/<port>:<onu>. En la plataforma seguimos hablando de
- * "0/1/3" y de un ONT ID, igual que en Huawei, y acá se traduce.
+ * "0/1/3" y de un ONT ID, igual que en Huawei, y aquí se traduce.
  *
  * Comandos según el manual de configuración CLI del ZXA10 C320:
  *   show gpon onu uncfg                        ONU detectadas sin registrar
@@ -572,7 +572,7 @@ class ZteOltDriver extends DriverBase
             $this->cmds($pasos, 20);
             $this->volverAlPrompt();
 
-            return ['ok' => false, 'error' => 'falta el perfil de subida (tcont). Elegí uno por defecto en los perfiles de la OLT, o en el formulario, y volvé a vincular.'];
+            return ['ok' => false, 'error' => 'falta el perfil de subida (tcont). Seleccione uno por defecto en los perfiles de la OLT, o en el formulario, y vuelva a vincular.'];
         }
 
         // Internet va en el 2, como en las ONT que ya tiene la OLT (SmartOLT

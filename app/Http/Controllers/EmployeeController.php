@@ -41,16 +41,16 @@ class EmployeeController extends Controller
             }
 
             if ($codigo === '1048') {
-                return 'Faltan datos obligatorios: revisá nombre, apellido y cédula.';
+                return 'Faltan datos obligatorios: revise nombre, apellido y cédula.';
             }
 
             if ($codigo === '1452') {
-                return 'El dato que elegiste ya no existe (usuario, cargo o empleado). Recargá la pantalla e intentá de nuevo.';
+                return 'El dato que eligió ya no existe (usuario, cargo o empleado). Recargue la pantalla e intente de nuevo.';
             }
 
             \Illuminate\Support\Facades\Log::error('Empleados: ' . $texto);
 
-            return 'No se pudo guardar. Revisá los datos e intentá de nuevo.';
+            return 'No se pudo guardar. Revise los datos e intente de nuevo.';
         }
 
         if ($e instanceof \Illuminate\Database\Eloquent\ModelNotFoundException) {
@@ -59,7 +59,7 @@ class EmployeeController extends Controller
 
         \Illuminate\Support\Facades\Log::error('Empleados: ' . $e->getMessage());
 
-        return 'Ocurrió un error al procesar la solicitud. Intentá de nuevo; si sigue igual, avisale al soporte de Netvula.';
+        return 'Ocurrió un error al procesar la solicitud. Intente de nuevo; si sigue igual, avísele al soporte de Netvula.';
     }
 
     // ── Empleados ─────────────────────────────────────────────────────────────

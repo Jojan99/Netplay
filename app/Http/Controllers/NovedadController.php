@@ -9,7 +9,7 @@ use Tymon\JWTAuth\Facades\JWTAuth;
 
 /**
  * Las novedades que ve la empresa en su panel: qué se agregó, qué mejoró y qué
- * se arregló. Las escribe Netvula desde la consola; acá sólo se leen y se
+ * se arregló. Las escribe Netvula desde la consola; aquí sólo se leen y se
  * marcan como vistas.
  */
 class NovedadController extends Controller
@@ -38,7 +38,7 @@ class NovedadController extends Controller
         ], 0, JsonResponse::HTTP_OK);
     }
 
-    /** Se abrió la lista: de acá en adelante ya no son nuevas. */
+    /** Se abrió la lista: de aquí en adelante ya no son nuevas. */
     public function vistas(): JsonResponse
     {
         $user = JWTAuth::user();

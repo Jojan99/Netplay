@@ -137,7 +137,7 @@ class PaymentAllocationService
         $clientName  = 'Portal (online)';
         $cabResolved = false;
 
-        // $medio y $banco faltaban acá y se usan adentro (el medio con el que
+        // $medio y $banco faltaban aquí y se usan adentro (el medio con el que
         // pagó el cliente). En la consola eso es sólo un aviso, pero en el
         // servidor Laravel lo convierte en excepción: saltaba dentro de la
         // transacción, se deshacía todo y la factura quedaba sin acreditar
@@ -207,7 +207,7 @@ class PaymentAllocationService
                     // payment_logs.type es un enum: pago_completo|abono|descuento|ajuste.
                     // Escribir cualquier otra cosa hace que MySQL trunque y aborte.
                     'type'                => $fullyPaid ? 'pago_completo' : 'abono',
-                    // El instrumento concreto («Mastercard ·3222») va acá y no
+                    // El instrumento concreto («Mastercard ·3222») va aquí y no
                     // en el catálogo de métodos: si fuera allá, habría una
                     // forma de pago por cada tarjeta que pase por la
                     // plataforma y la lista quedaría impresentable.

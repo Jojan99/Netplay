@@ -272,7 +272,7 @@ class PaymentProofController extends Controller
         if (!$leido) {
             return response()->json([
                 'status'  => 'error',
-                'message' => 'No pudimos leer la imagen. Escribí el monto a mano.',
+                'message' => 'No pudimos leer la imagen. Escriba el monto a mano.',
             ], 422);
         }
 
@@ -374,7 +374,7 @@ class PaymentProofController extends Controller
         if ($proofAmount <= 0) {
             return response()->json([
                 'status'  => 'error',
-                'message' => 'No sabemos de cuánto es el pago: escribí el monto para aprobarlo.',
+                'message' => 'No sabemos de cuánto es el pago: escriba el monto para aprobarlo.',
             ], 422);
         }
 

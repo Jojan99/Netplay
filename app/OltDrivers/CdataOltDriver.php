@@ -1751,7 +1751,7 @@ class CdataOltDriver extends DriverBase
         // Un cambio de perfil anterior que se cortó con la ONT borrada: primero
         // se la repone, y después se sigue.
         if ($repuesta = $this->reponerSiQuedoEnTransito($puerto, $ontId, $fs, $f)) {
-            return ['ok' => false, 'detalle' => $repuesta . ' Volvé a darle acceso en un minuto.'] + $base;
+            return ['ok' => false, 'detalle' => $repuesta . ' Vuelva a darle acceso en un minuto.'] + $base;
         }
 
         if (!$f['existe'] || !$f['serial']) {
@@ -1759,7 +1759,7 @@ class CdataOltDriver extends DriverBase
         }
 
         if ($f['msp'] === null) {
-            return ['ok' => false, 'omitido' => 'sin_perfil', 'detalle' => 'La ONT no usa mult-srv-profile (tiene configuración propia): no se toca. Volvé a autorizarla con su perfil y después dale acceso.'] + $base;
+            return ['ok' => false, 'omitido' => 'sin_perfil', 'detalle' => 'La ONT no usa mult-srv-profile (tiene configuración propia): no se toca. Vuelva a autorizarla con su perfil y después continúe acceso.'] + $base;
         }
 
         $multis = $this->multiSrvProfiles();
@@ -1786,7 +1786,7 @@ class CdataOltDriver extends DriverBase
                 // Quedó en el perfil de gestión pero el equipo no lo aceptó: vuelve
                 // al perfil de clientes equivalente (mismo de línea y de servicio).
                 if (!$original || !$f['online']) {
-                    return ['ok' => false, 'detalle' => 'La ONT no aceptó el perfil de gestión y no se encontró su perfil de clientes para devolverla: revisala en la OLT.'] + $base;
+                    return ['ok' => false, 'detalle' => 'La ONT no aceptó el perfil de gestión y no se encontró su perfil de clientes para devolverla: revísela en la OLT.'] + $base;
                 }
 
                 $this->volverAAgregar($puerto, $ontId, $f['serial'], $original['id'], $f['descripcion'], $fs, $original['id']);
@@ -1806,7 +1806,7 @@ class CdataOltDriver extends DriverBase
                     'detalle' => self::instruccionesHgu($f['equipo'])
                         . ($vuelta === 'success'
                             ? " La ONT volvió a su perfil {$original['nombre']} y sigue con su servicio."
-                            : ' ⚠️ Revisá la ONT: no se confirmó que volviera a su perfil.'),
+                            : ' ⚠️ Revise la ONT: no se confirmó que volviera a su perfil.'),
                 ] + $base;
             }
         }
@@ -1818,7 +1818,7 @@ class CdataOltDriver extends DriverBase
         $copia = $actual ? collect($multis)->first(fn ($x) => $x['lp'] === $actual['lp'] && $x['sp'] === $actual['sp'] && $esCopiaVigente($x)) : null;
 
         if (!$copia) {
-            return ['ok' => false, 'detalle' => 'Faltan los perfiles de gestión de la VLAN ' . $vlan . ' en la OLT: usá «Volver a aplicar» en la configuración del acceso remoto.'] + $base;
+            return ['ok' => false, 'detalle' => 'Faltan los perfiles de gestión de la VLAN ' . $vlan . ' en la OLT: use «Volver a aplicar» en la configuración del acceso remoto.'] + $base;
         }
 
         // Sin la VLAN en el perfil de línea la WAN de gestión no sale: mover la
@@ -1864,7 +1864,7 @@ class CdataOltDriver extends DriverBase
             'ok'      => false,
             'omitido' => $estado === 'failed' ? 'modelo_sin_wan' : 'no_volvio',
             'detalle' => ($estado === 'failed' ? self::instruccionesHgu($f['equipo']) : 'La ONT no volvió a tiempo con el perfil de gestión.')
-                . ($vuelta === 'success' ? ' La ONT volvió a su perfil original y sigue con su servicio.' : ' ⚠️ Revisá la ONT: no se confirmó que volviera a su perfil.'),
+                . ($vuelta === 'success' ? ' La ONT volvió a su perfil original y sigue con su servicio.' : ' ⚠️ Revise la ONT: no se confirmó que volviera a su perfil.'),
         ] + $base;
     }
 
@@ -2287,7 +2287,7 @@ class CdataOltDriver extends DriverBase
         $servicios = array_column($this->getSrvProfiles(), 'id');
 
         if ($lineas && !in_array($lineProfileId, $lineas, true)) {
-            return ['error' => "El perfil de línea {$lineProfileId} no existe en la OLT (tiene " . implode(', ', $lineas) . '). Elegí uno de esos.'];
+            return ['error' => "El perfil de línea {$lineProfileId} no existe en la OLT (tiene " . implode(', ', $lineas) . '). Seleccione uno de esos.'];
         }
 
         $this->volverAlPrompt();
@@ -2311,7 +2311,7 @@ class CdataOltDriver extends DriverBase
             $srv = $delMulti ?? (count($servicios) === 1 ? $servicios[0] : null);
 
             if ($srv === null) {
-                return ['error' => 'El perfil de servicio ' . ($srvProfileId ?? $this->srvProfileId) . ' no existe en la OLT (tiene ' . implode(', ', $servicios) . '). Elegí uno de esos.'];
+                return ['error' => 'El perfil de servicio ' . ($srvProfileId ?? $this->srvProfileId) . ' no existe en la OLT (tiene ' . implode(', ', $servicios) . '). Seleccione uno de esos.'];
             }
         }
 
@@ -2426,7 +2426,7 @@ class CdataOltDriver extends DriverBase
     {
         // En EPON la sintaxis de GPON ("ont port native-vlan" + service-port)
         // cambiaba el puerto de la ONU y después fallaba en el service-port,
-        // que no existe: un cambio a medias. Acá sólo se verifica la VLAN.
+        // que no existe: un cambio a medias. Aquí sólo se verifica la VLAN.
         if ($this->esEpon()) {
             return $this->pasoVlan($fsp, $vlan)['ok'];
         }
@@ -2484,7 +2484,7 @@ class CdataOltDriver extends DriverBase
         $this->volverAlPrompt();
 
         // ponerDescripcion ya reintenta con el texto plano si la primera forma
-        // no le gusta; que llegue hasta acá es que alguna entró.
+        // no le gusta; que llegue hasta aquí es que alguna entró.
         return true;
     }
 

@@ -182,14 +182,14 @@ class PaymentNotificationService
     private function invoiceSummary(OnlinePaymentTransaction $tx): string
     {
         $lines = $this->invoiceLines($tx);
-        if ($lines === []) return 'tu factura quedó al día';
+        if ($lines === []) return 'su factura quedó al día';
 
         $pending = array_values(array_filter($lines, fn ($l) => str_contains($l, 'queda ')));
 
         if ($pending === []) {
             return count($lines) === 1
-                ? 'tu factura quedó pagada'
-                : 'tus ' . count($lines) . ' facturas quedaron pagadas';
+                ? 'su factura quedó pagada'
+                : 'sus ' . count($lines) . ' facturas quedaron pagadas';
         }
 
         $owed = 0.0;
@@ -198,7 +198,7 @@ class PaymentNotificationService
             if ($inv) $owed += $inv->outstanding();
         }
 
-        return 'te queda un saldo de ' . $this->money($owed);
+        return 'le queda un saldo de ' . $this->money($owed);
     }
 
     // ─── Mensajes ────────────────────────────────────────────────────────────
@@ -225,7 +225,7 @@ class PaymentNotificationService
         $lines = [
             "✅ *Pago confirmado*",
             "",
-            "Recibimos tu pago por *{$amount}*.",
+            "Recibimos su pago por *{$amount}*.",
             "",
             "Medio de pago: {$method}",
             "Comprobante: {$voucher}",
@@ -250,13 +250,13 @@ class PaymentNotificationService
         return implode("\n", [
             "⏳ *Pago en proceso*",
             "",
-            "Registramos tu pago por *{$amount}*, pero todavía no se ha acreditado.",
+            "Registramos su pago por *{$amount}*, pero todavía no se ha acreditado.",
             "",
             "Medio de pago: {$method}",
             "Comprobante: {$voucher}",
             "",
-            "Si pagaste en efectivo o por transferencia, la confirmación puede tardar unas horas.",
-            "Te avisamos por este mismo chat apenas se acredite. No necesitas volver a pagar.",
+            "Si pagó en efectivo o por transferencia, la confirmación puede tardar unas horas.",
+            "Le avisamos por este mismo chat apenas se acredite. No necesitas volver a pagar.",
         ]);
     }
 
@@ -265,10 +265,10 @@ class PaymentNotificationService
         return implode("\n", [
             "❌ *Pago no completado*",
             "",
-            "Tu pago por *{$amount}* con {$method} no pudo procesarse.",
+            "Su pago por *{$amount}* con {$method} no pudo procesarse.",
             "Comprobante: {$voucher}",
             "",
-            "*No se te hizo ningún cobro* y tu factura sigue pendiente.",
+            "*No se le hizo ningún cobro* y su factura sigue pendiente.",
             "Puedes intentarlo de nuevo con otro medio de pago, o escribirnos por aquí si necesitas ayuda.",
         ]);
     }
@@ -281,8 +281,8 @@ class PaymentNotificationService
             "El pago por *{$amount}* con {$method} fue anulado.",
             "Comprobante: {$voucher}",
             "",
-            "Si el dinero salió de tu cuenta, se te devuelve automáticamente.",
-            "Tu factura sigue pendiente. Escríbenos por aquí si tienes dudas.",
+            "Si el dinero salió de su cuenta, se le devuelve automáticamente.",
+            "Su factura sigue pendiente. Escríbenos por aquí si tienes dudas.",
         ]);
     }
 
@@ -300,8 +300,8 @@ class PaymentNotificationService
             "",
             "No alcanzamos a recibir la aprobación del pago por *{$amount}* con {$method}, así que lo dimos de baja.",
             "",
-            "Tu factura sigue pendiente y no se te cobró nada.",
-            "Escribe *pagar* cuando quieras y te lo enviamos de nuevo.",
+            "Su factura sigue pendiente y no se le cobró nada.",
+            "Escribe *pagar* cuando quieras y le lo enviamos de nuevo.",
         ]);
     }
 

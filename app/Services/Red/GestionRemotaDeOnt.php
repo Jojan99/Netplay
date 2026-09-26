@@ -22,7 +22,7 @@ use RouterOS\Query;
  *
  * Montarlo a mano son once pasos repartidos entre el router y cada OLT, y
  * cualquiera de ellos mal puesto deja clientes sin servicio —sacar una VLAN
- * de un puerto de subida, por ejemplo—. Acá se propone lo que está libre, se
+ * de un puerto de subida, por ejemplo—. Aquí se propone lo que está libre, se
  * aplica de forma aditiva y queda anotado para poder deshacerlo.
  */
 class GestionRemotaDeOnt
@@ -196,7 +196,7 @@ class GestionRemotaDeOnt
         $red  = (string) ($datos['red'] ?? '');
 
         if ($vlan < 2 || $vlan > 4094) {
-            throw new \InvalidArgumentException('Elegí un número de VLAN entre 2 y 4094.');
+            throw new \InvalidArgumentException('Seleccione un número de VLAN entre 2 y 4094.');
         }
 
         if (!preg_match('#^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$#', $red)) {
@@ -219,7 +219,7 @@ class GestionRemotaDeOnt
             ->filter()->unique();
 
         if ($choca = $ajenas->first(fn ($otra) => $this->seSolapan($red, (string) $otra))) {
-            throw new \InvalidArgumentException("La red {$red} ya la usa otra empresa ({$choca}). Elegí otra: las sugeridas no chocan con nadie.");
+            throw new \InvalidArgumentException("La red {$red} ya la usa otra empresa ({$choca}). Seleccione otra: las sugeridas no chocan con nadie.");
         }
 
         // Las interfaces se validan antes de tocar nada: limpiar la red vieja
@@ -228,7 +228,7 @@ class GestionRemotaDeOnt
         $ifaces = self::interfacesDe((string) ($datos['interfaz'] ?? ''));
 
         if (!$ifaces) {
-            throw new \InvalidArgumentException('Elegí la interfaz del MikroTik hacia la OLT.');
+            throw new \InvalidArgumentException('Seleccione la interfaz del MikroTik hacia la OLT.');
         }
 
         $existentes = collect($this->conexion->conection($router->token)->query(new Query('/interface/print'))->read())->pluck('name')->all();
@@ -267,7 +267,7 @@ class GestionRemotaDeOnt
             // Sólo OLT de la empresa: el id llega en el cuerpo del pedido y el
             // middleware de empresa no lo mira.
             if (!in_array((int) $oltId, $mias, true)) {
-                $pasos[] = ['paso' => "VLAN en la OLT {$oltId}", 'ok' => false, 'detalle' => 'Esa OLT no es de tu empresa: no se tocó.'];
+                $pasos[] = ['paso' => "VLAN en la OLT {$oltId}", 'ok' => false, 'detalle' => 'Esa OLT no es de su empresa: no se tocó.'];
                 continue;
             }
 
@@ -282,7 +282,7 @@ class GestionRemotaDeOnt
                     ? [
                         'paso'    => "VLAN {$vlan} en la OLT por {$puerto}",
                         'ok'      => false,
-                        'detalle' => "Esta OLT no se configura sola: agregá la VLAN {$vlan} como tagged en el puerto {$puerto} de la OLT, a mano.",
+                        'detalle' => "Esta OLT no se configura sola: agregue la VLAN {$vlan} como tagged en el puerto {$puerto} de la OLT, a mano.",
                     ]
                     : [
                         'paso'    => "VLAN {$vlan} en la OLT por {$puerto}",
@@ -413,7 +413,7 @@ class GestionRemotaDeOnt
         $olt = OltAdmin::where('id', $oltId)->where('company_id', $this->companyId)->first();
 
         if (!$olt) {
-            return ['error' => 'Esa OLT no es de tu empresa.'];
+            return ['error' => 'Esa OLT no es de su empresa.'];
         }
 
         if ($this->soporte($olt)['nivel'] !== 'completo') {
@@ -421,7 +421,7 @@ class GestionRemotaDeOnt
         }
 
         if (!$g->vlan) {
-            return ['error' => 'Primero activá el acceso remoto: hace falta saber qué VLAN agregar.', 'perfiles' => []];
+            return ['error' => 'Primero active el acceso remoto: hace falta saber qué VLAN agregar.', 'perfiles' => []];
         }
 
         // C-Data EPON no tiene perfiles de línea que preparar: la VLAN va en el
@@ -467,7 +467,7 @@ class GestionRemotaDeOnt
         $todos = $leer('perfilesDeLinea');
 
         if (!$todos) {
-            return ['error' => 'La OLT no respondió al pedir la lista de perfiles. Suele ser el túnel: probá de nuevo en un momento.', 'perfiles' => []];
+            return ['error' => 'La OLT no respondió al pedir la lista de perfiles. Suele ser el túnel: pruebe de nuevo en un momento.', 'perfiles' => []];
         }
 
         // También los que todavía no usa nadie: son los que la OLT aplica al
@@ -523,7 +523,7 @@ class GestionRemotaDeOnt
         $olt = OltAdmin::where('id', $oltId)->where('company_id', $this->companyId)->first();
 
         if (!$olt || $this->soporte($olt)['nivel'] !== 'completo') {
-            return ['ok' => false, 'estado' => 'no_soportado', 'detalle' => $olt ? $this->soporte($olt)['detalle'] : 'Esa OLT no es de tu empresa.'];
+            return ['ok' => false, 'estado' => 'no_soportado', 'detalle' => $olt ? $this->soporte($olt)['detalle'] : 'Esa OLT no es de su empresa.'];
         }
 
         if (!$g->activa || !$g->vlan) {
@@ -675,7 +675,7 @@ class GestionRemotaDeOnt
         $router = collect($grupos)->firstWhere('titulo', 'MikroTik') ?? ['items' => []];
         if ($falta = $malos($router)) {
             return $sigue(1, 'Red de gestión en el MikroTik',
-                "Falta: {$falta[0]['titulo']} — {$falta[0]['detalle']} Entrá al asistente, revisá VLAN {$g->vlan}, red {$g->red} e interfaz, y pulsá «Volver a aplicar».", 'activar');
+                "Falta: {$falta[0]['titulo']} — {$falta[0]['detalle']} Ingrese al asistente, revise VLAN {$g->vlan}, red {$g->red} e interfaz, y presione «Volver a aplicar».", 'activar');
         }
         $hecho(1, 'Red de gestión en el MikroTik', "VLAN {$g->vlan}, red {$g->red}, DHCP con la dirección del TR-069 y aislamiento listos.");
 
@@ -693,8 +693,8 @@ class GestionRemotaDeOnt
                 return $sigue(2, "Preparar la OLT {$olt['titulo']}",
                     "Falta: {$falta[0]['titulo']} — {$falta[0]['detalle']} "
                     . (($falta[0]['accion'] ?? null) === 'perfiles'
-                        ? 'Andá a la pestaña «Perfiles de línea» y pulsá «Preparar» (hacelo en un horario tranquilo: los clientes de ese perfil pueden tener un corte de segundos).'
-                        : 'Elegí el puerto de subida de la OLT en el asistente y pulsá «Volver a aplicar».'),
+                        ? 'Vaya a la pestaña «Perfiles de línea» y presione «Preparar» (hágalo en un horario tranquilo: los clientes de ese perfil pueden tener un corte de segundos).'
+                        : 'Seleccione el puerto de subida de la OLT en el asistente y presione «Volver a aplicar».'),
                     $falta[0]['accion'] ?? 'activar');
             }
         }
@@ -706,12 +706,12 @@ class GestionRemotaDeOnt
 
         if (!$tunel) {
             return $sigue(3, 'Conectar la VPN',
-                "La red {$g->red} no está en ningún túnel. Pulsá «Volver a aplicar» para sumarla y después, en OLT → VPN, «Ver script» y pegalo en el MikroTik.", 'activar');
+                "La red {$g->red} no está en ningún túnel. Presione «Volver a aplicar» para sumarla y después, en OLT → VPN, «Ver script» y péguelo en el MikroTik.", 'activar');
         }
 
         if (!$tunel->conectado) {
             return $sigue(3, 'Conectar la VPN',
-                "El túnel «{$tunel->nombre}» no está saludando. En OLT → VPN pulsá «Ver script» en ese túnel, copialo y pegalo completo en la terminal del MikroTik. En uno o dos minutos debe decir «conectado».");
+                "El túnel «{$tunel->nombre}» no está saludando. En OLT → VPN presione «Ver script» en ese túnel, cópielo y péguelo completo en la terminal del MikroTik. En uno o dos minutos debe decir «conectado».");
         }
         $hecho(3, 'VPN conectada', "El túnel «{$tunel->nombre}» está conectado y lleva la red {$g->red}.");
 
@@ -732,9 +732,9 @@ class GestionRemotaDeOnt
 
         if ($conGestion === 0 && $enAcs === 0) {
             $sigue(4, 'Probar con un solo equipo',
-                'En OLT → Autorizadas elegí una ONT de prueba (mejor sin cliente) y pulsá «Dar acceso remoto». '
+                'En OLT → Autorizadas seleccione una ONT de prueba (mejor sin cliente) y presione «Dar acceso remoto». '
                 . 'Si el modelo lo acepta, en uno o dos minutos pide IP de gestión y aparece en Equipos. '
-                . 'Si no lo acepta, la plataforma la devuelve sola a su perfil (sin dejarla sin servicio) y te dice cómo configurarla.');
+                . 'Si no lo acepta, la plataforma la devuelve sola a su perfil (sin dejarla sin servicio) y le dice cómo configurarla.');
         } else {
             $hecho(4, 'Primer equipo gestionado', "{$enAcs} equipo(s) ya reportan al TR-069.");
 
@@ -744,16 +744,16 @@ class GestionRemotaDeOnt
             } else {
             $sigue(5, 'Sumar el resto de los equipos',
                 "{$enAcs} de {$totalOnts} equipos reportan al TR-069. Los modelos que aceptan la gestión por la OLT se suman con «Poner al día» "
-                . '(cada equipo se corta unos 20 segundos: hacelo en un horario tranquilo). Los que no la aceptan se configuran en el equipo (ver abajo).',
+                . '(cada equipo se corta unos 20 segundos: hágalo en un horario tranquilo). Los que no la aceptan se configuran en el equipo (ver abajo).',
                 'al_dia');
             }
         }
 
         if ($modelos) {
             $items[] = $this->item('manual', 'Equipos que se configuran en su página web · ' . implode(', ', $modelos),
-                'Estos modelos no aceptan que la OLT les cree la conexión de gestión. En cada uno, una sola vez: entrá a su página web (http://192.168.1.1), '
+                'Estos modelos no aceptan que la OLT les cree la conexión de gestión. En cada uno, una sola vez: ingrese a su página web (http://192.168.1.1), '
                 . "Maintenance/Management → TR-069 Client: CWMP activado, ACS URL {$url}, Periodic Inform activado cada 300 s, sobre su conexión de internet. "
-                . 'Guardá: en unos minutos aparece solo en Equipos y el contador de arriba sube. Sin corte para el cliente. '
+                . 'Guarde: en unos minutos aparece solo en Equipos y el contador de arriba sube. Sin corte para el cliente. '
                 . 'Para los equipos nuevos, configuralo en bodega antes de instalarlos.');
         }
 
@@ -855,7 +855,7 @@ class GestionRemotaDeOnt
         if (strtolower((string) $olt->brand) === 'cdata' && self::tecnologiaCdata($olt) === 'epon') {
             $items[] = $perfilAcs
                 ? $this->item('ok', 'Servidor TR-069', 'En EPON los equipos reciben la dirección ' . config('services.genieacs.cwmp_url') . ' por el DHCP de la red de gestión.')
-                : $this->item('pendiente', 'Servidor TR-069', 'Falta revisar la OLT: pulsá «Volver a aplicar».', 'activar');
+                : $this->item('pendiente', 'Servidor TR-069', 'Falta revisar la OLT: presione «Volver a aplicar».', 'activar');
             $items[] = $this->item('ok', 'Perfiles de línea', 'En EPON no hay perfiles que preparar: la VLAN va en el puerto PON.');
 
             return $items;
@@ -916,7 +916,7 @@ class GestionRemotaDeOnt
                 ? $this->item('ok', 'Equipos con IP de gestión', $conIp === 1 ? 'Un equipo ya pidió y recibió su IP.' : "{$conIp} equipos ya pidieron y recibieron su IP.")
                 : $this->item($estado['con_gestion'] > 0 ? 'error' : 'pendiente', 'Equipos con IP de gestión',
                     $estado['con_gestion'] > 0
-                        ? 'Hay equipos con acceso dado pero ninguno pidió IP: revisá los perfiles de línea.'
+                        ? 'Hay equipos con acceso dado pero ninguno pidió IP: revise los perfiles de línea.'
                         : 'Todavía ninguno.');
         } catch (\Throwable $e) {
             $items[] = $this->item('aviso', 'Equipos con IP de gestión', 'No se pudo leer el DHCP del MikroTik.');
@@ -975,12 +975,12 @@ class GestionRemotaDeOnt
         $olt = OltAdmin::where('id', $oltId)->where('company_id', $this->companyId)->first();
 
         if (!$olt) {
-            return ['ok' => false, 'detalle' => 'Esa OLT no es de tu empresa.'];
+            return ['ok' => false, 'detalle' => 'Esa OLT no es de su empresa.'];
         }
 
         if (!self::admiteGestion((string) $olt->brand)) {
             return self::noAplica(
-                'Esta OLT no admite dar la gestión desde acá: hay que configurarla en la OLT.',
+                'Esta OLT no admite dar la gestión desde aquí: hay que configurarla en la OLT.',
                 CompatibilidadDeOnt::queHacerAMano()
             );
         }
@@ -1099,7 +1099,7 @@ class GestionRemotaDeOnt
             }
 
             $r['detalle'] = 'La ONT está en línea' . (isset($vivo['potencia']) ? " ({$vivo['potencia']} dBm)" : '')
-                . ', pero la OLT todavía no la deja configurar (recién autorizada, se está registrando). Volvé a darle acceso remoto en un par de minutos.';
+                . ', pero la OLT todavía no la deja configurar (recién autorizada, se está registrando). Vuelva a darle acceso remoto en un par de minutos.';
         }
 
         // La OLT probó y el equipo no creó la conexión (el driver lo anota para
@@ -1121,8 +1121,8 @@ class GestionRemotaDeOnt
             }
 
             return ['ok' => false, 'detalle' => $r['detalle'] . ' '
-                . (($q['borrada'] ?? false) ? 'Se borró la conexión de gestión. ' : '⚠️ La conexión «gestion» no se pudo borrar: revisala. ')
-                . (($q['internet_ok'] ?? false) ? 'Su internet volvió a conectarse.' : '⚠️ Revisá el internet del equipo ya.')];
+                . (($q['borrada'] ?? false) ? 'Se borró la conexión de gestión. ' : '⚠️ La conexión «gestion» no se pudo borrar: revísela. ')
+                . (($q['internet_ok'] ?? false) ? 'Su internet volvió a conectarse.' : '⚠️ Revise el internet del equipo ya.')];
         }
 
         if ($r['sin_confirmar'] ?? false) {
@@ -1133,7 +1133,7 @@ class GestionRemotaDeOnt
             $ip = $this->ipDeGestionEnRouter((string) ($registrada?->serial ?? ''), $existente ? 10 : 45, !$existente);
 
             if (!$ip && $existente) {
-                return ['ok' => false, 'detalle' => 'La ONT tiene la conexión de gestión pero no se encontró su IP en el DHCP del router: no se tocó. Revisá que la VLAN llegue a esta OLT o reiniciá el equipo.'];
+                return ['ok' => false, 'detalle' => 'La ONT tiene la conexión de gestión pero no se encontró su IP en el DHCP del router: no se tocó. Revise que la VLAN llegue a esta OLT o reinicie el equipo.'];
             }
 
             if ($ip) {
@@ -1146,9 +1146,9 @@ class GestionRemotaDeOnt
                     $q = null;
                 }
 
-                return ['ok' => false, 'detalle' => "La ONT no pidió IP de gestión en la VLAN {$g->vlan}. Revisá que la VLAN llegue del MikroTik a esta OLT. "
-                    . (($q['borrada'] ?? false) ? 'Se borró la conexión creada. ' : '⚠️ La conexión «gestion» no se pudo borrar: revisala. ')
-                    . (($q['internet_ok'] ?? false) ? 'Su internet sigue conectado.' : '⚠️ Revisá el internet del equipo.')];
+                return ['ok' => false, 'detalle' => "La ONT no pidió IP de gestión en la VLAN {$g->vlan}. Revise que la VLAN llegue del MikroTik a esta OLT. "
+                    . (($q['borrada'] ?? false) ? 'Se borró la conexión creada. ' : '⚠️ La conexión «gestion» no se pudo borrar: revísela. ')
+                    . (($q['internet_ok'] ?? false) ? 'Su internet sigue conectado.' : '⚠️ Revise el internet del equipo.')];
             }
         }
 
@@ -1197,7 +1197,7 @@ class GestionRemotaDeOnt
                         $registrada?->update(['gestion_en' => null]);
 
                         return ['ok' => false, 'detalle' => $r['detalle']
-                            . ' No hace falta la clave: este equipo no publica su página. Usá «Reiniciar equipo» '
+                            . ' No hace falta la clave: este equipo no publica su página. Use «Reiniciar equipo» '
                             . '—el botón de al lado— cuando no moleste al cliente, y en un par de minutos aparece solo.'];
                     }
 
@@ -1712,7 +1712,7 @@ class GestionRemotaDeOnt
         $olt = OltAdmin::where('id', $oltId)->where('company_id', $this->companyId)->first();
 
         if (!$olt || !self::admiteReinicio((string) $olt->brand)) {
-            return ['ok' => false, 'detalle' => $olt ? 'Esta OLT no permite reiniciar equipos desde acá.' : 'Esa OLT no es de tu empresa.'];
+            return ['ok' => false, 'detalle' => $olt ? 'Esta OLT no permite reiniciar equipos desde aquí.' : 'Esa OLT no es de su empresa.'];
         }
 
         try {
@@ -1901,7 +1901,7 @@ class GestionRemotaDeOnt
                     // con YINETH decía "falta preparar" y el perfil estaba bien.
                     ? "no se pudo leer en la OLT su perfil de línea «{$deOnt['nombre']}» para confirmarlo; si el equipo aparece en el TR-069 está bien"
                     : "no se pudo preparar su perfil de línea «{$deOnt['nombre']}» para que deje salir la gestión por la VLAN {$vlan}"
-                        . ($fila['detalle_preparar'] ?? null ? ': ' . $fila['detalle_preparar'] : '. Probá desde Acceso remoto → Perfiles de línea.')),
+                        . ($fila['detalle_preparar'] ?? null ? ': ' . $fila['detalle_preparar'] : '. Pruebe desde Acceso remoto → Perfiles de línea.')),
         ];
     }
 
@@ -2129,7 +2129,7 @@ class GestionRemotaDeOnt
         $ifaces = self::interfacesDe($interfaz);
 
         if (!$ifaces) {
-            return [null, 'Elegí la interfaz del MikroTik hacia la OLT.'];
+            return [null, 'Seleccione la interfaz del MikroTik hacia la OLT.'];
         }
 
         $existentes = collect($api->query(new Query('/interface/print'))->read())->pluck('name')->all();

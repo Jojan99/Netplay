@@ -30,7 +30,7 @@ class IdentificacionEnTexto
         'identificación', 'numero', 'número', 'nro', 'no', 'es', 'soy', 'me', 'llamo',
         'nombre', 'y', 'el', 'la', 'de', 'con', 'buenas', 'buenos', 'dias', 'días',
         'tardes', 'noches', 'hola', 'señor', 'senor', 'señora', 'senora', 'gracias',
-        'por', 'favor', 'gracia', 'gracias.', 'gracias,', 'ti', 'nit',
+        'por', 'favor', 'gracia', 'gracias.', 'gracias,', 'usted', 'nit',
     ];
 
     /**

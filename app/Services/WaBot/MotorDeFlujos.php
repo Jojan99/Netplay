@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\Log;
  * PHP (factura, revisión, reportar pago, pagar). Se podía dibujar una
  * conversación entera, guardarla, y al cliente no le pasaba nada.
  *
- * Acá se recorre el grafo de bloques. Cada bloque hace lo suyo y dice a cuál
+ * Aquí se recorre el grafo de bloques. Cada bloque hace lo suyo y dice a cuál
  * seguir; cuando un bloque necesita que el cliente conteste —una pregunta, unos
  * botones, una lista— el recorrido se detiene y queda anotado en la sesión.
  *
@@ -179,7 +179,7 @@ class MotorDeFlujos
 
             case 'buttons':
                 $this->canal->botones(
-                    $this->rellenar((string) ($bloque['message'] ?? '¿Qué querés hacer?'), $datos),
+                    $this->rellenar((string) ($bloque['message'] ?? '¿Qué quiere hacer?'), $datos),
                     $this->botonesDe($bloque, $datos),
                     $this->rellenar((string) ($bloque['header'] ?? ''), $datos),
                 );
@@ -188,7 +188,7 @@ class MotorDeFlujos
 
             case 'list':
                 $this->canal->lista(
-                    $this->rellenar((string) ($bloque['message'] ?? 'Elegí una opción'), $datos),
+                    $this->rellenar((string) ($bloque['message'] ?? 'Seleccione una opción'), $datos),
                     $this->seccionesDe($bloque, $datos),
                     $this->rellenar((string) ($bloque['button_text'] ?? 'Ver opciones'), $datos),
                 );
@@ -196,7 +196,7 @@ class MotorDeFlujos
                 return Resultado::espera($datos);
 
             case 'input':
-                $this->canal->texto($this->rellenar((string) ($bloque['message'] ?? '¿Me lo escribís?'), $datos));
+                $this->canal->texto($this->rellenar((string) ($bloque['message'] ?? '¿Me lo escribe?'), $datos));
 
                 return Resultado::espera($datos);
 
@@ -310,7 +310,7 @@ class MotorDeFlujos
             }
 
             $this->canal->texto($this->rellenar(
-                (string) ($bloque['error_message'] ?? 'No entendí esa opción. Tocá uno de los botones, por favor.'),
+                (string) ($bloque['error_message'] ?? 'No entendí esa opción. Toque uno de los botones, por favor.'),
                 $datos,
             ));
 
@@ -424,7 +424,7 @@ class MotorDeFlujos
         }
 
         $this->canal->texto($this->rellenar(
-            (string) ($bloque['error_message'] ?? '' ?: 'No pude consultar esa información ahora. Probá en un rato.'),
+            (string) ($bloque['error_message'] ?? '' ?: 'No pude consultar esa información ahora. Pruebe en un rato.'),
             $datos,
         ));
 
@@ -659,7 +659,7 @@ class MotorDeFlujos
     private function problemaDelDato(string $tipo, string $valor): ?string
     {
         if ($valor === '') {
-            return 'No me llegó nada. ¿Lo escribís de nuevo?';
+            return 'No me llegó nada. ¿Lo escribe de nuevo?';
         }
 
         return match ($tipo) {
@@ -667,7 +667,7 @@ class MotorDeFlujos
                 ? null : 'Necesito sólo números.',
             'email' => filter_var($valor, FILTER_VALIDATE_EMAIL) ? null : 'Ese correo no parece válido.',
             'phone' => strlen(preg_replace('/\D/', '', $valor)) >= 7 ? null : 'Ese teléfono no parece completo.',
-            'date'  => strtotime($valor) !== false ? null : 'No entendí la fecha. Probá con día/mes/año.',
+            'date'  => strtotime($valor) !== false ? null : 'No entendí la fecha. Pruebe con día/mes/año.',
             default => null,
         };
     }

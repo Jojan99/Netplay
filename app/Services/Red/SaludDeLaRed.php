@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\Log;
  * La señal ya se mide cada 15 minutos para las alertas, pero se olvidaba: no
  * había forma de ver que un puerto se viene cayendo de a poco (0/0/3 con la
  * mediana en -25 dBm y 17 clientes al borde) ni quién se reinicia todos los
- * días. Acá esa misma medición queda guardada —resumida, no lectura por
+ * días. Aquí esa misma medición queda guardada —resumida, no lectura por
  * lectura— y se convierte en tres respuestas:
  *
  *   1. Qué puertos hay que ir a revisar (y si empeoraron esta semana).
@@ -262,7 +262,7 @@ class SaludDeLaRed
      * Clientes que hoy trabajaron por debajo del límite: los próximos en caerse.
      *
      * Se mira el PROMEDIO del día, no la peor lectura. La peor es una sola
-     * medición de las ~50 que se toman: bastaba un valor raro para meter acá a
+     * medición de las ~50 que se toman: bastaba un valor raro para meter aquí a
      * un cliente que pasó el día en -22 dBm y mandar a un técnico a revisar un
      * enlace sano. La peor sigue a la vista, al lado, como dato.
      */

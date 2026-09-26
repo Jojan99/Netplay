@@ -100,7 +100,7 @@ class PaymentLinkService
         }
 
         if ($link->isExpired()) {
-            throw new PaymentLinkException('Este link de pago ya venció. Pídele uno nuevo a tu proveedor.');
+            throw new PaymentLinkException('Este link de pago ya venció. Pídele uno nuevo a su proveedor.');
         }
 
         if ($link->isExhausted()) {
@@ -115,13 +115,13 @@ class PaymentLinkService
         $invoices = $this->pendingInvoices($link);
 
         if ($invoices->isEmpty()) {
-            throw new PaymentLinkException('No tienes facturas pendientes por pagar. ¡Estás al día!');
+            throw new PaymentLinkException('No tienes facturas pendientes por pagar. ¡Está al día!');
         }
 
         $amount = round($invoices->sum(fn($inv) => $inv->outstanding()), 2);
 
         if ($amount <= 0) {
-            throw new PaymentLinkException('No tienes facturas pendientes por pagar. ¡Estás al día!');
+            throw new PaymentLinkException('No tienes facturas pendientes por pagar. ¡Está al día!');
         }
 
         $result = $this->initiator->initiate(

@@ -330,7 +330,7 @@ public function execute(array $payload): array
     // mensajes temporales, borrados, vencimiento de "ver una vez"): llegan con
     // type "unknown" y sin texto ni archivo.
     //
-    // La comprobación va acá y no más abajo a propósito: si se descarta el
+    // La comprobación va aquí y no más abajo a propósito: si se descarta el
     // mensaje después de getOrCreateConversationByPhone, la conversación ya
     // quedó creada y aparece vacía en la bandeja del agente.
     $tiposConocidos = ['text', 'image', 'video', 'audio', 'document', 'sticker',

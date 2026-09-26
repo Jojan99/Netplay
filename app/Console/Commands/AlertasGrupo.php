@@ -62,7 +62,7 @@ class AlertasGrupo extends Command
         if (count($coinciden) !== 1) {
             $this->error(count($coinciden) === 0
                 ? 'Ningún grupo de la línea coincide. ¿La línea de WhatsApp Web está dentro del grupo?'
-                : 'Coinciden varios grupos: ' . implode(', ', array_column($coinciden, 'nombre')) . '. Escribí un nombre más exacto.');
+                : 'Coinciden varios grupos: ' . implode(', ', array_column($coinciden, 'nombre')) . '. Escriba un nombre más exacto.');
             return self::FAILURE;
         }
 
@@ -73,7 +73,7 @@ class AlertasGrupo extends Command
         if (!$this->option('sin-prueba')) {
             $avisos->probar()
                 ? $this->info('Mensaje de prueba enviado al grupo.')
-                : $this->warn('No se pudo mandar la prueba: revisá que la línea siga conectada (ver el log).');
+                : $this->warn('No se pudo mandar la prueba: revise que la línea siga conectada (ver el log).');
         }
 
         return self::SUCCESS;

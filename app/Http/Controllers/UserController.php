@@ -77,7 +77,7 @@ class UserController extends Controller
             ->first();
 
         if (!$ficha) {
-            return standardApiReponse('Ese cliente no existe en tu empresa.', null, 1, JsonResponse::HTTP_OK);
+            return standardApiReponse('Ese cliente no existe en su empresa.', null, 1, JsonResponse::HTTP_OK);
         }
 
         $tipo = $request->input('descuento_tipo') ?: null;

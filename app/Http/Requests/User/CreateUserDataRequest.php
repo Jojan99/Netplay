@@ -48,7 +48,7 @@ class CreateUserDataRequest extends FormRequest
             // contraseña y la IP se la da el pool del router.
             'connection_type' => 'nullable|in:static,pppoe',
             // El usuario y la clave del PPPoE terminan dentro de la ONT: los
-            // signos que el equipo no admite se rechazan acá y no a mitad del
+            // signos que el equipo no admite se rechazan aquí y no a mitad del
             // aprovisionamiento, cuando ya es tarde.
             'pppoe_user' => ['nullable', 'string', 'max:120', 'required_if:connection_type,pppoe', new ClaveDeEquipo('El usuario del PPPoE')],
             'pppoe_password' => ['nullable', 'string', 'max:120', 'required_if:connection_type,pppoe', new ClaveDeEquipo('La clave del PPPoE')],

@@ -81,7 +81,7 @@ class ImportadorDeClientes
             'columnas'       => $tabla['columnas'],
             'mapeo'          => Normalizador::sugerirMapeo($tabla['columnas'], $origen),
             'total'          => count($tabla['filas']),
-            'detalle'        => 'Revisá qué columna corresponde a cada dato.',
+            'detalle'        => 'Revise qué columna corresponde a cada dato.',
         ]);
     }
 

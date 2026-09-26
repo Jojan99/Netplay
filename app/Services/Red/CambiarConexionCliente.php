@@ -65,7 +65,7 @@ class CambiarConexionCliente
 
         if ($curso = CambioDeConexion::enCurso($this->companyId, $userId)) {
             return ['ok' => false, 'aprovisionamiento' => $curso->id,
-                'mensaje' => "Ya hay un cambio de conexión en curso: {$curso->detalle} Esperá a que termine o cancelalo."];
+                'mensaje' => "Ya hay un cambio de conexión en curso: {$curso->detalle} Espere a que termine o cancelalo."];
         }
 
         try {
@@ -113,7 +113,7 @@ class CambiarConexionCliente
 
         if ($curso = CambioDeConexion::enCurso($this->companyId, $userId)) {
             return ['ok' => false, 'aprovisionamiento' => $curso->id,
-                'mensaje' => "Ya hay un cambio de conexión en curso: {$curso->detalle} Esperá a que termine o cancelalo."];
+                'mensaje' => "Ya hay un cambio de conexión en curso: {$curso->detalle} Espere a que termine o cancelalo."];
         }
 
         $plan = (new CambioDeConexion($this->companyId))->planear($userId);
@@ -222,7 +222,7 @@ class CambiarConexionCliente
             if (preg_match('/^vlan\D*(\d+)$/i', $interfaz, $m) && (int) $m[1] !== $vlan) {
                 return ['ok' => false, 'requiere_a_mano' => true,
                     'motivo' => "Esa IP es de {$interfaz} y la ONT sale por la VLAN {$vlan}: pasarlo de VLAN requiere cambiarle el service-port en la OLT.",
-                    'que_hacer' => 'Hacelo con un técnico: cambiá el service-port y el equipo, y después aplicá acá con «sólo el router».',
+                    'que_hacer' => 'Hacelo con un técnico: cambie el service-port y el equipo, y después aplique aquí con «sólo el router».',
                     'mensaje' => "Esa IP es de {$interfaz} y la ONT sale por la VLAN {$vlan}: pasarlo de VLAN requiere cambiarle el service-port en la OLT. No se tocó nada."];
             }
 
@@ -330,7 +330,7 @@ class CambiarConexionCliente
         $vlan = trim((string) ($datos['vlan'] ?? ''));
 
         if ($actual === 'static') {
-            return ['ok' => false, 'mensaje' => 'El cliente ya se conecta con IP fija. Para cambiarle la IP usá la migración.'];
+            return ['ok' => false, 'mensaje' => 'El cliente ya se conecta con IP fija. Para cambiarle la IP use la migración.'];
         }
 
         if ($ip === '' || $vlan === '') {

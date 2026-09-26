@@ -17,7 +17,7 @@ use Illuminate\Support\Facades\Log;
  * panel, la ve caída y va a escanear un QR que no hacía falta —o peor, da por
  * perdida una línea que funciona—.
  *
- * El estado de verdad lo tiene el servicio de Node; acá sólo se copia.
+ * El estado de verdad lo tiene el servicio de Node; aquí sólo se copia.
  */
 class WaSincronizarLineas extends Command
 {

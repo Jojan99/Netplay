@@ -51,10 +51,10 @@ abstract class FuenteApi
             $status = (int) ($r['status'] ?? 0);
 
             if ($status === 401 || $status === 403) {
-                throw new \RuntimeException('La plataforma rechazó el token o la clave de la API (sin permiso). Revisá que esté bien copiada y que tenga permiso para ver clientes.');
+                throw new \RuntimeException('La plataforma rechazó el token o la clave de la API (sin permiso). Revise que esté bien copiada y que tenga permiso para ver clientes.');
             }
             if ($status === 404) {
-                throw new \RuntimeException('No se encontró la API en esa dirección. Revisá la URL.');
+                throw new \RuntimeException('No se encontró la API en esa dirección. Revise la URL.');
             }
             if ($status === 0) {
                 throw new \RuntimeException('No se pudo conectar con la plataforma: ' . ($r['error'] ?? 'sin respuesta') . '.');

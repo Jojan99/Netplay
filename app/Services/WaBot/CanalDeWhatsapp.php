@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\Log;
 /**
  * Lo que el bot manda, a WhatsApp de verdad.
  *
- * Acá viven los límites de Meta —3 botones, 10 filas de lista, cuántos
+ * Aquí viven los límites de Meta —3 botones, 10 filas de lista, cuántos
  * caracteres entran en cada cosa— porque son del canal y no del flujo: quien
  * dibuja el flujo no tiene que saberlos de memoria, y si Meta los cambia se
  * cambian en un solo lugar.

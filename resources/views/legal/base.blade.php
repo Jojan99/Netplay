@@ -1,6 +1,6 @@
 {{--
     El molde de las páginas legales. Se abren desde el celular y muchas veces
-    desde el revisor de Meta: todo va acá adentro, sin librerías ni CDN, y
+    desde el revisor de Meta: todo va aquí adentro, sin librerías ni CDN, y
     tiene que poder leerse e imprimirse sin javascript.
 --}}
 <!DOCTYPE html>

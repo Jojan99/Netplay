@@ -116,7 +116,7 @@ class SyncMetaTemplates extends Command
         }
 
         $this->newLine();
-        $this->info('Listo. Revisá Comunicación › WhatsApp › Plantillas para activarlos.');
+        $this->info('Listo. Revise Comunicación › WhatsApp › Plantillas para activarlos.');
         return self::SUCCESS;
     }
 

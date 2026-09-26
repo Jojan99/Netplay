@@ -50,7 +50,7 @@ class Mikrowisp extends FuenteApi
                 return $r;
             }
             if (preg_match('/token/i', $mensaje)) {
-                throw new \RuntimeException('Mikrowisp rechazó el token de la API. Revisá que esté bien copiado y que la API esté activa.');
+                throw new \RuntimeException('Mikrowisp rechazó el token de la API. Revise que esté bien copiado y que la API esté activa.');
             }
 
             throw new \RuntimeException("Mikrowisp respondió: {$mensaje}");

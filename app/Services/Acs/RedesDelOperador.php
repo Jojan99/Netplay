@@ -14,7 +14,7 @@ use RouterOS\Query;
  * Para que el servidor TR-069 pueda hablarle a los equipos de los clientes
  * hacen falta las redes donde viven esos equipos. Pedirle al operador que las
  * escriba en notación CIDR es pedirle que sepa algo que no tiene por qué
- * saber: acá se leen del router y se muestran con nombre ("Clientes de la
+ * saber: aquí se leen del router y se muestran con nombre ("Clientes de la
  * vlan 101", "Rango PPPoE principal").
  */
 class RedesDelOperador
@@ -82,7 +82,7 @@ class RedesDelOperador
             }
 
             // Las direcciones de las sesiones PPPoE son de una en una: el rango
-            // sale del pool, no de acá. La red del propio túnel tampoco entra:
+            // sale del pool, no de aquí. La red del propio túnel tampoco entra:
             // es por donde se llega, no algo a lo que haya que llegar.
             if (str_contains($interfaz, 'pppoe') || str_contains($interfaz, '<') || str_starts_with($interfaz, 'wg')) {
                 continue;

@@ -48,7 +48,7 @@ class SobreCifrado
         }
 
         if (!$clave) {
-            throw new \RuntimeException('No se pudo abrir la clave: ¿la llave pública que subiste a Meta es la de este servidor?');
+            throw new \RuntimeException('No se pudo abrir la clave: ¿la llave pública que subió a Meta es la de este servidor?');
         }
 
         // Los últimos 16 bytes son la etiqueta de autenticidad.

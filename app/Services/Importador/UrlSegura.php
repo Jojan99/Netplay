@@ -32,7 +32,7 @@ class UrlSegura
         $ips = filter_var($host, FILTER_VALIDATE_IP) ? [$host] : (gethostbynamel($host) ?: []);
 
         if (!$ips) {
-            throw new \RuntimeException("No se encontró el servidor {$host}. Revisá la dirección.");
+            throw new \RuntimeException("No se encontró el servidor {$host}. Revise la dirección.");
         }
 
         foreach ($ips as $ip) {

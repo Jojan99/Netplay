@@ -50,7 +50,7 @@ class Cupones
         $cupon = self::porCodigo($codigo);
 
         if (!$cupon) {
-            return ['ok' => false, 'motivo' => 'Ese código no existe. Revisá cómo está escrito.', 'cupon' => null];
+            return ['ok' => false, 'motivo' => 'Ese código no existe. Revise cómo está escrito.', 'cupon' => null];
         }
 
         if (!$cupon->activo) {

@@ -50,7 +50,7 @@ class CreateStaffUseCase implements CreateStaffUseCaseInterface
             Log::error('Alta de personal: ' . $e->getMessage());
 
             return [
-                'message' => 'No se pudo crear el usuario. Volvé a intentarlo; si sigue igual, avisale al soporte de Netvula.',
+                'message' => 'No se pudo crear el usuario. Vuelva a intentarlo; si sigue igual, avísele al soporte de Netvula.',
                 'data'    => ApiResponseConstants::DATA_NULL,
                 'status'  => 1,
             ];
@@ -69,7 +69,7 @@ class CreateStaffUseCase implements CreateStaffUseCaseInterface
         $eliminado = isset($usuario->active) && (int) $usuario->active === 0;
 
         return $eliminado
-            ? $base . ', en una cuenta desactivada. Reactivala desde la lista del equipo o usá otro dato.'
+            ? $base . ', en una cuenta desactivada. Reactivala desde la lista del equipo o use otro dato.'
             : $base . '.';
     }
 }

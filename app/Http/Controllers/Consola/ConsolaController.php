@@ -16,7 +16,7 @@ use Illuminate\Support\Facades\Schema;
 /**
  * Consola de Netvula: el tablero, las empresas y la bitácora.
  *
- * Todo lo de acá cruza empresas a propósito. Por eso vive en su propia
+ * Todo lo de aquí cruza empresas a propósito. Por eso vive en su propia
  * dirección (admin.netvula.com) y detrás del middleware 'consola': hace falta
  * una sesión de `plataforma_usuarios`, que no tiene nada que ver con los
  * usuarios ni los perfiles de las empresas. Desde el panel de una empresa

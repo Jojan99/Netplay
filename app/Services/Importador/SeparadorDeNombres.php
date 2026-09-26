@@ -6,7 +6,7 @@ namespace App\Services\Importador;
  * Parte el nombre completo en nombres y apellidos.
  *
  * WispHub (y la mayoría de las exportaciones) traen todo junto en una sola
- * columna: "BRAYAN JESUS CASTELLANOS RUIZ". Acá se separa con la costumbre
+ * columna: "BRAYAN JESUS CASTELLANOS RUIZ". Aquí se separa con la costumbre
  * colombiana —dos nombres y dos apellidos— pero el administrador puede elegir
  * otra regla desde la pantalla, porque ningún criterio acierta siempre:
  * "MARIA DEL CARMEN DE LA HOZ" no se parte igual que "JUAN PEREZ".

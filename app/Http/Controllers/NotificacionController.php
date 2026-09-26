@@ -100,7 +100,7 @@ class NotificacionController extends Controller
             'nivel'   => $c->estado === 'escalado' ? 'critico' : 'aviso',
             'titulo'  => $c->estado === 'escalado'
                 ? 'Cobranza: ' . trim("{$c->names} {$c->lastname}") . ' necesita una persona'
-                : 'Cobranza: ' . trim("{$c->names} {$c->lastname}") . ' espera tu autorización',
+                : 'Cobranza: ' . trim("{$c->names} {$c->lastname}") . ' espera su autorización',
             'detalle' => ($c->motivo ?: 'Debe $' . number_format((float) $c->deuda, 0, ',', '.')),
             'cuando'  => (string) $c->updated_at,
             'ruta'    => 'cobranza',

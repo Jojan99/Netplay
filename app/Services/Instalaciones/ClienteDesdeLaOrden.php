@@ -17,7 +17,7 @@ use Illuminate\Support\Facades\Log;
  *
  * Reusa el alta de siempre —la que habla con el MikroTik, crea la credencial
  * PPPoE o reserva la IP en el ARP, y abre la facturación— para que un cliente
- * que entra por acá sea idéntico a uno cargado a mano. Duplicar ese camino
+ * que entra por aquí sea idéntico a uno cargado a mano. Duplicar ese camino
  * sería garantizar que con el tiempo se comporten distinto.
  */
 class ClienteDesdeLaOrden
@@ -50,7 +50,7 @@ class ClienteDesdeLaOrden
         if ($faltan) {
             return [
                 'ok' => false,
-                'message' => 'A la orden le falta ' . implode(', ', $faltan) . '. Completala desde Instalaciones y volvé a intentar.',
+                'message' => 'A la orden le falta ' . implode(', ', $faltan) . '. Completala desde Instalaciones y vuelva a intentar.',
                 'user_id' => null,
                 'nuevo' => false,
             ];
@@ -88,9 +88,17 @@ class ClienteDesdeLaOrden
     /** Crea el usuario, su ficha y la cabecera de facturación. */
     private static function alta(InstallationOrder $orden): int
     {
-        $partes = preg_split('/\s+/', trim((string) $orden->client_name), 2);
-        $nombres = $partes[0] ?? (string) $orden->client_name;
-        $apellidos = $partes[1] ?? '';
+        // Si la orden los trae separados, se usan tal cual. Partir el nombre
+        // completo adivinando dónde terminaba el nombre salía mal con dos
+        // nombres y dos apellidos, que es lo normal aquí.
+        $nombres = trim((string) $orden->client_firstname);
+        $apellidos = trim((string) $orden->client_lastname);
+
+        if ($nombres === '') {
+            $partes = preg_split('/\s+/', trim((string) $orden->client_name), 2);
+            $nombres = $partes[0] ?? (string) $orden->client_name;
+            $apellidos = $apellidos !== '' ? $apellidos : ($partes[1] ?? '');
+        }
 
         $user = User::create([
             'company_id' => $orden->company_id,

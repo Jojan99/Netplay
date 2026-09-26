@@ -36,7 +36,7 @@ class EquipoDelInventario
         if (!$item) {
             return [
                 'ok' => false,
-                'detalle' => "El serial {$serial} no se encontró en el inventario. El equipo quedó instalado igual; revisá el stock desde la oficina.",
+                'detalle' => "El serial {$serial} no se encontró en el inventario. El equipo quedó instalado igual; revise el stock desde la oficina.",
                 'inventory_id' => null,
             ];
         }

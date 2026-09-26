@@ -15,7 +15,7 @@ use Illuminate\Support\Str;
  * El token NO es un JWT: es una cadena al azar que se guarda hasheada en
  * `plataforma_sesiones`. Es a propósito. Así:
  *
- *  - un token del panel (un JWT) no puede valer acá: no está en la tabla;
+ *  - un token del panel (un JWT) no puede valer aquí: no está en la tabla;
  *  - un token de la consola no vale en el panel: no es un JWT y no pasa la
  *    verificación de firma;
  *  - una sesión se puede cortar desde la base, cosa que con un JWT no.
@@ -180,7 +180,7 @@ class AccesoConsola
             return null;
         }
 
-        // Un JWT del panel trae dos puntos; acá no sirve, y se descarta antes
+        // Un JWT del panel trae dos puntos; aquí no sirve, y se descarta antes
         // de tocar la base.
         return str_contains($m[1], '.') ? null : $m[1];
     }

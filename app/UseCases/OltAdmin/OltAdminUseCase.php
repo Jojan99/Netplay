@@ -129,7 +129,7 @@ class OltAdminUseCase
             'message' => match (true) {
                 !$sinDatos     => 'OK',
                 $r['midiendo'] => 'Midiendo la señal de todas las ONT en segundo plano: tarda cerca de un minuto.',
-                $sinMedicion   => 'Todavía no hay una medición de señal guardada: tocá «Medir ahora».',
+                $sinMedicion   => 'Todavía no hay una medición de señal guardada: toque «Medir ahora».',
                 default        => $r['error'] ?: 'La OLT no devolvió mediciones ópticas',
             },
             'data'    => $r,
@@ -170,7 +170,7 @@ class OltAdminUseCase
                 return [
                     'status'  => 1,
                     'message' => "El {$dato['nombre']} {$dato['valor']} no está entre los que tiene la OLT. "
-                        . 'Sincronizá los perfiles y volvé a intentar.',
+                        . 'Sincronice los perfiles y vuelva a intentar.',
                     'data'    => null,
                 ];
             }
@@ -390,7 +390,7 @@ class OltAdminUseCase
     /**
      * Crea la OLT junto con su túnel de gestión.
      *
-     * Tiene más sentido acá que como paso aparte: cuando se registra una OLT en
+     * Tiene más sentido aquí que como paso aparte: cuando se registra una OLT en
      * red privada, el camino para llegar a ella es parte del alta. Si ya hay un
      * túnel que cubre su red se reutiliza —lo que hace falta es uno por router,
      * no uno por equipo.
@@ -417,7 +417,7 @@ class OltAdminUseCase
             return [
                 'status'  => 0,
                 'message' => "OLT creada. Ya hay un túnel que cubre su red: «{$existente->nombre}». "
-                    . 'Aplicá ese script en el router si todavía no está levantado.',
+                    . 'Aplique ese script en el router si todavía no está levantado.',
                 'data'    => ['olt' => $olt, 'tunel' => $existente, 'reutilizado' => true],
             ];
         }
@@ -443,7 +443,7 @@ class OltAdminUseCase
             ]);
 
             // Si la red de la OLT la usa otra empresa, la plataforma llega por la virtual.
-            $mensaje = 'OLT y túnel creados. Pegá el script en el router para levantarlo.';
+            $mensaje = 'OLT y túnel creados. Pegue el script en el router para levantarlo.';
             $ipVirtual = $creado['tunel']->ipAlcanzable((string) $olt->host);
 
             if ($ipVirtual !== $olt->host && $olt->access_mode === 'direct') {
@@ -534,7 +534,7 @@ class OltAdminUseCase
         return [
             'status'  => 0,
             'message' => "OLT creada y su red sumada al túnel «{$tunel->nombre}». "
-                . 'Volvé a pegar el script en ese router para que agregue el acceso a la red nueva.',
+                . 'Vuelva a pegar el script en ese router para que agregue el acceso a la red nueva.',
             'data'    => [
                 'olt'    => $olt,
                 'tunel'  => $tunel,
@@ -790,7 +790,7 @@ class OltAdminUseCase
                 return [
                     'status'  => 1,
                     'message' => 'Falta la VLAN: sin ella la ONT queda registrada pero el cliente no navega. '
-                        . 'Elegí la VLAN del servicio o poné una VLAN por defecto en la OLT.',
+                        . 'Seleccione la VLAN del servicio o ingrese una VLAN por defecto en la OLT.',
                     'data'    => null,
                 ];
             }
@@ -938,7 +938,7 @@ class OltAdminUseCase
                 Cache::forget("olt:{$oltId}:all_service_ports");
 
                 // Acceso remoto: si la empresa lo tiene activado, el equipo
-                // nuevo entra solo al TR-069. Hacerlo acá evita que alguien
+                // nuevo entra solo al TR-069. Hacerlo aquí evita que alguien
                 // tenga que acordarse de habilitarlo equipo por equipo.
                 $gestion = $this->darGestionRemota($oltId, $data['fsp'], $ontId);
 
@@ -958,7 +958,7 @@ class OltAdminUseCase
                         'ok'      => false,
                         'omitido' => true,
                         'detalle' => 'No se programó: sin service-port el equipo no navega, '
-                                   . 'y sin navegar no llega al TR-069. Creá el service-port y reaplicá.',
+                                   . 'y sin navegar no llega al TR-069. Cree el service-port y reaplique.',
                     ];
                 }
 
@@ -997,7 +997,7 @@ class OltAdminUseCase
                         ? ($result['vlan_paso']['ok'] ? " · VLAN {$vlan} verificada en el puerto" : " · falta la VLAN {$vlan} en el puerto")
                         : (($result['service_port_created'] ?? false) ? " · service-port {$spIndex} creado" : ''))
                 : (stripos((string) $result['message'], 'System is busy') !== false
-                    ? 'La OLT está ocupada en este momento (suele ser porque está guardando la configuración). Probá de nuevo en unos segundos.'
+                    ? 'La OLT está ocupada en este momento (suele ser porque está guardando la configuración). Pruebe de nuevo en unos segundos.'
                     : 'La OLT no autorizó la ONT: ' . ($result['message'] ?: 'sin detalle'));
 
             return [
@@ -1069,7 +1069,7 @@ class OltAdminUseCase
                 'status'  => $ok ? 0 : 1,
                 'message' => $ok
                     ? "ONT eliminada de {$fsp} (ONT ID {$ontId})"
-                    : 'La OLT no pudo eliminar la ONT. Revisá que el ONT ID sea el correcto.',
+                    : 'La OLT no pudo eliminar la ONT. Revise que el ONT ID sea el correcto.',
                 'data'    => null,
             ];
         } catch (\Throwable $e) {
@@ -2124,7 +2124,7 @@ class OltAdminUseCase
      * la consola, y arreglarlo obligaba a entrar por telnet a hacer
      * «ont modify», que es justo lo que no queremos que nadie tenga que hacer.
      *
-     * El texto se sanea acá y no en cada driver: ninguna de las cuatro marcas
+     * El texto se sanea aquí y no en cada driver: ninguna de las cuatro marcas
      * acepta lo mismo —espacios, acentos y comillas dan problemas en todas—,
      * así que se manda lo que todas entienden.
      */

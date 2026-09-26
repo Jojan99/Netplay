@@ -12,7 +12,7 @@ use Illuminate\Contracts\Validation\ValidationRule;
  * El PPPoE y la cuenta de administración de la ONT viajan por TR-069 y, en
  * varias marcas, por una línea de consola. Una eñe, una tilde, una comilla o
  * un espacio los parten en algún punto del camino y el equipo contesta
- * «Invalid arguments», que no le dice nada a nadie. No se mide el largo: acá
+ * «Invalid arguments», que no le dice nada a nadie. No se mide el largo: aquí
  * lo que importa son los signos.
  */
 class ClaveDeEquipo implements ValidationRule

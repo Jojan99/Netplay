@@ -77,7 +77,7 @@ class Tr069EnPaginaDeOnu
             return [
                 'ok'      => false,
                 'detalle' => 'Se llega a la página del equipo pero no se pudo entrar, ni con la cuenta de administrador de ONU '
-                    . 'de la empresa ni con la de fábrica. Cargá la correcta en Acceso remoto → Aprovisionamiento.',
+                    . 'de la empresa ni con la de fábrica. Cargue la correcta en Acceso remoto → Aprovisionamiento.',
             ];
         }
 

@@ -51,7 +51,7 @@ class AcsController extends Controller
         $id = (string) $request->query('id');
 
         return $this->responder(fn (EquiposDelAcs $acs) => $acs->detalle($id)
-            ?? throw new \InvalidArgumentException('Ese equipo no es de tu empresa.'));
+            ?? throw new \InvalidArgumentException('Ese equipo no es de su empresa.'));
     }
 
     public function deCliente(int $userId): JsonResponse

@@ -18,9 +18,9 @@ class RegisterCompanyRequest extends FormRequest
         return [
             'nit.unique'             => 'Ya existe una empresa registrada con ese NIT.',
             'email.unique'           => 'Ya existe una empresa registrada con ese correo.',
-            'email.email'            => 'Escribí un correo válido.',
+            'email.email'            => 'Escriba un correo válido.',
             'admin_password.min'     => 'La contraseña debe tener al menos 6 caracteres.',
-            'admin_username.unique'  => 'Ese usuario ya está tomado. Probá con otro.',
+            'admin_username.unique'  => 'Ese usuario ya está tomado. Pruebe con otro.',
             'admin_username.regex'   => 'El usuario admite letras, números, punto, guion y guion bajo.',
         ];
     }

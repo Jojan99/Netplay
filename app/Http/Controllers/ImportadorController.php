@@ -20,7 +20,7 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 /**
  * Importar clientes desde WispHub o Mikrowisp, por API o con el archivo
  * exportado. Sólo el ADMIN de la empresa (role:admin en la ruta y se vuelve a
- * mirar acá); todo queda atado a la empresa de la sesión.
+ * mirar aquí); todo queda atado a la empresa de la sesión.
  */
 class ImportadorController extends Controller
 {
@@ -118,11 +118,11 @@ class ImportadorController extends Controller
             $url = \App\Services\Importador\Fuentes\WispHub::URL_POR_DEFECTO;
         }
         if ($url === '') {
-            return $this->err('Falta la dirección de tu Mikrowisp (por ejemplo https://mikrowisp.tuempresa.com).');
+            return $this->err('Falta la dirección de su Mikrowisp (por ejemplo https://mikrowisp.tuempresa.com).');
         }
 
         if (Importacion::where('company_id', $c)->whereIn('estado', ['leyendo', 'en_cola', 'importando'])->where('updated_at', '>', now()->subMinutes(15))->exists()) {
-            return $this->err('Ya hay una importación en curso. Esperá a que termine.');
+            return $this->err('Ya hay una importación en curso. Espere a que termine.');
         }
 
         try {
@@ -169,7 +169,7 @@ class ImportadorController extends Controller
             'origen'  => 'required|in:wisphub,mikrowisp',
             'archivo' => 'required|file|max:20480',
         ], [
-            'archivo.required' => 'Elegí el archivo exportado.',
+            'archivo.required' => 'Seleccione el archivo exportado.',
             'archivo.max'      => 'El archivo no puede pasar de 20 MB.',
         ]);
 
@@ -200,7 +200,7 @@ class ImportadorController extends Controller
             return $this->err('No existe esa importación.', JsonResponse::HTTP_NOT_FOUND);
         }
         if (!in_array($imp->estado, ['mapeo', 'analizado'], true)) {
-            return $this->err('Esta importación ya se ejecutó: subí el archivo de nuevo para otra.');
+            return $this->err('Esta importación ya se ejecutó: suba el archivo de nuevo para otra.');
         }
 
         try {
@@ -319,14 +319,14 @@ class ImportadorController extends Controller
             'saldo.fecha'        => 'nullable|date_format:Y-m-d',
             'saldo.evitar_envio' => 'nullable|boolean',
         ], [
-            'estados.required' => 'Elegí qué estados de cliente importar.',
-            'grupo.required'   => 'Elegí el grupo de facturación.',
+            'estados.required' => 'Seleccione qué estados de cliente importar.',
+            'grupo.required'   => 'Seleccione el grupo de facturación.',
             'precios.*.numeric' => 'El valor del plan tiene que ser un número.',
         ]);
 
         $grupos = CompanyBillingSchedule::where('company_id', $c)->where('active', true)->pluck('grupo')->map(fn ($g) => (int) $g)->all();
         if (!$grupos) {
-            return $this->err('La empresa no tiene grupos de facturación. Creá al menos uno antes de importar.');
+            return $this->err('La empresa no tiene grupos de facturación. Cree al menos uno antes de importar.');
         }
         if (!in_array((int) $datos['grupo'], $grupos, true)) {
             return $this->err('El grupo de facturación no es de la empresa.');
@@ -388,7 +388,7 @@ class ImportadorController extends Controller
 
         foreach ($usados as $g) {
             if (!in_array((int) $g, $existentes, true)) {
-                return $this->err("El grupo {$g} no se puede usar todavía por cómo está armada la facturación en la base. Elegí otro grupo o avisale al soporte.");
+                return $this->err("El grupo {$g} no se puede usar todavía por cómo está armada la facturación en la base. Seleccione otro grupo o avísele al soporte.");
             }
         }
 
@@ -537,7 +537,7 @@ class ImportadorController extends Controller
         } elseif (!empty($datos['ids'])) {
             $q->whereIn('id', $datos['ids']);
         } else {
-            return $this->err('Elegí al menos un cliente.');
+            return $this->err('Seleccione al menos un cliente.');
         }
 
         $cuantas = $q->update($cambios);
@@ -562,7 +562,7 @@ class ImportadorController extends Controller
             'billing_hour' => 'nullable|integer|min:0|max:23',
             'nombre'       => 'nullable|string|max:60',
         ], [
-            'billing_day.required' => 'Elegí el día del mes en que se factura.',
+            'billing_day.required' => 'Seleccione el día del mes en que se factura.',
             'billing_day.max'      => 'El día tiene que ser del 1 al 30. En los meses más cortos se factura el último día.',
         ]);
 
@@ -581,7 +581,7 @@ class ImportadorController extends Controller
             }
 
             if (!$grupo) {
-                return $this->err('La empresa ya tiene los 4 grupos de facturación. Cambiá el día de alguno en vez de crear otro.');
+                return $this->err('La empresa ya tiene los 4 grupos de facturación. Cambie el día de alguno en vez de crear otro.');
             }
         }
 

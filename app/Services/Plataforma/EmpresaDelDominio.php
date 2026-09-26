@@ -119,7 +119,7 @@ class EmpresaDelDominio
     public function problemaCon(string $sub, ?int $salvoEmpresaId = null): ?string
     {
         if (!preg_match(self::FORMATO, $sub)) {
-            return 'Usá de 3 a 40 letras minúsculas, números o guiones (sin guion al principio ni al final).';
+            return 'Use de 3 a 40 letras minúsculas, números o guiones (sin guion al principio ni al final).';
         }
 
         if (str_contains($sub, '--')) {
@@ -127,7 +127,7 @@ class EmpresaDelDominio
         }
 
         if (in_array($sub, config('plataforma.reservados', []), true)) {
-            return 'Esa dirección está reservada. Probá con otra.';
+            return 'Esa dirección está reservada. Pruebe con otra.';
         }
 
         $tomado = Company::where('subdomain', $sub)

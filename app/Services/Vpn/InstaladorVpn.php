@@ -56,7 +56,7 @@ else
 fi
 
 echo "5/5 · Levantar el túnel y dejarlo persistente"
-# El estado deseado ya lo dejó escrito la plataforma; acá sólo se aplica.
+# El estado deseado ya lo dejó escrito la plataforma; aquí sólo se aplica.
 {$ayudante} sync
 
 cat > /etc/systemd/system/netplay-vpn.service <<'UNIT'

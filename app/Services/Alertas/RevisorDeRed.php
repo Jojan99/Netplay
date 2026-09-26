@@ -308,7 +308,7 @@ class RevisorDeRed
                 // Se vuelve a preguntar por esa ONT antes de avisar: la lectura
                 // por puerto viene paginada y una respuesta cortada hace
                 // parecer que falta un service-port que sí está. Avisar de más
-                // acá es mandar a un técnico a una casa donde todo funciona.
+                // aquí es mandar a un técnico a una casa donde todo funciona.
                 if (!$this->confirmaQueLeFalta($olt->id, $ont['fsp'], (int) $ont['ont_id'])) {
                     continue;
                 }
@@ -452,7 +452,7 @@ class RevisorDeRed
 
         return match ($ont['estado']) {
             'saturada' => "Recibe demasiada luz ({$dbm}): el equipo está muy cerca o falta un atenuador.",
-            'critica'  => "Recibe muy poca luz ({$dbm}): revisá el empalme, el conector o la roseta.",
+            'critica'  => "Recibe muy poca luz ({$dbm}): revise el empalme, el conector o la roseta.",
             default    => "La señal va justa ({$dbm}): todavía navega, pero con lluvia o un empalme más ya falla.",
         };
     }

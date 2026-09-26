@@ -117,7 +117,7 @@ class OltConnectionFactory
      * Por el túnel los paquetes se pierden de a ráfagas: un intento que no
      * obtiene respuesta suele entrar si se repite a los pocos segundos. Antes
      * había un único intento de 30 s y, cuando fallaba, el operador veía el
-     * texto crudo del socket. Reintentar acá es seguro: todavía no se mandó
+     * texto crudo del socket. Reintentar aquí es seguro: todavía no se mandó
      * ningún comando.
      */
     private function openDirectTcpStream(OltAdmin $olt)
@@ -155,7 +155,7 @@ class OltConnectionFactory
 
         throw new RuntimeException(
             "No se pudo llegar a la OLT ({$olt->host}) después de " . self::INTENTOS_TCP . ' intentos: '
-            . 'la conexión con el nodo se está cortando. Probá de nuevo en un momento. '
+            . 'la conexión con el nodo se está cortando. Pruebe de nuevo en un momento. '
             . "[{$ultimoError}]"
         );
     }

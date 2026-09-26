@@ -15,7 +15,7 @@ use Illuminate\Http\Request;
  *  1. la petición tiene que llegar a la dirección de la consola
  *     (admin.netvula.com). Desde el panel de una empresa estas rutas ni
  *     siquiera existen, pero por si alguna vez se registran fuera del grupo
- *     con dominio, acá se vuelve a comprobar;
+ *     con dominio, aquí se vuelve a comprobar;
  *  2. el token tiene que ser de una sesión de la consola. Un JWT del panel no
  *     sirve: no es un token de esta tabla y se descarta sin consultar nada.
  *
@@ -34,7 +34,7 @@ class ConsolaMiddleware
 
         if (!$usuario) {
             return standardApiReponse(
-                'Tu sesión de la consola venció o no es válida. Volvé a ingresar.',
+                'Su sesión de la consola venció o no es válida. Vuelva a ingresar.',
                 ApiResponseConstants::DATA_NULL,
                 ApiResponseConstants::ERROR,
                 401

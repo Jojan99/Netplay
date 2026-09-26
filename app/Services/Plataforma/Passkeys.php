@@ -29,7 +29,7 @@ use Webauthn\PublicKeyCredentialUserEntity;
  * Passkeys para la consola de Netvula.
  *
  * El navegador guarda una llave en el dispositivo —teléfono, laptop o una
- * llave física— y la desbloquea con la huella, la cara o el PIN. Acá sólo
+ * llave física— y la desbloquea con la huella, la cara o el PIN. Aquí sólo
  * queda su clave **pública**.
  *
  * Lo que las hace mejores que un código de seis dígitos: **están atadas al
@@ -48,7 +48,7 @@ class Passkeys
     private const MINUTOS = 5;
 
     /**
-     * El dominio al que quedan atadas. Fuera de acá no sirven.
+     * El dominio al que quedan atadas. Fuera de aquí no sirven.
      *
      * Es el host de la consola y no el dominio raíz a propósito: con
      * «netvula.com» la misma passkey valdría en cualquier subdominio,
@@ -108,7 +108,7 @@ class Passkeys
         $pedido = Cache::pull(self::clave('alta', $usuario->id));
 
         if (!$pedido) {
-            return ['ok' => false, 'motivo' => 'Se venció el tiempo para confirmar. Probá de nuevo.'];
+            return ['ok' => false, 'motivo' => 'Se venció el tiempo para confirmar. Pruebe de nuevo.'];
         }
 
         try {
@@ -180,7 +180,7 @@ class Passkeys
         $pedido = Cache::pull(self::clave('entrar', $pase));
 
         if (!$pedido) {
-            return ['usuario' => null, 'motivo' => 'Se venció el tiempo para confirmar. Probá de nuevo.'];
+            return ['usuario' => null, 'motivo' => 'Se venció el tiempo para confirmar. Pruebe de nuevo.'];
         }
 
         try {

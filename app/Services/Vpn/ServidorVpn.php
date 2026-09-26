@@ -30,7 +30,7 @@ class ServidorVpn
     /**
      * La configuración, creándola la primera vez.
      *
-     * La clave del servidor se genera acá y no se vuelve a mostrar: lo que los
+     * La clave del servidor se genera aquí y no se vuelve a mostrar: lo que los
      * routers necesitan es la pública.
      */
     public static function configuracion(): VpnServidor
@@ -57,7 +57,7 @@ class ServidorVpn
     }
 
     /**
-     * La IP con la que los routers van a marcar hacia acá.
+     * La IP con la que los routers van a marcar hacia aquí.
      *
      * Se toma de la interfaz de salida; si el servidor estuviera detrás de NAT
      * habría que corregirla a mano, y para eso el campo es editable.
@@ -102,7 +102,7 @@ class ServidorVpn
             if (self::seSolapan($red, $servidor->subred)) {
                 throw new RuntimeException(
                     "La red {$red} se solapa con la del túnel ({$servidor->subred}). "
-                    . 'Elegí otra red para el túnel en la configuración del servidor.'
+                    . 'Seleccione otra red para el túnel en la configuración del servidor.'
                 );
             }
         }
@@ -220,7 +220,7 @@ class ServidorVpn
                         throw new RuntimeException(
                             "La red {$red} ya la usa otro túnel ({$ocupada}). "
                             . 'Dos túneles no pueden llegar a la misma red: el tráfico iría sólo a uno. '
-                            . 'Si las dos OLT están detrás del mismo router, agregá la red a ese túnel '
+                            . 'Si las dos OLT están detrás del mismo router, agregue la red a ese túnel '
                             . 'en vez de crear otro.'
                         );
                     }
@@ -453,7 +453,7 @@ class ServidorVpn
         }
 
         throw new RuntimeException(
-            "No quedan IP libres en {$servidor->subred}. Ampliá la subred del túnel."
+            "No quedan IP libres en {$servidor->subred}. Amplíe la subred del túnel."
         );
     }
 
@@ -595,7 +595,7 @@ class ServidorVpn
 
         foreach (VpnTunel::where('activo', true)->orderBy('id')->get() as $tunel) {
             // AllowedIPs del lado servidor: la IP del router dentro del túnel
-            // más las redes que hay detrás. De acá salen también las rutas.
+            // más las redes que hay detrás. De aquí salen también las rutas.
             $permitidas = array_merge([$tunel->ip_tunel . '/32'], $tunel->redes_remotas ?? []);
 
             // Seguro: WireGuard le quita una red al par que la tenía si otro par

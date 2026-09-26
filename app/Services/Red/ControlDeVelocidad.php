@@ -12,7 +12,7 @@ use RouterOS\Query;
  * La velocidad de los planes, llevada al MikroTik.
  *
  * El operador contesta tres cosas —cuánto baja, cuánto sube y si quiere
- * ráfaga— y acá se traduce a lo que el router entiende, que es bastante menos
+ * ráfaga— y aquí se traduce a lo que el router entiende, que es bastante menos
  * amable: un renglón con seis pares de números en un orden que además está al
  * revés de como uno lo piensa (primero la subida del cliente, después la
  * bajada).
@@ -138,7 +138,7 @@ class ControlDeVelocidad
         $plan = $this->plan($planId);
 
         if (!$plan->bajada_mbps || !$plan->subida_mbps) {
-            throw new \InvalidArgumentException('Primero definí cuánto baja y cuánto sube este plan.');
+            throw new \InvalidArgumentException('Primero defina cuánto baja y cuánto sube este plan.');
         }
 
         $router = ConectionRouter::where('company_id', $this->companyId)
@@ -324,7 +324,7 @@ class ControlDeVelocidad
      * El PCQ reparte el límite por dirección IP, así que cada cliente de la
      * lista recibe su velocidad completa.
      *
-     * La ráfaga no entra acá: PCQ no la tiene. Sólo aplica a los PPPoE.
+     * La ráfaga no entra aquí: PCQ no la tiene. Sólo aplica a los PPPoE.
      *
      * @param  list<string>  $avisos
      * @return int  clientes alcanzados
@@ -503,6 +503,6 @@ class ControlDeVelocidad
             ->where('company_id', $this->companyId)
             ->first();
 
-        return $plan ?? throw new \InvalidArgumentException('Ese plan no es de tu empresa.');
+        return $plan ?? throw new \InvalidArgumentException('Ese plan no es de su empresa.');
     }
 }

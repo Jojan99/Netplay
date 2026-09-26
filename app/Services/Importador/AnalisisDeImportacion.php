@@ -286,7 +286,7 @@ class AnalisisDeImportacion
             unset($p['precios']);
 
             $p['sugerencia'] = null;
-            $p['motivo'] = $p['clave'] === '' ? 'Elegí un plan para los clientes sin plan.' : 'No hay uno parecido: se puede crear.';
+            $p['motivo'] = $p['clave'] === '' ? 'Seleccione un plan para los clientes sin plan.' : 'No hay uno parecido: se puede crear.';
 
             // Un precio de tres cifras casi nunca es una mensualidad: suele ser
             // la velocidad leída de la columna equivocada. Se marca para que el

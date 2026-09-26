@@ -5,7 +5,7 @@ namespace App\Services\Seguridad;
 /**
  * Los códigos de seis dígitos del authenticator (TOTP, RFC 6238).
  *
- * Está escrito acá y no traído de una librería a propósito: el algoritmo son
+ * Está escrito aquí y no traído de una librería a propósito: el algoritmo son
  * treinta líneas —un HMAC, un truncado y un módulo— y agregar una dependencia
  * a producción para eso trae más riesgo del que quita. Está comprobado contra
  * los vectores de prueba del RFC, que es lo que garantiza que Google

@@ -57,7 +57,7 @@ class ComprobanteWhatsAppWeb
                 ->first();
 
             if ($repetido) {
-                // Devolver el cliente también acá: sin esto el bot respondía
+                // Devolver el cliente también aquí: sin esto el bot respondía
                 // "lo registramos a nombre de undefined".
                 return [
                     'ok'       => true,
@@ -122,7 +122,7 @@ class ComprobanteWhatsAppWeb
         // Si el comprobante no tiene nada raro, se aplica solo.
         //
         // Esto ya existía pero sólo en el camino del bot de Meta, y todo el
-        // tráfico real entra por acá: por eso los pagos quedaban esperando
+        // tráfico real entra por aquí: por eso los pagos quedaban esperando
         // aprobación a mano aunque estuvieran perfectos.
         $aplicado = false;
 

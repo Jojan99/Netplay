@@ -44,7 +44,7 @@ class ProbarFlowDePago extends Command
         $flowId = (string) ($this->option('flow') ?: $this->flowDePago($empresa));
 
         if (!$flowId) {
-            $this->error("No encontré el Flow de pago en la cuenta de {$empresa->name}. Pasá --flow=<id>.");
+            $this->error("No encontré el Flow de pago en la cuenta de {$empresa->name}. Pase --flow=<id>.");
 
             return self::FAILURE;
         }
@@ -52,7 +52,7 @@ class ProbarFlowDePago extends Command
         $clienteId = (int) ($this->option('cliente') ?: $this->duenoDelCelular($empresa->id, $celular));
 
         if (!$clienteId) {
-            $this->error("No encontré un cliente de {$empresa->name} con el celular {$celular}. Pasá --cliente=<id>.");
+            $this->error("No encontré un cliente de {$empresa->name} con el celular {$celular}. Pase --cliente=<id>.");
 
             return self::FAILURE;
         }
@@ -67,7 +67,7 @@ class ProbarFlowDePago extends Command
             flowId:    $flowId,
             companyId: (int) $empresa->id,
             userId:    $clienteId,
-            titulo:    'Paga tu factura',
+            titulo:    'Paga su factura',
             cuerpo:    'Mira lo que tienes pendiente y págalo aquí mismo, sin salir de WhatsApp.',
             borrador:  !$this->option('publicado'),
         );
@@ -78,7 +78,7 @@ class ProbarFlowDePago extends Command
             return self::FAILURE;
         }
 
-        $this->info('Enviado. Revisá el WhatsApp de ese número.');
+        $this->info('Enviado. Revise el WhatsApp de ese número.');
 
         return self::SUCCESS;
     }

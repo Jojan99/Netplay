@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\DB;
  * quién está por vencer y quién está en mora.
  *
  * No hay pasarela: todo es registro manual, con su comprobante. El día que se
- * integre una, entra por acá y el resto no se entera.
+ * integre una, entra por aquí y el resto no se entera.
  */
 class FacturacionDeLaPlataforma
 {
@@ -204,7 +204,7 @@ class FacturacionDeLaPlataforma
         }
 
         if ((float) $cobro->pagado > 0) {
-            return ['ok' => false, 'motivo' => 'Ese cobro ya tiene pagos registrados. Revertí los pagos antes de anularlo.'];
+            return ['ok' => false, 'motivo' => 'Ese cobro ya tiene pagos registrados. Revierta los pagos antes de anularlo.'];
         }
 
         DB::transaction(function () use ($cobro, $motivo) {

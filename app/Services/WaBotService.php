@@ -110,7 +110,7 @@ class WaBotService
 
         if (in_array($normalizedMessage, ['otra cedula', 'otra cédula', 'cambiar cedula', 'cambiar cédula'], true)) {
             WaIdentity::forget($company->id, $from);
-            $this->sendTextMessage($company, $from, "Listo, olvidé esa cédula. Te la pediré de nuevo.");
+            $this->sendTextMessage($company, $from, "Listo, olvidé esa cédula. Le la pediré de nuevo.");
             return $this->returnToMenu($company, $from);
         }
 
@@ -152,7 +152,7 @@ class WaBotService
                     $company,
                     $sesion->phone,
                     'No recibimos ninguna consulta, así que cerramos por ahora. '
-                    . 'Escríbenos cuando quieras y con gusto te ayudamos.'
+                    . 'Escríbenos cuando quieras y con gusto le ayudamos.'
                 );
             } catch (\Throwable $e) {
                 Log::warning('[WaBotService] No se pudo avisar el cierre por inactividad', [
@@ -586,19 +586,19 @@ class WaBotService
 
         if ($flow === 'consultar_factura') {
             $this->createSession($company->id, $phone, 'consultar_factura', 'ask_dni');
-            $this->sendTextMessage($company, $phone, "Para consultar tu factura, por favor envíame tu número de cédula o DNI.");
+            $this->sendTextMessage($company, $phone, "Para consultar su factura, por favor envíame su número de cédula o DNI.");
             return true;
         }
 
         if ($flow === 'consultar_revision') {
             $this->createSession($company->id, $phone, 'consultar_revision', 'ask_dni');
-            $this->sendTextMessage($company, $phone, "Para consultar tu revisión o ticket de soporte, por favor envíame tu número de cédula o DNI.");
+            $this->sendTextMessage($company, $phone, "Para consultar su revisión o ticket de soporte, por favor envíame su número de cédula o DNI.");
             return true;
         }
 
         if ($flow === 'reportar_pago') {
             $this->createSession($company->id, $phone, 'reportar_pago', 'ask_dni');
-            $this->sendTextMessage($company, $phone, "Para registrar tu pago, primero envía la cédula del titular de la cuenta.");
+            $this->sendTextMessage($company, $phone, "Para registrar su pago, primero envía la cédula del titular de la cuenta.");
             return true;
         }
 
@@ -610,7 +610,7 @@ class WaBotService
             }
 
             $this->createSession($company->id, $phone, 'pagar_factura', 'ask_dni');
-            $this->sendTextMessage($company, $phone, "Para generar tu link de pago, envíame el número de cédula del titular de la cuenta.");
+            $this->sendTextMessage($company, $phone, "Para generar su link de pago, envíame el número de cédula del titular de la cuenta.");
             return true;
         }
 
@@ -637,14 +637,14 @@ class WaBotService
                     'data' => array_merge($data, ['dni' => $dni]),
                     'expires_at' => self::vencimientoSesion(),
                 ]);
-                $this->sendTextMessage($company, $phone, "Para confirmar que eres el titular, escríbeme el número de celular registrado en tu cuenta.");
+                $this->sendTextMessage($company, $phone, "Para confirmar que eres el titular, escríbeme el número de celular registrado en su cuenta.");
                 return true;
             }
 
             $client = $this->resolveDniOwner($company, $dni, $phone, $data['verified_phone'] ?? null);
 
             if (!$client) {
-                $this->sendTextMessage($company, $phone, "No pudimos validar esos datos con este número de WhatsApp. Verifica la cédula registrada en tu cuenta o comunícate con soporte.");
+                $this->sendTextMessage($company, $phone, "No pudimos validar esos datos con este número de WhatsApp. Verifica la cédula registrada en su cuenta o comunícate con soporte.");
                 return true;
             }
 
@@ -662,7 +662,7 @@ class WaBotService
             $wa = new WhatsAppService($company->id, false, 'meta');
             $wa->sendInteractiveButtons(
                 $phone,
-                "¿Es correcta tu cédula: {$dni}?",
+                "¿Es correcta su cédula: {$dni}?",
                 [
                     ['id' => 'confirm_yes', 'title' => 'Sí, es correcta'],
                     ['id' => 'confirm_no', 'title' => 'No, intenta de nuevo'],
@@ -677,7 +677,7 @@ class WaBotService
             // Aceptar respuesta de botón O texto manual
             if ($message === 'confirm_no' || $message === 'no' || $message === '2') {
                 $this->clearSession($company->id, $phone);
-                $this->sendTextMessage($company, $phone, "De acuerdo, por favor intenta de nuevo.\n\nEscribe tu cédula:");
+                $this->sendTextMessage($company, $phone, "De acuerdo, por favor intenta de nuevo.\n\nEscribe su cédula:");
                 $this->createSession($company->id, $phone, 'consultar_factura', 'ask_dni');
                 return true;
             }
@@ -782,14 +782,14 @@ class WaBotService
 
             if (!$client) {
                 if ($this->tooManyAttempts($session)) {
-                    $this->sendTextMessage($company, $phone, "Por seguridad cerramos la consulta. Comunícate con soporte para verificar tu cuenta.");
+                    $this->sendTextMessage($company, $phone, "Por seguridad cerramos la consulta. Comunícate con soporte para verificar su cuenta.");
                     $this->clearSession($company->id, $phone);
                     return true;
                 }
 
                 // Un solo mensaje para cédula y teléfono: decir cuál de los dos
                 // falló le serviría a alguien para tantear datos ajenos.
-                $this->sendTextMessage($company, $phone, "No pudimos validar esos datos con este número de WhatsApp. Verifica la cédula registrada en tu cuenta o comunícate con soporte.");
+                $this->sendTextMessage($company, $phone, "No pudimos validar esos datos con este número de WhatsApp. Verifica la cédula registrada en su cuenta o comunícate con soporte.");
                 return true;
             }
 
@@ -880,7 +880,7 @@ class WaBotService
             $invoiceNumber = $data['selected_number'] ?? 'factura';
 
             if (!$invoiceId) {
-                $this->sendTextMessage($company, $phone, "Error al procesar tu solicitud.");
+                $this->sendTextMessage($company, $phone, "Error al procesar su solicitud.");
                 $this->clearSession($company->id, $phone);
                 return true;
             }
@@ -951,7 +951,7 @@ class WaBotService
 
         if (count($invoices) > 3) {
             $wa->sendInteractiveList($phone, $bodyText, [[
-                'title' => 'Tus facturas',
+                'title' => 'Sus facturas',
                 'rows'  => array_map(fn ($inv) => [
                     'id'          => "invoice_{$inv['option']}",
                     'title'       => "Factura #{$inv['number_facture']}",
@@ -1077,12 +1077,12 @@ class WaBotService
             try {
                 (new WhatsAppService($company->id, false, 'meta'))->sendInteractiveList(
                     $phone,
-                    'Selecciona la factura que deseas pagar. Verás el abono acumulado y el saldo pendiente.',
+                    'Selecciona la factura que deseas pagar. Verá el abono acumulado y el saldo pendiente.',
                     [['title' => 'Facturas pendientes', 'rows' => $rows]],
                     'Ver facturas'
                 );
             } catch (\Throwable $exception) {
-                $text = "Estas son tus facturas pendientes:\n\n";
+                $text = "Estas son sus facturas pendientes:\n\n";
                 foreach ($invoiceList as $inv) {
                     $text .= $inv['option'] . ". Factura #{$inv['number_facture']} - Abonado: $" . number_format($inv['paid_amount'], 0, ',', '.')
                         . " | Restante: $" . number_format($inv['balance'], 0, ',', '.') . "\n";
@@ -1113,7 +1113,7 @@ class WaBotService
             }
 
             if (!$selectedInvoice) {
-                $this->sendTextMessage($company, $phone, "Esa factura no está en tu lista de pendientes. Escribe el número correcto.");
+                $this->sendTextMessage($company, $phone, "Esa factura no está en su lista de pendientes. Escribe el número correcto.");
                 return true;
             }
 
@@ -1213,7 +1213,7 @@ class WaBotService
                 return [
                     'approved' => false,
                     'can_continue' => true,
-                    'message' => "Este comprobante ya fue procesado anteriormente.\n\nReferencia: {$reference}\nFactura asociada: #{$previousProof->invoice?->number_facture}\n\nPara proteger tu pago, no se aplicó ningún valor adicional.",
+                    'message' => "Este comprobante ya fue procesado anteriormente.\n\nReferencia: {$reference}\nFactura asociada: #{$previousProof->invoice?->number_facture}\n\nPara proteger su pago, no se aplicó ningún valor adicional.",
                 ];
             }
         }
@@ -1251,7 +1251,7 @@ class WaBotService
                 return [
                     'approved' => false,
                     'can_continue' => true,
-                    'message' => "Este comprobante ya fue procesado anteriormente con la referencia {$reference}.\n\nPara proteger tu pago, no se aplicó ningún valor adicional.",
+                    'message' => "Este comprobante ya fue procesado anteriormente con la referencia {$reference}.\n\nPara proteger su pago, no se aplicó ningún valor adicional.",
                 ];
             }
 
@@ -1303,7 +1303,7 @@ class WaBotService
                 'metadata' => ['source' => 'automatic_validation', 'missing_fields' => $missingFields],
             ]);
 
-            return ['approved' => false, 'can_continue' => true, 'message' => "Recibimos tu comprobante para la factura #{$invoice->number_facture}. Quedó pendiente de revisión porque no pudimos identificar " . implode(' y ', $missingFields) . '. No se aplicó ningún pago todavía.'];
+            return ['approved' => false, 'can_continue' => true, 'message' => "Recibimos su comprobante para la factura #{$invoice->number_facture}. Quedó pendiente de revisión porque no pudimos identificar " . implode(' y ', $missingFields) . '. No se aplicó ningún pago todavía.'];
         }
 
         // El cliente puede pagar una cifra cercana a la deuda, por ejemplo 49.900 o 50.100
@@ -1358,7 +1358,7 @@ class WaBotService
 
             return [
                 'approved' => true,
-                'message' => "{$messageStatus}\n\nResumen de tu reporte:\n"
+                'message' => "{$messageStatus}\n\nResumen de su reporte:\n"
                     . "Factura: #{$invoice->number_facture}\n"
                     . 'Valor recibido: $' . number_format($details['amount'], 0, ',', '.') . "\n"
                     . "Referencia: {$referenceText}\n"
@@ -1582,7 +1582,7 @@ class WaBotService
 
         if ($candidatos) {
             // El mayor: en un comprobante los otros números con peso suelen ser
-            // costos («a otros bancos te cuesta $7.590»), nunca el importe.
+            // costos («a otros bancos le cuesta $7.590»), nunca el importe.
             return max($candidatos);
         }
 
@@ -1818,7 +1818,7 @@ class WaBotService
                 return true;
             }
 
-            $text = "Hola {$client->names}, estos son tus últimos tickets:\n\n";
+            $text = "Hola {$client->names}, estos son sus últimos tickets:\n\n";
             foreach ($tickets as $ticket) {
                 $statusMap = ['Abierto', 'En progreso', 'Cerrado', 'Pendiente'];
                 $status = $statusMap[$ticket->status_id - 1] ?? 'Desconocido';
@@ -1872,21 +1872,21 @@ class WaBotService
                     'data' => array_merge($data, ['dni' => $dni]),
                     'expires_at' => self::vencimientoSesion(),
                 ]);
-                $this->sendTextMessage($company, $phone, "Para confirmar que eres el titular, escríbeme el número de celular registrado en tu cuenta.");
+                $this->sendTextMessage($company, $phone, "Para confirmar que eres el titular, escríbeme el número de celular registrado en su cuenta.");
                 return true;
             }
 
             $client = $this->resolveDniOwner($company, $dni, $phone, $data['verified_phone'] ?? null);
 
             if (!$client) {
-                $this->sendTextMessage($company, $phone, "No pudimos validar esos datos con este número de WhatsApp. Verifica la cédula registrada en tu cuenta o comunícate con soporte.");
+                $this->sendTextMessage($company, $phone, "No pudimos validar esos datos con este número de WhatsApp. Verifica la cédula registrada en su cuenta o comunícate con soporte.");
                 return true;
             }
 
             $invoices = $this->pendingInvoicesFor($company, (int) $client->user_id);
 
             if ($invoices->isEmpty()) {
-                $this->sendTextMessage($company, $phone, "Hola {$client->names}, no tienes facturas pendientes. ¡Estás al día!\n\nEscribe *menu* para volver al inicio.");
+                $this->sendTextMessage($company, $phone, "Hola {$client->names}, no tienes facturas pendientes. ¡Está al día!\n\nEscribe *menu* para volver al inicio.");
                 $this->clearSession($company->id, $phone);
                 return true;
             }
@@ -1932,12 +1932,12 @@ class WaBotService
 
             if (!$this->resolveDniOwner($company, (string) ($data['dni'] ?? ''), $phone, $typed)) {
                 if ($this->tooManyAttempts($session)) {
-                    $this->sendTextMessage($company, $phone, "Por seguridad cerramos la solicitud. Comunícate con soporte para verificar tu cuenta.");
+                    $this->sendTextMessage($company, $phone, "Por seguridad cerramos la solicitud. Comunícate con soporte para verificar su cuenta.");
                     $this->clearSession($company->id, $phone);
                     return true;
                 }
 
-                $this->sendTextMessage($company, $phone, "No pudimos validar esos datos con este número de WhatsApp. Verifica la cédula registrada en tu cuenta o comunícate con soporte.");
+                $this->sendTextMessage($company, $phone, "No pudimos validar esos datos con este número de WhatsApp. Verifica la cédula registrada en su cuenta o comunícate con soporte.");
                 return true;
             }
 
@@ -1985,7 +1985,7 @@ class WaBotService
 
             if (in_array($message, ['nq_otro', '2'], true)) {
                 $session->update(['current_step' => 'nequi_otro', 'expires_at' => self::vencimientoSesion()]);
-                $this->sendTextMessage($company, $phone, "Escribe el celular de Nequi al que quieres que te llegue el cobro (10 dígitos).");
+                $this->sendTextMessage($company, $phone, "Escribe el celular de Nequi al que quieres que le llegue el cobro (10 dígitos).");
 
                 return true;
             }
@@ -2000,7 +2000,7 @@ class WaBotService
                 return $this->dispararCobroNequi($company, $session, $phone, (string) (($session->data ?? [])['nequi_phone'] ?? ''));
             }
 
-            $this->sendTextMessage($company, $phone, "No te entendí. Responde *SÍ* para usar ese número, o escribe otro celular de 10 dígitos.");
+            $this->sendTextMessage($company, $phone, "No le entendí. Responde *SÍ* para usar ese número, o escribe otro celular de 10 dígitos.");
 
             return true;
         }
@@ -2040,7 +2040,7 @@ class WaBotService
             $invoices = $this->pendingInvoicesFor($company, $clientUserId);
 
             if ($invoices->isEmpty()) {
-                $this->sendTextMessage($company, $phone, "Ya no tienes facturas pendientes. ¡Estás al día!");
+                $this->sendTextMessage($company, $phone, "Ya no tienes facturas pendientes. ¡Está al día!");
                 $this->clearSession($company->id, $phone);
                 return true;
             }
@@ -2127,7 +2127,7 @@ class WaBotService
                 'error'      => $e->getMessage(),
             ]);
 
-            $this->sendTextMessage($company, $phone, "No pudimos generar tu link de pago en este momento. Intenta de nuevo en unos minutos.");
+            $this->sendTextMessage($company, $phone, "No pudimos generar su link de pago en este momento. Intenta de nuevo en unos minutos.");
             $this->clearSession($company->id, $phone);
             return true;
         }
@@ -2204,8 +2204,8 @@ class WaBotService
             'expires_at'   => self::vencimientoSesion(),
         ]);
 
-        $texto = "Te enviamos el cobro a tu app de Nequi y lo apruebas ahí mismo, sin salir de WhatsApp.\n\n"
-            . "¿Te lo enviamos al *{$this->celularBonito($guardado)}*?";
+        $texto = "Le enviamos el cobro a su app de Nequi y lo apruebas ahí mismo, sin salir de WhatsApp.\n\n"
+            . "¿Le lo enviamos al *{$this->celularBonito($guardado)}*?";
 
         $this->recordBotConversationMessage($company, $phone, 'system', $texto);
 
@@ -2245,7 +2245,7 @@ class WaBotService
         }
 
         if ($facturas->isEmpty()) {
-            $this->sendTextMessage($company, $phone, "Tus facturas ya están al día. No hay nada que cobrar.");
+            $this->sendTextMessage($company, $phone, "Sus facturas ya están al día. No hay nada que cobrar.");
             $this->clearSession($company->id, $phone);
 
             return true;
@@ -2277,10 +2277,10 @@ class WaBotService
             return $this->nequiPorElCheckout($company, $session, $phone, $data);
         }
 
-        $texto = "✅ Listo, ya te enviamos el cobro.\n\n"
-            . "*Abre tu app de Nequi* y aprueba los " . $this->formatMoney($monto) . ". "
-            . "Te llegó al {$this->celularBonito($celular)}.\n\n"
-            . "Apenas lo apruebes te aviso por aquí y tus facturas quedan al día.";
+        $texto = "✅ Listo, ya le enviamos el cobro.\n\n"
+            . "*Abre su app de Nequi* y aprueba los " . $this->formatMoney($monto) . ". "
+            . "Le llegó al {$this->celularBonito($celular)}.\n\n"
+            . "Apenas lo apruebes le aviso por aquí y sus facturas quedan al día.";
 
         $this->recordBotConversationMessage($company, $phone, 'system', $texto);
         $this->sendTextMessage($company, $phone, $texto);
@@ -2301,7 +2301,7 @@ class WaBotService
             return true;
         }
 
-        $this->sendTextMessage($company, $phone, "No pudimos enviarte el cobro a Nequi directamente. Te dejamos el enlace para pagarlo:");
+        $this->sendTextMessage($company, $phone, "No pudimos enviarte el cobro a Nequi directamente. Le dejamos el enlace para pagarlo:");
 
         return $this->sendPaymentCta(
             $company,
@@ -2359,7 +2359,7 @@ class WaBotService
 
         if ($method === 'nequi') {
             $url  .= (str_contains($url, '?') ? '&' : '?') . 'm=nequi';
-            $medios = 'Solo tendrás que escribir tu celular y aprobar el pago en tu app de Nequi.';
+            $medios = 'Solo tendrá que escribir su celular y aprobar el pago en su app de Nequi.';
             $boton  = 'Pagar con Nequi';
         } else {
             $medios = 'Toca el botón para pagar con Nequi, tarjeta, PSE, Bre-B o efectivo.';

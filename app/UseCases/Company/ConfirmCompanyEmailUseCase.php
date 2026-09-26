@@ -52,7 +52,7 @@ class ConfirmCompanyEmailUseCase implements ConfirmCompanyEmailUseCaseInterface
             ->update(['active' => 1]);
 
         return [
-            'message' => 'Correo confirmado. Tu empresa ya está activa.',
+            'message' => 'Correo confirmado. Su empresa ya está activa.',
             'status'  => 0,
             'data'    => [
                 'estado'  => 'ok',

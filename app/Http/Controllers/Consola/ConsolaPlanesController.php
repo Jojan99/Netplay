@@ -250,7 +250,7 @@ class ConsolaPlanesController extends Controller
     private function sinMigrar(): JsonResponse
     {
         return standardApiReponse(
-            'Los planes todavía se leen de la configuración. Corré la migración de la consola para poder editarlos.',
+            'Los planes todavía se leen de la configuración. Ejecute la migración de la consola para poder editarlos.',
             null, 1, JsonResponse::HTTP_CONFLICT
         );
     }

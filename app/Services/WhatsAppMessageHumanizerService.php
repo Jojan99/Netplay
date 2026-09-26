@@ -26,12 +26,12 @@ class WhatsAppMessageHumanizerService
      * Variaciones de introducción de factura
      */
     private array $introLines = [
-        "te informamos que tu factura ya está lista.",
-        "tu factura del mes ya está disponible.",
-        "ya generamos tu factura de este período.",
-        "tu factura mensual está lista para revisión.",
-        "aquí tienes los detalles de tu factura.",
-        "te compartimos la información de tu factura.",
+        "le informamos que su factura ya está lista.",
+        "su factura del mes ya está disponible.",
+        "ya generamos su factura de este período.",
+        "su factura mensual está lista para revisión.",
+        "aquí tienes los detalles de su factura.",
+        "le compartimos la información de su factura.",
     ];
 
     /**
@@ -70,7 +70,7 @@ class WhatsAppMessageHumanizerService
      */
     private array $closingLines = [
         "Gracias por preferirnos.",
-        "Agradecemos tu confianza.",
+        "Agradecemos su confianza.",
         "Gracias por ser parte de nosotros.",
         "Quedamos atentos.",
         "Cualquier duda, escríbenos.",
@@ -92,7 +92,7 @@ class WhatsAppMessageHumanizerService
     private array $paymentHeaders = [
         "Medios de pago:",
         "Puedes pagar por:",
-        "Realiza tu pago en:",
+        "Realiza su pago en:",
     ];
 
     private array $paymentClosings = [
@@ -185,20 +185,20 @@ class WhatsAppMessageHumanizerService
 
         $paymentLines = [
             'completo' => [
-                "confirmamos que recibimos tu pago completo de la factura *{invoice}* por *{amount}*.",
-                "tu pago de *{amount}* por la factura *{invoice}* fue registrado exitosamente.",
+                "confirmamos que recibimos su pago completo de la factura *{invoice}* por *{amount}*.",
+                "su pago de *{amount}* por la factura *{invoice}* fue registrado exitosamente.",
                 "recibimos el pago total de la factura *{invoice}* — *{amount}*. ¡Gracias!",
             ],
             'abono' => [
                 "registramos un abono de *{amount}* en la factura *{invoice}*.",
-                "tu abono de *{amount}* para la factura *{invoice}* fue recibido.",
+                "su abono de *{amount}* para la factura *{invoice}* fue recibido.",
                 "recibimos un abono de *{amount}* sobre la factura *{invoice}*.",
             ],
         ];
 
         $closingLines = [
-            "Gracias por tu pago.",
-            "Agradecemos tu puntualidad.",
+            "Gracias por su pago.",
+            "Agradecemos su puntualidad.",
             "Quedamos atentos por si necesitas algo.",
         ];
 

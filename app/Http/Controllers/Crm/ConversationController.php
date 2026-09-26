@@ -1177,7 +1177,7 @@ public function editMessage(Request $request, int $conversationId, int $messageI
         return response()->json(['ok' => false, 'error' => 'Solo se pueden editar los mensajes de texto propios.'], 422);
     }
 
-    // WhatsApp corta a los 15 minutos. Se comprueba acá para dar un motivo
+    // WhatsApp corta a los 15 minutos. Se comprueba aquí para dar un motivo
     // claro en vez de un error genérico de la pasarela.
     if (\Carbon\Carbon::parse($msg->created_at)->diffInMinutes(now()) >= 15) {
         return response()->json([

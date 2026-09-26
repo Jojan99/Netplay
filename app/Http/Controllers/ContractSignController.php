@@ -29,7 +29,7 @@ class ContractSignController extends Controller
      * Página de firma del cliente: /contrato/firmar/{token}
      *
      * Es pública (el cliente entra desde el link de WhatsApp o del correo), así
-     * que acá se arma todo ya resuelto y escapado: la vista no toca la base.
+     * que aquí se arma todo ya resuelto y escapado: la vista no toca la base.
      */
     public function show(string $token)
     {

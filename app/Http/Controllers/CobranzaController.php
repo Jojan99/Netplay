@@ -77,7 +77,7 @@ class CobranzaController extends Controller
             'pago_texto'                => 'nullable|string|max:1000',
         ], [
             'hora_hasta.after' => 'La hora de fin tiene que ser después de la de inicio.',
-            'dias.regex'       => 'Elegí al menos un día.',
+            'dias.regex'       => 'Seleccione al menos un día.',
         ]);
 
         // Los medios de pago son de una migración nueva: si todavía no se corrió,
@@ -174,7 +174,7 @@ class CobranzaController extends Controller
         $clave = trim((string) $request->input('ia_clave', '')) ?: (string) $cfg->ia_clave;
 
         if ($clave === '') {
-            return standardApiReponse('Escribí la clave de Google para probarla.', null, 1, JsonResponse::HTTP_OK);
+            return standardApiReponse('Escriba la clave de Google para probarla.', null, 1, JsonResponse::HTTP_OK);
         }
 
         $r = self::probarClave($clave, $cfg->ia_modelos);
@@ -189,7 +189,7 @@ class CobranzaController extends Controller
             $r = (new \App\Services\Cobranza\IaCompatible($clave, null, $modelos))
                 ->mensaje('Responde solamente: OK', [['role' => 'user', 'content' => 'Prueba de conexión']], [], 20);
 
-            return ['ok' => true, 'mensaje' => 'La clave funciona: el asistente ya puede usar tu cuenta de Google.'];
+            return ['ok' => true, 'mensaje' => 'La clave funciona: el asistente ya puede usar su cuenta de Google.'];
         } catch (\App\Services\Cobranza\IaOcupada) {
             // La clave es válida; sólo está en su límite ahora.
             return ['ok' => true, 'mensaje' => 'La clave es válida (ahora está en su límite de uso, se libera sola).'];
@@ -309,7 +309,7 @@ class CobranzaController extends Controller
 
         if (!\App\Services\Cobranza\UsoIa::puedeEmpezar($this->empresa())) {
             return standardApiReponse('Autorizado, pero hoy ya se usaron las ' . Ia::LIMITE_PRUEBA . ' conversaciones de prueba con la IA de Netvula: '
-                . 'le escribe mañana. Para no tener límite, conectá tu propia clave de Google en Cobranza inteligente.', $caso, 0, JsonResponse::HTTP_OK);
+                . 'le escribe mañana. Para no tener límite, conecte su propia clave de Google en Cobranza inteligente.', $caso, 0, JsonResponse::HTTP_OK);
         }
 
         // En horario se le escribe ya (después de contestarle al panel); si
@@ -348,7 +348,7 @@ class CobranzaController extends Controller
         $caso = $this->elCaso($id);
         $caso->fill(['estado' => 'cerrado', 'resultado' => 'lo_atiende_una_persona', 'visto' => true])->save();
 
-        return standardApiReponse('Listo: ahora lo atendés vos desde el CRM; el asistente ya no le contesta.', $caso, 0, JsonResponse::HTTP_OK);
+        return standardApiReponse('Listo: ahora lo atiende usted desde el CRM; el asistente ya no le contesta.', $caso, 0, JsonResponse::HTTP_OK);
     }
 
     /** Lo escalado vuelve al asistente (por ejemplo, ya se aclaró el pago). */
@@ -371,7 +371,7 @@ class CobranzaController extends Controller
         $cfg = CobranzaConfig::deEmpresa($companyId);
 
         if (!$cfg->exists || !$cfg->activa) {
-            return standardApiReponse('Activá la cobranza para poder revisar.', null, 1, JsonResponse::HTTP_OK);
+            return standardApiReponse('Active la cobranza para poder revisar.', null, 1, JsonResponse::HTTP_OK);
         }
 
         $n = (new Cobranza($companyId))->detectar();

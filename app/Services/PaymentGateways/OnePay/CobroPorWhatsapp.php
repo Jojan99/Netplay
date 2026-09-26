@@ -204,7 +204,7 @@ class CobroPorWhatsapp
     {
         // La factura no sabe de quién es ni de qué empresa: eso vive en su
         // cabecera. Sin esta unión se le podría cobrar a un cliente una
-        // factura de otra empresa, que es el peor error posible acá.
+        // factura de otra empresa, que es el peor error posible aquí.
         $q = DetFacturation::join('cab_facturations', 'cab_facturations.id', '=', 'det_facturations.cab_id')
             ->where('cab_facturations.company_id', $company->id)
             ->where('cab_facturations.user_id', $userId)

@@ -221,7 +221,7 @@ class ClienteEnElRouter
             }
         }
 
-        // El ARP y las listas se leen enteros y se filtran acá: el cliente
+        // El ARP y las listas se leen enteros y se filtran aquí: el cliente
         // puede estar con su documento, con el nombre que traía de la otra
         // plataforma o, en última instancia, por su IP fija.
         $arp = IdentidadEnElRouter::suyas($this->leer($api, '/ip/arp/print'), $identidad, $this->companyId);

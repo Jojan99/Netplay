@@ -102,7 +102,7 @@ class CompanyController extends Controller
 
         if (!$sesion) {
             return response()->json([
-                'message' => 'Este enlace ya se usó o venció. Iniciá sesión con tu usuario y contraseña.',
+                'message' => 'Este enlace ya se usó o venció. Inicie sesión con su usuario y contraseña.',
                 'data'    => null,
                 'error'   => 1,
             ], JsonResponse::HTTP_OK);
@@ -130,13 +130,13 @@ class CompanyController extends Controller
         }
 
         // Respuesta uniforme: no se revela si la empresa existe o no
-        $generico = 'Si la cuenta existe y falta confirmarla, te enviamos el correo de activación.';
+        $generico = 'Si la cuenta existe y falta confirmarla, le enviamos el correo de activación.';
 
         if (!$company) {
             return response()->json(['message' => $generico, 'data' => null, 'error' => 0]);
         }
         if ($company->active) {
-            return response()->json(['message' => 'Esa empresa ya está activa. Podés iniciar sesión.', 'data' => null, 'error' => 0]);
+            return response()->json(['message' => 'Esa empresa ya está activa. Puede iniciar sesión.', 'data' => null, 'error' => 0]);
         }
 
         if (!$company->verification_token) {
@@ -508,14 +508,14 @@ class CompanyController extends Controller
         }
 
         try {
-            // Una instancia de OTRA empresa no se borra desde acá aunque el id
+            // Una instancia de OTRA empresa no se borra desde aquí aunque el id
             // llegue en la URL. Si no figura en el catálogo se sincroniza antes
             // de rechazar: puede ser una línea recién creada desde el panel.
             if (LineasDeWhatsApp::disponible() && !LineasDeWhatsApp::porInstancia($instanceId, (int) $company->id)) {
                 (new LineasDeWhatsApp())->sincronizar((int) $company->id);
 
                 if (!LineasDeWhatsApp::porInstancia($instanceId, (int) $company->id)) {
-                    return standardApiReponse('Esa línea no es de tu empresa.', null, true, JsonResponse::HTTP_OK);
+                    return standardApiReponse('Esa línea no es de su empresa.', null, true, JsonResponse::HTTP_OK);
                 }
             }
 
@@ -720,7 +720,7 @@ class CompanyController extends Controller
         $companyId = getSessionCompanyId();
 
         // El grupo de alertas que quedó del comando pasa a ser una ruta más, la
-        // primera vez que la empresa entra acá. Idempotente: la migración hace
+        // primera vez que la empresa entra aquí. Idempotente: la migración hace
         // lo mismo para todas de una.
         \App\Services\Alertas\AvisosAlGrupo::materializarEspejo($companyId);
 
@@ -872,7 +872,7 @@ class CompanyController extends Controller
             ->first();
 
         if (!$route) {
-            return standardApiReponse('No encontramos ese destino en tus avisos.', null, true, JsonResponse::HTTP_OK);
+            return standardApiReponse('No encontramos ese destino en sus avisos.', null, true, JsonResponse::HTTP_OK);
         }
 
         $company = Company::findOrFail($companyId);
@@ -905,7 +905,7 @@ class CompanyController extends Controller
 
         return $ok
             ? standardApiReponse('Mensaje de prueba enviado.', null, false, JsonResponse::HTTP_OK)
-            : standardApiReponse('No se pudo enviar. Revisá que la línea siga conectada.', null, true, JsonResponse::HTTP_OK);
+            : standardApiReponse('No se pudo enviar. Revise que la línea siga conectada.', null, true, JsonResponse::HTTP_OK);
     }
 
     /**

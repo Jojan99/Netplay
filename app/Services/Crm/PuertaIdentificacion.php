@@ -40,12 +40,12 @@ class PuertaIdentificacion
     private ?string $instanceId = null;
 
     public const PREGUNTA_POR_DEFECTO =
-        "¡Hola! 👋 Para atenderte y ver tu cuenta necesito identificarte.\n\n" .
-        "Respondé este mensaje con tu *número de cédula* y tu *nombre*.\n" .
+        "¡Hola! 👋 Para atenderte y ver su cuenta necesito identificarte.\n\n" .
+        "Responda este mensaje con su *número de cédula* y su *nombre*.\n" .
         "Por ejemplo: 1234567 Juan Pérez";
 
     private const REINTENTO =
-        "No encontré un número de cédula en tu mensaje. 🙏\n" .
+        "No encontré un número de cédula en su mensaje. 🙏\n" .
         "Escribime solo el *número*, por ejemplo: 1234567";
 
     /**
@@ -155,8 +155,8 @@ class PuertaIdentificacion
                 ]);
 
                 $this->enviar($companyId, $provider, $phone,
-                    "¡Gracias, {$cliente->names}! ✅ Ya te identifiqué.\n" .
-                    "En un momento te atiende un asesor.");
+                    "¡Gracias, {$cliente->names}! ✅ Ya le identifiqué.\n" .
+                    "En un momento le atiende un asesor.");
 
                 return [
                     'accion'    => self::PASA,
@@ -180,7 +180,7 @@ class PuertaIdentificacion
 
             $this->enviar($companyId, $provider, $phone,
                 "No encontré esa cédula en nuestro sistema. 🤔\n" .
-                "Te paso con un asesor para que te ayude.");
+                "Le paso con un asesor para que le ayude.");
 
             return [
                 'accion'    => self::PASA,
@@ -200,7 +200,7 @@ class PuertaIdentificacion
                 'retenidos' => null,
             ]);
 
-            $this->enviar($companyId, $provider, $phone, 'Te paso con un asesor para que te ayude. 🙌');
+            $this->enviar($companyId, $provider, $phone, 'Le paso con un asesor para que le ayude. 🙌');
 
             return [
                 'accion'    => self::PASA,

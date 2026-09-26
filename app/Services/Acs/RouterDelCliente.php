@@ -58,7 +58,7 @@ class RouterDelCliente
      * Cómo está el servicio del cliente, cruzando lo que dice el ACS con lo
      * que ve la OLT.
      *
-     * Decirle "tu equipo no se comunica" a alguien cuyo equipo está encendido
+     * Decirle "su equipo no se comunica" a alguien cuyo equipo está encendido
      * y con buena señal es asustarlo por un problema nuestro. La OLT sabe si
      * el equipo está ahí:
      *
@@ -94,8 +94,8 @@ class RouterDelCliente
         if ($enLinea === false) {
             return [
                 'clave'   => 'sin_servicio',
-                'titulo'  => 'Tu equipo está apagado o sin señal',
-                'detalle' => 'Revisá que esté enchufado y que el cable de fibra esté conectado. '
+                'titulo'  => 'Su equipo está apagado o sin señal',
+                'detalle' => 'Revise que esté enchufado y que el cable de fibra esté conectado. '
                     . 'Si las luces están encendidas y sigue así, reportalo y vamos a verlo.',
             ];
         }
@@ -106,16 +106,16 @@ class RouterDelCliente
         if ($this->esPppoe() && !$this->tieneSesion()) {
             return [
                 'clave'   => 'sin_servicio',
-                'titulo'  => 'Tu equipo está encendido pero no logra conectarse',
-                'detalle' => 'La fibra llega bien, así que no es el cable. Probá apagarlo y encenderlo; '
+                'titulo'  => 'Su equipo está encendido pero no logra conectarse',
+                'detalle' => 'La fibra llega bien, así que no es el cable. Pruebe apagarlo y encenderlo; '
                     . 'si en unos minutos sigue igual, reportalo y lo revisamos nosotros.',
             ];
         }
 
         return [
             'clave'   => 'actualizando',
-            'titulo'  => 'Estamos actualizando los datos de tu equipo',
-            'detalle' => 'Tu servicio está funcionando. Lo que ves es de la última lectura; '
+            'titulo'  => 'Estamos actualizando los datos de su equipo',
+            'detalle' => 'Su servicio está funcionando. Lo que ves es de la última lectura; '
                 . 'los cambios que hagas se aplican igual.',
         ];
     }
@@ -180,7 +180,7 @@ class RouterDelCliente
         $clave = "router-cliente:reinicio:{$this->userId}";
 
         if (!\Illuminate\Support\Facades\Cache::add($clave, now()->toIso8601String(), now()->addMinutes(self::ESPERA_REINICIO))) {
-            throw new \InvalidArgumentException('Ya reiniciaste tu equipo hace poco. Espera unos minutos: tarda en volver a conectarse.');
+            throw new \InvalidArgumentException('Ya reiniciaste su equipo hace poco. Espera unos minutos: tarda en volver a conectarse.');
         }
 
         try {
@@ -192,8 +192,8 @@ class RouterDelCliente
 
         return $t + [
             'mensaje' => ($t['hecha'] ?? false)
-                ? 'Tu equipo se está reiniciando. En 2 o 3 minutos vuelve internet.'
-                : 'Le pedimos a tu equipo que se reinicie; lo hará en cuanto se comunique con nosotros.',
+                ? 'Su equipo se está reiniciando. En 2 o 3 minutos vuelve internet.'
+                : 'Le pedimos a su equipo que se reinicie; lo hará en cuanto se comunique con nosotros.',
         ];
     }
 
@@ -436,7 +436,7 @@ class RouterDelCliente
         $filtro = $this->filtro($raw);
 
         if (!$filtro) {
-            throw new \InvalidArgumentException('Tu equipo no permite bloquear dispositivos desde aquí.');
+            throw new \InvalidArgumentException('Su equipo no permite bloquear dispositivos desde aquí.');
         }
 
         $api = GenieAcs::make();
@@ -460,7 +460,7 @@ class RouterDelCliente
         if (!($nuevo['instancia'] ?? null)) {
             return [
                 'ok' => false,
-                'mensaje' => 'Tu equipo está fuera de línea en este momento. Intenta de nuevo en unos minutos.',
+                'mensaje' => 'Su equipo está fuera de línea en este momento. Intenta de nuevo en unos minutos.',
             ];
         }
 

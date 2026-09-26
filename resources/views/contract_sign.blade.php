@@ -1,7 +1,7 @@
 {{--
     Página de firma del cliente. La abre desde el celular, con el link que le
     llega por WhatsApp o correo, y muchas veces con datos y un teléfono de gama
-    media: todo va acá adentro, sin librerías ni CDN, y las animaciones son CSS.
+    media: todo va aquí adentro, sin librerías ni CDN, y las animaciones son CSS.
     El controlador entrega los datos ya resueltos y escapados.
 --}}
 <!DOCTYPE html>

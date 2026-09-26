@@ -12,7 +12,7 @@ use RuntimeException;
  *
  * Antes se instanciaba HuaweiOltDriver en todos lados, así que una OLT de otra
  * marca recibía comandos Huawei y no respondía nada útil. Ahora la columna
- * olt_admins.brand decide, y agregar una marca es agregar una línea acá.
+ * olt_admins.brand decide, y agregar una marca es agregar una línea aquí.
  */
 class FabricaDeDrivers
 {

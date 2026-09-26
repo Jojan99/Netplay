@@ -14,7 +14,7 @@ use Illuminate\Support\Str;
  * OnePay usa un solo dominio para pruebas y para producción: lo que separa un
  * entorno del otro es la llave. Una llave «sk_test_…» toca la base de pruebas
  * y una de producción toca la real, con la misma URL. Eso es cómodo y es
- * peligroso a la vez, así que acá se revisa que la llave concuerde con el
+ * peligroso a la vez, así que aquí se revisa que la llave concuerde con el
  * interruptor de sandbox de la empresa: cobrarle de verdad a un cliente
  * creyendo que estabas probando es el error que no se puede permitir.
  *
@@ -66,7 +66,7 @@ class OnePayApi
     /**
      * Los intentos de pago de un cobro.
      *
-     * Acá vive el medio con el que se pagó de verdad
+     * Aquí vive el medio con el que se pagó de verdad
      * («payment_method_label»). El cobro en sí lo trae a veces y a veces no,
      * así que ésta es la fuente que no falla.
      *
@@ -139,7 +139,7 @@ class OnePayApi
      * ¿La llave concuerda con el entorno configurado?
      *
      * Ya pasó con Wompi: la empresa quedó en producción con llaves de prueba y
-     * ningún pago en línea funcionaba, sin un solo error que lo dijera. Acá se
+     * ningún pago en línea funcionaba, sin un solo error que lo dijera. Aquí se
      * revisa antes de hacer nada.
      */
     public function problemaDeEntorno(): ?string
@@ -189,7 +189,7 @@ class OnePayApi
                 ->timeout(self::ESPERA)
                 ->{$metodo}(self::BASE . $ruta, $datos);
         } catch (ConnectionException $e) {
-            throw new OnePayError('OnePay no contestó a tiempo. El cobro puede haberse creado igual: revisá antes de volver a mandarlo.', 0, $e);
+            throw new OnePayError('OnePay no contestó a tiempo. El cobro puede haberse creado igual: revise antes de volver a mandarlo.', 0, $e);
         }
 
         if ($r->successful()) {
@@ -244,10 +244,10 @@ class OnePayApi
         }
 
         return match (true) {
-            $estado === 401 => 'OnePay no aceptó la llave: revisá la llave privada en la configuración de la pasarela.',
+            $estado === 401 => 'OnePay no aceptó la llave: revise la llave privada en la configuración de la pasarela.',
             $estado === 403 => 'La cuenta de OnePay no tiene habilitada esta operación. Puede faltar la verificación de la empresa.',
             $estado === 404 => 'OnePay no encontró ese cobro.',
-            $estado === 429 => 'OnePay está recibiendo demasiadas peticiones nuestras. Esperá un momento y reintentá.',
+            $estado === 429 => 'OnePay está recibiendo demasiadas peticiones nuestras. Espere un momento y reintente.',
             $estado >= 500  => 'OnePay tuvo un problema de su lado. El cobro no se creó; se puede reintentar.',
             default         => "OnePay rechazó la llamada ({$estado}).",
         };

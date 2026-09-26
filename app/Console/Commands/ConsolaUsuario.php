@@ -82,7 +82,7 @@ class ConsolaUsuario extends Command
         $nombre = trim((string) ($this->option('nombre') ?: $this->ask('Nombre', $usuario->nombre ?? '')));
 
         if ($nombre === '') {
-            $this->error('Poné un nombre.');
+            $this->error('Ingrese un nombre.');
 
             return self::FAILURE;
         }
@@ -116,7 +116,7 @@ class ConsolaUsuario extends Command
         }
 
         $host = AccesoConsola::host();
-        $this->line('Entrá en ' . ($host !== '' ? "https://{$host}" : 'la dirección de la consola (falta configurar CONSOLA_HOST)'));
+        $this->line('Ingrese en ' . ($host !== '' ? "https://{$host}" : 'la dirección de la consola (falta configurar CONSOLA_HOST)'));
 
         return self::SUCCESS;
     }
@@ -126,7 +126,7 @@ class ConsolaUsuario extends Command
         $filas = PlataformaUsuario::orderBy('email')->get(['id', 'nombre', 'email', 'activo', 'ultimo_ingreso']);
 
         if ($filas->isEmpty()) {
-            $this->warn('Todavía no hay ningún usuario de la consola. Creá el primero con: php artisan consola:usuario');
+            $this->warn('Todavía no hay ningún usuario de la consola. Cree el primero con: php artisan consola:usuario');
 
             return self::SUCCESS;
         }

@@ -34,7 +34,7 @@ class BajaDePersonal
         }
 
         if ($userId === (int) getSessionUserId()) {
-            return $this->error('No podés eliminar tu propia cuenta. Pedile a otro administrador que lo haga.');
+            return $this->error('No puede eliminar su propia cuenta. Pedile a otro administrador que lo haga.');
         }
 
         if ((int) $usuario->active === 0) {
@@ -42,7 +42,7 @@ class BajaDePersonal
         }
 
         if (strtoupper((string) $usuario->profile_name) === 'ADMIN' && $this->administradoresActivos($companyId) <= 1) {
-            return $this->error('Es el único administrador activo de la empresa. Creá o activá otro administrador antes de eliminar este.');
+            return $this->error('Es el único administrador activo de la empresa. Cree o active otro administrador antes de eliminar este.');
         }
 
         $nombre = trim(($usuario->names ?? '') . ' ' . ($usuario->lastname ?? '')) ?: $usuario->username;

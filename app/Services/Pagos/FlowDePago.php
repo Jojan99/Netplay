@@ -35,12 +35,12 @@ class FlowDePago
     private const MEDIOS = [
         'nequi' => [
             'title'       => 'Nequi',
-            'description' => 'Se aprueba al instante desde tu app, sin salir de WhatsApp',
+            'description' => 'Se aprueba al instante desde su app, sin salir de WhatsApp',
             'wompi'       => 'NEQUI',
         ],
         'bancolombia' => [
             'title'       => 'Botón Bancolombia',
-            'description' => 'Sales a tu banco para aprobar y vuelves al chat',
+            'description' => 'Sales a su banco para aprobar y vuelves al chat',
             'wompi'       => 'BANCOLOMBIA_TRANSFER',
         ],
         'daviplata' => [
@@ -50,7 +50,7 @@ class FlowDePago
         ],
         'pse' => [
             'title'       => 'PSE',
-            'description' => 'Sales a tu banco con tu usuario y clave',
+            'description' => 'Sales a su banco con su usuario y clave',
             'wompi'       => 'PSE',
         ],
         'tarjeta' => [
@@ -64,7 +64,7 @@ class FlowDePago
      * Lo que se ve en la vista previa de Meta.
      *
      * Ahí no hay cliente: el Flow se abre sin el token que mandamos nosotros
-     * en el mensaje. Antes eso mostraba «no pudimos reconocer tu cuenta», que
+     * en el mensaje. Antes eso mostraba «no pudimos reconocer su cuenta», que
      * daba la impresión de que el Flow estaba roto cuando estaba bien.
      */
     public function pantallaDeEjemplo(): array
@@ -75,7 +75,7 @@ class FlowDePago
                 'concepto' => 'Pago de 2 facturas',
                 'total'    => '$ 140.000',
                 'facturas' => 'NT15110 · NT15460',
-                'empresa'  => 'tu proveedor de internet',
+                'empresa'  => 'su proveedor de internet',
                 'opciones' => array_values(array_map(
                     fn ($id, $m) => ['id' => $id, 'title' => $m['title'], 'description' => $m['description']],
                     array_keys(self::MEDIOS),
@@ -91,7 +91,7 @@ class FlowDePago
         $deuda = $this->deuda($companyId, $userId);
 
         if (!$deuda['cuantas']) {
-            return $this->cerrar('No tienes nada pendiente', 'Tus facturas están al día. ¡Gracias!');
+            return $this->cerrar('No tienes nada pendiente', 'Sus facturas están al día. ¡Gracias!');
         }
 
         $empresa = Company::find($companyId);
@@ -100,7 +100,7 @@ class FlowDePago
         if (!$medios) {
             return $this->cerrar(
                 'Pago en línea no disponible',
-                'Ahora mismo no podemos cobrarte por aquí. Escríbenos y te pasamos los datos de pago.',
+                'Ahora mismo no podemos cobrarte por aquí. Escríbenos y le pasamos los datos de pago.',
             );
         }
 
@@ -110,7 +110,7 @@ class FlowDePago
                 'concepto' => $deuda['cuantas'] === 1 ? 'Pago de 1 factura' : "Pago de {$deuda['cuantas']} facturas",
                 'total'    => $this->pesos($deuda['total']),
                 'facturas' => implode(' · ', $deuda['numeros']),
-                'empresa'  => (string) ($empresa->name ?? 'tu proveedor'),
+                'empresa'  => (string) ($empresa->name ?? 'su proveedor'),
                 'opciones' => $medios,
             ],
         ];
@@ -127,7 +127,7 @@ class FlowDePago
         $deuda = $this->deuda($companyId, $userId);
 
         if (!$deuda['cuantas']) {
-            return $this->cerrar('Ya no hay nada que pagar', 'Tus facturas quedaron al día.');
+            return $this->cerrar('Ya no hay nada que pagar', 'Sus facturas quedaron al día.');
         }
 
         if (!isset(self::MEDIOS[$medio])) {
@@ -149,7 +149,7 @@ class FlowDePago
         $enlace = $this->enlaceDelBanco($companyId, $userId, $medio);
 
         if (!$enlace) {
-            return $this->cerrar('No se pudo', 'No pudimos armar el pago ahora. Escríbenos y te ayudamos.');
+            return $this->cerrar('No se pudo', 'No pudimos armar el pago ahora. Escríbenos y le ayudamos.');
         }
 
         $banco = self::MEDIOS[$medio]['title'];
@@ -159,7 +159,7 @@ class FlowDePago
             'data'   => [
                 'banco'  => $banco,
                 'total'  => $this->pesos($deuda['total']),
-                'aviso'  => "Vas a salir de WhatsApp para aprobar el pago de {$this->pesos($deuda['total'])} en {$banco}.",
+                'aviso'  => "Va a salir de WhatsApp para aprobar el pago de {$this->pesos($deuda['total'])} en {$banco}.",
                 'enlace' => $enlace,
             ],
         ];
@@ -194,17 +194,17 @@ class FlowDePago
         } catch (\Throwable $e) {
             Log::error('[Flow de pago] No se pudo crear el cobro de Nequi', ['empresa' => $companyId, 'error' => $e->getMessage()]);
 
-            return $this->cerrar('No se pudo', 'No pudimos enviar el cobro ahora. Escríbenos y te ayudamos.');
+            return $this->cerrar('No se pudo', 'No pudimos enviar el cobro ahora. Escríbenos y le ayudamos.');
         }
 
         if (!OnlinePaymentTransaction::where('reference', $r['reference'] ?? '')->exists()) {
-            return $this->cerrar('No se pudo', 'No pudimos enviar el cobro ahora. Escríbenos y te ayudamos.');
+            return $this->cerrar('No se pudo', 'No pudimos enviar el cobro ahora. Escríbenos y le ayudamos.');
         }
 
         return $this->cerrar(
-            'Te enviamos el cobro',
-            "Abre tu app de Nequi y aprueba el cobro de {$this->pesos($deuda['total'])}. Te llegó al {$numero}.",
-            'Apenas lo apruebes, tus facturas quedan al día y te avisamos por aquí.',
+            'Le enviamos el cobro',
+            "Abre su app de Nequi y aprueba el cobro de {$this->pesos($deuda['total'])}. Le llegó al {$numero}.",
+            'Apenas lo apruebes, sus facturas quedan al día y le avisamos por aquí.',
         );
     }
 
@@ -213,7 +213,7 @@ class FlowDePago
     {
         return $this->cerrar(
             'Estamos esperando el pago',
-            'Cuando el banco lo confirme te avisamos por este chat y tus facturas quedan al día.',
+            'Cuando el banco lo confirme le avisamos por este chat y sus facturas quedan al día.',
             'Si algo falló, escribinos y lo revisamos.',
         );
     }

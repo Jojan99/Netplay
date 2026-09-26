@@ -260,7 +260,7 @@ try {
             ]);
 
             throw new \InvalidArgumentException(
-                'Ese tipo de archivo no se puede enviar por seguridad. Convertilo a PDF o imagen y volvé a intentar.'
+                'Ese tipo de archivo no se puede enviar por seguridad. Convertilo a PDF o imagen y vuelva a intentar.'
             );
         }
     }

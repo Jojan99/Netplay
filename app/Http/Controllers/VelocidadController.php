@@ -64,12 +64,12 @@ class VelocidadController extends Controller
             ->update(['control_velocidad' => $request->input('control')]);
 
         if (!$afectados) {
-            return standardApiReponse('Ese cliente no es de tu empresa', null, 1, JsonResponse::HTTP_OK);
+            return standardApiReponse('Ese cliente no es de su empresa', null, 1, JsonResponse::HTTP_OK);
         }
 
         return standardApiReponse(
             $request->input('control') === 'plan'
-                ? 'El cliente vuelve a la velocidad de su plan. Aplicá el plan para que tome efecto.'
+                ? 'El cliente vuelve a la velocidad de su plan. Aplique el plan para que tome efecto.'
                 : 'El cliente queda fuera del control de velocidad. Quitale la cola o el perfil en el router si ya los tenía.',
             null,
             0,

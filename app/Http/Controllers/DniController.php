@@ -240,7 +240,7 @@ class DniController extends Controller
     $user = $this->arpDelCliente($connection, (string) $gestionUserRequest['dni']);
 
     // Un cliente PPPoE no está en el ARP: su IP es la que recibe al conectar.
-    // Antes el ping terminaba acá con "no encontrado en ARP" y no había forma
+    // Antes el ping terminaba aquí con "no encontrado en ARP" y no había forma
     // de probar a un cliente PPPoE.
     $ip = $user[0]['address'] ?? $this->ipDeSesionPppoe($connection, (string) $gestionUserRequest['dni']);
 

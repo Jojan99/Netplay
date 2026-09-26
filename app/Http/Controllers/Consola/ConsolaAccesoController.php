@@ -17,7 +17,7 @@ use Illuminate\Support\Facades\Log;
  * Ingreso a la consola de Netvula.
  *
  * Nada que ver con el login del panel: otra tabla de usuarios, otro token y
- * otra dirección. Un usuario de empresa no tiene forma de entrar acá.
+ * otra dirección. Un usuario de empresa no tiene forma de entrar aquí.
  */
 class ConsolaAccesoController extends Controller
 {
@@ -34,7 +34,7 @@ class ConsolaAccesoController extends Controller
         // La contraseña estuvo bien pero falta el código del authenticator.
         if (!$r['token'] && !empty($r['pase'])) {
             return response()->json([
-                'message' => 'Poné el código de tu authenticator.',
+                'message' => 'Ingrese el código de su authenticator.',
                 'error'   => 0,
                 'data'    => ['falta_codigo' => true, 'pase' => $r['pase']],
             ]);
@@ -199,7 +199,7 @@ class ConsolaAccesoController extends Controller
         $u = $request->attributes->get('consola_usuario');
 
         if (!Passkeys::borrar($u, $id)) {
-            return response()->json(['message' => 'Esa passkey no es tuya o ya no está.', 'data' => null, 'error' => 1], JsonResponse::HTTP_OK);
+            return response()->json(['message' => 'Esa passkey no es suya o ya no está.', 'data' => null, 'error' => 1], JsonResponse::HTTP_OK);
         }
 
         Bitacora::anotarComo($u, 'consola.passkey.baja', null, ['ip' => $request->ip()]);
@@ -230,7 +230,7 @@ class ConsolaAccesoController extends Controller
         $u = $request->attributes->get('consola_usuario');
 
         return response()->json([
-            'message' => 'Escaneá el código con tu authenticator.',
+            'message' => 'Escanee el código con su authenticator.',
             'error'   => 0,
             'data'    => SegundoFactor::preparar($u),
         ]);
@@ -251,7 +251,7 @@ class ConsolaAccesoController extends Controller
         Bitacora::anotarComo($u, 'consola.2fa.activado', null, ['ip' => $request->ip()]);
 
         return response()->json([
-            'message' => 'Listo. Guardá estos códigos: son la única forma de entrar si perdés el teléfono.',
+            'message' => 'Listo. Guarde estos códigos: son la única forma de entrar si pierde el teléfono.',
             'error'   => 0,
             'data'    => ['codigos' => $r['codigos']],
         ]);
@@ -269,7 +269,7 @@ class ConsolaAccesoController extends Controller
         $u = $request->attributes->get('consola_usuario');
 
         if (!\Illuminate\Support\Facades\Hash::check($datos['password'], (string) $u->password)) {
-            return response()->json(['message' => 'Esa no es tu contraseña.', 'data' => null, 'error' => 1], JsonResponse::HTTP_OK);
+            return response()->json(['message' => 'Esa no es su contraseña.', 'data' => null, 'error' => 1], JsonResponse::HTTP_OK);
         }
 
         SegundoFactor::quitar($u);
@@ -327,7 +327,7 @@ class ConsolaAccesoController extends Controller
         Bitacora::anotarComo($u, 'consola.clave_cambiada');
 
         return response()->json([
-            'message' => 'Contraseña cambiada. Volvé a ingresar.',
+            'message' => 'Contraseña cambiada. Vuelva a ingresar.',
             'data'    => null,
             'error'   => 0,
         ]);

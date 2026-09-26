@@ -254,7 +254,7 @@ class AprovisionamientoDeOnt
             $c = $a->datos['cambio'];
 
             if (empty($c['ficha_actualizada']) || $c['modo'] !== 'gestion_temporal') {
-                throw new \InvalidArgumentException('Este cambio de conexión no se completó y quedó como estaba: volvé a pedirlo desde la ficha del cliente.');
+                throw new \InvalidArgumentException('Este cambio de conexión no se completó y quedó como estaba: vuelva a pedirlo desde la ficha del cliente.');
             }
 
             $c['fase'] = 'tr069';
@@ -515,11 +515,11 @@ class AprovisionamientoDeOnt
         }
 
         if (!$conexion) {
-            return ['texto' => 'El servidor TR-069 no tiene leída la conexión de internet del equipo: pedí leerla y volvé a intentar.', 'id' => null];
+            return ['texto' => 'El servidor TR-069 no tiene leída la conexión de internet del equipo: solicite leerla y vuelva a intentar.', 'id' => null];
         }
 
         if (CambioDeConexion::enCurso($companyId, (int) $ont->user_data_id)) {
-            return ['texto' => 'Hay un cambio de conexión en curso en este equipo: esperá a que termine.', 'id' => null];
+            return ['texto' => 'Hay un cambio de conexión en curso en este equipo: espere a que termine.', 'id' => null];
         }
 
         Aprovisionamiento::where('company_id', $companyId)->where('serial', $ont->serial)
@@ -578,7 +578,7 @@ class AprovisionamientoDeOnt
 
         // Un cambio de conexión en curso lleva también el router: no se pisa.
         if ($curso = CambioDeConexion::enCurso($companyId, $userId)) {
-            return ['texto' => "Hay un cambio de conexión en curso: {$curso->detalle} Esperá a que termine.", 'id' => null];
+            return ['texto' => "Hay un cambio de conexión en curso: {$curso->detalle} Espere a que termine.", 'id' => null];
         }
 
         $yo = new self($companyId);
@@ -706,7 +706,7 @@ class AprovisionamientoDeOnt
      * La configuración viaja por TR-069, el TR-069 viaja por la conexión del
      * cliente: si esa conexión quedó mal, el equipo no puede reportarse y no
      * hay forma de arreglarlo. Reaplicar, solo, encola tareas que nadie va a
-     * recoger. Acá se mira si falta algo y se abre lo que haga falta; si el
+     * recoger. Aquí se mira si falta algo y se abre lo que haga falta; si el
      * equipo ya tiene por dónde salir, esto no toca nada.
      *
      * @return array{pasos: list<array{paso:string, ok:bool, detalle:string}>, ip_prestada: ?string}
@@ -920,7 +920,7 @@ class AprovisionamientoDeOnt
 
     /**
      * El nombre de la red tal como lo escribieron, sin acentos ni caracteres
-     * que los equipos manejan mal. Lo que no entra se cae en silencio: acá no
+     * que los equipos manejan mal. Lo que no entra se cae en silencio: aquí no
      * se rechaza nada, porque este nombre lo arma el sistema.
      */
     private static function limpiarSsid(string $s): string
@@ -1145,7 +1145,7 @@ class AprovisionamientoDeOnt
             $c = array_merge($c, [
                 'puede'     => CompatibilidadDeOnt::NO,
                 'motivo'    => 'El acceso remoto de la empresa está apagado: nadie le da al equipo la dirección del TR-069.',
-                'que_hacer' => 'Encendelo en Acceso remoto → Configuración y volvé a autorizar el equipo, o ' . lcfirst(CompatibilidadDeOnt::queHacerAMano()),
+                'que_hacer' => 'Encendelo en Acceso remoto → Configuración y vuelva a autorizar el equipo, o ' . lcfirst(CompatibilidadDeOnt::queHacerAMano()),
             ]);
         }
 
@@ -1281,7 +1281,7 @@ class AprovisionamientoDeOnt
         $ontId = $a->ont_id === null ? null : (int) $a->ont_id;
 
         // El alta no siempre conoce el número de ONT: cuando falta, se busca
-        // por serial, que es lo único que no cambia. Ojo: en Huawei la primera
+        // por serial, que es lo único que no cambia. Atención: en Huawei la primera
         // ONT de un puerto es la 0, así que un cero es un número válido.
         if ($ontId === null && $a->serial) {
             $fila = \App\Models\OltOnt::where('olt_id', $a->olt_id)
@@ -1365,7 +1365,7 @@ class AprovisionamientoDeOnt
                         'estado'  => 'error',
                         'detalle' => "La ONT {$donde} está registrada en la OLT pero sin service-port: "
                             . 'no tiene camino de datos, por eso no navega ni aparece en el TR-069. '
-                            . 'Completale el service-port con la VLAN del cliente desde Admin OLT y reintentá.',
+                            . 'Completale el service-port con la VLAN del cliente desde Admin OLT y reintente.',
                     ])->save();
 
                     return;
@@ -1376,8 +1376,8 @@ class AprovisionamientoDeOnt
                         'estado'  => 'vencido',
                         'detalle' => $sinConfirmar
                             ? "El equipo no apareció en el TR-069 en {$espera} minutos: {$compatible['equipo']} no toma la configuración que le manda la OLT {$compatible['olt']}. "
-                                . CompatibilidadDeOnt::queHacerAMano() . ' Después tocá «Reintentar».'
-                            : 'El equipo no apareció en el TR-069 en ' . self::ESPERA_MINUTOS . ' minutos. Revisá su acceso remoto y volvé a autorizarlo, o configuralo a mano.',
+                                . CompatibilidadDeOnt::queHacerAMano() . ' Después toque «Reintentar».'
+                            : 'El equipo no apareció en el TR-069 en ' . self::ESPERA_MINUTOS . ' minutos. Revise su acceso remoto y vuelva a autorizarlo, o configuralo a mano.',
                     ])->save();
 
                     return;
@@ -1749,7 +1749,7 @@ class AprovisionamientoDeOnt
 
         if (!$soportado) {
             return ['paso' => $titulo, 'ok' => false, 'omitido' => true,
-                'detalle' => 'En esta marca la conexión a internet todavía no se configura por TR-069: cargala en el equipo (' . self::resumenWan($wan) . ').'];
+                'detalle' => 'En esta marca la conexión a internet todavía no se configura por TR-069: cárguela en el equipo (' . self::resumenWan($wan) . ').'];
         }
 
         $vlanGestion = (int) (GestionRemota::where('company_id', $this->companyId)->value('vlan') ?: 0);
@@ -2032,7 +2032,7 @@ class AprovisionamientoDeOnt
             'motivo'    => $r['falla']
                 ? "el equipo la rechazó ({$r['falla']})."
                 : ($r['incierta']
-                    ? 'el equipo estaba ocupado y no se pudo confirmar ni sacar de la cola: revisá el equipo antes de reintentar.'
+                    ? 'el equipo estaba ocupado y no se pudo confirmar ni sacar de la cola: revise el equipo antes de reintentar.'
                     : 'el equipo no respondió al momento y no se le dejó el cambio en cola (lo haría horas después, sin nadie mirando).'),
             'instancia' => null,
         ];
@@ -2170,7 +2170,7 @@ class AprovisionamientoDeOnt
      * Por qué una clave WiFi no va a entrar, dicho en palabras.
      *
      * El equipo sólo contesta «Invalid arguments», así que la explicación
-     * tiene que salir de acá.
+     * tiene que salir de aquí.
      *
      * @return string|null El motivo, o null si la clave sirve.
      */
@@ -2202,7 +2202,7 @@ class AprovisionamientoDeOnt
     /**
      * Lo mismo para la clave de administración del equipo y para la del PPPoE.
      *
-     * Acá no se mide el largo: esas claves las pone la marca o el proveedor y
+     * Aquí no se mide el largo: esas claves las pone la marca o el proveedor y
      * las hay de cinco caracteres. Lo que sí importa son los signos, porque
      * viajan por el mismo camino y se rompen igual.
      *
@@ -2247,7 +2247,7 @@ class AprovisionamientoDeOnt
 
         // El estándar WPA sólo admite ASCII imprimible en la contraseña. Una
         // «ñ» o una tilde hacen que el equipo conteste «cwmp.9003 Invalid
-        // arguments», que no le dice nada a nadie. Mejor decirlo acá: nadie
+        // arguments», que no le dice nada a nadie. Mejor decirlo aquí: nadie
         // va a adivinar que el problema era la eñe.
         if ($problema = self::problemaDeLaClaveWifi($clave)) {
             return ['paso' => $titulo, 'ok' => false, 'detalle' => $problema];
@@ -2354,7 +2354,7 @@ class AprovisionamientoDeOnt
         $api = $this->routerDelCliente((int) $a->user_id);
 
         if (!$api) {
-            return ['paso' => $titulo, 'ok' => false, 'detalle' => "No se pudo entrar al router del cliente: cargá a mano la MAC {$mac} para la IP {$wan['ip']}.", 'reintentar' => self::WAN];
+            return ['paso' => $titulo, 'ok' => false, 'detalle' => "No se pudo entrar al router del cliente: cargue a mano la MAC {$mac} para la IP {$wan['ip']}.", 'reintentar' => self::WAN];
         }
 
         try {
@@ -2367,7 +2367,7 @@ class AprovisionamientoDeOnt
                 $red = $this->redEnElRouter($api, $wan['ip']);
 
                 if (!$red) {
-                    return ['paso' => $titulo, 'ok' => false, 'detalle' => "No se encontró en el router la red de {$wan['ip']}: cargá a mano la MAC {$mac}."];
+                    return ['paso' => $titulo, 'ok' => false, 'detalle' => "No se encontró en el router la red de {$wan['ip']}: cargue a mano la MAC {$mac}."];
                 }
 
                 $dni = (string) UserData::where('user_id', $a->user_id)->where('company_id', $this->companyId)->value('dni');

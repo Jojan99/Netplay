@@ -52,7 +52,7 @@ class ClientConsumoController extends Controller
             $r = (new ConsumoDelCliente((int) $user->company_id))->velocidadAhora((int) $user->id);
         } catch (\Throwable $e) {
             Log::warning('[Portal] No se pudo medir la velocidad', ['user_id' => $user->id, 'error' => $e->getMessage()]);
-            return response()->json(['message' => 'No pudimos medir tu velocidad ahora. Intenta en un momento.', 'data' => null, 'error' => 1]);
+            return response()->json(['message' => 'No pudimos medir su velocidad ahora. Intenta en un momento.', 'data' => null, 'error' => 1]);
         }
 
         if (!$r['ok']) {

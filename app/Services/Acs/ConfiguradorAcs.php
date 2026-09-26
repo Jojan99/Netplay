@@ -120,7 +120,7 @@ class ConfiguradorAcs
         if ($nbi && (int) (parse_url($nbi, PHP_URL_PORT) ?: 0) === $puerto) {
             throw new \InvalidArgumentException(
                 "La dirección de la API usa el puerto de los equipos ({$puerto}). En GenieACS la API (NBI) va en el 7557: "
-                . 'http://' . parse_url($nbi, PHP_URL_HOST) . ':7557. Si la dejás vacía se usa esa.'
+                . 'http://' . parse_url($nbi, PHP_URL_HOST) . ':7557. Si la deja vacía se usa esa.'
             );
         }
 
@@ -189,7 +189,7 @@ class ConfiguradorAcs
         }
 
         if (preg_match('/cURL error (7|28)|Connection refused|timed out|Could not connect/i', $mensaje)) {
-            return "No se llega a {$api}. En tu servidor la API de GenieACS tiene que escuchar hacia afuera "
+            return "No se llega a {$api}. En su servidor la API de GenieACS tiene que escuchar hacia afuera "
                 . '(GENIEACS_NBI_INTERFACE=0.0.0.0 y reiniciar genieacs-nbi) y el firewall dejar entrar al 7557'
                 . ($ip ? " sólo desde {$ip}" : '') . '.';
         }
@@ -237,7 +237,7 @@ class ConfiguradorAcs
     public function aplicar(array $redes, ?int $routerId = null): array
     {
         if (!$redes) {
-            throw new \InvalidArgumentException('Elegí al menos una red para alcanzar.');
+            throw new \InvalidArgumentException('Seleccione al menos una red para alcanzar.');
         }
 
         $s = $this->servidor();
@@ -303,10 +303,10 @@ class ConfiguradorAcs
                 'router'   => null,
                 'servidor' => null,
                 'notas'    => [
-                    'Tu servidor TR-069 tiene IP pública, así que los equipos llegan solos: no hay que tocar el router.',
+                    'Su servidor TR-069 tiene IP pública, así que los equipos llegan solos: no hay que tocar el router.',
                     'Configurá en los equipos la URL ' . $s->urlCwmp() . '.',
-                    'Para que los cambios se apliquen al momento, tu servidor tiene que poder llamar a los equipos. '
-                        . 'Si están detrás del router con IP privada, elegí "por túnel" en vez de "IP pública".',
+                    'Para que los cambios se apliquen al momento, su servidor tiene que poder llamar a los equipos. '
+                        . 'Si están detrás del router con IP privada, seleccione "por túnel" en vez de "IP pública".',
                 ],
             ];
         }
@@ -317,7 +317,7 @@ class ConfiguradorAcs
             return [
                 'router'   => null,
                 'servidor' => null,
-                'notas'    => ['Todavía no hay túnel para este MikroTik: aplicá la configuración primero.'],
+                'notas'    => ['Todavía no hay túnel para este MikroTik: aplique la configuración primero.'],
             ];
         }
 
@@ -329,11 +329,11 @@ class ConfiguradorAcs
         );
 
         if ($s->modo === 'propio') {
-            $notas[] = 'Tu servidor TR-069 está en otra red, así que además del router hay que levantar '
+            $notas[] = 'Su servidor TR-069 está en otra red, así que además del router hay que levantar '
                 . 'el otro extremo del túnel en ese servidor con la configuración de abajo.';
         }
 
-        $notas[] = 'Este script es de este MikroTik. Si tenés otro, configuralo aparte: cada uno lleva su propio túnel.';
+        $notas[] = 'Este script es de este MikroTik. Si tiene otro, configuralo aparte: cada uno lleva su propio túnel.';
 
         return [
             'router'   => $script,
@@ -368,7 +368,7 @@ class ConfiguradorAcs
             'titulo'  => 'El servidor TR-069 responde',
             'ok'      => $servidorOk,
             'detalle' => $servidorOk
-                ? ($s->esPropio() ? 'Tu servidor en ' . $s->host : 'El servidor de la plataforma')
+                ? ($s->esPropio() ? 'Su servidor en ' . $s->host : 'El servidor de la plataforma')
                 : ('No contesta: ' . ($detalleServidor ?? 'sin detalle')),
         ];
 
@@ -379,13 +379,13 @@ class ConfiguradorAcs
 
         $checks[] = [
             'clave'   => 'camino',
-            'titulo'  => $porTunel ? 'El túnel con tu router está arriba' : 'Tu servidor tiene IP pública',
+            'titulo'  => $porTunel ? 'El túnel con su router está arriba' : 'Su servidor tiene IP pública',
             'ok'      => (bool) $tunelOk,
             'detalle' => !$porTunel
                 ? 'Los equipos llegan por internet.'
                 : ($tunelOk
                     ? 'Último saludo ' . ($tunel->ultimo_saludo?->diffForHumans() ?? '')
-                    : 'El router no saluda. Pegá el script del paso 3 en el router.'),
+                    : 'El router no saluda. Pegue el script del paso 3 en el router.'),
         ];
 
         // 3. Los equipos reportan.
@@ -401,7 +401,7 @@ class ConfiguradorAcs
 
         $checks[] = [
             'clave'   => 'equipos',
-            'titulo'  => 'Tus equipos reportan',
+            'titulo'  => 'Sus equipos reportan',
             'ok'      => $reportando > 0,
             'detalle' => $equipos === []
                 ? 'Ningún equipo configurado todavía: cargales la dirección ' . $s->urlCwmp() . '.'
@@ -426,7 +426,7 @@ class ConfiguradorAcs
             'nivel'   => $fallan->isEmpty() ? 'ok' : ($fallan->contains(fn ($c) => in_array($c['clave'], ['servidor', 'camino'], true)) ? 'error' : 'warn'),
             'resumen' => $fallan->isEmpty()
                 ? 'TR-069 funcionando'
-                : ($fallan->first()['titulo'] . ': revisá abajo'),
+                : ($fallan->first()['titulo'] . ': revise abajo'),
             'checks'  => $checks,
             'equipos' => count($equipos),
             'reportando' => $reportando,
@@ -467,7 +467,7 @@ class ConfiguradorAcs
         return [
             'ok'      => false,
             'detalle' => 'No se llega a ' . $m[1] . ': los cambios van a quedar en cola hasta el próximo reporte del equipo. '
-                . 'Revisá que la red de ese equipo esté marcada en el paso 2.',
+                . 'Revise que la red de ese equipo esté marcada en el paso 2.',
         ];
     }
 
@@ -516,19 +516,19 @@ class ConfiguradorAcs
         $faltan = [];
 
         if ($s->modo === 'propio' && !$s->host) {
-            $faltan[] = 'Decinos dónde está tu servidor TR-069.';
+            $faltan[] = 'Decinos dónde está su servidor TR-069.';
         }
 
         if (!$s->redes) {
-            $faltan[] = 'Detectá las redes de tu router: es un botón.';
+            $faltan[] = 'Detecte las redes de su router: es un botón.';
         }
 
         if (!$s->aplicado_en) {
-            $faltan[] = 'Aplicá la configuración para armar el camino hasta los equipos.';
+            $faltan[] = 'Aplique la configuración para armar el camino hasta los equipos.';
         }
 
         if ($s->alcance === 'tunel' && $tunel && !($tunel->ultimo_saludo && $tunel->ultimo_saludo->gt(now()->subMinutes(5)))) {
-            $faltan[] = 'El router todavía no saluda por el túnel: pegá el script en el router.';
+            $faltan[] = 'El router todavía no saluda por el túnel: pegue el script en el router.';
         }
 
         return $faltan;

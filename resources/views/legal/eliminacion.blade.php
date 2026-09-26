@@ -8,7 +8,7 @@
 
 <p>Cualquier persona puede pedirle a <strong>{{ $empresa }}</strong> que elimine los datos personales que
 tenemos sobre ella. No hay que pagar nada ni explicar por qué. Es un derecho que reconoce la
-<strong>Ley 1581 de 2012</strong>, y acá está cómo ejercerlo.</p>
+<strong>Ley 1581 de 2012</strong>, y aquí está cómo ejercerlo.</p>
 
 <h2>Cómo solicitarlo</h2>
 

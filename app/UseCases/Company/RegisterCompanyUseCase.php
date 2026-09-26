@@ -97,7 +97,7 @@ class RegisterCompanyUseCase implements RegisterCompanyUseCaseInterface
             });
 
             // Suscripción con Netvula: nace en prueba y con su código de
-            // referido. Si el alta trajo un código, se anota acá.
+            // referido. Si el alta trajo un código, se anota aquí.
             try {
                 $this->anotarCodigo($company->id, (string) ($data['codigo'] ?? ''));
             } catch (\Throwable $e) {
@@ -134,11 +134,11 @@ class RegisterCompanyUseCase implements RegisterCompanyUseCaseInterface
             return ['message' => $this->friendlyDbError($e), 'status' => 1, 'data' => null];
         } catch (\Throwable $e) {
             Log::error('[Registro empresa] error inesperado', ['error' => $e->getMessage()]);
-            return ['message' => 'No pudimos registrar la empresa. Intentá de nuevo en unos minutos.', 'status' => 1, 'data' => null];
+            return ['message' => 'No pudimos registrar la empresa. Intente de nuevo en unos minutos.', 'status' => 1, 'data' => null];
         }
 
         return [
-            'message' => 'Empresa registrada. Revisá tu correo para confirmar la cuenta.',
+            'message' => 'Empresa registrada. Revise su correo para confirmar la cuenta.',
             'status'  => 0,
             'data'    => ['company_id' => $company->id, 'email_sent' => true, 'subdominio' => $company->subdomain],
         ];
@@ -186,9 +186,9 @@ class RegisterCompanyUseCase implements RegisterCompanyUseCaseInterface
         $msg = $e->getMessage();
         if (str_contains($msg, 'companies_nit_unique') || str_contains($msg, "for key 'nit'")) return 'Ya existe una empresa registrada con ese NIT.';
         if (str_contains($msg, 'companies_email_unique') || str_contains($msg, "for key 'email'")) return 'Ya existe una empresa registrada con ese correo.';
-        if (str_contains($msg, 'companies_subdomain_unique')) return 'Esa dirección de empresa ya está tomada. Elegí otra.';
-        if (str_contains($msg, 'companies_slug_unique')) return 'Ya existe una empresa con un nombre muy parecido. Probá con otro nombre.';
-        if (str_contains($msg, 'Duplicate entry')) return 'Alguno de los datos ya está registrado. Revisá NIT, correo y usuario.';
-        return 'No pudimos registrar la empresa. Revisá los datos e intentá de nuevo.';
+        if (str_contains($msg, 'companies_subdomain_unique')) return 'Esa dirección de empresa ya está tomada. Seleccione otra.';
+        if (str_contains($msg, 'companies_slug_unique')) return 'Ya existe una empresa con un nombre muy parecido. Pruebe con otro nombre.';
+        if (str_contains($msg, 'Duplicate entry')) return 'Alguno de los datos ya está registrado. Revise NIT, correo y usuario.';
+        return 'No pudimos registrar la empresa. Revise los datos e intente de nuevo.';
     }
 }

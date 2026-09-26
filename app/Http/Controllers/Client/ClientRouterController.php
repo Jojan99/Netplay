@@ -41,8 +41,8 @@ class ClientRouterController extends Controller
 
             return [
                 'mensaje' => ($t['hecha'] ?? false)
-                    ? 'Listo. Vuelve a conectar tus equipos con los datos nuevos.'
-                    : 'Guardado. Se aplica en cuanto tu equipo se vuelva a conectar.',
+                    ? 'Listo. Vuelve a conectar sus equipos con los datos nuevos.'
+                    : 'Guardado. Se aplica en cuanto su equipo se vuelva a conectar.',
             ] + $t;
         }, 'cambio de WiFi');
     }
@@ -86,8 +86,8 @@ class ClientRouterController extends Controller
 
             return [
                 'mensaje' => ($t['hecha'] ?? false)
-                    ? 'Listo. Tus equipos pueden desconectarse unos segundos mientras cambia el canal.'
-                    : 'Guardado. Se aplica en cuanto tu equipo se vuelva a conectar.',
+                    ? 'Listo. Sus equipos pueden desconectarse unos segundos mientras cambia el canal.'
+                    : 'Guardado. Se aplica en cuanto su equipo se vuelva a conectar.',
             ] + $t;
         }, 'cambio de canal WiFi');
     }
@@ -138,7 +138,7 @@ class ClientRouterController extends Controller
             Log::warning('[Portal] Router del cliente falló', ['user_id' => $user->id, 'error' => $e->getMessage()]);
 
             return response()->json([
-                'message' => 'No pudimos hablar con tu equipo en este momento.',
+                'message' => 'No pudimos hablar con su equipo en este momento.',
                 'data' => null, 'error' => 1,
             ]);
         }

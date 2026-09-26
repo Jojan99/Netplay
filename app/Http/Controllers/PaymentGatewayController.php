@@ -519,7 +519,7 @@ class PaymentGatewayController extends Controller
                 try {
                     $gateway->api()->anularCobro((string) $t->gateway_transaction_id);
                 } catch (\Throwable $e) {
-                    // Que no se pueda anular allá no puede impedir cerrarlo acá.
+                    // Que no se pueda anular allá no puede impedir cerrarlo aquí.
                     Log::info('[Pagos] No se pudo anular el cobro gemelo en la pasarela', [
                         'cobro' => $t->reference, 'error' => $e->getMessage(),
                     ]);

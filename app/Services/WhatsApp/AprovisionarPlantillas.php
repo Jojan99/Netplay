@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\Log;
  *
  * Una plantilla aprobada solo sirve en la cuenta de Meta donde fue aprobada,
  * así que no se pueden compartir entre empresas. Lo que se comparte es el
- * texto: acá se crean en la cuenta de la empresa y quedan en revisión de Meta.
+ * texto: aquí se crean en la cuenta de la empresa y quedan en revisión de Meta.
  *
  * Es idempotente: si la plantilla ya existe en la cuenta no se vuelve a crear,
  * solo se deja el vínculo con su evento.

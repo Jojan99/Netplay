@@ -47,7 +47,7 @@ class CalculadoraDeCobro
         $precio   = $pactado ?? $lista;
 
         if ($precio === null) {
-            return ['ok' => false, 'motivo' => 'El plan ' . $plan->nombre . ' no tiene precio para el ciclo ' . $ciclo . '. Poné un precio pactado.'];
+            return ['ok' => false, 'motivo' => 'El plan ' . $plan->nombre . ' no tiene precio para el ciclo ' . $ciclo . '. Ingrese un precio pactado.'];
         }
 
         $renglones = [[

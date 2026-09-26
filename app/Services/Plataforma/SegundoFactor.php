@@ -17,7 +17,7 @@ use Illuminate\Support\Str;
  * pase corto que sólo sirve para presentar el código de seis dígitos. Así una
  * contraseña robada no alcanza.
  *
- * Tres cosas que no son opcionales y por eso están acá adentro:
+ * Tres cosas que no son opcionales y por eso están aquí adentro:
  *
  *   - **Códigos de recuperación.** Sin ellos, perder el teléfono es quedarse
  *     afuera del sistema, y el segundo factor pasa de ser seguridad a ser un
@@ -80,7 +80,7 @@ class SegundoFactor
         $guardado = Cache::get(self::clave($pase));
 
         if (!is_array($guardado)) {
-            return ['usuario' => null, 'motivo' => 'El ingreso venció. Volvé a poner tu correo y contraseña.', 'era_recuperacion' => false];
+            return ['usuario' => null, 'motivo' => 'El ingreso venció. Vuelva a poner su correo y contraseña.', 'era_recuperacion' => false];
         }
 
         $usuario = PlataformaUsuario::find($guardado['usuario'] ?? 0);
@@ -126,7 +126,7 @@ class SegundoFactor
 
             Log::warning('[Consola] Demasiados códigos fallidos', ['usuario' => $usuario->id, 'ip' => $request->ip()]);
 
-            return ['usuario' => null, 'motivo' => 'Demasiados intentos. Volvé a poner tu correo y contraseña.', 'era_recuperacion' => false];
+            return ['usuario' => null, 'motivo' => 'Demasiados intentos. Vuelva a poner su correo y contraseña.', 'era_recuperacion' => false];
         }
 
         Cache::put(self::clave($pase), $guardado, now()->addMinutes(self::MINUTOS_DE_PASE));
@@ -135,7 +135,7 @@ class SegundoFactor
 
         return [
             'usuario' => null,
-            'motivo'  => "Ese código no es. Te quedan {$restantes} intento(s).",
+            'motivo'  => "Ese código no es. Le quedan {$restantes} intento(s).",
             'era_recuperacion' => false,
         ];
     }
@@ -175,7 +175,7 @@ class SegundoFactor
         }
 
         if (!Totp::sirve((string) $usuario->totp_secreto, $codigo)) {
-            return ['ok' => false, 'motivo' => 'Ese código no es. Revisá que la hora del teléfono esté al día.', 'codigos' => []];
+            return ['ok' => false, 'motivo' => 'Ese código no es. Revise que la hora del teléfono esté al día.', 'codigos' => []];
         }
 
         $recuperacion = Totp::codigosDeRecuperacion();

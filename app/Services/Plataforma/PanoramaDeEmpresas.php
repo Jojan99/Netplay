@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Schema;
  * Lo que la consola sabe de todas las empresas.
  *
  * Es el único lugar del sistema que lee a propósito sin filtrar por la
- * empresa en sesión. Por eso vive aparte: nada de acá se llama desde los
+ * empresa en sesión. Por eso vive aparte: nada de aquí se llama desde los
  * controladores normales del panel, y todo lo que devuelve pasó por el
  * middleware de plataforma.
  *
@@ -197,7 +197,7 @@ class PanoramaDeEmpresas
      */
     public static function filas(bool $conTr069 = false, bool $refrescarAcs = false): array
     {
-        // Las empresas viejas no tienen suscripción: se les abre acá, una sola
+        // Las empresas viejas no tienen suscripción: se les abre aquí, una sola
         // vez, así todas tienen estado y código de referido.
         SuscripcionDeEmpresa::asegurarTodas();
 

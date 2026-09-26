@@ -3,7 +3,7 @@
 namespace App\Services\Vpn;
 
 /**
- * Claves de WireGuard, generadas acá mismo.
+ * Claves de WireGuard, generadas aquí mismo.
  *
  * WireGuard usa Curve25519, que es lo que hace `sodium_crypto_scalarmult_base`,
  * así que no hace falta tener instalado `wg` para dar de alta un túnel: la

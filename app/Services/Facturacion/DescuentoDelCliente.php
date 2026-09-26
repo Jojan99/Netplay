@@ -12,7 +12,7 @@ use Carbon\Carbon;
  * acordara cada mes, y el mes que no, el cliente pagaba de más y había que
  * devolverle.
  *
- * Acá se resuelve una sola vez y lo aplican los dos caminos que crean
+ * Aquí se resuelve una sola vez y lo aplican los dos caminos que crean
  * facturas —el proceso mensual y la factura suelta—, para que no puedan
  * calcular distinto.
  */
@@ -93,7 +93,7 @@ class DescuentoDelCliente
         }
 
         if ($valor <= 0) {
-            return 'El descuento tiene que ser mayor que cero. Para quitarlo, elegí «sin descuento».';
+            return 'El descuento tiene que ser mayor que cero. Para quitarlo, seleccione «sin descuento».';
         }
 
         if ($tipo === self::PORCENTAJE && $valor > 100) {

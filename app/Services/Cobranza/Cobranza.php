@@ -225,7 +225,7 @@ class Cobranza
         // probar. Las que ya empezaron siguen sin límite.
         if (!UsoIa::puedeEmpezar($this->companyId)) {
             $caso->fill(['motivo' => 'Llegaste a las ' . Ia::LIMITE_PRUEBA . ' conversaciones de prueba de hoy con la IA de Netvula. '
-                . 'Mañana sigue solo, o conectá tu propia clave de Google en Cobranza inteligente para no tener este límite.'])->save();
+                . 'Mañana sigue solo, o conecte su propia clave de Google en Cobranza inteligente para no tener este límite.'])->save();
 
             return false;
         }

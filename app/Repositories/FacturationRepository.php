@@ -70,7 +70,7 @@ class FacturationRepository implements FacturationRepositoryInterface
 
     public function getDatePayFacture(GetDateFacturePendingnRequest $data): mixed
     {
-        // Las anuladas se muestran acá —marcadas— para que no parezca que la
+        // Las anuladas se muestran aquí —marcadas— para que no parezca que la
         // factura se esfumó; en el resto de la plataforma siguen sin contar.
         $query = DetFacturation::conAnuladas()->select(
             'det_facturations.id','det_facturations.cab_id','date_facturation','number_facture','date_create_facturation',
@@ -339,7 +339,7 @@ class FacturationRepository implements FacturationRepositoryInterface
      * Por defecto sólo los que deben algo, que es lo que se viene a cobrar.
      * Con $incluirAlDia entran también los que están al día: antes, un cliente
      * que terminaba de pagar desaparecía de la pantalla y no había manera de
-     * abrir su historial de facturas desde acá.
+     * abrir su historial de facturas desde aquí.
      */
     public function getClientsPaginated(?string $search, int $page, int $perPage, bool $incluirAlDia = false): object
     {
@@ -597,7 +597,7 @@ class FacturationRepository implements FacturationRepositoryInterface
         }
 
         if ($det->paid) {
-            return ['ok' => false, 'mensaje' => 'Está pagada: revertí el pago primero, o anulala.'];
+            return ['ok' => false, 'mensaje' => 'Está pagada: revierta el pago primero, o anulala.'];
         }
 
         if ((float) ($det->price_abone ?? 0) > 0 || $det->abone) {

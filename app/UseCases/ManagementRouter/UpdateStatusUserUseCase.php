@@ -215,13 +215,13 @@ public function UpdateStatus(GestionUserRequest $gestionUserRequest): array
                     . "💰 Saldo pendiente: *\${deuda}*\n\n"
                     . "Para reactivar su servicio comuníquese con nosotros.\n\n"
                     . "📅 Fecha: {fecha}\n\n"
-                    . "💳 Pago de tu saldo pendiente\n\n"
-                    . "Puedes realizar tu pago siguiendo una de estas opciones:\n"
+                    . "💳 Pago de su saldo pendiente\n\n"
+                    . "Puedes realizar su pago siguiendo una de estas opciones:\n"
                     . "1⃣ Descarga la imagen adjunta.\n"
                     . "2⃣ Si deseas pagar con Nequi, escanea el código QR y sigue los pasos indicados.\n"
                     . "3⃣ También puedes realizar una transferencia por Bre-B usando la siguiente llave:\n"
                     . "🔑 0091768855\n\n"
-                    . "📩 Envíanos el comprobante en tu siguiente mensaje.";
+                    . "📩 Envíanos el comprobante en su siguiente mensaje.";
 
                         $message = str_replace(array_keys($vars), array_values($vars), $template);
                         //(new WhatsAppService())->sendImage($userData->phone, "https://netplay.com.co/storage/Qr/QrNetplay.jpeg", $message);

@@ -102,7 +102,7 @@ class Asistente
         // Ningún monto sale si no viene de los datos o de las herramientas: la
         // IA llegó a escribir $126.000 cuando la herramienta dijo $133.000.
         if ($texto !== '' && ($malas = $this->cifrasInventadas($texto, $historial))) {
-            $historial[] = ['role' => 'user', 'content' => '[SISTEMA] Tu mensaje tiene montos que no corresponden a los datos: ' . implode(', ', array_map([Deuda::class, 'pesos'], $malas))
+            $historial[] = ['role' => 'user', 'content' => '[SISTEMA] Su mensaje tiene montos que no corresponden a los datos: ' . implode(', ', array_map([Deuda::class, 'pesos'], $malas))
                 . '. Reescríbelo usando únicamente las cifras exactas de la deuda, de las facturas o de lo que respondieron las herramientas. No uses herramientas ahora.'];
             $r = $this->contar($claude)->mensaje($this->sistema(), $historial, $herr->definiciones());
             $historial[] = ['role' => 'assistant', 'content' => $r['content']];
@@ -110,7 +110,7 @@ class Asistente
 
             if ($texto === '' || ($r['stop_reason'] ?? '') === 'tool_use' || $this->cifrasInventadas($texto, $historial)) {
                 $this->caso->historial = $this->recortar($historial);
-                $this->caso->fill(['estado' => 'escalado', 'motivo' => 'El asistente escribió montos que no coinciden con la cuenta: no se le envió al cliente. Revisá la conversación.', 'visto' => false])->save();
+                $this->caso->fill(['estado' => 'escalado', 'motivo' => 'El asistente escribió montos que no coinciden con la cuenta: no se le envió al cliente. Revise la conversación.', 'visto' => false])->save();
                 Log::warning('[Cobranza] Mensaje frenado por montos incorrectos', ['caso' => $this->caso->id]);
 
                 return false;
@@ -229,7 +229,7 @@ class Asistente
         $nombreEmpresa = $empresa->name ?? 'la empresa';
 
         return <<<TXT
-Eres «{$this->cfg->nombre_asistente}», asistente de cartera de {$nombreEmpresa}, un proveedor de internet en Colombia. Hablas por WhatsApp con un cliente que tiene un saldo pendiente. Tu objetivo es que se ponga al día, con respeto y sin presionar de más.
+Eres «{$this->cfg->nombre_asistente}», asistente de cartera de {$nombreEmpresa}, un proveedor de internet en Colombia. Hablas por WhatsApp con un cliente que tiene un saldo pendiente. Su objetivo es que se ponga al día, con respeto y sin presionar de más.
 
 Hoy es {$hoy->locale('es')->isoFormat('dddd D [de] MMMM [de] YYYY')} ({$hoy->format('Y-m-d')}).
 
@@ -247,7 +247,7 @@ REGLAS:
 - Escribe en español de Colombia y trátalo SIEMPRE de «usted», también al pedirle algo: «envíeme», «compártame», «dígame» (nunca «envíame», «compárteme», «dime»).
 - Mensajes cortos, mensajes cortos (máximo 3-4 líneas), sin listas largas ni formato raro. Nada de emojis salvo uno ocasional.
 - No supongas si es hombre o mujer: no uses «señor», «señora», «Sr.» ni «Sra.». Llámalo por su primer nombre.
-- Nunca inventes cifras, fechas, planes, descuentos ni condiciones: sólo lo de arriba y lo que te devuelvan las herramientas. Cuando una herramienta te dé un monto, cópialo exacto; no lo recalcules.
+- Nunca inventes cifras, fechas, planes, descuentos ni condiciones: sólo lo de arriba y lo que le devuelvan las herramientas. Cuando una herramienta le dé un monto, cópialo exacto; no lo recalcules.
 - Nunca digas que un acuerdo quedó hecho si la herramienta no respondió que sí. Si la herramienta rechaza algo, explícale al cliente la alternativa válida.
 - No amenaces. Si hay compromiso con suspensión automática, menciónalo una vez, con tacto.
 - Si el cliente dice que ya pagó, reclama por el servicio o la factura, está molesto, pide hablar con una persona o pide algo que no puedes dar: usa escalar_a_humano.

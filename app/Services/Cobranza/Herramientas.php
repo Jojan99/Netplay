@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Lo único que el asistente puede HACER. La IA propone; acá se valida contra
+ * Lo único que el asistente puede HACER. La IA propone; aquí se valida contra
  * los límites de la empresa y, si no cumple, se le devuelve el motivo para que
  * le explique al cliente. Ningún acuerdo sale de la conversación sin pasar por
  * estas reglas.
@@ -68,7 +68,7 @@ class Herramientas
             [
                 'name'        => 'escalar_a_humano',
                 'description' => 'Pasa la conversación a una persona del equipo y dejas de responder. Úsala si el cliente lo pide, está molesto, '
-                    . 'reclama por el servicio o la factura, dice que ya pagó, pide algo fuera de tus límites, o no sabes qué responder.',
+                    . 'reclama por el servicio o la factura, dice que ya pagó, pide algo fuera de sus límites, o no sabes qué responder.',
                 'input_schema' => [
                     'type' => 'object',
                     'properties' => ['motivo' => ['type' => 'string']],
@@ -248,14 +248,14 @@ class Herramientas
         if ($medios['qr']) {
             $partes[] = $this->mandarQr($medios['qr'])
                 ? 'Ya le envié al cliente la imagen del QR de pago: dile que escanee el QR que le acaba de llegar.'
-                : 'No se pudo enviar la imagen del QR; dale los datos escritos de abajo.';
+                : 'No se pudo enviar la imagen del QR; continúe los datos escritos de abajo.';
         }
 
         if ($medios['texto']) {
             $partes[] = "Medios de pago de la empresa (cópialos tal cual, sin cambiar ni un número):\n" . $medios['texto'];
         }
 
-        $partes[] = 'Después pídele que te mande el comprobante cuando pague.';
+        $partes[] = 'Después pídele que le mande el comprobante cuando pague.';
 
         return ['ok' => true, 'texto' => implode("\n\n", $partes)];
     }
@@ -328,7 +328,7 @@ class Herramientas
         $como = array_filter([
             $m['link'] ? 'le devuelve el link de pago en línea' : null,
             $m['qr'] ? 'le manda al cliente la imagen del QR de pago' : null,
-            $m['texto'] ? 'te devuelve los datos de pago escritos para que se los copies' : null,
+            $m['texto'] ? 'le devuelve los datos de pago escritos para que se los copies' : null,
         ]);
 
         return implode(', ', $como) . '.';
@@ -414,7 +414,7 @@ class Herramientas
         $link = $servicio->create(Company::findOrFail($companyId), (int) $this->caso->user_id, $deuda->facturas->pluck('id')->all(), 'cobranza', $ttl, (string) $this->caso->telefono);
         $url = $servicio->publicUrl($link);
 
-        // Con un medio elegido, el link no abre la pantalla de "elegí cómo
+        // Con un medio elegido, el link no abre la pantalla de "seleccione cómo
         // pagar": lleva derecho al banco, o dispara el cobro de Nequi.
         $deLaPasarela = $this->mediosDeLaPasarela();
 
