@@ -156,7 +156,9 @@ class ConciliacionPagosController extends Controller
     /** @return array{filas: list<array<string,mixed>>, resumen: array<string,mixed>} */
     private function correr(array $d, bool $aplicar, string $estadoOk): array
     {
-        $fecha = !empty($d['fecha']) ? Carbon::parse($d['fecha'])->setTime(12, 0) : null;
+        // Una fecha pasada se guarda al mediodía (sólo interesa el día). Si es HOY se deja la
+        // hora real: antes todos los pagos de un lote quedaban con las 12:00:00 en el registro.
+        $fecha = (!empty($d['fecha']) && $d['fecha'] !== now()->toDateString()) ? Carbon::parse($d['fecha'])->setTime(12, 0) : null;
 
         $motor = new AplicarPagoALasFacturas(
             $this->empresa(), $aplicar ? (int) getSessionUserId() : null, $d['metodo_id'] ?? null, $fecha, $aplicar, $d['orden'] === 'exacta',
