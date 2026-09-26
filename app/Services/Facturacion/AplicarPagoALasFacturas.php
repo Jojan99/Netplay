@@ -69,11 +69,19 @@ class AplicarPagoALasFacturas
             ->join('users as u', 'u.id', '=', 'ud.user_id')
             ->where('u.company_id', $this->companyId)
             ->where('ud.dni', trim($cedula))
-            ->get(['ud.user_id', 'ud.names', 'ud.lastname'])
+            ->get(['ud.user_id', 'ud.names', 'ud.lastname', 'ud.active'])
             ->unique('user_id')->values();
 
+        // «Eliminar» un cliente no borra nada: deja user_data.active = 0 y su cédula sigue
+        // ahí. Quien se retiró y volvió tiene dos fichas con la misma cédula, y el pago es
+        // de la que está activa. Si no hay UNA sola activa, se sigue considerando ambiguo.
+        if ($clientes->count() > 1) {
+            $activos = $clientes->filter(fn ($c) => (int) $c->active === 1)->values();
+            if ($activos->count() === 1) $clientes = $activos;
+        }
+
         if ($clientes->isEmpty()) return $vacio('sin_cliente', "No hay un cliente con la cédula {$cedula}.");
-        if ($clientes->count() > 1) return $vacio('ambiguo', "La cédula {$cedula} la tienen {$clientes->count()} clientes.");
+        if ($clientes->count() > 1) return $vacio('ambiguo', "La cédula {$cedula} la tienen {$clientes->count()} clientes y no hay uno solo activo.");
 
         $userId = (int) $clientes[0]->user_id;
         $nombre = trim($clientes[0]->names . ' ' . $clientes[0]->lastname);
