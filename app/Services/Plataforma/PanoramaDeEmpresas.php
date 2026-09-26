@@ -31,7 +31,12 @@ class PanoramaDeEmpresas
      *
      * Cliente es el usuario con perfil USER; el equipo de la empresa no cuenta.
      *
-     * @return array<int, array{total:int, activos:int, suspendidos:int, retirados:int}>
+     * `en_plan` es lo que se compara contra el tope del plan: activos + suspendidos.
+     * Un cliente suspendido sigue siendo cliente —tiene su equipo, su ficha y su
+     * factura pendiente, y vuelve a andar con un pago—, así que ocupa su lugar. Sólo
+     * el retirado (user_data.active = 0, «eliminado») deja de contar.
+     *
+     * @return array<int, array{total:int, activos:int, suspendidos:int, retirados:int, en_plan:int}>
      */
     public static function clientes(): array
     {
@@ -46,6 +51,7 @@ class PanoramaDeEmpresas
                 DB::raw('SUM(ud.active = 1 AND ud.status_internet_id = 1) as activos'),
                 DB::raw('SUM(ud.active = 1 AND ud.status_internet_id <> 1) as suspendidos'),
                 DB::raw('SUM(ud.active = 0) as retirados'),
+                DB::raw('SUM(ud.active = 1) as en_plan'),
             ]);
 
         $mapa = [];
@@ -56,6 +62,7 @@ class PanoramaDeEmpresas
                 'activos'     => (int) $f->activos,
                 'suspendidos' => (int) $f->suspendidos,
                 'retirados'   => (int) $f->retirados,
+                'en_plan'     => (int) $f->en_plan,
             ];
         }
 
@@ -228,7 +235,7 @@ class PanoramaDeEmpresas
 
         foreach ($empresas as $e) {
             $id = (int) $e->id;
-            $c  = $clientes[$id] ?? ['total' => 0, 'activos' => 0, 'suspendidos' => 0, 'retirados' => 0];
+            $c  = $clientes[$id] ?? ['total' => 0, 'activos' => 0, 'suspendidos' => 0, 'retirados' => 0, 'en_plan' => 0];
             $s  = $suscripciones[$id] ?? null;
 
             $filas[] = [
@@ -253,7 +260,7 @@ class PanoramaDeEmpresas
                 'tr069'          => $tr069[$id] ?? null,
                 'mailjet'        => (bool) $e->mailjet_activo,
                 'ultimo_ingreso' => $ultimoIngreso[$id] ?? null,
-                'suscripcion'    => self::resumenSuscripcion($s, $c['activos']),
+                'suscripcion'    => self::resumenSuscripcion($s, $c),
             ];
         }
 
@@ -273,7 +280,7 @@ class PanoramaDeEmpresas
             return null;
         }
 
-        $clientes = (self::clientes()[$companyId] ?? ['total' => 0, 'activos' => 0, 'suspendidos' => 0, 'retirados' => 0]);
+        $clientes = (self::clientes()[$companyId] ?? ['total' => 0, 'activos' => 0, 'suspendidos' => 0, 'retirados' => 0, 'en_plan' => 0]);
         $olts     = self::olts()[$companyId] ?? [];
         $routers  = self::routers()[$companyId] ?? [];
         $lineas   = self::lineasWhatsapp()[$companyId] ?? [];
@@ -335,7 +342,7 @@ class PanoramaDeEmpresas
             ],
             'suscripcion' => self::resumenSuscripcion(
                 $suscripcion ? self::conPlan($suscripcion, $plan) : null,
-                $clientes['activos']
+                $clientes
             ),
         ];
     }
@@ -387,7 +394,7 @@ class PanoramaDeEmpresas
     }
 
     /** La suscripción como la lee la consola, con el uso contra el tope del plan. */
-    private static function resumenSuscripcion(?object $s, int $clientesActivos): ?array
+    private static function resumenSuscripcion(?object $s, array $clientes): ?array
     {
         if (!$s) {
             return null;
@@ -397,6 +404,8 @@ class PanoramaDeEmpresas
         $lista   = $ciclo === 'anual' ? $s->plan_anual : $s->plan_mensual;
         $precio  = $s->precio_pactado !== null ? (float) $s->precio_pactado : ($lista === null ? null : (float) $lista);
         $incluye = $s->plan_clientes === null ? null : (int) $s->plan_clientes;
+        // Los suspendidos también ocupan lugar en el plan; los retirados no.
+        $enPlan  = (int) ($clientes['en_plan'] ?? (($clientes['activos'] ?? 0) + ($clientes['suspendidos'] ?? 0)));
 
         return [
             'plan_id'        => $s->plan_id ? (int) $s->plan_id : null,
@@ -417,11 +426,14 @@ class PanoramaDeEmpresas
             'referida_por'   => $s->referida_por ? (int) $s->referida_por : null,
             'credito'        => SuscripcionDeEmpresa::credito((int) $s->company_id),
             'uso' => [
-                'clientes'  => $clientesActivos,
-                'incluidos' => $incluye,
+                'clientes'    => $enPlan,
+                // El desglose, para que quien lo lee entienda de dónde sale el número.
+                'activos'     => (int) ($clientes['activos'] ?? 0),
+                'suspendidos' => (int) ($clientes['suspendidos'] ?? 0),
+                'incluidos'   => $incluye,
                 // Sin tope el plan no se "llena": es el de red completa.
-                'porcentaje'=> $incluye ? min(999, (int) round($clientesActivos * 100 / max(1, $incluye))) : null,
-                'excedido'  => $incluye ? $clientesActivos > $incluye : false,
+                'porcentaje'  => $incluye ? min(999, (int) round($enPlan * 100 / max(1, $incluye))) : null,
+                'excedido'    => $incluye ? $enPlan > $incluye : false,
             ],
             'notas' => $s->notas,
         ];
