@@ -478,7 +478,7 @@ class InstallationOrderController extends Controller
         $casoDeUso = app(\App\UseCases\OltAdmin\OltAdminUseCase::class);
 
         try {
-            $r = $casoDeUso->getUnauthorizedONTs($oltId);
+            $r = $casoDeUso->getUnauthONTs($oltId);
             $sinAutorizar = $r['data'] ?? [];
         } catch (\Throwable $e) {
             return response()->json([
