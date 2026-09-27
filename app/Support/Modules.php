@@ -38,7 +38,7 @@ class Modules
         'Red' => [
             'mikrotik'        => ['label' => 'MikroTik',            'description' => 'Routers, colas y control de ancho de banda.'],
             'olt-admin'       => ['label' => 'OLT',                 'description' => 'Administración de OLT y ONT.'],
-            'olt-detail'      => ['label' => 'Detalle de OLT',      'description' => 'Consulta detallada de puertos y ONT.'],
+            'olt-detail'      => ['label' => 'Autorizar ONT',       'description' => 'Autoriza equipos nuevos y consulta los ya autorizados, sin llegar a la configuración de la OLT (CLI, VPN, perfiles).'],
             'router'          => ['label' => 'Router del cliente',  'description' => 'Gestión TR-069 del equipo del cliente.'],
             'inventory'       => ['label' => 'Inventario',          'description' => 'Equipos, categorías y movimientos.'],
         ],

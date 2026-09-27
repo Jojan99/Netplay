@@ -188,69 +188,82 @@ Route::prefix('management')->middleware('empresa.propia')->group(function () {
     });
 
     // ── OLT Admin ──────────────────────────────────────────────────────────
-    Route::prefix('olt')->group(function () {
+    //
+    // El grupo entero requiere el módulo completo («olt-admin») O el recorte
+    // para técnicos («olt-detail», ver Modules::CATALOG): autorizar una ONT
+    // nueva y consultar las ya autorizadas, nada de CLI, VPN ni de tocar el
+    // equipo de otro cliente. Lo que sí es sólo de administrador queda en el
+    // sub-grupo de abajo, con «olt-admin» exigido de nuevo, sin el atajo.
+    Route::prefix('olt')->middleware('module:olt-admin,olt-detail')->group(function () {
         Route::get('/',                    [OltAdminController::class, 'index']);
-        Route::post('/',                   [OltAdminController::class, 'store']);
-        Route::put('/{id}',                [OltAdminController::class, 'update']);
-        Route::delete('/{id}',             [OltAdminController::class, 'destroy']);
-        Route::get('/marcas',              [OltAdminController::class, 'marcas']);
 
-        // Ficha del equipo: marca, modelo, tarjetas y puertos, por SNMP.
-        Route::get('/{oltId}/equipo',       [OltAdminController::class, 'equipo']);
-        Route::get('/{oltId}/senal',        [OltAdminController::class, 'senal']);
-        Route::post('/{oltId}/senal/cancelar', [OltAdminController::class, 'cancelarSenal'])->whereNumber('oltId');
+        // Antes de autorizar: ¿esta ONT ya está en otro puerto? Y qué capacidades
+        // (VLAN, perfiles, tipos de ONU) tiene la OLT para armar el formulario.
         Route::get('/{oltId}/capacidades',        [OltAdminController::class, 'capacidades']);
         Route::get('/{oltId}/auto-autorizacion',  [OltAdminController::class, 'autoAutorizacion']);
-        Route::post('/{oltId}/auto-autorizacion', [OltAdminController::class, 'cambiarAutoAutorizacion']);
-        Route::get('/{oltId}/diagnostico',  [OltAdminController::class, 'diagnostico']);
-        Route::post('/{oltId}/olvidar-puertos', [OltAdminController::class, 'olvidarPuertos']);
-        Route::post('/{oltId}/foto',        [OltAdminController::class, 'guardarFoto']);
-        Route::delete('/{oltId}/foto',      [OltAdminController::class, 'borrarFoto']);
-
         Route::get('/{oltId}/unauth',      [OltAdminController::class, 'unauthONTs']);
         Route::post('/{oltId}/register',   [OltAdminController::class, 'registerONT']);
-
-        // Antes de autorizar: ¿esta ONT ya está en otro puerto?
         Route::get('/{oltId}/buscar-ont',      [OltAdminController::class, 'buscarOnt']);
         Route::post('/{oltId}/mover-ont',      [OltAdminController::class, 'moverOnt']);
-        Route::get('/{oltId}/onts-incompletas', [OltAdminController::class, 'ontsIncompletas']);
-        Route::get('/{oltId}/clientes-sin-ont',  [OltAdminController::class, 'clientesSinOnt']);
         Route::post('/{oltId}/completar-service-port', [OltAdminController::class, 'completarServicePort']);
-        Route::delete('/{oltId}/ont',      [OltAdminController::class, 'deleteONT']);
-        Route::post('/{oltId}/assign',      [OltAdminController::class, 'assignONT']);
-        Route::post('/{oltId}/auto-assign', [OltAdminController::class, 'autoAssignONT']);
-
-        // Read operations
-        Route::get('/snmp-onts',              [ManagementRouterController::class, 'obtenerInformacionSNMP']);
         Route::get('/{oltId}/onts',           [OltAdminController::class, 'authorizedONTs']);
         Route::get('/{oltId}/ont/info',       [OltAdminController::class, 'ontInfo']);        // ?fsp=0/1/0&ont_id=0
         Route::get('/{oltId}/service-ports',  [OltAdminController::class, 'servicePorts']);  // ?fsp=&ont_id=
         Route::get('/{oltId}/profiles',       [OltAdminController::class, 'getProfiles']);
 
-        // Write operations
-        Route::post('/{oltId}/ont/transfer',  [OltAdminController::class, 'transferONT']);
-        Route::post('/{oltId}/ont/deactivate',[OltAdminController::class, 'deactivateONT']);
-        Route::post('/{oltId}/ont/activate',  [OltAdminController::class, 'activateONT']);
-        Route::post('/{oltId}/profiles/sync', [OltAdminController::class, 'syncProfiles']);
-        Route::post('/{oltId}/profiles/default', [OltAdminController::class, 'fijarPerfiles']);
-        Route::post('/{oltId}/cli',                  [OltAdminController::class, 'cliCommand']);
-        Route::post('/{oltId}/ont/assign-client',    [OltAdminController::class, 'assignClientToOnt']);
-        Route::post('/{oltId}/ont/description',      [OltAdminController::class, 'cambiarDescripcionDeOnt']);
-        // Cada puerto PON: ocupación, clientes en mora o suspendidos y alertas abiertas.
-        Route::get('/{oltId}/puertos',               [\App\Http\Controllers\PuertosDeOltController::class, 'resumen'])->whereNumber('oltId');
-        // Vincular en tanda las ONT con sus clientes.
+        // ── De acá para abajo, sólo con el módulo completo ───────────────────
+        // Crear/borrar la OLT, verla por dentro (CLI, SNMP, VPN), y todo lo que
+        // toca una ONT que ya es de otro cliente (eliminarla, reiniciarla,
+        // pasarla de cliente, reasignarla): con «olt-detail» sólo no alcanza.
+        Route::middleware('module:olt-admin')->group(function () {
+            Route::post('/',                   [OltAdminController::class, 'store']);
+            Route::put('/{id}',                [OltAdminController::class, 'update']);
+            Route::delete('/{id}',             [OltAdminController::class, 'destroy']);
+            Route::get('/marcas',              [OltAdminController::class, 'marcas']);
+
+            // Ficha del equipo: marca, modelo, tarjetas y puertos, por SNMP.
+            Route::get('/{oltId}/equipo',       [OltAdminController::class, 'equipo']);
+            Route::get('/{oltId}/senal',        [OltAdminController::class, 'senal']);
+            Route::post('/{oltId}/senal/cancelar', [OltAdminController::class, 'cancelarSenal'])->whereNumber('oltId');
+            Route::post('/{oltId}/auto-autorizacion', [OltAdminController::class, 'cambiarAutoAutorizacion']);
+            Route::get('/{oltId}/diagnostico',  [OltAdminController::class, 'diagnostico']);
+            Route::post('/{oltId}/olvidar-puertos', [OltAdminController::class, 'olvidarPuertos']);
+            Route::post('/{oltId}/foto',        [OltAdminController::class, 'guardarFoto']);
+            Route::delete('/{oltId}/foto',      [OltAdminController::class, 'borrarFoto']);
+
+            Route::get('/{oltId}/onts-incompletas', [OltAdminController::class, 'ontsIncompletas']);
+            Route::get('/{oltId}/clientes-sin-ont',  [OltAdminController::class, 'clientesSinOnt']);
+            Route::delete('/{oltId}/ont',      [OltAdminController::class, 'deleteONT']);
+            Route::post('/{oltId}/assign',      [OltAdminController::class, 'assignONT']);
+            Route::post('/{oltId}/auto-assign', [OltAdminController::class, 'autoAssignONT']);
+
+            Route::get('/snmp-onts',              [ManagementRouterController::class, 'obtenerInformacionSNMP']);
+
+            Route::post('/{oltId}/ont/transfer',  [OltAdminController::class, 'transferONT']);
+            Route::post('/{oltId}/ont/deactivate',[OltAdminController::class, 'deactivateONT']);
+            Route::post('/{oltId}/ont/activate',  [OltAdminController::class, 'activateONT']);
+            Route::post('/{oltId}/profiles/sync', [OltAdminController::class, 'syncProfiles']);
+            Route::post('/{oltId}/profiles/default', [OltAdminController::class, 'fijarPerfiles']);
+            Route::post('/{oltId}/cli',                  [OltAdminController::class, 'cliCommand']);
+            Route::post('/{oltId}/ont/assign-client',    [OltAdminController::class, 'assignClientToOnt']);
+            Route::post('/{oltId}/ont/description',      [OltAdminController::class, 'cambiarDescripcionDeOnt']);
+            // Cada puerto PON: ocupación, clientes en mora o suspendidos y alertas abiertas.
+            Route::get('/{oltId}/puertos',               [\App\Http\Controllers\PuertosDeOltController::class, 'resumen'])->whereNumber('oltId');
+
+            Route::get('/ont/by-user/{userId}',          [OltAdminController::class, 'getOntByUser']);
+            Route::get('/ont/by-user/{userId}/en-vivo',  [OltAdminController::class, 'ontEnVivo']);
+            Route::get('/ont/by-user/{userId}/equipo',   [OltAdminController::class, 'equipoDeCliente']);
+            Route::post('/ont/modelo/foto',              [OltAdminController::class, 'guardarFotoDeModelo']);
+            Route::delete('/ont/modelo/foto',            [OltAdminController::class, 'borrarFotoDeModelo']);
+        });
+
+        // Vincular en tanda las ONT con sus clientes: ya pedía role:admin, se deja igual.
         Route::middleware('role:admin')->group(function () {
             // Clientes que necesitan una decisión, cruzando red con cartera.
             Route::get('/clientes-en-riesgo', [OltAdminController::class, 'clientesEnRiesgo']);
             Route::get('/vinculos/propuestas', [OltAdminController::class, 'propuestasDeVinculo']);
             Route::post('/vinculos/aplicar',   [OltAdminController::class, 'aplicarVinculos']);
         });
-
-        Route::get('/ont/by-user/{userId}',          [OltAdminController::class, 'getOntByUser']);
-        Route::get('/ont/by-user/{userId}/en-vivo',  [OltAdminController::class, 'ontEnVivo']);
-        Route::get('/ont/by-user/{userId}/equipo',   [OltAdminController::class, 'equipoDeCliente']);
-        Route::post('/ont/modelo/foto',              [OltAdminController::class, 'guardarFotoDeModelo']);
-        Route::delete('/ont/modelo/foto',            [OltAdminController::class, 'borrarFotoDeModelo']);
     });
 
   // 📥 Inbox
