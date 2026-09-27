@@ -10,4 +10,6 @@ Route::prefix('conciliacion-pagos')->middleware('role:admin,contador')->group(fu
     Route::post('simular',  [ConciliacionPagosController::class, 'simular']);
     Route::post('aplicar',  [ConciliacionPagosController::class, 'aplicar']);
     Route::get('lotes',     [ConciliacionPagosController::class, 'lotes']);
+    Route::get('lotes/{lote}',            [ConciliacionPagosController::class, 'lote'])->where('lote', '[A-Za-z0-9-]+');
+    Route::post('lotes/{lote}/revertir',  [ConciliacionPagosController::class, 'revertir'])->where('lote', '[A-Za-z0-9-]+');
 });

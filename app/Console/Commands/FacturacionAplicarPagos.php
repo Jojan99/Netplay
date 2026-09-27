@@ -33,6 +33,7 @@ class FacturacionAplicarPagos extends Command
         {--metodo= : id del método de pago (obligatorio al aplicar)}
         {--fecha= : fecha en que se recibió el pago, Y-m-d; por defecto ahora}
         {--lote= : nombre del lote, forma parte de la marca de cada pago}
+        {--titulo= : cómo se ve el lote en el historial de la pantalla}
         {--exacta-primero : si una factura debe justo lo que se pagó, se paga esa antes que las más viejas}
         {--reactivar : después de aplicar, reactiva a los clientes que quedaron al día}';
 
@@ -69,6 +70,20 @@ class FacturacionAplicarPagos extends Command
 
         $this->line($aplicar ? '<fg=red;options=bold>APLICANDO pagos de verdad.</>' : '<fg=yellow;options=bold>SIMULACIÓN: no se escribe nada.</>');
         $this->line("Empresa {$empresa} · lote {$lote} · orden: " . ($this->option('exacta-primero') ? 'la factura exacta primero, luego la más vieja' : 'de la más vieja a la más nueva') . ' · ' . count($pagos) . ' pagos' . ($por ? " · registra el usuario {$por}" : '') . ($metodo ? " · método {$metodo}" : ''));
+
+        // Un lote aplicado por consola también queda registrado, con cómo estaban las facturas: así aparece en el
+        // historial de la pantalla y se puede deshacer igual que uno de la web.
+        if ($aplicar) {
+            $simulador = new AplicarPagoALasFacturas($empresa, null, $metodo, $fecha, false, (bool) $this->option('exacta-primero'));
+            $ids = [];
+            foreach ($pagos as $p) {
+                try {
+                    $x = $simulador->pagar((string) $p['cedula'], (float) $p['valor'], "Lote {$lote} · {$p['ref']} · cruce por cédula");
+                    foreach ($x['movimientos'] as $m) $ids[] = $m['det_id'];
+                } catch (\Throwable $e) { /* el que falle se reporta al aplicarlo */ }
+            }
+            \App\Services\Facturacion\LoteDePagos::abrir($empresa, $lote, $por, $metodo, $this->option('exacta-primero') ? 'exacta' : 'antigua', $fecha?->toDateString(), $this->option('titulo') ?: "Consola · {$lote}", array_values(array_unique($ids)), 'consola');
+        }
 
         $reporte = [];
         $resumen = [];
@@ -112,6 +127,15 @@ class FacturacionAplicarPagos extends Command
         $this->line("Clientes que quedan sin facturas pendientes: <options=bold>{$alDia}</> · que todavía deben algo: <options=bold>{$debiendo}</>");
         $this->line('Se ' . ($aplicar ? 'aplicó' : 'aplicaría') . ' en facturas: <options=bold>$' . number_format($aplicado, 0, ',', '.') . '</>'
             . ' · sin aplicar (sobrante o sin facturas): <options=bold>$' . number_format($sobrante, 0, ',', '.') . '</>');
+
+        if ($aplicar) {
+            \App\Services\Facturacion\LoteDePagos::cerrar($empresa, $lote, [
+                'pagos' => count($pagos),
+                'pagos_aplicados' => collect($reporte)->where('estado', 'aplicado')->count(),
+                'aplicado' => round($aplicado, 2), 'sin_aplicar' => round($sobrante, 2),
+                'por_estado' => collect($reporte)->groupBy('estado')->map(fn ($g) => ['pagos' => $g->count(), 'valor' => round($g->sum('valor'), 2)])->all(),
+            ]);
+        }
 
         $salida = 'reporte_pagos_' . $lote . ($aplicar ? '' : '_simulacion') . '.json';
         file_put_contents(storage_path('app/' . $salida), json_encode($reporte, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));

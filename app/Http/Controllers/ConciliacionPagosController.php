@@ -75,33 +75,11 @@ class ConciliacionPagosController extends Controller
         $plan = $this->correr($d, false, 'simulacion');
         $ids = collect($plan['filas'])->flatMap(fn ($f) => collect($f['movimientos'])->pluck('det_id'))->unique()->values()->all();
 
-        $lote = DB::table('conciliacion_pagos_lotes')->where('company_id', $this->empresa())->where('lote', $d['lote'])->first();
-
-        if (!$lote) {
-            // Sólo cuando el lote es nuevo: si se toca dos veces el botón, el segundo «antes»
-            // ya tendría los pagos puestos y no serviría para deshacer nada.
-            DB::table('conciliacion_pagos_lotes')->insert([
-                'company_id'        => $this->empresa(),
-                'lote'              => $d['lote'],
-                'user_id'           => getSessionUserId(),
-                'payment_method_id' => $d['metodo_id'],
-                'titulo'            => $d['titulo'] ?? null,
-                'orden'             => $d['orden'],
-                'fecha_pago'        => $d['fecha'] ?? null,
-                'antes'             => json_encode(DB::table('det_facturations')->whereIn('id', $ids)->get(), JSON_UNESCAPED_UNICODE),
-                'created_at'        => now(), 'updated_at' => now(),
-            ]);
-        }
+        \App\Services\Facturacion\LoteDePagos::abrir($this->empresa(), $d['lote'], getSessionUserId(), $d['metodo_id'], $d['orden'], $d['fecha'] ?? null, $d['titulo'] ?? null, $ids, 'web');
 
         $r = $this->correr($d, true, 'aplicado');
 
-        DB::table('conciliacion_pagos_lotes')->where('company_id', $this->empresa())->where('lote', $d['lote'])->update([
-            'pagos'       => $r['resumen']['pagos_aplicados'],
-            'aplicado'    => $r['resumen']['aplicado'],
-            'sin_aplicar' => $r['resumen']['sin_aplicar'],
-            'resumen'     => json_encode($r['resumen']),
-            'updated_at'  => now(),
-        ]);
+        \App\Services\Facturacion\LoteDePagos::cerrar($this->empresa(), $d['lote'], $r['resumen']);
 
         Log::info('[Conciliación] Pagos aplicados', [
             'empresa' => $this->empresa(), 'lote' => $d['lote'], 'por' => getSessionUserId(),
@@ -119,10 +97,30 @@ class ConciliacionPagosController extends Controller
             ->leftJoin('payment_methods as pm', 'pm.id', '=', 'l.payment_method_id')
             ->where('l.company_id', $this->empresa())
             ->orderByDesc('l.id')->limit(50)
-            ->get(['l.lote', 'l.titulo', 'l.orden', 'l.fecha_pago', 'l.pagos', 'l.aplicado', 'l.sin_aplicar', 'l.created_at',
+            ->get(['l.lote', 'l.origen', 'l.titulo', 'l.orden', 'l.fecha_pago', 'l.pagos', 'l.aplicado', 'l.sin_aplicar', 'l.created_at', 'l.revertido_en',
                 DB::raw("TRIM(CONCAT(COALESCE(ud.names,''),' ',COALESCE(ud.lastname,''))) as usuario"), 'pm.name as metodo']);
 
         return standardApiReponse('OK', $filas, 0, JsonResponse::HTTP_OK);
+    }
+
+    /** Qué aplicó un lote y qué pasaría si se deshace. No toca nada. */
+    public function lote(string $lote): JsonResponse
+    {
+        $r = \App\Services\Facturacion\LoteDePagos::vistaPrevia($this->empresa(), $lote);
+
+        return standardApiReponse($r['existe'] ? 'OK' : 'Ese lote no existe.', $r, $r['existe'] ? 0 : 1, JsonResponse::HTTP_OK);
+    }
+
+    /** Deshace un lote entero: las facturas vuelven a como estaban. Todo o nada. */
+    public function revertir(string $lote): JsonResponse
+    {
+        $r = \App\Services\Facturacion\LoteDePagos::revertir($this->empresa(), $lote, getSessionUserId());
+
+        if ($r['ok']) {
+            Log::info('[Conciliación] Lote deshecho', ['empresa' => $this->empresa(), 'lote' => $lote, 'por' => getSessionUserId(), 'facturas' => $r['facturas'], 'monto' => $r['monto']]);
+        }
+
+        return standardApiReponse($r['message'], $r, $r['ok'] ? 0 : 1, JsonResponse::HTTP_OK);
     }
 
     // ── Piezas ────────────────────────────────────────────────────────────
