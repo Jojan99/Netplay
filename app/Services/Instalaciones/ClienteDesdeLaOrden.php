@@ -124,6 +124,9 @@ class ClienteDesdeLaOrden
             'email'             => $orden->client_email,
             'phone'             => $orden->client_phone,
             'address'           => $orden->address,
+            // La orden no le pregunta la fecha de nacimiento al cliente: la ficha lo acepta vacío, igual
+            // que al registrar una empresa (RegisterCompanyUseCase). Se completa después si hace falta.
+            'birthday'          => '',
             'internet_plans_id' => $orden->internet_plan_id,
             'connection_type'   => $orden->connection_type ?: 'static',
             'pppoe_user'        => $orden->pppoe_user,
