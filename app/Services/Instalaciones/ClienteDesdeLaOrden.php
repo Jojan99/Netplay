@@ -107,17 +107,23 @@ class ClienteDesdeLaOrden
             $apellidos = $apellidos !== '' ? $apellidos : ($partes[1] ?? '');
         }
 
+        $perfilCliente = self::perfilDeCliente((int) $orden->company_id);
+
         $user = User::create([
             'company_id' => $orden->company_id,
             'username'   => $orden->client_dni,
             'email'      => $orden->client_email ?: null,
             'password'   => Hash::make(bin2hex(random_bytes(8))),
-            'profile_id' => self::perfilDeCliente((int) $orden->company_id),
+            'profile_id' => $perfilCliente,
         ]);
 
         DB::table('user_data')->insert([
             'company_id'        => $orden->company_id,
             'user_id'           => $user->id,
+            // Sin esto, MySQL usa el default de la columna (0) en vez de dejarla en null, y no hay
+            // perfil con id 0: la llave foránea a «profiles» revienta. Mismo criterio que el
+            // importador (EjecutarImportacion::perfilDeCliente).
+            'role_id'           => $perfilCliente,
             'names'             => $nombres,
             'lastname'          => $apellidos,
             'dni'               => $orden->client_dni,
@@ -135,6 +141,10 @@ class ClienteDesdeLaOrden
             'router_id'         => $orden->router_id,
             'active'            => 1,
             'status'            => 1,
+            // Sin esto queda en null: no cuenta como activo NI como suspendido en «N activos + M
+            // suspendidos» del panel (status_internet_id <> 1), y el cliente recién instalado
+            // desaparece de ambos conteos. 1 = ACTIVE (ver tabla internet_status).
+            'status_internet_id' => 1,
             'whatsapp_enabled'  => 1,
             'created_at'        => now(),
             'updated_at'        => now(),
