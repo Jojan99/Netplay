@@ -16,6 +16,8 @@ Route::prefix('user')->group(function () {
         Route::delete('deleteUserDataById/{id}', [UserController::class, 'DeleteUserData']);
         // Clientes eliminados: listarlos y volver a darlos de alta. Va antes de
         // '{id}/en-router' para que 'eliminados' no se lea como un id.
+        // Cuántos clientes incluye el plan de la empresa y cuántos lleva.
+        Route::get('cupo',             [UserController::class, 'cupo']);
         Route::get('eliminados',       [UserController::class, 'eliminados']);
         Route::post('{id}/reinstalar', [UserController::class, 'reinstalar'])->whereNumber('id');
         Route::get('{id}/reinstalar/ip', [UserController::class, 'reinstalarRevisarIp'])->whereNumber('id');

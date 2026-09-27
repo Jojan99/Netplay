@@ -61,6 +61,13 @@ class CreateUserDataUseCase implements CreateUserDataUseCaseInterface
                 if ($this->userRepository->validateUserEmail($data['email'])) return ['message' => 'The email already exists', 'data' => 4, 'status' => 1];
                 if ($this->userRepository->validateUserPhone($data['phone']))  return ['message' => 'The phone already exists', 'data' => 5, 'status' => 1];
                 if ($this->userRepository->validateUserDni($data['dni'])) return ['message' => 'ID already exists', 'data' => 6, 'status' => 1];
+
+                // El tope de clientes del plan, ANTES de tocar el router: el alta crea primero la
+                // entrada en el ARP o la credencial PPPoE, y un cliente que después no se pudiera
+                // crear dejaría eso huérfano en el MikroTik.
+                if ($motivo = \App\Services\Plataforma\LimiteDeClientes::motivoDeBloqueo((int) getSessionCompanyId())) {
+                    return ['message' => $motivo, 'status' => 1, 'data' => 'LIMITE_DE_CLIENTES'];
+                }
                 
                     // Los dos tipos de conexión se dan de alta distinto: con IP
                     // fija el cliente vive en el ARP del router, con PPPoE se le

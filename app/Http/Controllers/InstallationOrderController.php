@@ -102,6 +102,16 @@ class InstallationOrderController extends Controller
             'user_data_id' => ['nullable', $this->deLaEmpresa('user_data')],
         ]);
         
+        // ¿Esta orden va a dar de alta un cliente nuevo? Entonces necesita un lugar en el plan, y el
+        // aviso tiene que llegar ahora, a quien toma el pedido: si no, el técnico se quedaría en la
+        // casa del cliente sin poder terminar.
+        $esNuevo = empty($validated['user_data_id'] ?? null)
+            && !DB::table('user_data')->where('company_id', getSessionCompanyId())->where('dni', trim($validated['client_dni']))->exists();
+
+        if ($esNuevo && ($motivo = \App\Services\Plataforma\LimiteDeClientes::motivoDeBloqueo((int) getSessionCompanyId()))) {
+            return response()->json(['message' => $motivo, 'data' => ['limite' => \App\Services\Plataforma\LimiteDeClientes::estado((int) getSessionCompanyId())]], 422);
+        }
+
         $validated['company_id'] = getSessionCompanyId();
         $validated['created_by'] = Auth::id();
         $validated['status'] = 'pending';

@@ -102,6 +102,15 @@ class UserController extends Controller
         );
     }
 
+    /**
+     * Cuántos clientes incluye el plan de la empresa y cuántos lleva (activos + suspendidos).
+     * La pantalla de clientes lo muestra y deshabilita el alta cuando ya no hay lugar.
+     */
+    public function cupo(): object
+    {
+        return standardApiReponse('ok', \App\Services\Plataforma\LimiteDeClientes::estado((int) getSessionCompanyId()), ApiResponseConstants::SUCCESS);
+    }
+
     /** Clientes eliminados de la empresa, para poder reinstalarlos. */
     public function eliminados(Request $request, \App\Services\Clientes\ClientesEliminados $eliminados): object
     {

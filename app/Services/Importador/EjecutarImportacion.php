@@ -524,6 +524,12 @@ class EjecutarImportacion
 
     private function crear(int $companyId, array $d, int $planId, ?int $routerId, string $estado, int $grupo): int
     {
+        // Un cliente activo o suspendido ocupa un lugar del plan; uno retirado no. Cuando se llena, esa
+        // fila queda con error y el mensaje lo dice; las anteriores ya entraron.
+        if (self::camposDeEstado($estado)['active'] === 1) {
+            \App\Services\Plataforma\LimiteDeClientes::asegurar($companyId);
+        }
+
         $user = User::create([
             'username'   => $d['dni'],
             'email'      => $d['email'],
@@ -593,6 +599,11 @@ class EjecutarImportacion
             $cambios['router_id'] = $routerId;
         }
         $cambios += self::camposDeEstado($estado);
+
+        // Un retirado que el archivo trae activo vuelve a ocupar un lugar del plan.
+        if ((int) $ficha->active === 0 && ($cambios['active'] ?? 0) === 1) {
+            \App\Services\Plataforma\LimiteDeClientes::asegurar($companyId);
+        }
 
         if ($d['tipo_conexion'] === 'pppoe') {
             $cambios['connection_type'] = 'pppoe';

@@ -99,6 +99,11 @@ class ClientesEliminados
             return ['message' => 'Ese cliente ya está activo en el registro.', 'data' => null, 'status' => 1];
         }
 
+        // Un retirado que vuelve ocupa un lugar del plan otra vez.
+        if ($motivo = \App\Services\Plataforma\LimiteDeClientes::motivoDeBloqueo($companyId)) {
+            return ['message' => 'No se puede reinstalar: ' . lcfirst($motivo), 'data' => 'LIMITE_DE_CLIENTES', 'status' => 1];
+        }
+
         $avisos   = [];
         $cambios  = ['active' => 1, 'status' => 0, 'status_internet_id' => 1];
         $accion   = (string) ($eleccion['ip_accion'] ?? '');

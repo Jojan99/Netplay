@@ -56,6 +56,13 @@ class ClienteDesdeLaOrden
             ];
         }
 
+        // Su lugar ya estaba reservado al agendar la orden (por eso se excluye a sí misma). Falla acá
+        // sólo si el plan bajó o alguien llenó el cupo por otro lado, y falla ANTES de autorizar la
+        // ONT: no queda un equipo dado de alta para un cliente que no se pudo crear.
+        if ($motivo = \App\Services\Plataforma\LimiteDeClientes::motivoDeBloqueo((int) $orden->company_id, 1, (int) $orden->id)) {
+            return ['ok' => false, 'message' => $motivo, 'user_id' => null, 'nuevo' => false];
+        }
+
         try {
             $userId = DB::transaction(fn () => self::alta($orden));
         } catch (\Throwable $e) {
