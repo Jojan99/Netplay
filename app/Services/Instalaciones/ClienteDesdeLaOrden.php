@@ -39,7 +39,7 @@ class ClienteDesdeLaOrden
             ->join('users as us', 'us.id', '=', 'u.user_id')
             ->where('us.company_id', $orden->company_id)
             ->where('u.dni', $dni)
-            ->value('u.user_id');
+            ->value('u.id');
 
         if ($ya) {
             return ['ok' => true, 'message' => 'El cliente ya existía.', 'user_id' => (int) $ya, 'nuevo' => false];
@@ -117,7 +117,7 @@ class ClienteDesdeLaOrden
             'profile_id' => $perfilCliente,
         ]);
 
-        DB::table('user_data')->insert([
+        $userDataId = DB::table('user_data')->insertGetId([
             'company_id'        => $orden->company_id,
             'user_id'           => $user->id,
             // Sin esto, MySQL usa el default de la columna (0) en vez de dejarla en null, y no hay
@@ -152,7 +152,11 @@ class ClienteDesdeLaOrden
 
         self::abrirFacturacion((int) $user->id, (int) $orden->company_id, (int) $orden->grupo_facturacion);
 
-        return (int) $user->id;
+        // Lo que identifica a un cliente en el resto del sistema (instalaciones, OLT, inventario) es
+        // el id de «user_data», no el de «users» —son dos tablas con su propio contador—. Devolver
+        // el de «users» hacía que la ONT, el inventario y la orden quedaran apuntando a una fila que
+        // no existía en «user_data», y reventaba al final con una llave foránea.
+        return (int) $userDataId;
     }
 
     /** El perfil de cliente de esa empresa: el que no es admin, técnico ni contador. */
