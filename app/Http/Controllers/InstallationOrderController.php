@@ -11,17 +11,37 @@ use App\Models\PaymentMethod;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 
 class InstallationOrderController extends Controller
 {
+    /** El perfil de quien hace la petición, en minúscula ('admin', 'tecnico', 'contador'…). */
+    private function miPerfil(): string
+    {
+        return strtolower((string) DB::table('profiles')->where('id', getSessionUserProfileId())->value('name'));
+    }
+
+    /** Su id de empleado, si lo tiene; null si es admin/contador o no está de alta como empleado. */
+    private function miEmpleadoId(): ?int
+    {
+        return Employee::where('company_id', getSessionCompanyId())->where('user_id', getSessionUserId())->value('id');
+    }
+
     public function index(Request $request)
     {
         $companyId = getSessionCompanyId();
-        
+
         $query = InstallationOrder::where('company_id', $companyId)
             ->with(['client', 'plan', 'paymentMethod']);
-        
+
+        // Un técnico sólo ve lo suyo: las que tiene por instalar y las que ya hizo. Nada de la agenda
+        // completa de la empresa. Sin ficha de empleado, no ve ninguna (no que vea todo por descarte).
+        if ($this->miPerfil() === 'tecnico') {
+            $miId = $this->miEmpleadoId();
+            $miId ? $query->whereJsonContains('technician_ids', $miId) : $query->whereRaw('0 = 1');
+        }
+
         if ($request->has('status') && $request->status) {
             $query->where('status', $request->status);
         }
@@ -112,17 +132,9 @@ class InstallationOrderController extends Controller
             return response()->json(['message' => $motivo, 'data' => ['limite' => \App\Services\Plataforma\LimiteDeClientes::estado((int) getSessionCompanyId())]], 422);
         }
 
-        // Un técnico da de alta al cliente desde la puerta de la casa, pero no le pone precio a la
-        // instalación ni se asigna una comisión: eso lo decide la oficina, así lo haya escrito el
-        // formulario. Si no venía nadie en «technician_ids», queda asignada a quien la creó.
-        if (strtoupper((string) DB::table('profiles')->where('id', getSessionUserProfileId())->value('name')) === 'TECNICO') {
-            $validated['installation_cost'] = null;
-            $validated['commission_amount'] = null;
-            if (empty($validated['technician_ids'])) {
-                $miEmpleado = Employee::where('company_id', getSessionCompanyId())->where('user_id', getSessionUserId())->value('id');
-                $validated['technician_ids'] = $miEmpleado ? [$miEmpleado] : null;
-            }
-        }
+        // Dar de alta una instalación (precio, comisión, a quién se asigna) es de oficina: la ruta
+        // sólo llega hasta acá con «role:admin,contador» (ver routes/api/installationRoutes.php). Un
+        // técnico no crea órdenes; lo que sí puede es una de práctica, aparte, con practica().
 
         $validated['company_id'] = getSessionCompanyId();
         $validated['created_by'] = Auth::id();
@@ -220,14 +232,9 @@ class InstallationOrderController extends Controller
             return response()->json(['message' => 'No se puede eliminar una orden en proceso o completada'], 400);
         }
 
-        // Un técnico sólo borra lo suyo: la orden de práctica que creó (el botón «Práctica» las crea a
-        // su nombre) o una pendiente de verdad que él mismo tomó. Borrar la de otro —técnico o de
-        // oficina— sigue siendo de administrador o contador.
-        $esAdminOContador = in_array(
-            strtolower((string) DB::table('profiles')->where('id', getSessionUserProfileId())->value('name')),
-            ['admin', 'contador'],
-        );
-        if (!$esAdminOContador && $installation->created_by !== Auth::id()) {
+        // Un técnico ya no crea órdenes de verdad (ver store()), así que esto en la práctica sólo
+        // le deja borrar su propia orden de práctica. Borrar la de otro sigue siendo de oficina.
+        if (!in_array($this->miPerfil(), ['admin', 'contador']) && $installation->created_by !== Auth::id()) {
             return response()->json(['message' => 'Esa orden no es suya'], 403);
         }
 
@@ -677,6 +684,59 @@ class InstallationOrderController extends Controller
             'message' => 'Pago actualizado',
             'data' => $installation->fresh(['paymentMethod'])
         ]);
+    }
+
+    /**
+     * El comprobante de la transferencia con la que el cliente pagó la instalación. Lo sube el mismo
+     * técnico que está en la casa —no necesita esperar a la oficina para dejarlo registrado—, pero sólo
+     * en una orden suya; el resto de la ficha de pago (monto, referencia, estado) sigue siendo de
+     * administrador o contador.
+     */
+    public function uploadPaymentProof(Request $request, $id)
+    {
+        $installation = InstallationOrder::where('company_id', getSessionCompanyId())->findOrFail($id);
+
+        if (!in_array($this->miPerfil(), ['admin', 'contador'])) {
+            $miId = $this->miEmpleadoId();
+            if (!$miId || !in_array($miId, $installation->technician_ids ?? [])) {
+                return response()->json(['message' => 'Esa orden no es suya'], 403);
+            }
+        }
+
+        $request->validate([
+            'comprobante' => 'required|file|mimes:jpg,jpeg,png,webp,pdf|max:8192',
+        ]);
+
+        // El anterior se borra: si no, cada reemplazo deja un archivo suelto (mismo criterio que
+        // OltAdminUseCase::guardarFoto).
+        if ($installation->payment_image_url) {
+            Storage::disk('public')->delete(str_replace(url('/storage') . '/', '', $installation->payment_image_url));
+        }
+
+        $ruta = $request->file('comprobante')->store('comprobantes-instalacion/' . getSessionCompanyId(), 'public');
+        $installation->forceFill(['payment_image_url' => url('/storage/' . $ruta)])->save();
+
+        InstallationLog::create([
+            'installation_id' => $id,
+            'action' => 'payment_proof',
+            'description' => 'Comprobante de pago adjuntado',
+            'created_by' => Auth::id(),
+        ]);
+
+        return response()->json(['message' => 'Comprobante guardado', 'data' => ['payment_image_url' => $installation->payment_image_url]]);
+    }
+
+    /** Quitar el comprobante: si se subió por error o no correspondía. Sólo oficina. */
+    public function removePaymentProof($id)
+    {
+        $installation = InstallationOrder::where('company_id', getSessionCompanyId())->findOrFail($id);
+
+        if ($installation->payment_image_url) {
+            Storage::disk('public')->delete(str_replace(url('/storage') . '/', '', $installation->payment_image_url));
+            $installation->forceFill(['payment_image_url' => null])->save();
+        }
+
+        return response()->json(['message' => 'Comprobante eliminado']);
     }
 
     public function assignTechnicians(Request $request, $id)

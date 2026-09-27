@@ -4,10 +4,9 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\InstallationOrderController;
 
 Route::prefix('installations')->middleware('module:installations')->group(function () {
-    // Lo que un técnico también hace: ver la agenda, tomar un pedido en la calle, avanzar el estado
-    // de la suya y dejarla instalada. Nada de precios ni de mover técnicos de otro.
+    // Lo que un técnico también hace: ver sus propias órdenes (index() se las filtra solo), avanzar el
+    // estado de la suya y dejarla instalada. No da de alta órdenes nuevas ni ve las de otro.
     Route::get('/', [InstallationOrderController::class, 'index']);
-    Route::post('/', [InstallationOrderController::class, 'store']);
     // Una orden de práctica para recorrer el flujo sin tocar la red. Va antes de '/{id}'.
     Route::post('/practica', [InstallationOrderController::class, 'practica']);
     Route::get('/plans', [InstallationOrderController::class, 'plans']);
@@ -27,18 +26,24 @@ Route::prefix('installations')->middleware('module:installations')->group(functi
     Route::get('/{id}/logs', [InstallationOrderController::class, 'logs']);
     Route::post('/{id}/logs', [InstallationOrderController::class, 'createLog']);
 
+    // El comprobante de la transferencia con la que pagaron la instalación: el técnico lo sube de una
+    // vez, sólo en una orden suya (ver InstallationOrderController::uploadPaymentProof).
+    Route::post('/{id}/payment-proof', [InstallationOrderController::class, 'uploadPaymentProof']);
+
     // Borrar queda abierto: adentro sólo deja borrar una orden pendiente, y si es de un técnico sólo
     // la suya y de práctica (ver InstallationOrderController::destroy). El resto sigue siendo de oficina.
     Route::delete('/{id}', [InstallationOrderController::class, 'destroy']);
 
     // ── De acá para abajo, sólo oficina (admin o contador) ────────────────────
-    // Precio, comisión, a quién se le asigna, cancelar o editar la orden: nada
-    // de esto lo decide quien está parado en la puerta del cliente.
+    // Dar de alta la orden, precio, comisión, a quién se le asigna, cancelar o
+    // editarla: nada de esto lo decide quien está parado en la puerta del cliente.
     Route::middleware('role:admin,contador')->group(function () {
+        Route::post('/', [InstallationOrderController::class, 'store']);
         Route::get('/dashboard', [InstallationOrderController::class, 'dashboard']);
         Route::put('/{id}', [InstallationOrderController::class, 'update']);
         Route::post('/{id}/cancel', [InstallationOrderController::class, 'cancel']);
         Route::put('/{id}/payment', [InstallationOrderController::class, 'updatePayment']);
+        Route::delete('/{id}/payment-proof', [InstallationOrderController::class, 'removePaymentProof']);
         Route::put('/{id}/technicians', [InstallationOrderController::class, 'assignTechnicians']);
         Route::get('/{id}/commission', [InstallationOrderController::class, 'calculateCommission']);
     });
