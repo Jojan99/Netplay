@@ -112,11 +112,23 @@ class InstallationOrderController extends Controller
             return response()->json(['message' => $motivo, 'data' => ['limite' => \App\Services\Plataforma\LimiteDeClientes::estado((int) getSessionCompanyId())]], 422);
         }
 
+        // Un técnico da de alta al cliente desde la puerta de la casa, pero no le pone precio a la
+        // instalación ni se asigna una comisión: eso lo decide la oficina, así lo haya escrito el
+        // formulario. Si no venía nadie en «technician_ids», queda asignada a quien la creó.
+        if (strtoupper((string) DB::table('profiles')->where('id', getSessionUserProfileId())->value('name')) === 'TECNICO') {
+            $validated['installation_cost'] = null;
+            $validated['commission_amount'] = null;
+            if (empty($validated['technician_ids'])) {
+                $miEmpleado = Employee::where('company_id', getSessionCompanyId())->where('user_id', getSessionUserId())->value('id');
+                $validated['technician_ids'] = $miEmpleado ? [$miEmpleado] : null;
+            }
+        }
+
         $validated['company_id'] = getSessionCompanyId();
         $validated['created_by'] = Auth::id();
         $validated['status'] = 'pending';
         $validated['payment_status'] = 'pending';
-        
+
         $installation = InstallationOrder::create($validated);
         
         // Create log for installation creation
@@ -203,13 +215,24 @@ class InstallationOrderController extends Controller
     {
         $installation = InstallationOrder::where('company_id', getSessionCompanyId())
             ->findOrFail($id);
-        
+
         if ($installation->status !== 'pending' && !$installation->modo_practica) {
             return response()->json(['message' => 'No se puede eliminar una orden en proceso o completada'], 400);
         }
-        
+
+        // Un técnico sólo borra lo suyo: la orden de práctica que creó (el botón «Práctica» las crea a
+        // su nombre) o una pendiente de verdad que él mismo tomó. Borrar la de otro —técnico o de
+        // oficina— sigue siendo de administrador o contador.
+        $esAdminOContador = in_array(
+            strtolower((string) DB::table('profiles')->where('id', getSessionUserProfileId())->value('name')),
+            ['admin', 'contador'],
+        );
+        if (!$esAdminOContador && $installation->created_by !== Auth::id()) {
+            return response()->json(['message' => 'Esa orden no es suya'], 403);
+        }
+
         $installation->delete();
-        
+
         return response()->json(['message' => 'Orden de instalación eliminada']);
     }
 
