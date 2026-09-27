@@ -35,11 +35,13 @@ class InstallationOrderController extends Controller
         $query = InstallationOrder::where('company_id', $companyId)
             ->with(['client', 'plan', 'paymentMethod']);
 
-        // Un técnico sólo ve lo suyo: las que tiene por instalar y las que ya hizo. Nada de la agenda
-        // completa de la empresa. Sin ficha de empleado, no ve ninguna (no que vea todo por descarte).
+        // Un técnico sólo ve lo suyo, y sólo lo que tiene por instalar: pendiente, confirmada o en
+        // proceso. Ni la agenda completa de la empresa, ni lo ya completado o cancelado. Sin ficha
+        // de empleado, no ve ninguna (no que vea todo por descarte).
         if ($this->miPerfil() === 'tecnico') {
             $miId = $this->miEmpleadoId();
             $miId ? $query->whereJsonContains('technician_ids', $miId) : $query->whereRaw('0 = 1');
+            $query->whereIn('status', ['pending', 'confirmed', 'in_progress']);
         }
 
         if ($request->has('status') && $request->status) {
@@ -432,11 +434,38 @@ class InstallationOrderController extends Controller
 
         $oltId = (int) ($request->integer('olt_id') ?: $orden->olt_id);
 
+        // De la empresa, para el selector de «por dónde entra» y para el caso de abajo, sin repetir
+        // la consulta: el técnico no ve más OLT que las de su propia empresa.
+        $olts = \App\Models\OltAdmin::where('company_id', $orden->company_id)
+            ->get(['id', 'name', 'brand', 'model', 'host', 'ont_lineprofile_id', 'ont_srvprofile_id'])
+            ->map(fn ($o) => $o->toArray())->all();
+
         if (!$oltId) {
+            // La orden no trae por qué OLT entra el cliente, y el técnico ya no puede editarla (eso es
+            // de oficina): antes esto era un error sin salida. Ahora se le manda la lista de OLT de la
+            // empresa para que elija una desde acá mismo; al elegirla, el navegador vuelve a pedir esto
+            // mismo con «olt_id» y sigue como si la orden la hubiera traído.
             return response()->json([
-                'status'  => 'error',
-                'message' => 'La orden no dice por qué OLT entra este cliente. Complétela desde Instalaciones.',
-            ], 422);
+                'status' => 'success',
+                'data'   => [
+                    'onts'        => [],
+                    'inventario'  => \App\Services\Instalaciones\EquipoDelInventario::ontsConStock((int) $orden->company_id),
+                    'aprovisiona' => (bool) \App\Models\GestionRemota::where('company_id', $orden->company_id)->value('aprovisionar'),
+                    'olts'        => $olts,
+                    'olt_id'      => null,
+                    'falta_olt'   => true,
+                    'perfiles'    => ['line' => [], 'srv' => []],
+                    'capacidades' => [],
+                    'vlans'       => [],
+                    'plan'        => [
+                        'olt_id'          => null,
+                        'vlan'            => $orden->vlan ? (int) $orden->vlan : null,
+                        'line_profile_id' => $orden->line_profile_id ? (int) $orden->line_profile_id : null,
+                        'srv_profile_id'  => $orden->srv_profile_id ? (int) $orden->srv_profile_id : null,
+                        'onu_type'        => $orden->onu_type,
+                    ],
+                ],
+            ]);
         }
 
         // Que la OLT sea de la empresa: el id llega del navegador.
@@ -479,9 +508,7 @@ class InstallationOrderController extends Controller
                 'aprovisiona' => (bool) \App\Models\GestionRemota::where('company_id', $orden->company_id)->value('aprovisionar'),
 
                 // Para poder corregir en el terreno lo que se planeó en la oficina.
-                'olts'        => \App\Models\OltAdmin::where('company_id', $orden->company_id)
-                                    ->get(['id', 'name', 'brand', 'model', 'host', 'ont_lineprofile_id', 'ont_srvprofile_id'])
-                                    ->map(fn ($o) => $o->toArray())->all(),
+                'olts'        => $olts,
                 'olt_id'      => $oltId,
                 'perfiles'    => $perfiles,
                 'capacidades' => $capacidades,
