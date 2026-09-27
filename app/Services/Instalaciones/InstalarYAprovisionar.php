@@ -200,6 +200,71 @@ class InstalarYAprovisionar
     }
 
     /**
+     * El mismo recorrido de arriba, en una orden de PRÁCTICA: no toca la OLT, no da de alta a nadie y no
+     * descuenta inventario. Devuelve los mismos pasos, marcados como simulados, para que el técnico vea
+     * exactamente qué pasaría con una instalación de verdad —incluido lo que él corrigió respecto de la
+     * orden— y termine la orden como en la vida real.
+     *
+     * @param  array{fsp: string, ont_id: int, serial: string, inventory_id?: int|null}  $equipo
+     * @return array{ok: bool, message: string, pasos: list<array<string,mixed>>, avisos: list<string>, data: array<string,mixed>}
+     */
+    public static function practica(InstallationOrder $orden, array $equipo, ?int $tecnicoId = null): array
+    {
+        if ($orden->status === 'completed') {
+            return self::falla('Esa práctica ya terminó.', [], []);
+        }
+
+        $pasos = [];
+        $anotar = function (string $que, ?string $detalle = null) use (&$pasos): void {
+            $pasos[] = ['paso' => $que, 'ok' => true, 'detalle' => $detalle ? $detalle . ' (simulado)' : '(simulado)', 'en' => now()->toDateTimeString()];
+        };
+
+        $serial = strtoupper(trim($equipo['serial']));
+
+        // Lo que traía la orden y lo que el técnico eligió, con los nombres que vio en pantalla: en una práctica
+        // los ids de la OLT y de los perfiles son de mentira y no existen en la base.
+        $olts = [-1 => 'OLT Norte (práctica)', -2 => 'OLT Sur (práctica)'];
+        $perfiles = [10 => 'Residencial 100M', 11 => 'Residencial 200M', 20 => 'Internet + WiFi', 21 => 'Solo internet'];
+        $planeado = ['olt' => -1, 'vlan' => (int) ($orden->vlan ?: 100), 'linea' => 10, 'servicio' => 20];
+        $elegido  = ['olt' => (int) ($equipo['olt_id'] ?? -1), 'vlan' => (int) ($equipo['vlan'] ?? $planeado['vlan']),
+                     'linea' => (int) ($equipo['line_profile_id'] ?? 10), 'servicio' => (int) ($equipo['srv_profile_id'] ?? 20)];
+
+        $cambios = [];
+        if ($elegido['olt'] !== $planeado['olt'])           $cambios[] = 'OLT: ' . $olts[$planeado['olt']] . ' → ' . ($olts[$elegido['olt']] ?? "OLT {$elegido['olt']}");
+        if ($elegido['vlan'] !== $planeado['vlan'])         $cambios[] = "VLAN: {$planeado['vlan']} → {$elegido['vlan']}";
+        if ($elegido['linea'] !== $planeado['linea'])       $cambios[] = 'perfil de línea: ' . ($perfiles[$planeado['linea']] ?? $planeado['linea']) . ' → ' . ($perfiles[$elegido['linea']] ?? $elegido['linea']);
+        if ($elegido['servicio'] !== $planeado['servicio']) $cambios[] = 'perfil de servicio: ' . ($perfiles[$planeado['servicio']] ?? $planeado['servicio']) . ' → ' . ($perfiles[$elegido['servicio']] ?? $elegido['servicio']);
+
+        $anotar('Cliente dado de alta', 'Se crearía a ' . ($orden->client_name ?: 'el cliente') . ' con su plan y su facturación');
+
+        if ($cambios) {
+            $anotar('El técnico corrigió el plan', implode(' · ', $cambios));
+        }
+
+        $anotar('ONT autorizada', "{$equipo['fsp']}:{$equipo['ont_id']} · {$serial} · " . ($olts[$elegido['olt']] ?? 'OLT') . " · VLAN {$elegido['vlan']}");
+        $anotar('Equipo asignado al cliente');
+        $anotar('Descontado del inventario', "Saldría 1 unidad, serial {$serial}");
+        $anotar('Configuración programada', 'Se cargarían el WiFi' . ($orden->wifi_ssid ? " «{$orden->wifi_ssid}»" : '') . ' y la conexión ' . ($orden->connection_type === 'pppoe' ? 'PPPoE' : 'de IP fija'));
+
+        $orden->fill([
+            'status'            => 'completed',
+            'ont_serial'        => $serial,
+            'ont_fsp'           => $equipo['fsp'],
+            'provisioned_at'    => now(),
+            'provision_detalle' => ['pasos' => $pasos, 'avisos' => [], 'cambios' => $cambios, 'practica' => true],
+            'finished_at'       => $orden->finished_at ?: now(),
+        ])->save();
+
+        return [
+            'ok'      => true,
+            'message' => 'Práctica terminada. Nada de esto tocó la red: el equipo era simulado y no se creó ningún cliente.',
+            'pasos'   => $pasos,
+            'avisos'  => [],
+            'data'    => ['practica' => true, 'ont' => ['fsp' => $equipo['fsp'], 'ont_id' => (int) $equipo['ont_id'], 'serial' => $serial]],
+        ];
+    }
+
+    /**
      * Con qué se va a autorizar: lo de la orden, salvo lo que el técnico cambió.
      *
      * Devuelve además qué cambió, en palabras, para que quede anotado en la

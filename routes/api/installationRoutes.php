@@ -6,6 +6,8 @@ use App\Http\Controllers\InstallationOrderController;
 Route::prefix('installations')->middleware('module:installations')->group(function () {
     Route::get('/', [InstallationOrderController::class, 'index']);
     Route::post('/', [InstallationOrderController::class, 'store']);
+    // Una orden de práctica para recorrer el flujo sin tocar la red. Va antes de '/{id}'.
+    Route::post('/practica', [InstallationOrderController::class, 'practica']);
     Route::get('/dashboard', [InstallationOrderController::class, 'dashboard']);
     Route::get('/plans', [InstallationOrderController::class, 'plans']);
     Route::get('/payment-methods', [InstallationOrderController::class, 'paymentMethods']);

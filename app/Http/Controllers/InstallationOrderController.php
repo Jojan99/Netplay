@@ -204,7 +204,7 @@ class InstallationOrderController extends Controller
         $installation = InstallationOrder::where('company_id', getSessionCompanyId())
             ->findOrFail($id);
         
-        if ($installation->status !== 'pending') {
+        if ($installation->status !== 'pending' && !$installation->modo_practica) {
             return response()->json(['message' => 'No se puede eliminar una orden en proceso o completada'], 400);
         }
         
@@ -321,6 +321,66 @@ class InstallationOrderController extends Controller
      * que está conectado y encendido.
      */
     /**
+     * Crea una orden de PRÁCTICA para quien la pide, ya confirmada, para recorrer el flujo de instalar.
+     *
+     * No avisa por WhatsApp, no reserva lugar en el plan, no cuenta en el tablero ni en las comisiones, y al
+     * terminarla no se toca la red: el equipo es simulado. Si quien la crea es un técnico, queda asignada a él.
+     */
+    public function practica()
+    {
+        $empresa = (int) getSessionCompanyId();
+        $tecnico = Employee::where('company_id', $empresa)->where('user_id', getSessionUserId())->value('id');
+
+        $orden = InstallationOrder::create([
+            'company_id' => $empresa, 'created_by' => Auth::id(), 'status' => 'confirmed', 'modo_practica' => true, 'payment_status' => 'pending',
+            'client_name' => 'CLIENTE DE PRÁCTICA', 'client_firstname' => 'CLIENTE', 'client_lastname' => 'DE PRÁCTICA',
+            'client_dni' => 'PRACTICA-' . random_int(1000, 9999), 'client_phone' => '3000000000', 'address' => 'Calle de práctica 123', 'neighborhood' => 'Barrio de práctica',
+            'internet_plan_id' => DB::table('internet_plans')->where('company_id', $empresa)->orderBy('id')->value('id'),
+            'grupo_facturacion' => 1, 'connection_type' => 'pppoe', 'pppoe_user' => 'practica', 'pppoe_profile' => 'practica', 'vlan' => 100,
+            'wifi_ssid' => 'PRACTICA_WIFI', 'wifi_password' => 'practica2026',
+            'scheduled_date' => now()->toDateString(), 'scheduled_time' => now()->format('H:i'), 'installation_cost' => 0, 'commission_amount' => 0,
+            'technician_ids' => $tecnico ? [(int) $tecnico] : null,
+            'observations' => 'ORDEN DE PRÁCTICA: nada de esto toca la red, ni crea clientes, ni descuenta inventario.',
+        ]);
+
+        InstallationLog::create(['installation_id' => $orden->id, 'action' => 'create', 'description' => 'Orden de práctica creada', 'notes' => 'Modo práctica', 'created_by' => Auth::id()]);
+
+        return response()->json(['message' => 'Orden de práctica creada. Inícielo y siga los pasos: nada de esto toca la red.', 'data' => $orden], 201);
+    }
+
+    /** Lo que ve el técnico en una práctica: equipos, OLT, VLAN y perfiles de mentira, con la forma de los reales. */
+    private function equiposDePractica(InstallationOrder $orden, int $oltPedida): array
+    {
+        $olts = [
+            ['id' => -1, 'name' => 'OLT Norte (práctica)', 'brand' => 'huawei', 'model' => 'MA5800', 'host' => '10.0.0.1', 'ont_lineprofile_id' => 10, 'ont_srvprofile_id' => 20],
+            ['id' => -2, 'name' => 'OLT Sur (práctica)',   'brand' => 'zte',    'model' => 'C320',   'host' => '10.0.0.2', 'ont_lineprofile_id' => 10, 'ont_srvprofile_id' => 20],
+        ];
+        $oltId = $oltPedida < 0 ? $oltPedida : -1;
+
+        // Otra OLT trae otros equipos: así se ve qué pasa cuando el cliente no sale por donde decía la orden.
+        $onts = $oltId === -1
+            ? [['serial' => 'PRACTICA-HWTC0001', 'sn' => 'PRACTICA-HWTC0001', 'fsp' => '0/1/1', 'ont_id' => 0, 'model' => 'HG8145V5 (simulada)'],
+               ['serial' => 'PRACTICA-HWTC0002', 'sn' => 'PRACTICA-HWTC0002', 'fsp' => '0/1/2', 'ont_id' => 1, 'model' => 'HG8145V5 (simulada)']]
+            : [['serial' => 'PRACTICA-ZTEG0003', 'sn' => 'PRACTICA-ZTEG0003', 'fsp' => '1/2/1', 'ont_id' => 0, 'model' => 'F670L (simulada)']];
+
+        return [
+            'onts'        => $onts,
+            'inventario'  => [['id' => -1, 'name' => 'ONT HG8145V5 (práctica)', 'quantity' => 12], ['id' => -2, 'name' => 'ONT F670L (práctica)', 'quantity' => 8]],
+            'aprovisiona' => true,
+            'olts'        => $olts,
+            'olt_id'      => $oltId,
+            'perfiles'    => [
+                'line' => [['profile_id' => 10, 'profile_name' => 'Residencial 100M (práctica)'], ['profile_id' => 11, 'profile_name' => 'Residencial 200M (práctica)']],
+                'srv'  => [['profile_id' => 20, 'profile_name' => 'Internet + WiFi (práctica)'], ['profile_id' => 21, 'profile_name' => 'Solo internet (práctica)']],
+            ],
+            'capacidades' => ['etiqueta_perfil_linea' => 'Perfil de línea', 'etiqueta_perfil_servicio' => 'Perfil de servicio', 'perfil_servicio_en_alta' => true],
+            'vlans'       => [['vlan' => 100, 'nombre' => 'vlan100', 'red' => '10.100.0.0/24', 'clientes' => 34], ['vlan' => 120, 'nombre' => 'vlan120', 'red' => '10.120.0.0/24', 'clientes' => 12]],
+            'plan'        => ['olt_id' => -1, 'vlan' => $orden->vlan ? (int) $orden->vlan : 100, 'line_profile_id' => 10, 'srv_profile_id' => 20, 'onu_type' => null],
+            'practica'    => true,
+        ];
+    }
+
+    /**
      * Todo lo que el técnico necesita para instalar, en una sola consulta.
      *
      * Está en la calle con datos móviles: pedirle cuatro peticiones para armar
@@ -333,6 +393,12 @@ class InstallationOrderController extends Controller
     public function equiposDisponibles(Request $request, int $id)
     {
         $orden = InstallationOrder::where('company_id', getSessionCompanyId())->findOrFail($id);
+
+        // Una orden de práctica no le pregunta nada a la OLT ni al router: todo es de mentira, pero con la
+        // misma forma que lo real, para que el técnico vea la pantalla tal como la va a ver en la calle.
+        if ($orden->modo_practica) {
+            return response()->json(['status' => 'success', 'data' => $this->equiposDePractica($orden, (int) $request->integer('olt_id'))]);
+        }
 
         $oltId = (int) ($request->integer('olt_id') ?: $orden->olt_id);
 
@@ -451,6 +517,9 @@ class InstallationOrderController extends Controller
 
     public function provisionar(Request $request, int $id)
     {
+        $orden = InstallationOrder::where('company_id', getSessionCompanyId())->findOrFail($id);
+        $practica = (bool) $orden->modo_practica;
+
         $datos = $request->validate([
             'fsp'          => 'required|string|max:20',
             'ont_id'       => 'required|integer|min:0',
@@ -460,14 +529,23 @@ class InstallationOrderController extends Controller
             // Lo que el técnico corrige estando en la casa: la orden se tomó
             // en la oficina y a veces el cliente sale por otro nodo u otra
             // VLAN. Si no viene, se usa lo que traía la orden.
-            'olt_id'          => ['nullable', $this->deLaEmpresa('olt_admins')],
+            // En una práctica los ids de la OLT son de mentira: no existen en la base.
+            'olt_id'          => $practica ? 'nullable|integer' : ['nullable', $this->deLaEmpresa('olt_admins')],
             'vlan'            => 'nullable|integer|min:1|max:4094',
             'line_profile_id' => 'nullable|integer|min:0',
             'srv_profile_id'  => 'nullable|integer|min:0',
             'onu_type'        => 'nullable|string|max:60',
         ]);
 
-        $orden = InstallationOrder::where('company_id', getSessionCompanyId())->findOrFail($id);
+        if ($practica) {
+            $r = \App\Services\Instalaciones\InstalarYAprovisionar::practica($orden, $datos, getSessionUserId());
+
+            return response()->json([
+                'status'  => $r['ok'] ? 'success' : 'error',
+                'message' => $r['message'],
+                'data'    => ['pasos' => $r['pasos'], 'avisos' => $r['avisos']] + $r['data'],
+            ], $r['ok'] ? 200 : 422);
+        }
 
         $r = \App\Services\Instalaciones\InstalarYAprovisionar::hacer($orden, $datos, getSessionUserId());
 
@@ -638,26 +716,26 @@ class InstallationOrderController extends Controller
         $companyId = getSessionCompanyId();
         
         $stats = [
-            'total' => InstallationOrder::where('company_id', $companyId)->count(),
-            'pending' => InstallationOrder::where('company_id', $companyId)->where('status', 'pending')->count(),
-            'confirmed' => InstallationOrder::where('company_id', $companyId)->where('status', 'confirmed')->count(),
-            'in_progress' => InstallationOrder::where('company_id', $companyId)->where('status', 'in_progress')->count(),
-            'completed' => InstallationOrder::where('company_id', $companyId)->where('status', 'completed')->count(),
-            'cancelled' => InstallationOrder::where('company_id', $companyId)->where('status', 'cancelled')->count(),
+            'total' => InstallationOrder::where('company_id', $companyId)->where('modo_practica', false)->count(),
+            'pending' => InstallationOrder::where('company_id', $companyId)->where('modo_practica', false)->where('status', 'pending')->count(),
+            'confirmed' => InstallationOrder::where('company_id', $companyId)->where('modo_practica', false)->where('status', 'confirmed')->count(),
+            'in_progress' => InstallationOrder::where('company_id', $companyId)->where('modo_practica', false)->where('status', 'in_progress')->count(),
+            'completed' => InstallationOrder::where('company_id', $companyId)->where('modo_practica', false)->where('status', 'completed')->count(),
+            'cancelled' => InstallationOrder::where('company_id', $companyId)->where('modo_practica', false)->where('status', 'cancelled')->count(),
         ];
         
         $payments = [
-            'pending' => InstallationOrder::where('company_id', $companyId)->where('payment_status', 'pending')->count(),
-            'paid' => InstallationOrder::where('company_id', $companyId)->where('payment_status', 'paid')->count(),
-            'verified' => InstallationOrder::where('company_id', $companyId)->where('payment_status', 'verified')->count(),
-            'rejected' => InstallationOrder::where('company_id', $companyId)->where('payment_status', 'rejected')->count(),
+            'pending' => InstallationOrder::where('company_id', $companyId)->where('modo_practica', false)->where('payment_status', 'pending')->count(),
+            'paid' => InstallationOrder::where('company_id', $companyId)->where('modo_practica', false)->where('payment_status', 'paid')->count(),
+            'verified' => InstallationOrder::where('company_id', $companyId)->where('modo_practica', false)->where('payment_status', 'verified')->count(),
+            'rejected' => InstallationOrder::where('company_id', $companyId)->where('modo_practica', false)->where('payment_status', 'rejected')->count(),
         ];
         
-        $pendingAmount = InstallationOrder::where('company_id', $companyId)
+        $pendingAmount = InstallationOrder::where('company_id', $companyId)->where('modo_practica', false)
             ->whereIn('payment_status', ['pending', 'paid'])
             ->sum('payment_amount');
         
-        $commissionTotal = InstallationOrder::where('company_id', $companyId)
+        $commissionTotal = InstallationOrder::where('company_id', $companyId)->where('modo_practica', false)
             ->where('status', 'completed')
             ->sum('commission_amount');
         
