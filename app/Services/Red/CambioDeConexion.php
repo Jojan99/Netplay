@@ -130,8 +130,15 @@ class CambioDeConexion
             return ['modo' => 'sin_ont', 'motivo' => 'El aprovisionamiento está apagado.'];
         }
 
+        if (!\App\Services\Plataforma\ComplementoTr069::permitido($this->companyId)) {
+            return ['modo' => 'sin_ont', 'motivo' => 'El complemento TR-069 no está activo.'];
+        }
+
+        // $userId es el de «users»; «olt_onts.user_data_id» guarda el de la ficha. Buscar con el
+        // primero encontraba la ONT de otro cliente —el que tiene ese número de ficha— o ninguna.
         $ont = OltOnt::whereHas('olt', fn ($q) => $q->where('company_id', $this->companyId))
-            ->where('user_data_id', $userId)->orderByDesc('updated_at')->first();
+            ->where('user_data_id', (int) \Illuminate\Support\Facades\DB::table('user_data')->where('user_id', $userId)->value('id'))
+            ->orderByDesc('updated_at')->first();
 
         if (!$ont || !$ont->serial) {
             return ['modo' => 'sin_ont', 'motivo' => 'El cliente no tiene ONT.'];

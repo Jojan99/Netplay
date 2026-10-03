@@ -32,21 +32,9 @@ class UpdateInventoryUseCase implements UpdateInventoryUseCaseInterface
                 ];
             }
 
-            // Si se envió cantidad diferente, registrar ajuste para trazabilidad
-            if ($newQuantity !== null && (float) $newQuantity !== (float) $item->quantity) {
-                $movementResult = $this->movementUseCase->create([
-                    'inventory_id' => $id,
-                    'type'         => InventoryMovement::TYPE_AJUSTE,
-                    'quantity'     => (float) $newQuantity,
-                    'unit_price'   => 0,
-                    'description'  => 'Ajuste por edición manual de cantidad',
-                    'reference'    => 'ajuste-edición',
-                ]);
-
-                if ($movementResult['status'] !== ApiResponseConstants::SUCCESS) {
-                    return $movementResult;
-                }
-            }
+            // La cantidad no se cambia editando el ítem: la pantalla manda la que tenía cuando se
+            // cargó la lista, y con eso se devolvía la existencia a un valor viejo sin que nadie
+            // lo pidiera. Para corregirla está el ajuste por conteo (un movimiento, con rastro).
 
             $item = $this->itemRepository->update($companyId, $id, $data);
 

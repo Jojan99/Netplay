@@ -273,6 +273,26 @@ class FacturationController extends Controller
         return standardApiReponse($r['mensaje'], null, $r['ok'] ? 0 : 1, JsonResponse::HTTP_OK);
     }
 
+    /** Anular varias facturas de un cliente de una vez, todas con el mismo motivo. */
+    public function anularBulk(Request $request, FacturationRepositoryInterface $repo): object
+    {
+        if (!$this->puedeTocarPagos()) {
+            return standardApiReponse('No tiene permiso para anular facturas.', null, 1, JsonResponse::HTTP_FORBIDDEN);
+        }
+
+        $request->validate([
+            'det_ids' => 'required|array|min:1',
+            'motivo'  => 'required|string|max:255',
+        ]);
+
+        $r = $repo->anularBulk((array) $request->input('det_ids'), trim((string) $request->input('motivo')));
+
+        $mensaje = "{$r['anuladas']} factura(s) anulada(s)." . ($r['errores'] ? ' ' . implode(' ', $r['errores']) : '')
+            . (!empty($r['avisos']) ? ' ' . implode(' ', $r['avisos']) : '');
+
+        return standardApiReponse($mensaje, $r, 0, JsonResponse::HTTP_OK);
+    }
+
     /**
      * Borrar una factura.
      *

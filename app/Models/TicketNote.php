@@ -6,6 +6,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class TicketNote extends Model
 {
+    use \App\Models\Concerns\FechasEnHoraLocal;
+
     protected $fillable = [
         'ticket_id',
         'company_id',

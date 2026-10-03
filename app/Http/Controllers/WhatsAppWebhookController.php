@@ -145,6 +145,20 @@ class WhatsAppWebhookController extends Controller
                     : null;
 
                 foreach ($messages as $message) {
+                    // Meta reenvía el mismo mensaje si la respuesta tarda (leer un comprobante puede
+                    // tomar más de un minuto). Sin esto el reenvío se procesaba como un mensaje nuevo:
+                    // el mismo comprobante entraba dos veces y la conversación del bot se enredaba.
+                    if (!empty($message['id'])) {
+                        try {
+                            if (!\Illuminate\Support\Facades\Cache::store('redis')->add('meta:mensaje:' . $message['id'], 1, now()->addDay())) {
+                                $results[] = ['status' => 'duplicado', 'message_id' => $message['id']];
+                                continue;
+                            }
+                        } catch (\Throwable $e) {
+                            // Sin Redis no se puede saber si es repetido: se procesa.
+                        }
+                    }
+
                     try {
                         // Intentar manejar con el bot primero
                         $handledByBot = false;
@@ -189,7 +203,13 @@ class WhatsAppWebhookController extends Controller
                                 $metaMessage['payment_proof_media'] = $message[$message['type']];
                             }
 
-                            $handledByBot = $this->botService->handleIncomingMessage($metaMessage, $phoneNumberId);
+                            // Un pedido de soporte no pasa por el bot de menús: lo
+                            // atiende el asistente de soporte (más abajo, ya con la
+                            // conversación creada en el CRM).
+                            $esDeSoporte = $companyId && $metaMessage['from']
+                                && \App\Services\Soporte\AgenteDeSoporte::esParaSoporte((int) $companyId, 'meta', (string) $metaMessage['from'], $metaMessage['text']['body'] ?? null);
+
+                            $handledByBot = $esDeSoporte ? false : $this->botService->handleIncomingMessage($metaMessage, $phoneNumberId);
                         }
 
                         if ($handledByBot) {

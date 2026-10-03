@@ -4,9 +4,9 @@ namespace App\UseCases\Inventory;
 
 use App\Constants\ApiResponseConstants;
 use App\Repositories\Interfaces\InventoryCategoryRepositoryInterface;
-use App\UseCases\Inventory\Interfaces\CreateInventoryCategoryUseCaseInterface;
+use App\UseCases\Inventory\Interfaces\UpdateInventoryCategoryUseCaseInterface;
 
-class UpdateInventoryCategoryUseCase implements CreateInventoryCategoryUseCaseInterface
+class UpdateInventoryCategoryUseCase implements UpdateInventoryCategoryUseCaseInterface
 {
     public function __construct(
         private InventoryCategoryRepositoryInterface $categoryRepository

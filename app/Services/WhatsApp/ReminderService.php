@@ -130,7 +130,7 @@ class ReminderService
             })
             ->leftJoin('internet_plans as ip', 'ip.id', '=', 'ud.internet_plans_id')
             ->where('cf.company_id', $company->id)
-            ->where('df.paid', 0)
+            ->where('df.paid', 0)->whereNull('df.anulada_en')
             ->whereRaw('DATE(df.date_facturation) = ?', [$emitidaEl])
             ->whereRaw('(df.price_total - COALESCE(df.price_discount,0) - COALESCE(df.price_abone,0)) > 0')
             ->whereRaw("CHAR_LENGTH(REGEXP_REPLACE(COALESCE(ud.phone,''), '[^0-9]', '')) >= 10")
@@ -190,7 +190,7 @@ class ReminderService
                     ->from('cab_facturations as cf')
                     ->join('det_facturations as df', 'df.cab_id', '=', 'cf.id')
                     ->where('cf.company_id', $company->id)
-                    ->where('df.paid', 0)
+                    ->where('df.paid', 0)->whereNull('df.anulada_en')
                     ->whereRaw('(df.price_total - COALESCE(df.price_discount,0) - COALESCE(df.price_abone,0)) > 0');
             })
             ->get(['ud.*', DB::raw('ip.plan_name as plan')]);
@@ -247,10 +247,44 @@ class ReminderService
             ->join('cab_facturations as cf', 'cf.id', '=', 'df.cab_id')
             ->where('cf.company_id', $companyId)
             ->where('cf.user_id', $userId)
-            ->where('df.paid', 0)
+            ->where('df.paid', 0)->whereNull('df.anulada_en')
             ->whereRaw('(df.price_total - COALESCE(df.price_discount,0) - COALESCE(df.price_abone,0)) > 0')
             ->orderBy('df.date_facturation')
             ->first(['df.id', 'df.number_facture', 'df.date_facturation']);
+    }
+
+    /**
+     * Manda una plantilla a UN cliente, con sus datos y sus botones, y devuelve qué pasó.
+     *
+     * Es lo mismo que hace la pasada diaria, a pedido: lo usa la suspensión masiva para avisar
+     * a los clientes que el operador eligió. No mira si ya se le avisó hoy: eso lo decide quien llama.
+     *
+     * @param  array<int,string> $orden   variables del cuerpo, en el orden de la plantilla
+     * @return array{ok:bool, error:?string}
+     */
+    public function enviarPlantilla(Company $company, string $plantilla, string $idioma, array $orden, object $cliente, array $extra, string $evento): array
+    {
+        $caso = ['cliente' => $cliente, 'extra' => $extra];
+        $valores = $this->contexto->forClient($company, $cliente, array_diff_key($extra, ['texto_libre' => 1]));
+
+        if (isset($extra['texto_libre'])) {
+            $valores['texto_libre'] = $this->contexto->rellenar((string) $extra['texto_libre'], $valores);
+        }
+
+        try {
+            $botones = $this->valoresDeBotones((new MetaWhatsAppService($company->id))->dynamicUrlButtons($plantilla, $idioma), $company, $caso);
+            $r = (new WhatsAppService($company->id, false, 'meta'))->sendTemplate((string) $cliente->phone, $plantilla, $this->contexto->toParameters($orden, $valores), $idioma, $botones);
+        } catch (\Throwable $e) {
+            return ['ok' => false, 'error' => mb_substr($e->getMessage(), 0, 250)];
+        }
+
+        if (!MetaWhatsAppService::accepted($r)) {
+            return ['ok' => false, 'error' => mb_substr((string) ($r['error'] ?? 'Meta no aceptó el mensaje'), 0, 250)];
+        }
+
+        $this->registrar($company->id, $evento, (int) $cliente->user_id);
+
+        return ['ok' => true, 'error' => null];
     }
 
     private function enviar(Company $company, WaTemplateBinding $binding, array $caso): bool
@@ -341,7 +375,7 @@ class ReminderService
                 ->join('cab_facturations as cab', 'cab.id', '=', 'd.cab_id')
                 ->where('cab.company_id', $companyId)
                 ->where('cab.user_id', $userId)
-                ->where('d.paid', 0)
+                ->where('d.paid', 0)->whereNull('d.anulada_en')
                 ->sum(DB::raw('GREATEST(0, d.price_total - COALESCE(d.price_discount,0) - COALESCE(d.price_abone,0))'));
 
             DB::table('wa_avisos_enviados')->insert([
@@ -411,10 +445,8 @@ class ReminderService
      */
     private function tokenDePago(Company $company, int $userId, string $phone): ?string
     {
-        if (!$company->pg_active || !$company->pg_gateway) {
-            return null;
-        }
-
+        // Sin pasarela el enlace igual sirve: abre el estado de cuenta del cliente (ver
+        // PaymentLinkService::resolveToCheckout). Sin token, Meta rechaza el mensaje entero.
         try {
             $link = app(\App\Services\PaymentGateways\PaymentLinkService::class)
                 ->create($company, $userId, null, 'recordatorio', null, $phone);

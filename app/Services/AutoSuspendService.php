@@ -167,6 +167,100 @@ class AutoSuspendService
         return $applied;
     }
 
+    /**
+     * Corta o devuelve el servicio en el router, según cómo se conecte cada cliente.
+     *
+     * Con IP fija se apaga o se enciende su entrada del ARP. Un cliente PPPoE no tiene
+     * entrada ahí: lo que se corta es su credencial (el «secret») y además se le baja la
+     * sesión, o sigue navegando hasta que reconecte. Antes este proceso sólo sabía de ARP,
+     * así que a los PPPoE ni los suspendía ni los reactivaba: salían como «no encontrado».
+     *
+     * @param  array<int,int> $userIds  ids de «users»
+     * @return ?array<int,int>  los que el router confirmó; null si no hubo conexión con ninguno
+     */
+    private function aplicarEnElRouter(int $companyId, array $userIds, bool $suspender): ?array
+    {
+        if (empty($userIds)) return [];
+
+        $pppoe = DB::table('user_data')
+            ->whereIn('user_id', $userIds)
+            ->where('company_id', $companyId)
+            ->where('connection_type', 'pppoe')
+            ->get(['user_id', 'names', 'lastname', 'dni', 'pppoe_user', 'router_id']);
+
+        $fijos = array_values(array_diff(array_map('intval', $userIds), $pppoe->pluck('user_id')->map(fn ($i) => (int) $i)->all()));
+
+        $hechos = [];
+        $sinConexion = false;
+
+        if ($fijos) {
+            $r = $this->applyArpStatus($companyId, $fijos, $suspender ? '/ip/arp/disable' : '/ip/arp/enable', $suspender ? 'SUSPENDIDO' : 'REACTIVADO');
+            $r === null ? $sinConexion = true : $hechos = $r;
+        }
+
+        if ($pppoe->isEmpty()) {
+            return $sinConexion && !$hechos ? null : $hechos;
+        }
+
+        $verbo = $suspender ? 'SUSPENDIDO' : 'REACTIVADO';
+        $this->writelog("EMPRESA {$companyId} │ PPPoE │ " . ($suspender ? 'SUSPENDER' : 'REACTIVAR') . ' │ Usuarios a procesar: ' . $pppoe->count());
+
+        $conexion = app(\App\Managers\Interfaces\ConectionRouterManagerInterface::class);
+        $caidos = 0;
+
+        foreach ($pppoe as $c) {
+            $label = "ID:{$c->user_id} | " . trim("{$c->names} {$c->lastname}") . " | DNI:{$c->dni} | pppoe:{$c->pppoe_user}";
+            $usuario = trim((string) $c->pppoe_user);
+
+            if ($usuario === '') {
+                $this->writelog("  ✗ {$label} — es PPPoE pero no tiene usuario configurado, omitido");
+                continue;
+            }
+
+            try {
+                // El router del cliente; si no tiene uno asignado, el de la empresa.
+                $router = $c->router_id ? $this->routerRepo->getRouterById((int) $c->router_id, $companyId) : null;
+                $token  = $router->token ?? $this->routerRepo->getTokenByCompany($companyId);
+
+                if (!$token) {
+                    $this->writelog("  ✗ {$label} — la empresa no tiene router configurado");
+                    $caidos++;
+                    continue;
+                }
+
+                $servicio = new \App\Services\Red\ServicioPppoe($conexion, $token);
+                $suspender ? $servicio->suspender($usuario) : $servicio->reactivar($usuario);
+
+                // suspender()/reactivar() no avisan si la credencial no existe: se comprueba
+                // cómo quedó antes de darlo por hecho y tocar la plataforma.
+                $secret = $servicio->secret($usuario);
+
+                if (!$secret) {
+                    $this->writelog("  ✗ {$label} — la credencial no existe en el router");
+                    continue;
+                }
+
+                if ((($secret['disabled'] ?? 'false') === 'true') !== $suspender) {
+                    $this->writelog("  ! {$label} — el router no aplicó el cambio");
+                    continue;
+                }
+
+                $this->writelog("  ✓ {$label} — {$verbo} en el router (PPPoE)");
+                $hechos[] = (int) $c->user_id;
+            } catch (\Throwable $e) {
+                $this->writelog("  ! {$label} — ERROR PPPoE: " . $e->getMessage());
+                $caidos++;
+            }
+        }
+
+        // Nada aplicado y todo fue falla de conexión: se trata como router caído, para reintentar.
+        if (!$hechos && ($sinConexion || $caidos === $pppoe->count()) && ($sinConexion || !$fijos)) {
+            return null;
+        }
+
+        return $hechos;
+    }
+
     // ── Lógica principal ─────────────────────────────────────────────────────
 
     /**
@@ -179,7 +273,9 @@ class AutoSuspendService
             ->join('user_data as ud', 'ud.user_id', '=', 'cb.user_id')
             ->join('users', 'users.id', '=', 'cb.user_id')
             ->where('users.company_id', $companyId)
-            ->where('ud.STATUS', 0)
+            // Sólo clientes vigentes que hoy tienen servicio: ni eliminados ni ya suspendidos.
+            ->where('ud.active', 1)
+            ->where('ud.status_internet_id', 1)
             ->whereNotIn('users.profile_id', function ($q) use ($companyId) {
                 $q->select('id')->from('profiles')
                     ->where('company_id', $companyId)
@@ -189,7 +285,7 @@ class AutoSuspendService
                 $q->select(DB::raw(1))
                     ->from('det_facturations as df')
                     ->whereColumn('df.cab_id', 'cb.id')
-                    ->where('df.paid', 0)
+                    ->where('df.paid', 0)->whereNull('df.anulada_en')
                     ->where('df.abone', '!=', 1);
             })
             ->select('cb.user_id', DB::raw('COUNT(DISTINCT cb.id) as cab_count'))
@@ -210,7 +306,7 @@ class AutoSuspendService
             ->join('cab_facturations as cb', 'cb.id', '=', 'df.cab_id')
             ->join('user_data as ud', 'ud.user_id', '=', 'cb.user_id')
             ->whereIn('cb.user_id', $userIds)
-            ->where('df.paid', 0)
+            ->where('df.paid', 0)->whereNull('df.anulada_en')
             ->where('df.abone', '!=', 1)
             ->select(
                 'cb.user_id',
@@ -234,7 +330,7 @@ class AutoSuspendService
         }
 
         // 1. Primero aplicar en MikroTik
-        $applied = $this->applyArpStatus($companyId, $userIds, '/ip/arp/disable', 'SUSPENDIDO');
+        $applied = $this->aplicarEnElRouter($companyId, $userIds, true);
 
         if ($applied === null) {
             $this->writelog("suspendOverdue empresa={$companyId} → MikroTik sin conexión, BD sin cambios.");
@@ -242,7 +338,7 @@ class AutoSuspendService
         }
 
         if (empty($applied)) {
-            $this->writelog("suspendOverdue empresa={$companyId} → ningún cliente encontrado en ARP, BD sin cambios.");
+            $this->writelog("suspendOverdue empresa={$companyId} → ningún cliente encontrado en el router (ARP ni PPPoE), BD sin cambios.");
             return 0;
         }
 
@@ -258,14 +354,67 @@ class AutoSuspendService
                 'company_id'     => $companyId,
                 'user_id'        => $r->user_id,
                 'action'         => 'suspended',
+                'motivo'         => 'mora',
+                'detalle'        => "Corte automático: {$r->cab_count} factura(s) pendiente(s)",
                 'invoices_count' => $r->cab_count,
                 'created_at'     => $now,
             ])->toArray();
         DB::table('auto_suspend_logs')->insert($logs);
+        $this->alHistorial($companyId, $applied, false, 'Suspensión automática por mora');
 
         $total = count($applied);
         $this->writelog("suspendOverdue empresa={$companyId} → {$total} cliente(s) suspendido(s) en BD y MikroTik");
         return $total;
+    }
+
+    /**
+     * Suspende los clientes que el operador eligió (suspensión masiva).
+     *
+     * Hace lo mismo que el corte automático —primero el router, después la plataforma, y
+     * sólo para los que el router confirmó—, pero con la lista que se le pasa en vez de
+     * calcularla, y deja escrito quién lo ordenó.
+     *
+     * @param  list<int> $userIds
+     * @return array{suspendidos: list<int>, router_caido: bool}
+     */
+    public function suspenderSeleccion(int $companyId, array $userIds, string $detalle, ?int $hechoPor): array
+    {
+        // Sólo clientes vigentes de la empresa que hoy tienen servicio.
+        $validos = DB::table('user_data')->where('company_id', $companyId)->where('active', 1)->where('status_internet_id', 1)
+            ->whereIn('user_id', array_map('intval', $userIds))->pluck('user_id')->map(fn ($i) => (int) $i)->all();
+
+        if (!$validos) {
+            return ['suspendidos' => [], 'router_caido' => false];
+        }
+
+        $this->writelog("suspensionMasiva empresa={$companyId} por usuario " . ($hechoPor ?? 'sistema') . ' → ' . count($validos) . ' cliente(s) elegidos');
+        $aplicados = $this->aplicarEnElRouter($companyId, $validos, true);
+
+        if ($aplicados === null) {
+            $this->writelog("suspensionMasiva empresa={$companyId} → MikroTik sin conexión, BD sin cambios.");
+
+            return ['suspendidos' => [], 'router_caido' => true];
+        }
+
+        if (!$aplicados) {
+            return ['suspendidos' => [], 'router_caido' => false];
+        }
+
+        DB::table('user_data')->where('company_id', $companyId)->whereIn('user_id', $aplicados)->update(['STATUS' => 1, 'status_internet_id' => 2]);
+
+        $facturas = DB::table('det_facturations as df')->join('cab_facturations as cb', 'cb.id', '=', 'df.cab_id')
+            ->where('cb.company_id', $companyId)->whereIn('cb.user_id', $aplicados)->where('df.paid', 0)->whereNull('df.anulada_en')
+            ->groupBy('cb.user_id')->selectRaw('cb.user_id, COUNT(*) n')->pluck('n', 'user_id');
+        $ahora = now();
+
+        DB::table('auto_suspend_logs')->insert(array_map(fn ($id) => [
+            'company_id' => $companyId, 'user_id' => $id, 'action' => 'suspended', 'motivo' => 'mora',
+            'detalle' => mb_substr($detalle, 0, 250), 'hecho_por' => $hechoPor, 'invoices_count' => (int) ($facturas[$id] ?? 0), 'created_at' => $ahora,
+        ], $aplicados));
+        $this->alHistorial($companyId, $aplicados, false, mb_substr($detalle, 0, 200));
+        $this->writelog("suspensionMasiva empresa={$companyId} → " . count($aplicados) . ' cliente(s) suspendido(s) en BD y MikroTik');
+
+        return ['suspendidos' => array_values($aplicados), 'router_caido' => false];
     }
 
     /**
@@ -275,6 +424,13 @@ class AutoSuspendService
      */
     public function importExistingSuspended(int $companyId): int
     {
+        // Ya no hace falta: la reactivación mira el estado real del cliente, no este registro
+        // (ver suspendidosQueVuelvenSolos). Y tal como estaba era peligroso al encender el
+        // corte: tomaba «STATUS = 1», que tienen sobre todo los clientes ELIMINADOS, y les
+        // apagaba el ARP buscándolos por documento o por IP — una IP que hoy puede ser de
+        // otro cliente. Se deja el método porque lo llama la pantalla de configuración.
+        return 0;
+
         // Usuarios suspendidos (STATUS=1) sin ningún log en auto_suspend_logs
         $suspended = DB::table('user_data as ud')
             ->join('users', 'users.id', '=', 'ud.user_id')
@@ -301,6 +457,8 @@ class AutoSuspendService
             'company_id'     => $companyId,
             'user_id'        => $uid,
             'action'         => 'suspended',
+            'motivo'         => 'importado',
+            'detalle'        => 'Ya estaba suspendido al encender el corte automático',
             'invoices_count' => 0,
             'created_at'     => $importedAt,
         ], $suspended);
@@ -330,40 +488,46 @@ class AutoSuspendService
         $hasUnpaid = DB::table('det_facturations as df')
             ->join('cab_facturations as cb', 'cb.id', '=', 'df.cab_id')
             ->where('cb.user_id', $userId)
-            ->where('df.paid', 0)
+            ->where('df.paid', 0)->whereNull('df.anulada_en')
             ->where('df.abone', '!=', 1)
             ->exists();
 
         if ($hasUnpaid) return false;
 
-        $userData = DB::table('user_data')->where('user_id', $userId)->first();
-        $currentStatus = $userData ? ($userData->STATUS ?? $userData->status ?? null) : null;
-        if (!$userData || $currentStatus != 1) return false;
+        // Suspendido de verdad: cliente vigente con el internet en INACTIVE (ver
+        // suspendidosQueVuelvenSolos). Antes se miraba STATUS = 1, que la suspensión desde el
+        // panel no escribe: quien pagaba después de un corte manual no volvía al registrar el pago.
+        $userData = DB::table('user_data')->where('user_id', $userId)->where('company_id', $companyId)->first();
+        if (!$userData || (int) $userData->active !== 1 || (int) $userData->status_internet_id !== 2) return false;
 
-        $lastLog = DB::table('auto_suspend_logs')
-            ->where('user_id', $userId)
-            ->where('company_id', $companyId)
-            ->orderByDesc('created_at')
-            ->first();
-
-        if (!$lastLog || $lastLog->action !== 'suspended') return false;
+        // Ya no depende de que exista una fila en el registro: basta con que esté suspendido
+        // y al día. Lo único que lo frena es que un operador lo haya suspendido por algo que
+        // no es la mora (ver UpdateStatusUserUseCase).
+        if (!empty($userData->no_reactivar_auto)) {
+            $this->writelog("reactivateIfClear usuario={$userId} → al día, pero marcado «no reactivar automáticamente»: lo reactiva un operador.");
+            return false;
+        }
 
         // 1. Primero MikroTik
-        $applied = $this->applyArpStatus($companyId, [$userId], '/ip/arp/enable', 'REACTIVADO');
+        $applied = $this->aplicarEnElRouter($companyId, [$userId], false);
 
         if (empty($applied)) return false; // MikroTik falló o no encontró al cliente
 
         // 2. Actualizar BD solo si MikroTik confirmó
-        DB::table('user_data')->where('user_id', $userId)->update(['STATUS' => 0, 'status_internet_id' => 1]);
+        DB::table('user_data')->where('user_id', $userId)->update(['STATUS' => 0, 'status_internet_id' => 1, 'no_reactivar_auto' => 0]);
 
         // 3. Log
         DB::table('auto_suspend_logs')->insert([
             'company_id'     => $companyId,
             'user_id'        => $userId,
             'action'         => 'reactivated',
+            'motivo'         => 'al_dia',
+            'detalle'        => 'Reactivación automática: quedó sin facturas pendientes',
             'invoices_count' => 0,
             'created_at'     => now(),
         ]);
+
+        $this->alHistorial($companyId, [$userId], true, 'Reactivación automática: quedó sin facturas pendientes');
 
         // 4. Avisarle. Sin esto el cliente que pagó vuelve a llamar preguntando
         // por su internet aunque ya lo tenga de vuelta.
@@ -395,26 +559,70 @@ class AutoSuspendService
     }
 
     /**
+     * Deja el cambio en el historial de la ficha del cliente, igual que el cambio manual.
+     * Sin esto el operador veía al cliente suspendido y no sabía que había sido el sistema.
+     *
+     * @param array<int,int> $userIds
+     */
+    private function alHistorial(int $companyId, array $userIds, bool $reactiva, string $descripcion): void
+    {
+        try {
+            $ahora = now();
+
+            DB::table('user_audit_logs')->insert(array_map(fn ($id) => [
+                'user_id'       => $id,
+                // La columna no admite nulo: 0 es «el sistema».
+                'changed_by'    => 0,
+                'company_id'    => $companyId,
+                'field_changed' => 'estado_internet',
+                'old_value'     => $reactiva ? 'INACTIVE' : 'ACTIVE',
+                'new_value'     => $reactiva ? 'ACTIVE' : 'INACTIVE',
+                'description'   => $descripcion,
+                'created_at'    => $ahora,
+                'updated_at'    => $ahora,
+            ], array_values($userIds)));
+        } catch (\Throwable $e) {
+            $this->writelog("alHistorial empresa={$companyId} → no se pudo anotar: {$e->getMessage()}");
+        }
+    }
+
+    /**
+     * Los suspendidos a los que el sistema les puede devolver el servicio cuando queden al día.
+     *
+     * @return array<int,int>  ids de «users»
+     */
+    public function suspendidosQueVuelvenSolos(int $companyId): array
+    {
+        return DB::table('user_data as ud')
+            ->join('users', 'users.id', '=', 'ud.user_id')
+            ->where('users.company_id', $companyId)
+            // Suspendido de verdad = cliente vigente con el internet en INACTIVE. «STATUS = 1»
+            // no sirve para esto: lo tienen sobre todo los clientes eliminados, y la
+            // suspensión hecha desde el panel ni lo toca.
+            ->where('ud.active', 1)
+            ->where('ud.status_internet_id', 2)
+            ->where('ud.no_reactivar_auto', 0)
+            ->whereNotIn('users.profile_id', function ($q) use ($companyId) {
+                $q->select('id')->from('profiles')
+                    ->where('company_id', $companyId)
+                    ->whereIn('name', ['ADMIN', 'TECNICO', 'CONTADOR']);
+            })
+            ->pluck('ud.user_id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+    }
+
+    /**
      * Reactiva en bloque todos los auto-suspendidos que ya saldaron su deuda.
      * Corre en el job cada 4 min y en el día de corte mensual.
      */
     public function reactivateAllClear(int $companyId, int $minInvoices): int
     {
-        // Usuarios cuyo último log es 'suspended'
-        $autoSuspended = DB::table('auto_suspend_logs as asl')
-            ->where('asl.company_id', $companyId)
-            ->where('asl.action', 'suspended')
-            ->whereNotExists(function ($q) use ($companyId) {
-                $q->from('auto_suspend_logs as asl2')
-                    ->whereColumn('asl2.user_id', 'asl.user_id')
-                    ->where('asl2.company_id', $companyId)
-                    ->where('asl2.action', 'reactivated')
-                    ->whereColumn('asl2.created_at', '>', 'asl.created_at');
-            })
-            ->select('asl.user_id')
-            ->distinct()
-            ->pluck('user_id')
-            ->toArray();
+        // Todos los suspendidos de la empresa, tengan o no fila en el registro. Antes sólo se
+        // miraba a quien tuviera un «suspended» anotado: el que se suspendía por otro camino no
+        // volvía nunca aunque pagara. Quedan fuera el personal, los clientes dados de baja y los
+        // que un operador suspendió por algo que no es la mora.
+        $autoSuspended = $this->suspendidosQueVuelvenSolos($companyId);
 
         if (empty($autoSuspended)) {
             $this->writelog("reactivateAllClear empresa={$companyId} → sin clientes auto-suspendidos pendientes");
@@ -425,7 +633,7 @@ class AutoSuspendService
         $stillOwing = DB::table('det_facturations as df')
             ->join('cab_facturations as cb', 'cb.id', '=', 'df.cab_id')
             ->whereIn('cb.user_id', $autoSuspended)
-            ->where('df.paid', 0)
+            ->where('df.paid', 0)->whereNull('df.anulada_en')
             ->where('df.abone', '!=', 1)
             ->select('cb.user_id')
             ->distinct()
@@ -439,7 +647,7 @@ class AutoSuspendService
         }
 
         // 1. Primero aplicar en MikroTik — solo actualizamos BD con los que respondieron ok
-        $applied = $this->applyArpStatus($companyId, $toReactivate, '/ip/arp/enable', 'REACTIVADO');
+        $applied = $this->aplicarEnElRouter($companyId, $toReactivate, false);
 
         if ($applied === null) {
             // Fallo total de conexión — no tocar BD ni logs, se reintenta en 4 min
@@ -448,7 +656,7 @@ class AutoSuspendService
         }
 
         if (empty($applied)) {
-            $this->writelog("reactivateAllClear empresa={$companyId} → ningún cliente encontrado en ARP, BD sin cambios.");
+            $this->writelog("reactivateAllClear empresa={$companyId} → ningún cliente encontrado en el router (ARP ni PPPoE), BD sin cambios.");
             return 0;
         }
 
@@ -461,10 +669,13 @@ class AutoSuspendService
             'company_id'     => $companyId,
             'user_id'        => $uid,
             'action'         => 'reactivated',
+            'motivo'         => 'al_dia',
+            'detalle'        => 'Reactivación automática: quedó sin facturas pendientes',
             'invoices_count' => 0,
             'created_at'     => $now,
         ], $applied);
         DB::table('auto_suspend_logs')->insert($logs);
+        $this->alHistorial($companyId, $applied, true, 'Reactivación automática: quedó sin facturas pendientes');
 
         // Avisarle a cada uno que ya tiene servicio.
         $this->avisarReactivacion($companyId, $applied);
@@ -475,9 +686,15 @@ class AutoSuspendService
     }
 
     /**
-     * Sincroniza el estado ARP del MikroTik con el STATUS de la plataforma.
-     * - STATUS=0 (activo)    pero ARP desactivado → habilita ARP
-     * - STATUS=1 (suspendido) pero ARP activado   → desactiva ARP
+     * Sincroniza el ARP del MikroTik con el estado del servicio en la plataforma.
+     * - servicio activo     pero ARP desactivado → habilita ARP
+     * - servicio suspendido pero ARP activado    → desactiva ARP
+     *
+     * El estado es «status_internet_id» (2 = suspendido), que es lo que escribe tanto el corte
+     * automático como la suspensión desde el panel. Antes se guiaba por «STATUS», que el panel
+     * no toca: a un cliente suspendido a mano lo veía «activo con el ARP apagado» y se lo volvía
+     * a encender, además de pisarle el estado. Sólo clientes vigentes y de IP fija: los
+     * eliminados pueden tener su IP ya en manos de otro, y los PPPoE no viven en el ARP.
      */
     public function syncArpWithPlatform(int $companyId): array
     {
@@ -507,8 +724,11 @@ class AutoSuspendService
                         ->where('company_id', $companyId)
                         ->whereIn('name', ['ADMIN', 'TECNICO', 'CONTADOR']);
                 })
-                ->select('ud.user_id', 'ud.dni', 'ud.names', 'ud.lastname', 'ud.STATUS', 'ud.status_internet_id', 'users.username')
-                ->get();
+                ->where('ud.active', 1)
+                ->where(fn ($q) => $q->whereNull('ud.connection_type')->orWhere('ud.connection_type', '!=', 'pppoe'))
+                ->select('ud.user_id', 'ud.dni', 'ud.names', 'ud.lastname', 'ud.status_internet_id', 'users.username')
+                ->get()
+                ->each(fn ($u) => $u->STATUS = (int) $u->status_internet_id === 2 ? 1 : 0);
 
             $this->writelog("  Usuarios en plataforma: " . $users->count() . " | Entradas ARP cargadas: " . count($allArp));
             $this->writelog("─────────────────────────────────────────────────────");
@@ -536,14 +756,7 @@ class AutoSuspendService
                 $arpLabel      = $isDisabled ? 'DESACTIVADO' : 'ACTIVADO';
 
                 if ($isDisabled === $platformOk) {
-                    // ARP y STATUS en sync — verificar también status_internet_id
-                    $expectedInternetId = $u->STATUS == 1 ? 2 : 1;
-                    if ($u->status_internet_id != $expectedInternetId) {
-                        DB::table('user_data')->where('user_id', $u->user_id)->update(['status_internet_id' => $expectedInternetId]);
-                        $this->writelog("  ~ {$label} │ plataforma={$statusLabel} arp={$arpLabel} — corregido status_internet_id → {$expectedInternetId}");
-                    } else {
-                        $this->writelog("  ✓ {$label} │ plataforma={$statusLabel} arp={$arpLabel} por {$foundBy} │ IPs: {$ips} — OK");
-                    }
+                    $this->writelog("  ✓ {$label} │ plataforma={$statusLabel} arp={$arpLabel} por {$foundBy} │ IPs: {$ips} — OK");
                     continue;
                 }
 
@@ -557,7 +770,6 @@ class AutoSuspendService
                             if (empty($arp['.id'])) continue;
                             $api->query((new Query('/ip/arp/enable'))->equal('.id', $arp['.id']))->read();
                         }
-                        DB::table('user_data')->where('user_id', $u->user_id)->update(['status_internet_id' => 1]);
                         $this->writelog("    → ARP HABILITADO (cliente activo en plataforma)");
                         $result['enabled']++;
                     } else {
@@ -566,7 +778,6 @@ class AutoSuspendService
                             if (empty($arp['.id'])) continue;
                             $api->query((new Query('/ip/arp/disable'))->equal('.id', $arp['.id']))->read();
                         }
-                        DB::table('user_data')->where('user_id', $u->user_id)->update(['status_internet_id' => 2]);
                         $this->writelog("    → ARP DESACTIVADO (cliente suspendido en plataforma)");
                         $result['disabled']++;
                     }
@@ -593,16 +804,13 @@ class AutoSuspendService
      */
     public function getStats(int $companyId): array
     {
-        $suspended = DB::table('auto_suspend_logs as asl')
-            ->where('asl.company_id', $companyId)
-            ->where('asl.action', 'suspended')
-            ->whereNotExists(function ($q) use ($companyId) {
-                $q->from('auto_suspend_logs as asl2')
-                    ->whereColumn('asl2.user_id', 'asl.user_id')
-                    ->where('asl2.company_id', $companyId)
-                    ->where('asl2.action', 'reactivated')
-                    ->whereColumn('asl2.created_at', '>', 'asl.created_at');
-            })
+        // Los que hoy están suspendidos de verdad, no los que tienen una fila «suspended»
+        // sin su «reactivated»: esa cuenta se inflaba con cada suspensión repetida.
+        $suspended = DB::table('user_data as ud')
+            ->join('users', 'users.id', '=', 'ud.user_id')
+            ->where('users.company_id', $companyId)
+            ->where('ud.active', 1)
+            ->where('ud.status_internet_id', 2)
             ->count();
 
         $reactivatedToday = DB::table('auto_suspend_logs')

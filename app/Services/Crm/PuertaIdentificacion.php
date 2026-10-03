@@ -36,8 +36,22 @@ class PuertaIdentificacion
 
     private const TABLA = 'crm_identificaciones';
 
+    /** Con esta cantidad de dígitos o menos, el mensaje no se toma como un intento de dar la cédula. */
+    private const DIGITOS_PARA_AVISAR = 5;
+
+    /**
+     * Segundos después de la pregunta en los que un mensaje sin números no cuenta como intento.
+     * La gente escribe «buenas», «me regala el Nequi», «por favor» en tres mensajes seguidos:
+     * el segundo y el tercero llegan antes de que alcance a leer la pregunta, y contarlos
+     * agotaba los intentos y cerraba la identificación antes de que respondiera.
+     */
+    private const SEGUNDOS_DE_RAFAGA = 90;
+
     /** La línea de WhatsApp Web por la que entró el mensaje que se está evaluando. */
     private ?string $instanceId = null;
+
+    /** Con esto la puerta decide igual, pero no le escribe al cliente. */
+    private bool $callada = false;
 
     public const PREGUNTA_POR_DEFECTO =
         "¡Hola! 👋 Para atenderte y ver su cuenta necesito identificarte.\n\n" .
@@ -54,11 +68,16 @@ class PuertaIdentificacion
      * @param  array  $payload  El webhook completo, para poder reprocesarlo al soltarlo.
      * @return array{accion: string, dni?: ?string, user_id?: ?int, nombre?: ?string, retenidos?: array}
      */
-    public function evaluar(int $companyId, string $provider, string $phone, ?string $texto, array $payload, ?string $instanceId = null): array
+    public function evaluar(int $companyId, string $provider, string $phone, ?string $texto, array $payload, ?string $instanceId = null, ?string $tipo = null, bool $delFlujoDelBot = false): array
     {
         // La empresa puede tener varias líneas: se pregunta y se confirma por la
         // MISMA por la que escribió el cliente, no por la principal.
         $this->instanceId = $instanceId;
+
+        // Lo que el cliente le contestó al bot de la línea (la cédula del titular de un
+        // comprobante): la puerta la aprovecha para identificarlo, pero no dice nada, porque
+        // el bot ya le está respondiendo. Dos voces preguntando lo mismo confunden.
+        $this->callada = $delFlujoDelBot;
 
         $ajustes = $this->ajustes($companyId);
 
@@ -72,6 +91,16 @@ class PuertaIdentificacion
             ->where('phone', $phone)
             ->first();
 
+        // Quedó sin identificar (no dio la cédula a tiempo, o la que dio no existía) y ahora
+        // manda una que sí es de un cliente: se le reconoce, aunque llegue tarde.
+        if ($registro && $registro->estado === 'sin_registro' && !$registro->user_id) {
+            $tardia = $this->cedulaTardia($companyId, $provider, $phone, $texto);
+
+            if ($tardia) {
+                return $tardia;
+            }
+        }
+
         // Ya resuelto antes: no se vuelve a molestar a esta persona.
         if ($registro && in_array($registro->estado, ['identificado', 'sin_registro'], true)) {
             return [
@@ -80,6 +109,20 @@ class PuertaIdentificacion
                 'user_id' => $registro->user_id ? (int) $registro->user_id : null,
                 'nombre'  => $registro->nombre,
             ];
+        }
+
+        // Primer contacto con una foto o un documento: casi siempre es un comprobante, y de
+        // eso se encarga el bot de la línea, que pregunta la cédula del titular. Si además la
+        // puerta preguntaba la suya, al cliente le llegaban dos pedidos de cédula seguidos.
+        // Pasa sin identificar; si era otra cosa, se le pregunta con su próximo mensaje.
+        if (!$registro && in_array($tipo, ['image', 'document'], true)) {
+            return ['accion' => self::PASA];
+        }
+
+        // Primera vez que se sabe de esta persona y es contestándole al bot: si la cédula que
+        // dio es de un cliente queda identificada; si no, no se abre ninguna pregunta.
+        if (!$registro && $delFlujoDelBot) {
+            return $this->cedulaTardia($companyId, $provider, $phone, $texto) ?? ['accion' => self::PASA];
         }
 
         // Primer contacto
@@ -128,6 +171,37 @@ class PuertaIdentificacion
         return ['accion' => self::RETIENE];
     }
 
+    /** La cédula llega cuando la puerta ya se había cerrado sin identificar a la persona. */
+    private function cedulaTardia(int $companyId, string $provider, string $phone, ?string $texto): ?array
+    {
+        if (preg_match_all('/\d/', (string) $texto) <= self::DIGITOS_PARA_AVISAR) {
+            return null;
+        }
+
+        foreach (IdentificacionEnTexto::extraer($texto)['candidatos'] as $posible) {
+            $cliente = $this->clientePorDni($companyId, $posible);
+
+            if (!$cliente) {
+                continue;
+            }
+
+            $nombre = trim($cliente->names . ' ' . $cliente->lastname);
+
+            $this->guardar($companyId, $provider, $phone, [
+                'estado'  => 'identificado',
+                'dni'     => $cliente->dni,
+                'user_id' => $cliente->user_id,
+                'nombre'  => $nombre,
+            ]);
+
+            $this->enviar($companyId, $provider, $phone, "¡Gracias, {$cliente->names}! ✅ Ya le identifiqué.");
+
+            return ['accion' => self::PASA, 'dni' => $cliente->dni, 'user_id' => (int) $cliente->user_id, 'nombre' => $nombre];
+        }
+
+        return null;
+    }
+
     /* ── Respuesta del cliente ───────────────────────────────────────────── */
 
     private function respuesta(int $companyId, string $provider, string $phone, ?string $texto, array $payload, object $registro, array $ajustes): array
@@ -136,7 +210,12 @@ class PuertaIdentificacion
         $retenidos[] = $payload;
 
         $lectura = IdentificacionEnTexto::extraer($texto);
-        $intentos = (int) $registro->intentos + 1;
+        $intentoDarla = preg_match_all('/\d/', (string) $texto) > self::DIGITOS_PARA_AVISAR;
+
+        // Lo que llega pegado a la pregunta, sin números, es el resto del saludo: se retiene
+        // pero no gasta un intento.
+        $enRafaga = !$intentoDarla && now()->diffInSeconds($registro->created_at) < self::SEGUNDOS_DE_RAFAGA;
+        $intentos = (int) $registro->intentos + ($enRafaga ? 0 : 1);
 
         // Se prueba cada número que parezca documento, del más probable al menos.
         foreach ($lectura['candidatos'] as $posible) {
@@ -168,8 +247,11 @@ class PuertaIdentificacion
             }
         }
 
+        // Sólo se le contesta «no encontré la cédula» a quien de verdad intentó darla:
+        // un mensaje con más de cinco dígitos. La línea también se usa para otras
+        // cosas, y corregirle la cédula a quien escribió «buenas» o «ya voy» molesta.
         // Dio un número pero no está en el sistema: pasa al agente igual.
-        if ($lectura['documento']) {
+        if ($lectura['documento'] && $intentoDarla) {
             $this->guardar($companyId, $provider, $phone, [
                 'estado'    => 'sin_registro',
                 'intentos'  => $intentos,
@@ -192,7 +274,7 @@ class PuertaIdentificacion
         }
 
         // No mandó ningún número. Se reintenta, pero con tope.
-        if ($intentos >= max(1, (int) $ajustes['identificacion_intentos'])) {
+        if (!$enRafaga && $intentos >= max(1, (int) $ajustes['identificacion_intentos'])) {
             $this->guardar($companyId, $provider, $phone, [
                 'estado'    => 'sin_registro',
                 'intentos'  => $intentos,
@@ -217,7 +299,11 @@ class PuertaIdentificacion
             'retenidos' => json_encode($retenidos, JSON_UNESCAPED_UNICODE),
         ]);
 
-        $this->enviar($companyId, $provider, $phone, self::REINTENTO);
+        // Sin números en el mensaje no se insiste: queda retenido y cuenta como intento,
+        // así que al llegar al tope pasa al asesor igual.
+        if ($intentoDarla) {
+            $this->enviar($companyId, $provider, $phone, self::REINTENTO);
+        }
 
         return ['accion' => self::RETIENE];
     }
@@ -257,14 +343,24 @@ class PuertaIdentificacion
 
     private function guardar(int $companyId, string $provider, string $phone, array $datos): void
     {
-        DB::table(self::TABLA)->updateOrInsert(
-            ['company_id' => $companyId, 'provider' => $provider, 'phone' => $phone],
-            $datos + ['updated_at' => now(), 'created_at' => now()]
-        );
+        $llave = ['company_id' => $companyId, 'provider' => $provider, 'phone' => $phone];
+
+        // created_at es la hora de la pregunta: no se pisa al actualizar.
+        if (DB::table(self::TABLA)->where($llave)->exists()) {
+            DB::table(self::TABLA)->where($llave)->update($datos + ['updated_at' => now()]);
+
+            return;
+        }
+
+        DB::table(self::TABLA)->insert($llave + $datos + ['updated_at' => now(), 'created_at' => now()]);
     }
 
-    private function enviar(int $companyId, string $provider, string $phone, string $texto): void
+    protected function enviar(int $companyId, string $provider, string $phone, string $texto): void
     {
+        if ($this->callada) {
+            return;
+        }
+
         try {
             (new WhatsAppService($companyId, false, $provider, $this->instanceId))->mensajeInformativo($phone, $texto);
         } catch (\Throwable $e) {

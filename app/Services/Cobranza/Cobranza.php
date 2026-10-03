@@ -121,7 +121,7 @@ class Cobranza
             ->where('cab.company_id', $this->companyId)
             ->where('ud.company_id', $this->companyId)
             ->where('ud.active', 1)
-            ->where('d.paid', 0)
+            ->where('d.paid', 0)->whereNull('d.anulada_en')
             ->whereRaw('(d.price_total - COALESCE(d.price_discount,0) - COALESCE(d.price_abone,0)) > 0')
             ->whereRaw("CHAR_LENGTH(REGEXP_REPLACE(COALESCE(ud.phone,''), '[^0-9]', '')) >= 10")
             ->groupBy('cab.user_id', 'ud.phone')

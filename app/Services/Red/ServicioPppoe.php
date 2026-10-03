@@ -139,13 +139,15 @@ class ServicioPppoe
         }
 
         // La ONT de cada cliente, para ver desde la credencial si el equipo
-        // está en línea. olt_onts.user_data_id guarda users.id.
+        // está en línea. olt_onts.user_data_id guarda el id de la FICHA (user_data.id); más abajo
+        // se busca por el id de «users», así que la lista se arma con ése. Usar el de la ficha como
+        // si fuera el de «users» le ponía a cada credencial la ONT de otro cliente.
         $onts = DB::table('olt_onts as o')
             ->join('olt_admins as t', 't.id', '=', 'o.olt_id')
+            ->join('user_data as ficha', 'ficha.id', '=', 'o.user_data_id')
             ->where('t.company_id', $this->companyId())
-            ->whereNotNull('o.user_data_id')
-            ->get(['o.user_data_id', 'o.olt_id', 't.name as olt', 'o.fsp', 'o.ont_id', 'o.serial', 'o.status'])
-            ->keyBy('user_data_id');
+            ->get(['ficha.user_id as usuario_id', 'o.olt_id', 't.name as olt', 'o.fsp', 'o.ont_id', 'o.serial', 'o.status'])
+            ->keyBy('usuario_id');
 
         // MikroTik guarda en el mismo lugar las credenciales de PPPoE y las de
         // las VPN —L2TP, PPTP, SSTP, OpenVPN—. Aquí interesan sólo las de

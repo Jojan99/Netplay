@@ -15,7 +15,7 @@ class CobranzaConfig extends Model
         'descuento_max_pct', 'descuento_dias', 'cuotas_max', 'plazo_max_dias', 'compromiso_suspende',
         'hora_desde', 'hora_hasta', 'dias', 'max_contactos_dia', 'recordatorios', 'horas_entre_recordatorios',
         'nombre_asistente', 'instrucciones', 'wa_linea_id',
-        'pago_link', 'pago_qr', 'pago_texto',
+        'pago_link', 'pago_qr', 'pago_texto', 'pago_texto_fe',
         'ia_clave', 'ia_modelos',
     ];
 
@@ -42,6 +42,31 @@ class CobranzaConfig extends Model
         $link = $conPasarela && (bool) ($this->pago_link ?? true);
 
         return ['link' => $link, 'qr' => $qr, 'texto' => $texto, 'hay' => $link || $qr || $texto];
+    }
+
+    /**
+     * Lo que le corresponde a UN cliente, según tenga o no la facturación electrónica activa.
+     *
+     * Con facturación electrónica: el QR y sus instrucciones propias (pago_texto_fe), y NO los
+     * medios de los demás (los Nequi personales): su pago tiene que entrar a la cuenta de la
+     * empresa. Sin facturación electrónica: sólo el texto general, sin QR ni link.
+     *
+     * @return array{link:bool, qr:?string, texto:?string, hay:bool}
+     */
+    public function mediosPara(bool $conFacturaElectronica, bool $conPasarela): array
+    {
+        $m = $this->mediosDePago($conPasarela);
+
+        if ($conFacturaElectronica) {
+            $m['texto'] = trim((string) $this->pago_texto_fe) ?: null;
+        } else {
+            $m['link'] = false;
+            $m['qr'] = null;
+        }
+
+        $m['hay'] = $m['link'] || $m['qr'] || $m['texto'];
+
+        return $m;
     }
 
     /** ¿La empresa usa su propia clave de Google? */

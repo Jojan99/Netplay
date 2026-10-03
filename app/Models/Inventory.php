@@ -10,6 +10,8 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Inventory extends Model
 {
+    use \App\Models\Concerns\FechasEnHoraLocal;
+
     use HasFactory, SoftDeletes;
 
     protected $fillable = [
@@ -19,6 +21,8 @@ class Inventory extends Model
         'description',
         'sku',
         'code',
+        'barcode',
+        'usa_serial',
         'quantity',
         'stock_min',
         'stock_max',

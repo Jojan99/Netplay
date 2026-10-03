@@ -67,6 +67,7 @@ Route::prefix('facturation')->group(function () {
 
         // Liquidación masiva
         Route::post('liquidate-bulk',            [FacturationController::class, 'liquidateBulk']);
+        Route::post('anular-bulk',               [FacturationController::class, 'anularBulk']);
 
         // Compromisos de pago
         Route::get('commitments',                [FacturationController::class, 'listCommitments']);

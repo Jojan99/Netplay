@@ -438,17 +438,22 @@ class ContractController extends Controller
             $signUrl = url("/contrato/firmar/{$cc->token}");
             $email   = $request->input('email');
             $titulo  = htmlspecialchars((string) $cc->contract->title, ENT_QUOTES, 'UTF-8');
-            $url     = htmlspecialchars($signUrl, ENT_QUOTES, 'UTF-8');
+            $empresa = \App\Models\Company::find((int) $cc->company_id);
 
-            // Sale por la cuenta de correo de la empresa del contrato (propia o
-            // la de la plataforma); el mailer de Laravel no está configurado.
+            $plantilla = ($empresa ? \App\Services\Correo\PlantillaDeCorreo::deEmpresa($empresa) : \App\Services\Correo\PlantillaDeCorreo::netvula())
+                ->antetitulo('Contrato')
+                ->titulo('Tiene un contrato pendiente de firma')
+                ->parrafo('Hola. Le compartimos su contrato <strong>' . $titulo . '</strong> para que lo revise y lo firme.')
+                ->boton('Revisar y firmar', $signUrl)
+                ->enlace($signUrl)
+                ->aviso('Ábralo desde su teléfono: la firma se hace con el dedo sobre la pantalla.', 'info');
+
+            // Sale por la cuenta de correo de la empresa del contrato; el mailer de Laravel no está configurado.
             $resultado = \App\Services\Correo\Correo::deEmpresa((int) $cc->company_id)->enviar(
                 $email,
                 "Contrato pendiente de firma: {$cc->contract->title}",
-                "<p>Hola, le compartimos el link para firmar su contrato <strong>{$titulo}</strong>:</p>"
-                . "<p><a href='{$url}'>{$url}</a></p>"
-                . "<p>Abra el link desde su teléfono para firmar.</p>",
-                "Hola, le compartimos el link para firmar su contrato \"{$cc->contract->title}\":\n\n{$signUrl}\n\nAbra el link desde su teléfono para firmar.",
+                $plantilla->html(),
+                $plantilla->texto(),
             );
 
             if (!$resultado['ok']) {

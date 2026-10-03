@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Model;
 /** Una corrida del importador de clientes: lectura, vista previa y ejecución. */
 class Importacion extends Model
 {
+    use \App\Models\Concerns\FechasEnHoraLocal;
+
     protected $table = 'importaciones';
 
     protected $fillable = [

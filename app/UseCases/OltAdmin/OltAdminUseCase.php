@@ -922,7 +922,15 @@ class OltAdminUseCase
                         'description'   => $desc,
                         // El cliente queda vinculado desde el alta: así se sabe
                         // qué puerto lo atiende sin tener que asignarlo aparte.
-                        'user_data_id'  => $data['user_data_id'] ?? null,
+                        //
+                        // Lo que llega es el id de «users» (así lo manda la lista de
+                        // clientes y lo valida OltOntRequest); la columna guarda el de la
+                        // ficha «user_data». Escribirlo tal cual dejaba la ONT a nombre
+                        // del cliente cuya ficha tenía ese número: se autorizaba a una
+                        // persona y aparecía otra.
+                        'user_data_id'  => !empty($data['user_data_id'])
+                            ? \Illuminate\Support\Facades\DB::table('user_data')->where('user_id', (int) $data['user_data_id'])->value('id')
+                            : null,
                         'status'        => 'offline',
                         // En equipos sin service-port (C-Data EPON) el paso de
                         // VLAN sólo verifica el puerto PON: no hay índice que
@@ -2015,11 +2023,9 @@ class OltAdminUseCase
                 'ud.address',
                 'p.plan_name',
             ])
-            // `id` es el id de USUARIO, no el de la ficha: olt_onts.user_data_id
-            // guarda el id de usuario (ver OltOnt::client). Devolver el de la
-            // ficha hacía que el alta vinculara la ONT a otro cliente —el que
-            // tiene ese número como usuario— y que "ya tiene ONT" no marcara a
-            // nadie bien.
+            // `id` es el id de USUARIO: es lo que espera el alta (registerONT), que lo
+            // traduce al de la ficha antes de guardarlo en olt_onts.user_data_id.
+            // «Ya tiene ONT» sí se mira con el de la ficha, que es lo que guarda la columna.
             ->map(fn ($c) => [
                 'id'        => (int) $c->user_id,
                 'user_id'   => (int) $c->user_id,
@@ -2028,7 +2034,7 @@ class OltAdminUseCase
                 'dni'       => $c->dni,
                 'direccion' => $c->address,
                 'plan'      => $c->plan_name,
-                'tiene_ont' => isset($tomados[$c->user_id]),
+                'tiene_ont' => isset($tomados[$c->id]),
             ])
             ->all();
     }
@@ -2048,9 +2054,13 @@ class OltAdminUseCase
      * Por eso, si el cliente ya tiene otra ONT, no se asigna a ciegas: se
      * avisa cuál es y se espera que lo confirmen con $liberarAnterior.
      *
-     * @param ?int $userDataId  users.id (la columna se llama user_data_id por historia)
+     * @param ?int $userId  el id de «users» —lo que manda el buscador de clientes (UserController::search)—.
+     *   OJO: «olt_onts.user_data_id» guarda el id de «user_data», no éste; se traduce antes de
+     *   comparar o escribir (ver ontDelCliente()). Antes esta función escribía $userId tal cual en
+     *   esa columna: cualquier cliente asignado desde acá con los dos ids distintos quedaba mal
+     *   —una ONT que en verdad era de un cliente aparecía a nombre de otro—.
      */
-    public function assignClientToOnt(int $oltId, string $fsp, int $ontId, ?int $userDataId, bool $liberarAnterior = false): array
+    public function assignClientToOnt(int $oltId, string $fsp, int $ontId, ?int $userId, bool $liberarAnterior = false): array
     {
         $ont = OltOnt::where('olt_id', $oltId)
                      ->where('fsp', $fsp)
@@ -2061,7 +2071,7 @@ class OltAdminUseCase
             return ['status' => 1, 'message' => 'ONT no encontrada en la base de datos.', 'data' => null];
         }
 
-        if (!$userDataId) {
+        if (!$userId) {
             $anterior = $ont->user_data_id;
             $ont->update(['user_data_id' => null]);
 
@@ -2073,8 +2083,14 @@ class OltAdminUseCase
         }
 
         // El cliente también tiene que ser de la empresa (la OLT ya la valida la ruta).
-        if (!\App\Models\User::where('id', $userDataId)->where('company_id', getSessionCompanyId())->exists()) {
+        if (!\App\Models\User::where('id', $userId)->where('company_id', getSessionCompanyId())->exists()) {
             return ['status' => 1, 'message' => 'Cliente no encontrado.', 'data' => null];
+        }
+
+        $userDataId = \Illuminate\Support\Facades\DB::table('user_data')->where('user_id', $userId)->value('id');
+
+        if (!$userDataId) {
+            return ['status' => 1, 'message' => 'Ese cliente no tiene ficha (user_data).', 'data' => null];
         }
 
         $otras = OltOnt::where('user_data_id', $userDataId)
@@ -2191,12 +2207,19 @@ class OltAdminUseCase
 
     /**
      * Obtener el equipo ONT asignado a un cliente.
+     *
+     * Su único llamador (la ficha del cliente, «openClienteModal») trabaja con el id de «users»
+     * —lo mismo que usa el resto de esa pantalla—, no con el de «user_data» que espera
+     * «olt_onts.user_data_id». Sin esto, cualquier cliente con los dos ids distintos aparecía
+     * «Sin equipo ONT asignado» aunque lo tuviera.
      */
-    public function getOntByUserId(int $userDataId): array
+    public function getOntByUserId(int $userId): array
     {
-        $ont = OltOnt::where('user_data_id', $userDataId)
+        $userDataId = \Illuminate\Support\Facades\DB::table('user_data')->where('user_id', $userId)->value('id');
+
+        $ont = $userDataId ? OltOnt::where('user_data_id', $userDataId)
                      ->with('olt:id,name,host')
-                     ->first();
+                     ->first() : null;
 
         if (!$ont) {
             return ['status' => 0, 'message' => 'Sin equipo ONT asignado.', 'data' => null];
@@ -2240,10 +2263,23 @@ class OltAdminUseCase
         return ['status' => 0, 'message' => 'Foto quitada', 'data' => null];
     }
 
-    /** La ONT vinculada al cliente, sólo si su OLT es de la empresa en sesión. */
+    /**
+     * La ONT vinculada al cliente, sólo si su OLT es de la empresa en sesión.
+     *
+     * @param int $userId el id de «users» —lo que manda el frontend (ficha del cliente, ventana
+     *   rápida)—, no el de «user_data» que guarda de verdad «olt_onts.user_data_id». Sin este
+     *   paso, un cliente con los dos ids distintos aparecía sin equipo aunque lo tuviera: el
+     *   mismo bug que ya se corrigió en getOntByUserId() y en OltOnt::client().
+     */
     private function ontDelCliente(int $userId): ?OltOnt
     {
-        return OltOnt::where('user_data_id', $userId)
+        $userDataId = \Illuminate\Support\Facades\DB::table('user_data')->where('user_id', $userId)->value('id');
+
+        if (!$userDataId) {
+            return null;
+        }
+
+        return OltOnt::where('user_data_id', $userDataId)
             ->whereHas('olt', fn ($q) => $q->where('company_id', getSessionCompanyId()))
             ->with('olt')
             ->first();
@@ -2252,7 +2288,8 @@ class OltAdminUseCase
     /**
      * La ONT del cliente con su estado real, preguntándole a la OLT.
      *
-     * @param int $userId users.id: es lo que guarda olt_onts.user_data_id
+     * @param int $userId el id de «users»; ontDelCliente() lo traduce al de «user_data», que es
+     *   lo que de verdad guarda olt_onts.user_data_id.
      */
     public function ontEnVivoDeCliente(int $userId, bool $refrescar = false): array
     {

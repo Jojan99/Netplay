@@ -42,9 +42,12 @@ class CampaignService
     public function preview(int $companyId, array $filtros, array $excluidos = []): array
     {
         $clientes = $this->audiencia->resolve($companyId, $filtros, $excluidos);
+        $limite = $this->limiteDiario($companyId);
 
         return [
             'total'   => $clientes->count(),
+            'limite'  => $limite,
+            'excede'  => $limite['maximo'] !== null && $clientes->count() > $limite['maximo'],
             'muestra' => $clientes->take(10)->map(fn ($c) => [
                 'user_id' => (int) $c->user_id,
                 'nombre'  => trim(($c->names ?? '') . ' ' . ($c->lastname ?? '')),
@@ -71,8 +74,12 @@ class CampaignService
         // son ejemplos, porque en la prueba no hay un cliente real detrás.
         foreach ((array) $campaign->params as $entrada) {
             if (($entrada['tipo'] ?? '') === 'fijo') {
-                $valores[$entrada['variable'] ?? 'texto_libre'] = (string) ($entrada['valor'] ?? '');
+                $valores[$entrada['variable'] ?? 'texto_libre'] = $this->contexto->rellenar((string) ($entrada['valor'] ?? ''), $valores);
             }
+        }
+
+        if ($problema = $this->botonQueNoSePuedeLlenar($company, $campaign)) {
+            return ['success' => false, 'error' => $problema];
         }
 
         $resultado = $this->enviar(
@@ -117,6 +124,20 @@ class CampaignService
 
         if ($clientes->isEmpty()) {
             throw new \RuntimeException('Con esos filtros no queda ningún cliente al que escribirle.');
+        }
+
+        $company = Company::findOrFail($campaign->company_id);
+
+        if ($problema = $this->botonQueNoSePuedeLlenar($company, $campaign)) {
+            throw new \RuntimeException($problema);
+        }
+
+        // El tope de Meta es por número: pasarse no «encola» el resto, lo rechaza. Mejor no
+        // empezar que dejar a la mitad de los clientes sin el aviso y sin saber a cuáles.
+        $limite = $this->limiteDiario((int) $campaign->company_id);
+
+        if ($limite['maximo'] !== null && $clientes->count() > $limite['maximo']) {
+            throw new \RuntimeException("Este envío es para {$clientes->count()} clientes y su número de WhatsApp puede iniciar conversación con {$limite['maximo']} clientes distintos cada 24 horas (nivel {$limite['nivel']} de Meta). Meta rechazaría los que pasen de ahí. Reduzca la lista con los filtros —por ejemplo, un solo grupo de corte— y envíe el resto mañana.");
         }
 
         DB::transaction(function () use ($campaign, $clientes) {
@@ -206,7 +227,13 @@ class CampaignService
             }
         }
 
-        $valores   = $this->contexto->forClient($company, $cliente, $fijos);
+        $valores = $this->contexto->forClient($company, $cliente);
+
+        // El texto del operador puede llevar datos del cliente entre llaves: {total_pendiente}, {dias_mora}…
+        foreach ($fijos as $variable => $texto) {
+            $valores[$variable] = $this->contexto->rellenar($texto, $valores);
+        }
+
         $resultado = $this->enviar(
             $company,
             $destinatario->phone,
@@ -226,6 +253,52 @@ class CampaignService
                 'status' => WaCampaignRecipient::FALLIDO,
                 'error'  => mb_substr((string) ($resultado['error'] ?? 'Error desconocido'), 0, 250),
             ]);
+    }
+
+    /**
+     * Cuántos clientes distintos puede contactar hoy el número, según Meta.
+     *
+     * @return array{nivel:?string, maximo:?int, calidad:?string}
+     */
+    public function limiteDiario(int $companyId): array
+    {
+        return \Illuminate\Support\Facades\Cache::store('redis')->remember("meta:limite:{$companyId}", 600, function () use ($companyId) {
+            $nada = ['nivel' => null, 'maximo' => null, 'calidad' => null];
+            $c = Company::find($companyId);
+
+            if (!$c || !$c->wa_phone_number_id || !$c->wa_access_token) {
+                return $nada;
+            }
+
+            try {
+                $r = \Illuminate\Support\Facades\Http::withToken($c->wa_access_token)->timeout(12)
+                    ->get('https://graph.facebook.com/v21.0/' . $c->wa_phone_number_id, ['fields' => 'messaging_limit_tier,quality_rating']);
+            } catch (\Throwable) {
+                return $nada;
+            }
+
+            $nivel = (string) $r->json('messaging_limit_tier');
+            $topes = ['TIER_50' => 50, 'TIER_250' => 250, 'TIER_1K' => 1000, 'TIER_10K' => 10000, 'TIER_100K' => 100000];
+
+            return ['nivel' => $nivel ?: null, 'maximo' => $topes[$nivel] ?? null, 'calidad' => $r->json('quality_rating')];
+        });
+    }
+
+    /**
+     * Una plantilla con un botón de enlace variable («Pagar ahora → …/pay/{{1}}») exige ese dato
+     * en cada mensaje: sin él, Meta rechaza el envío entero. Los envíos masivos no arman ese
+     * enlace, así que se avisa antes de empezar en vez de fallarle a toda la lista.
+     */
+    private function botonQueNoSePuedeLlenar(Company $company, WaCampaign $campaign): ?string
+    {
+        try {
+            $botones = (new MetaWhatsAppService($company->id))->dynamicUrlButtons((string) $campaign->template_name, $campaign->language ?: 'es_CO');
+        } catch (\Throwable) {
+            return null;
+        }
+
+        return $botones === [] ? null
+            : 'La plantilla «' . $campaign->template_name . '» tiene un botón con enlace propio de cada cliente («' . implode('», «', $botones) . '») y un envío masivo no puede armarlo: Meta rechazaría todos los mensajes. Use una plantilla sin ese botón.';
     }
 
     /** Los {{n}} en el orden que definió el panel. */

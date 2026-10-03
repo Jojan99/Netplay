@@ -125,152 +125,86 @@ class InvoiceEmailService
     }
 
     /**
-     * Construir HTML profesional para la factura.
+     * La plantilla del correo de la factura, con el diseño común de la plataforma.
+     *
+     * Todo lo que muestra sale de dos lugares y de ninguno más: la factura real del cliente
+     * ($data, la misma fila con la que se arma el PDF) y el membrete que la empresa parametrizó
+     * para sus facturas (teléfono, NIT, dirección, medios de pago, pie). Lo que no esté cargado
+     * no se muestra: aquí no se rellena nada con valores supuestos.
      */
-    private function buildInvoiceHtml(array $data): string
+    private function plantilla(array $data): \App\Services\Correo\PlantillaDeCorreo
     {
         $e = fn ($v) => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
-        $names = $e(trim(($data['names'] ?? '') . ' ' . ($data['lastname'] ?? '')));
-        $numberFacture = $e($data['number_facture'] ?? '');
-        $dateFacturation = $e($data['date_facturation'] ?? '');
-        $total = isset($data['price_total']) ? number_format($data['price_total'] - ($data['price_discount'] ?? 0), 0, ',', '.') : '0';
-        $planName = $e($data['plan_name'] ?? 'Servicio de Internet');
-        $monthlyPrice = isset($data['monthly_price']) ? number_format($data['monthly_price'], 0, ',', '.') : '0';
-        $address = $e($data['address'] ?? '');
+        $pesos = fn ($v) => '$ ' . number_format((float) $v, 0, ',', '.');
+        $m = \App\Resources\Templates\TemplatesPdf::datosEmpresa($this->company);
 
-        // Marca de la empresa de la factura
-        $empresa = $e($this->empresa);
-        $logoHtml = $this->logo && str_starts_with($this->logo, 'data:')
-            ? "<img src='cid:logo' alt='{$empresa}' style='max-height:60px;max-width:200px;margin-bottom:10px;'><br>"
-            : '';
+        $nombre = trim(($data['names'] ?? '') . ' ' . ($data['lastname'] ?? ''));
+        $valor = (float) ($data['price_total'] ?? 0);
+        $descuento = (float) ($data['price_discount'] ?? 0);
+        $abonado = (float) ($data['price_abone'] ?? 0);
+        $saldo = max(0, $valor - $descuento - $abonado);
+        $limite = !empty($data['date_facturation']) ? self::fechaLarga((string) $data['date_facturation']) : null;
+        $concepto = trim((string) ($data['concepto'] ?? ''));
+        $conLogo = $this->logo && str_starts_with($this->logo, 'data:');
 
-        $contacto = [];
-        if ($this->empresaEmail !== '') {
-            $mail = $e($this->empresaEmail);
-            $contacto[] = "<strong>Email:</strong> <a href='mailto:{$mail}'>{$mail}</a>";
+        $p = \App\Services\Correo\PlantillaDeCorreo::deEmpresa($this->company, $conLogo ? 'logo' : null)
+            ->antetitulo('Factura de servicios')
+            ->titulo('Su factura #' . ($data['number_facture'] ?? '') . ' ya está lista')
+            ->parrafo('Hola' . ($nombre !== '' ? ', <strong>' . $e($nombre) . '</strong>' : '') . '.')
+            ->parrafo('Le compartimos la factura de su servicio. La encuentra adjunta en PDF y este es el resumen:')
+            ->cifra('Total a pagar', $pesos($saldo), $limite ? 'Fecha límite de pago: ' . $limite : null)
+            ->datos([
+                'Factura' => '#' . ($data['number_facture'] ?? ''),
+                'Cliente' => $nombre ?: null,
+                'Documento' => !empty($data['dni']) ? (string) $data['dni'] : null,
+                'Concepto' => $concepto !== '' ? $concepto : null,
+                'Plan' => !empty($data['plan_name']) ? (string) $data['plan_name'] : null,
+                'Valor' => $pesos($valor),
+                'Descuento' => $descuento > 0 ? '- ' . $pesos($descuento) : null,
+                'Abonado' => $abonado > 0 ? '- ' . $pesos($abonado) : null,
+                'Fecha límite de pago' => $limite,
+                'Dirección del servicio' => !empty($data['address']) ? (string) $data['address'] : null,
+            ]);
+
+        // Los medios de pago que la empresa puso en su factura, tal cual los escribió.
+        $pago = trim((string) $m['payment_info']);
+
+        if ($pago !== '' && !preg_match('/^[\-–—.\s]*$/u', $pago)) {
+            $p->textoDeLaEmpresa('Medios de pago', $pago);
         }
-        if ($this->empresaTelefono !== '') {
-            $digitos = preg_replace('/\D+/', '', $this->empresaTelefono);
-            if (strlen($digitos) === 10) {
-                $digitos = '57' . $digitos;
-            }
-            $tel = $e($this->empresaTelefono);
-            $contacto[] = strlen($digitos) >= 11
-                ? "<strong>WhatsApp:</strong> <a href='https://wa.me/{$digitos}'>{$tel}</a>"
-                : "<strong>Teléfono:</strong> {$tel}";
+
+        $p->parrafo('Si ya realizó el pago, puede ignorar este mensaje.');
+
+        // El WhatsApp es el teléfono de la factura, si es un celular; si no, no hay botón.
+        $digitos = preg_replace('/\D+/', '', (string) $m['phone']);
+        $digitos = strlen($digitos) === 10 && $digitos[0] === '3' ? '57' . $digitos : $digitos;
+
+        if (preg_match('/^573\d{9}$/', $digitos)) {
+            $p->boton('Escribirnos por WhatsApp', 'https://wa.me/' . $digitos);
         }
-        $contactoHtml = $contacto
-            ? "<p class='message'>Si tiene alguna pregunta o requiere asistencia, no dude en contactarnos:</p>
-            <p class='message' style='text-align:center;'>" . implode('<br>', $contacto) . "</p>"
-            : '';
 
-        $pie = $this->empresaPie !== '' ? "<p>" . $e($this->empresaPie) . "</p>" : '';
-        $derechos = $empresa !== '' ? "<p>&copy; " . date('Y') . " {$empresa}. Todos los derechos reservados.</p>" : '';
-        $responder = $this->empresaEmail !== ''
-            ? '<p>Puede responder a este correo para comunicarse con nosotros.</p>'
-            : '<p>Este es un correo automático, por favor no responda a esta dirección.</p>';
+        $pie = trim((string) $this->company->invoice_footer);
 
-        return "<!DOCTYPE html>
-<html lang='es'>
-<head>
-    <meta charset='UTF-8'>
-    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
-    <title>Factura {$numberFacture}</title>
-    <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6f8; margin: 0; padding: 0; }
-        .container { max-width: 600px; margin: 20px auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.08); }
-        .header { background: linear-gradient(135deg, #0056b3 0%, #003d80 100%); color: white; padding: 30px; text-align: center; }
-        .header h1 { margin: 0; font-size: 24px; font-weight: 600; }
-        .header p { margin: 8px 0 0; opacity: 0.9; font-size: 14px; }
-        .content { padding: 30px; }
-        .invoice-box { background-color: #f8fafc; border-radius: 8px; padding: 20px; margin: 20px 0; border-left: 4px solid #0056b3; }
-        .invoice-box h2 { margin: 0 0 15px; color: #0056b3; font-size: 18px; }
-        .detail-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e2e8f0; }
-        .detail-row:last-child { border-bottom: none; }
-        .detail-row .label { color: #64748b; font-size: 14px; }
-        .detail-row .value { color: #1e293b; font-weight: 600; font-size: 14px; }
-        .total-box { background: linear-gradient(135deg, #0056b3 0%, #003d80 100%); color: white; border-radius: 8px; padding: 20px; margin: 20px 0; text-align: center; }
-        .total-box .total-label { font-size: 14px; opacity: 0.9; margin-bottom: 5px; }
-        .total-box .total-value { font-size: 28px; font-weight: 700; }
-        .message { color: #475569; line-height: 1.7; font-size: 15px; margin: 20px 0; }
-        .btn-container { text-align: center; margin: 25px 0; }
-        .btn { display: inline-block; background-color: #0056b3; color: white; text-decoration: none; padding: 12px 30px; border-radius: 6px; font-weight: 600; font-size: 14px; }
-        .footer { background-color: #f1f5f9; text-align: center; padding: 20px; color: #64748b; font-size: 13px; }
-        .footer a { color: #0056b3; text-decoration: none; }
-        @media only screen and (max-width: 600px) {
-            .container { margin: 0; border-radius: 0; }
-            .content { padding: 20px; }
-        }
-    </style>
-</head>
-<body>
-    <div class='container'>
-        <div class='header'>
-            {$logoHtml}
-            <h1>{$empresa}</h1>
-            <p>Factura de Servicios</p>
-        </div>
-        <div class='content'>
-            <p class='message'>Estimado/a <strong>{$names}</strong>,</p>
-            <p class='message'>Le informamos que su factura del mes ha sido generada exitosamente. A continuación encontrará los detalles de su servicio:</p>
-
-            <div class='invoice-box'>
-                <h2>Detalle de la Factura</h2>
-                <div class='detail-row'>
-                    <span class='label'>No. Factura:</span>
-                    <span class='value'>#{$numberFacture}</span>
-                </div>
-                <div class='detail-row'>
-                    <span class='label'>Plan:</span>
-                    <span class='value'>{$planName}</span>
-                </div>
-                <div class='detail-row'>
-                    <span class='label'>Valor Plan:</span>
-                    <span class='value'>\${$monthlyPrice} COP</span>
-                </div>
-                <div class='detail-row'>
-                    <span class='label'>Fecha Límite:</span>
-                    <span class='value'>{$dateFacturation}</span>
-                </div>
-                <div class='detail-row'>
-                    <span class='label'>Dirección:</span>
-                    <span class='value'>{$address}</span>
-                </div>
-            </div>
-
-            <div class='total-box'>
-                <div class='total-label'>TOTAL A PAGAR</div>
-                <div class='total-value'>\${$total} COP</div>
-            </div>
-
-            <p class='message'>Adjunto a este correo encontrará su factura en formato PDF. Por favor realice el pago antes de la fecha límite indicada para evitar suspensión del servicio.</p>
-
-            {$contactoHtml}
-        </div>
-        <div class='footer'>
-            {$pie}
-            {$derechos}
-            {$responder}
-        </div>
-    </div>
-</body>
-</html>";
+        return $p->nota(trim(($pie !== '' ? $e($pie) . '<br>' : '')
+            . ($this->empresaEmail !== '' ? 'Puede responder a este correo para comunicarse con nosotros.' : 'Este es un correo automático: por favor no responda a esta dirección.')));
     }
 
-    /**
-     * Construir versión texto plano.
-     */
+    private static function fechaLarga(string $fecha): string
+    {
+        try {
+            return \Carbon\Carbon::parse($fecha)->locale('es')->isoFormat('D [de] MMMM [de] YYYY');
+        } catch (\Throwable) {
+            return $fecha;
+        }
+    }
+
+    private function buildInvoiceHtml(array $data): string
+    {
+        return $this->plantilla($data)->html();
+    }
+
     private function buildInvoiceText(array $data): string
     {
-        $names = trim(($data['names'] ?? '') . ' ' . ($data['lastname'] ?? ''));
-        $numberFacture = $data['number_facture'] ?? '';
-        $total = isset($data['price_total']) ? number_format($data['price_total'] - ($data['price_discount'] ?? 0), 0, ',', '.') : '0';
-
-        return "Estimado/a {$names},\n\n"
-            . "Le informamos que su factura #{$numberFacture} ha sido generada.\n"
-            . "Total a pagar: \${$total} COP\n\n"
-            . "Adjunto encontrará su factura en PDF.\n\n"
-            . ($this->empresa !== '' ? "Gracias por preferir {$this->empresa}.\n" : '')
-            . $this->empresaEmail;
+        return $this->plantilla($data)->texto();
     }
 }

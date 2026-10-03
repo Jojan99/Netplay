@@ -47,6 +47,10 @@ class SendMessageUseCase implements SendMessageUseCaseInterface
             ];
     }
 
+    // Si el asistente de soporte llevaba esta conversación, se retira: desde
+    // aquí la atiende una persona.
+    \App\Services\Soporte\AgenteDeSoporte::retirar((int) $conversation->id);
+
     // 🔥 AUTO-ASIGNACIÓN SI ES NEW
     if ($conversation->status === 'new') {
 
@@ -153,14 +157,30 @@ class SendMessageUseCase implements SendMessageUseCaseInterface
     $whatsAppService = WhatsAppService::paraConversacion($conversation);
 
     $quotedArg = $quoted ? ['id' => $quoted['external_id'], 'fromMe' => $quoted['sender_type'] !== 'customer', 'text' => $quoted['content']] : null;
-    $whats = match ($messageType) {
-        'sticker'  => $whatsAppService->sendSticker($conversation->phone, $mediaUrl, $quotedArg),
-        'location' => $whatsAppService->sendLocation($conversation->phone, (float)($extra['latitude'] ?? 0), (float)($extra['longitude'] ?? 0), $extra['name'] ?? null, $extra['address'] ?? null, $quotedArg),
-        'contact'  => $whatsAppService->sendContact($conversation->phone, $extra['contact_name'] ?? null, (string)($extra['contact_phone'] ?? ''), $quotedArg),
-        'reaction' => $whatsAppService->sendReaction($conversation->phone, (string)$target['external_id'], $target['sender_type'] !== 'customer', $content),
-        'poll'     => $whatsAppService->sendPoll($conversation->phone, trim((string)($extra['question'] ?? '')) ?: explode("\n", $content)[0], $pollOptions, (int)($extra['selectable'] ?? 1)),
-        default    => $whatsAppService->mensajeInformativo($conversation->phone, $content, $quotedArg),
-    };
+
+    // NetplayWhatsAppService lanza una excepción (no devuelve un arreglo con error) cuando el
+    // whatsapp-service contesta mal —por ejemplo, la línea de esta conversación quedó apuntando
+    // a una instancia vieja y desconectada—. Sin este try/catch, esa excepción se comía el resto
+    // del método: el mensaje se quedaba "pending" para siempre, sin avisarle nada al agente ni
+    // ofrecerle el botón de «Reintentar» que la pantalla ya tiene para mensajes fallidos.
+    try {
+        $whats = match ($messageType) {
+            'sticker'  => $whatsAppService->sendSticker($conversation->phone, $mediaUrl, $quotedArg),
+            'location' => $whatsAppService->sendLocation($conversation->phone, (float)($extra['latitude'] ?? 0), (float)($extra['longitude'] ?? 0), $extra['name'] ?? null, $extra['address'] ?? null, $quotedArg),
+            'contact'  => $whatsAppService->sendContact($conversation->phone, $extra['contact_name'] ?? null, (string)($extra['contact_phone'] ?? ''), $quotedArg),
+            'reaction' => $whatsAppService->sendReaction($conversation->phone, (string)$target['external_id'], $target['sender_type'] !== 'customer', $content),
+            'poll'     => $whatsAppService->sendPoll($conversation->phone, trim((string)($extra['question'] ?? '')) ?: explode("\n", $content)[0], $pollOptions, (int)($extra['selectable'] ?? 1)),
+            default    => $whatsAppService->mensajeInformativo($conversation->phone, $content, $quotedArg),
+        };
+    } catch (\Throwable $e) {
+        \Illuminate\Support\Facades\Log::error('[CRM] No se pudo enviar el mensaje', [
+            'conversation' => $conversation->id, 'message' => $message->id, 'error' => $e->getMessage(),
+        ]);
+        $this->conversationRepository->setMessageExternalId($message->id, null, 'failed');
+        broadcast(new \App\Events\MessageStatusEvent($conversation->id, $message->id, 'failed'));
+
+        return ['status' => 'error', 'message' => $e->getMessage(), 'message_id' => $message->id];
+    }
 
     // Guardar el id de WhatsApp para seguir los acks (entregado / leído)
     $externalId = is_array($whats) ? ($whats['messageId'] ?? ($whats['messages'][0]['id'] ?? null)) : null;

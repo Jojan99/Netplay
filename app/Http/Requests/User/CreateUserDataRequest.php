@@ -53,6 +53,9 @@ class CreateUserDataRequest extends FormRequest
             'pppoe_user' => ['nullable', 'string', 'max:120', 'required_if:connection_type,pppoe', new ClaveDeEquipo('El usuario del PPPoE')],
             'pppoe_password' => ['nullable', 'string', 'max:120', 'required_if:connection_type,pppoe', new ClaveDeEquipo('La clave del PPPoE')],
             'pppoe_profile' => 'nullable|string|max:120',
+        ] + \App\Support\DatosDelCliente::reglas() + [
+            // ↑ Tipo de documento, estrato, barrio, ciudad, departamento, país e indicativo: lo que
+            //   piden la DIAN y Alegra. Opcionales, para no romper las altas que no los mandan.
               // 'genderId' => 'required|int',
             // 'dniId' => 'required|int',
             // 'birthday' => 'required|string',

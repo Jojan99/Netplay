@@ -32,6 +32,8 @@ use Illuminate\Support\Facades\Route;
 
 // ── Pública: Login del cliente ──────────────────────────────────────────────
 Route::post('client/login', [ClientAuthController::class, 'login'])->middleware('throttle:login');
+// Desde el enlace de pago de WhatsApp, con los últimos cuatro dígitos de la cédula.
+Route::post('client/entrar-con-enlace', [ClientAuthController::class, 'entrarConEnlace'])->middleware('throttle:20,1');
 
 // ── Protegidas: solo clientes (profile_id = 1) ─────────────────────────────
 Route::prefix('client')->middleware(['jwt.client'])->group(function () {
@@ -64,6 +66,8 @@ Route::prefix('client')->middleware(['jwt.client'])->group(function () {
     // Perfil
     // ── Cuenta: estado del servicio, pagos, contratos y actividad ──
     // ── Mi WiFi: el equipo del cliente por TR-069 ──────────────────────────
+    // Todo esto pasa por el ACS: sin el complemento TR-069 de la empresa, el portal lo muestra como no disponible.
+    Route::middleware('complemento.tr069:portal')->group(function () {
     Route::get('router',              [\App\Http\Controllers\Client\ClientRouterController::class, 'panel']);
     Route::post('router/wifi',        [\App\Http\Controllers\Client\ClientRouterController::class, 'wifi']);
     Route::post('router/bloquear',    [\App\Http\Controllers\Client\ClientRouterController::class, 'bloquear']);
@@ -82,6 +86,7 @@ Route::prefix('client')->middleware(['jwt.client'])->group(function () {
     // ── Consumo de datos y velocidad ──
     Route::get('consumo',     [\App\Http\Controllers\Client\ClientConsumoController::class, 'historial']);
     Route::post('velocidad',  [\App\Http\Controllers\Client\ClientConsumoController::class, 'velocidad']);
+    });
 
     Route::get('status',                       [\App\Http\Controllers\Client\ClientAccountController::class, 'status']);
     Route::get('payments',                     [\App\Http\Controllers\Client\ClientAccountController::class, 'payments']);

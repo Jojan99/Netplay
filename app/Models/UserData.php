@@ -9,6 +9,8 @@ use Laravel\Sanctum\HasApiTokens;
 
 class UserData extends Authenticatable
 {
+    use \App\Models\Concerns\FechasEnHoraLocal;
+
     use HasApiTokens, HasFactory, Notifiable;
 
      /**
@@ -48,6 +50,17 @@ class UserData extends Authenticatable
         'descuento_valor',
         'descuento_motivo',
         'descuento_hasta',
+        // Lo que piden la DIAN y Alegra. Sin estar aquí, el alta los descartaba en silencio.
+        'fiscal_tipo_documento',
+        'fiscal_dv',
+        'fiscal_tipo_persona',
+        'fiscal_municipio',
+        'estrato',
+        'barrio',
+        'ciudad',
+        'departamento',
+        'pais',
+        'prefijo_telefono',
     ];
 
      /**

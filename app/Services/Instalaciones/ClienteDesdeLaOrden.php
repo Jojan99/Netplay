@@ -4,6 +4,7 @@ namespace App\Services\Instalaciones;
 
 use App\Models\InstallationOrder;
 use App\Models\User;
+use App\Models\UserData;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
@@ -85,6 +86,7 @@ class ClienteDesdeLaOrden
 
         if ($orden->connection_type === 'pppoe') {
             if (!$orden->pppoe_user) $falta[] = 'el usuario PPPoE';
+            if (!$orden->pppoe_password) $falta[] = 'la contraseña PPPoE';
         } elseif (!$orden->ip_asignada) {
             $falta[] = 'la IP';
         }
@@ -109,6 +111,25 @@ class ClienteDesdeLaOrden
 
         $perfilCliente = self::perfilDeCliente((int) $orden->company_id);
 
+        // El router antes que el cliente, a propósito —mismo criterio que CreateUserDataUseCase
+        // (el alta de siempre)—: si lo rechaza, mejor que no quede un cliente en la plataforma
+        // que no existe en la red. Esto es lo que faltaba de verdad: la ONT quedaba autorizada y
+        // con la conexión programada por TR-069, pero como el router nunca tuvo la credencial
+        // PPPoE (ni, con IP fija, la entrada en el ARP), el equipo pedía línea y nadie contestaba.
+        $arp = null;
+
+        if ($orden->connection_type === 'pppoe') {
+            if ($error = self::altaPppoe($orden)) {
+                throw new \RuntimeException($error);
+            }
+        } else {
+            $arp = self::asegurarIpEnArp($orden);
+
+            if (!($arp['ok'] ?? false)) {
+                throw new \RuntimeException($arp['mensaje'] ?: 'No se pudo reservar la IP en el router.');
+            }
+        }
+
         $user = User::create([
             'company_id' => $orden->company_id,
             'username'   => $orden->client_dni,
@@ -117,9 +138,22 @@ class ClienteDesdeLaOrden
             'profile_id' => $perfilCliente,
         ]);
 
-        $userDataId = DB::table('user_data')->insertGetId([
+        // Eloquent, no el query builder: «pppoe_password» está marcado «encrypted» en UserData, y
+        // sólo el modelo lo cifra al guardar. Insertarlo con DB::table() lo dejaba en texto plano
+        // —tal como lo entrega $orden->pppoe_password, ya descifrado por el cast de InstallationOrder—
+        // y cualquier pantalla que después leyera ese cliente reventaba al intentar descifrarlo
+        // («The payload is invalid.»), tumbando la lista de instalaciones entera.
+        // Con IP fija, la reserva en el ARP devuelve la fila de tabla_ips que hay que colgar del
+        // cliente; con PPPoE no hay IP propia, la reparte el pool del perfil.
+        $ipAssignmentId = $orden->connection_type !== 'pppoe'
+            ? app(\App\Repositories\Interfaces\InternetInfoRepositoryInterface::class)
+                ->AssignemetIpUser($orden->ip_asignada, $user->id, (string) ($arp['mac'] ?? ''))
+            : null;
+
+        $userData = UserData::create([
             'company_id'        => $orden->company_id,
             'user_id'           => $user->id,
+            'ip_assignment_id'  => $ipAssignmentId,
             // Sin esto, MySQL usa el default de la columna (0) en vez de dejarla en null, y no hay
             // perfil con id 0: la llave foránea a «profiles» revienta. Mismo criterio que el
             // importador (EjecutarImportacion::perfilDeCliente).
@@ -146,9 +180,8 @@ class ClienteDesdeLaOrden
             // desaparece de ambos conteos. 1 = ACTIVE (ver tabla internet_status).
             'status_internet_id' => 1,
             'whatsapp_enabled'  => 1,
-            'created_at'        => now(),
-            'updated_at'        => now(),
         ]);
+        $userDataId = $userData->id;
 
         self::abrirFacturacion((int) $user->id, (int) $orden->company_id, (int) $orden->grupo_facturacion);
 
@@ -157,6 +190,66 @@ class ClienteDesdeLaOrden
         // el de «users» hacía que la ONT, el inventario y la orden quedaran apuntando a una fila que
         // no existía en «user_data», y reventaba al final con una llave foránea.
         return (int) $userDataId;
+    }
+
+    /**
+     * Le crea la credencial PPPoE en el router (o se la actualiza si ya existía). Sin esto la
+     * ONT quedaba configurada por TR-069 para pedir esa línea, pero el router nunca la conocía:
+     * el equipo marcaba y del otro lado no había nadie que le contestara.
+     */
+    private static function altaPppoe(InstallationOrder $orden): ?string
+    {
+        $usuario = trim((string) $orden->pppoe_user);
+        $clave = (string) $orden->pppoe_password;
+        // Sin perfil elegido se usa el del plan, que es el que fija la velocidad en PPPoE.
+        $perfil = trim((string) $orden->pppoe_profile);
+
+        if ($perfil === '') {
+            $perfil = (string) DB::table('internet_plans')
+                ->where('id', $orden->internet_plan_id)
+                ->where('company_id', $orden->company_id)
+                ->value('pppoe_profile');
+        }
+
+        $perfil = $perfil ?: 'default';
+
+        if ($usuario === '' || $clave === '') {
+            return 'Para una conexión PPPoE hacen falta el usuario y la contraseña.';
+        }
+
+        $token = DB::table('conection_routers')
+            ->where('company_id', $orden->company_id)
+            ->when($orden->router_id, fn ($q) => $q->where('id', $orden->router_id))
+            ->value('token');
+
+        if (!$token) {
+            return 'No hay un router configurado para dar de alta la conexión PPPoE.';
+        }
+
+        try {
+            (new \App\Services\Red\ServicioPppoe(
+                app(\App\Managers\Interfaces\ConectionRouterManagerInterface::class),
+                $token,
+            ))->crear($usuario, $clave, $perfil, (string) $orden->client_dni);
+
+            return null;
+        } catch (\Throwable $e) {
+            Log::error('[Instalación] No se pudo crear la credencial PPPoE', ['orden' => $orden->id, 'error' => $e->getMessage()]);
+
+            return 'No se pudo crear el usuario PPPoE en el router: ' . $e->getMessage();
+        }
+    }
+
+    /** Reserva la IP en el ARP del router del cliente, igual que el alta de siempre. */
+    private static function asegurarIpEnArp(InstallationOrder $orden): array
+    {
+        return app(\App\UseCases\ManagementRouter\Interfaces\GetIpAvaliblesUseCaseInterface::class)->asegurarIpEnArp(
+            ip: (string) $orden->ip_asignada,
+            vlan: (string) ($orden->vlan ?: ''),
+            documento: (string) $orden->client_dni,
+            userId: null,
+            routerId: $orden->router_id ? (int) $orden->router_id : null,
+        );
     }
 
     /** El perfil de cliente de esa empresa: el que no es admin, técnico ni contador. */

@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class Egresses extends Model
 {
+    use \App\Models\Concerns\FechasEnHoraLocal;
+
     use HasFactory;
     protected $fillable = [
         'id',

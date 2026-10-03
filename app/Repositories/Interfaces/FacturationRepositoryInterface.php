@@ -103,6 +103,8 @@ interface FacturationRepositoryInterface
   public function payInvoice(int $detId, string $clientName, ?int $paymentMethodId = null, ?string $observacion = null): bool;
   public function abonarInvoice(int $detId, float $amount, string $clientName, ?int $paymentMethodId = null): bool;
   public function liquidateBulk(array $detIds, string $clientName, ?int $paymentMethodId = null): int;
+  /** @return array{anuladas:int, errores:list<string>, avisos:list<string>} */
+  public function anularBulk(array $detIds, string $motivo): array;
   public function updateInvoice(int $detId, array $data): bool;
   public function exportPayments(?string $from, ?string $to, ?int $cabId): array;
   public function getPaymentLogsPaginated(?string $search, ?string $from, ?string $to, int $page, int $perPage): object;

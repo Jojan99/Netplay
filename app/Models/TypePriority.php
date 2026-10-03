@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class TypePriority extends Model
 {
+    use \App\Models\Concerns\FechasEnHoraLocal;
+
     use HasFactory;
 
     // Especifica el nombre de la tabla manualmente

@@ -37,6 +37,11 @@ class RegisterCompanyUseCase implements RegisterCompanyUseCaseInterface
                 $company->subdomain = !empty($data['subdomain'])
                     ? strtolower(trim((string) $data['subdomain']))
                     : app(\App\Services\Plataforma\EmpresaDelDominio::class)->libreDesde((string) $data['name']);
+
+                // La prueba de la aceptación: cuándo, qué versión de los textos y desde dónde.
+                $company->terminos_aceptados_en = $now;
+                $company->terminos_version      = (string) config('plataforma.legal.version');
+                $company->terminos_ip           = $data->ip();
                 $company->save();
 
                 $adminProfileId = null;

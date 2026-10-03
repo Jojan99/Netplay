@@ -70,26 +70,45 @@ Eso implica que:</p>
   <li>El transporte de los mensajes se rige además por las condiciones de Meta, que no dependen de nosotros.</li>
 </ul>
 
-<h2>3. Con quién compartimos datos</h2>
+<h2>3. Atención automática y cobranza</h2>
+
+<p>Para atender más rápido usamos algunas funciones automáticas:</p>
+
+<ul>
+  <li><strong>Asistente automático por WhatsApp.</strong> Algunas respuestas, incluidos los recordatorios y acuerdos de pago, las puede generar un asistente con inteligencia artificial de un proveedor externo. Para responder, ese proveedor recibe el texto de la conversación y los datos mínimos de la cuenta, como el saldo. En cualquier momento puede pedir que lo atienda una persona.</li>
+  <li><strong>Lectura de comprobantes.</strong> Cuando nos envía un comprobante de pago, el sistema lo lee para cruzarlo con su factura. Si algo no coincide, lo revisa una persona.</li>
+  <li><strong>Suspensión y reactivación por mora.</strong> El servicio puede suspenderse y reactivarse de forma automática según las fechas de la factura y el registro del pago. Si cree que hubo un error, escríbanos y lo revisa una persona.</li>
+</ul>
+
+<p>Cuando lo contactamos para cobrar, lo hacemos por los canales que autorizó y dentro de los horarios que
+permite la <strong>Ley 2300 de 2023</strong>: lunes a viernes de 7:00 a. m. a 7:00 p. m. y sábados de 8:00 a. m.
+a 3:00 p. m., nunca domingos ni festivos. Si usted nos escribe fuera de ese horario, le respondemos.</p>
+
+<h2>4. Con quién compartimos datos</h2>
 
 <p>Compartimos lo mínimo indispensable, y sólo con quienes nos ayudan a prestar el servicio:</p>
 
 <ul>
+  <li><strong>{{ $plataforma }}</strong>, la plataforma tecnológica donde administramos clientes, facturación, red y atención. Trata los datos por cuenta nuestra y siguiendo nuestras instrucciones, como encargado.</li>
   <li><strong>Pasarelas de pago</strong>, para procesar los pagos en línea.</li>
   <li><strong>Proveedores de facturación electrónica</strong>, porque la DIAN exige que la factura salga con los datos del cliente.</li>
   <li><strong>Meta</strong>, en la medida en que usamos WhatsApp para comunicarnos.</li>
+  <li><strong>Servicios de correo y de inteligencia artificial</strong>, para enviar facturas y avisos y para el asistente automático.</li>
   <li><strong>Autoridades</strong>, cuando una orden judicial o una norma nos obliga a entregar información.</li>
 </ul>
 
-<p>Nuestros proveedores sólo pueden usar esos datos para lo que les encargamos, nunca para fines propios.</p>
+<p>Nuestros proveedores sólo pueden usar esos datos para lo que les encargamos, nunca para fines propios.
+Algunos tienen sus servidores fuera de Colombia, principalmente en Estados Unidos y la Unión Europea; los datos
+viajan a ellos únicamente para que presten su servicio, con el deber de protegerlos, como permite la Ley 1581.
+No reportamos a centrales de riesgo sin la autorización que exige la Ley 1266 de 2008.</p>
 
-<h2>4. Cuánto tiempo los guardamos</h2>
+<h2>5. Cuánto tiempo los guardamos</h2>
 
 <p>Mientras la persona sea cliente, y después el tiempo que exijan las normas contables y tributarias
 —diez años para la información de facturación—. Cumplido ese plazo, o cuando alguien pide que se borren
 sus datos y no hay obligación legal de conservarlos, los eliminamos.</p>
 
-<h2>5. Sus derechos</h2>
+<h2>6. Sus derechos</h2>
 
 <p>Toda persona cuyos datos tengamos puede, gratis y sin tener que justificarlo:</p>
 
@@ -113,7 +132,11 @@ sus datos y no hay obligación legal de conservarlos, los eliminamos.</p>
 Respondemos las consultas en <strong>diez días hábiles</strong> y los reclamos en <strong>quince días hábiles</strong>,
 como manda la ley. En la página de <a href="/eliminacion-de-datos">eliminación de datos</a> está el detalle de cómo pedir el borrado.</p>
 
-<h2>6. Cómo cuidamos la información</h2>
+<h3>Autorización</h3>
+<p>Tratamos sus datos con la autorización que usted da al contratar el servicio o al escribirnos por nuestros
+canales. Puede revocarla cuando quiera, salvo para lo que la ley o el contrato nos obligan a conservar.</p>
+
+<h2>7. Cómo cuidamos la información</h2>
 
 <ul>
   <li>Todo viaja cifrado: la plataforma sólo se abre por HTTPS.</li>
@@ -126,14 +149,16 @@ como manda la ley. En la página de <a href="/eliminacion-de-datos">eliminación
 <p>Ningún sistema es infalible. Si llegara a ocurrir un incidente que afecte datos personales, avisaremos a
 los afectados y a la Superintendencia de Industria y Comercio, como corresponde.</p>
 
-<h2>7. Menores de edad</h2>
+<h2>8. Menores de edad</h2>
 
 <p>No prestamos el servicio a menores de edad ni les pedimos datos. Si un menor aparece como contacto
 en la cuenta de un titular adulto, tratamos esos datos con la misma reserva y sólo para asuntos del servicio.</p>
 
-<h2>8. Cambios a esta política</h2>
+<h2>9. Vigencia y cambios</h2>
 
-<p>Si cambiamos algo, publicamos la versión nueva en esta misma dirección y actualizamos la fecha del pie.
-Cuando el cambio sea de fondo, además avisamos a los clientes por los medios de contacto que tengamos.</p>
+<p>Esta política rige desde el {{ $actualizado }}, y las bases de datos se mantienen mientras dure la finalidad
+para la que se recogieron los datos. Si cambiamos algo, publicamos la versión nueva en esta misma dirección y
+actualizamos la fecha del pie. Cuando el cambio sea de fondo, además avisamos a los clientes por los medios de
+contacto que tengamos.</p>
 
 @endsection

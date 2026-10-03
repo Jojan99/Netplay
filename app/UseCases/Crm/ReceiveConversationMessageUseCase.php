@@ -256,6 +256,22 @@ public function execute(array $payload): array
      */
     $deAgente = (bool) ($data['fromMe'] ?? false);
 
+    /**
+     * ¿Lo dijo el bot de la línea (el menú, «¿de quién es el pago?», «mándeme la cédula»)?
+     *
+     * Antes eso no llegaba nunca al CRM. Ahora llega marcado: se guarda como mensaje del bot,
+     * pero NO cuenta como que una persona atendió —no pausa al bot, no retira a los asistentes,
+     * no cambia el estado de la conversación—.
+     */
+    $deBot = $deAgente && (bool) ($data['fromBot'] ?? false);
+
+    /**
+     * Lo que el cliente contestó dentro de un flujo del bot (su cédula, un «sí»). El bot ya lo
+     * atendió: aquí sólo se guarda para que la conversación se lea completa. Ni bienvenida, ni
+     * aviso de fuera de horario, ni asignación, ni asistentes.
+     */
+    $soloRegistrar = !$deAgente && (bool) ($data['soloRegistrar'] ?? false);
+
     Log::info('[Mensaje campos disponibles]', [
         'type'   => $data['type'] ?? null,
         'keys'   => array_keys($data),
@@ -358,9 +374,17 @@ public function execute(array $payload): array
     $puerta = app(\App\Services\Crm\PuertaIdentificacion::class);
     $mensajesPrevios = [];
 
-    if (!$esGrupo && !($payload['_saltar_identificacion'] ?? false)) {
+    // La puerta es para lo que escribe el CLIENTE. Lo que sale de la línea (el agente desde el
+    // teléfono, o el bot) no se retiene ni dispara «envíeme su cédula»: antes, si el agente le
+    // escribía a alguien sin identificar, su propio mensaje quedaba retenido y al cliente le
+    // llegaba la pregunta de la cédula sin haber dicho nada.
+    //
+    // Lo que el cliente le contesta al bot de la línea (soloRegistrar) también pasa por la puerta,
+    // pero callada: si ahí dio su cédula, queda identificado y se sueltan los mensajes que
+    // estuvieran retenidos, sin que la puerta le escriba nada.
+    if (!$esGrupo && !$deAgente && !($payload['_saltar_identificacion'] ?? false)) {
         // La pregunta sale por la línea por la que escribió el cliente.
-        $decision = $puerta->evaluar($companyId, $provider, $phone, $data['content'] ?? null, $payload, $instanceId);
+        $decision = $puerta->evaluar($companyId, $provider, $phone, $data['content'] ?? null, $payload, $instanceId, $data['type'] ?? null, $soloRegistrar);
 
         if ($decision['accion'] === \App\Services\Crm\PuertaIdentificacion::RETIENE) {
             return ['status' => 'retenido_identificacion', 'phone' => $phone];
@@ -573,13 +597,17 @@ public function execute(array $payload): array
     // le devuelve WhatsApp al enviar; se compara por contenido dentro de una
     // ventana corta, que es lo que alcanza: nadie manda el mismo texto dos
     // veces en el mismo minuto por dos caminos distintos.
-    if ($deAgente && $content !== null && $content !== '') {
+    if ($deAgente && !$deBot && $content !== null && $content !== '') {
         $eco = DB::table('crm_messages')
             ->where('conversation_id', $conversationId)
             ->where('sender_type', 'agent')
             ->where('content', $content)
             ->where('created_at', '>=', now()->subMinutes(3))
             ->exists();
+
+        // El asistente de soporte manda y después guarda: su eco puede llegar
+        // en el medio, antes de que el mensaje exista en el CRM.
+        $eco = $eco || \App\Services\Soporte\AgenteDeSoporte::esEcoPropio((int) $conversationId, (string) $content);
 
         if ($eco) {
             Log::info('[CRM] Eco de un mensaje propio, ya estaba guardado', ['conversation_id' => $conversationId]);
@@ -594,8 +622,8 @@ public function execute(array $payload): array
         // Lo que sale desde el teléfono o WhatsApp Web lo escribió el agente,
         // no el cliente: si entrara como 'customer' la conversación se leería
         // al revés.
-        'sender_type'     => $deAgente ? 'agent' : 'customer',
-        'agent_signature' => $deAgente ? 'Desde WhatsApp' : null,
+        'sender_type'     => $deBot ? 'system' : ($deAgente ? 'agent' : 'customer'),
+        'agent_signature' => $deBot ? 'Bot' : ($deAgente ? 'Desde WhatsApp' : null),
         'message_type'    => $type,
         'content'         => $content,
         'media_url'       => $mediaUrl,
@@ -608,6 +636,15 @@ public function execute(array $payload): array
         'participant_name'  => $esGrupo ? ($data['participantName'] ?? null) : null,
         'created_at'      => now(),
     ]);
+
+    // Lo que dijo el bot, o lo que el cliente le contestó dentro de un flujo: queda guardado y
+    // a la vista, y nada más. No es una persona atendiendo ni un mensaje nuevo por atender.
+    if ($deBot || $soloRegistrar) {
+        broadcast(new NewMessageEvent($message, $conversationId));
+        broadcast(new InboxUpdatedEvent($conversationId, (string) DB::table('crm_conversations')->where('id', $conversationId)->value('status'), $deBot ? 'system' : 'customer', $provider));
+
+        return ['conversation_id' => $conversationId, 'status' => 'processed', 'origen' => $deBot ? 'bot' : 'cliente_en_flujo_del_bot'];
+    }
 
     // ─── Cobranza: si el asistente le está cobrando a este número, contesta él ───
     //
@@ -639,6 +676,9 @@ public function execute(array $payload): array
     // corresponde saludar, ni avisar que está fuera de horario, ni asignarla a
     // otro, ni dejar que el bot le hable encima al cliente.
     if ($deAgente) {
+        // Si el asistente de soporte llevaba esta conversación, se retira: ya hay una persona.
+        \App\Services\Soporte\AgenteDeSoporte::retirar((int) $conversationId);
+
         $this->calmarAlBot((int) $companyId, (string) $phone, (string) ($provider ?? 'netplay'), $lineaId, $instanceId ?? null);
 
         DB::table('crm_conversations')->where('id', $conversationId)
@@ -654,6 +694,30 @@ public function execute(array $payload): array
         ));
 
         return ['conversation_id' => $conversationId, 'status' => 'processed', 'origen' => 'agente_externo'];
+    }
+
+    // ─── Soporte: si es un pedido de soporte (o el asistente ya lleva el caso), contesta él ───
+    //
+    // Igual que en cobranza: sin bienvenida, sin aviso de fuera de horario y sin
+    // asignar agente. Vale para WhatsApp Web y para la API de Meta. La respuesta
+    // se arma en un proceso aparte (el diagnóstico y la IA tardan).
+    if (!$esGrupo) {
+        try {
+            $casoDeSoporte = \App\Services\Soporte\AgenteDeSoporte::tomar(
+                (int) $companyId, (string) ($provider ?? 'netplay'), (string) $phone, (int) $conversationId, (int) $message->id,
+                is_string($content) ? $content : null, (string) $type,
+                !empty($identidad['user_id']) ? (int) $identidad['user_id'] : null, $lineaId, $instanceId ?? null,
+            );
+
+            if ($casoDeSoporte) {
+                broadcast(new NewMessageEvent($message, $conversationId));
+                broadcast(new InboxUpdatedEvent($conversationId, (string) DB::table('crm_conversations')->where('id', $conversationId)->value('status'), 'customer', $provider));
+
+                return ['conversation_id' => $conversationId, 'status' => 'processed', 'soporte' => $casoDeSoporte->id];
+            }
+        } catch (\Throwable $e) {
+            Log::warning('[Soporte] No se pudo pasar el mensaje al asistente', ['phone' => $phone, 'error' => $e->getMessage()]);
+        }
     }
 
     $settings = \App\Support\CrmSettings::for((int)$companyId);

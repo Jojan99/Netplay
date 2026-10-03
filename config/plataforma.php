@@ -12,6 +12,135 @@ return [
     'nombre' => env('PLATAFORMA_NOMBRE', 'Netvula'),
 
     /**
+     * Quién responde legalmente por la plataforma. Sale en la política de
+     * tratamiento de datos y en los términos de netvula.com: la Ley 1581 y el
+     * Decreto 1377 exigen que figuren la razón social, el domicilio y los
+     * canales para ejercer los derechos. Lo que quede vacío no se muestra.
+     *
+     * 'version' es la de los textos legales: se guarda junto a la aceptación
+     * de cada empresa al registrarse, como prueba de qué texto aceptó. Hay
+     * que subirla cada vez que cambie el fondo de los términos o la política.
+     */
+    'legal' => [
+        'razon_social' => env('PLATAFORMA_RAZON_SOCIAL', env('PLATAFORMA_NOMBRE', 'Netvula')),
+        'nit'          => env('PLATAFORMA_NIT'),
+        'direccion'    => env('PLATAFORMA_DIRECCION'),
+        'ciudad'       => env('PLATAFORMA_CIUDAD'),
+        'correo'       => env('PLATAFORMA_CORREO_DATOS'),
+        'telefono'     => env('PLATAFORMA_TELEFONO'),
+        'version'      => '2026-09-30',
+        'actualizado'  => '30 de septiembre de 2026',
+    ],
+
+    /**
+     * Qué pasa cuando a una empresa se le vence la prueba o un cobro.
+     *
+     * La revisión diaria (plataforma:revisar-suscripciones) avisa primero y
+     * suspende después: el panel muestra el aviso desde 'aviso_dias' antes del
+     * vencimiento, y el acceso se cierra 'gracia_dias' después del primer aviso
+     * de vencida. Con 'automatica' en false sólo avisa: suspender vuelve a ser
+     * una decisión manual desde la consola.
+     */
+    'suspension' => [
+        'automatica'  => (bool) env('PLATAFORMA_SUSPENSION_AUTOMATICA', true),
+        'aviso_dias'  => (int) env('PLATAFORMA_AVISO_DIAS', 5),
+        'gracia_dias' => (int) env('PLATAFORMA_GRACIA_DIAS', 5),
+    ],
+
+    /**
+     * Funciones que se contratan aparte del plan.
+     *
+     * TR-069: gestión remota del equipo del cliente y configuración
+     * automática de la ONT. Se cobra por 'tramos' [hasta cuántos equipos,
+     * precio mensual], según los equipos de la empresa que reportan al ACS;
+     * por encima del último tramo se pacta el precio en la suscripción.
+     * 'desde' es el día en que empieza a exigirse: antes, todo sigue abierto
+     * y a quien lo usa se le avisa. Son los 30 días de aviso de cambio de
+     * precio que prometen los términos.
+     */
+    'complementos' => [
+        'tr069' => [
+            'tramos' => [
+                [500,  59900],
+                [1000, 89900],
+                [2000, 179000],
+            ],
+            'desde'  => env('PLATAFORMA_TR069_DESDE', '2026-10-30'),
+            // Precio fijo del complemento según el plan (clave de plataforma_planes), sin importar
+            // los equipos. 0 = incluido en el plan. Decidido el 2026-10-02 para quedar parejos con
+            // WispHub + SmartOLT de 1.500 clientes en adelante.
+            'por_plan' => [
+                'operador-plus' => 89900,
+                'red'           => 0,
+            ],
+        ],
+    ],
+
+    /**
+     * El comparativo de precios de la página pública.
+     *
+     * Publicidad comparativa: es legal mientras sea cierta, comprobable y de
+     * cosas equivalentes (Ley 256 de 1996, art. 13). Por eso cada cifra sale
+     * de la página oficial de precios del proveedor, va con su fecha y su
+     * fuente, y sólo se usan nombres, nunca logos. Los precios ajenos cambian:
+     * HAY QUE REVISARLO cada mes y actualizar 'fecha', 'trm' y 'usd'. Con
+     * 'activo' en false la sección desaparece de la página.
+     *
+     * 'usd' es el precio de lista mensual, sin impuestos, para cada tamaño de
+     * 'tamanos', sumando lo necesario para cubrir gestión del ISP y de la OLT:
+     *   WispHub: Básico 20 (hasta 200), Profesional 50 (hasta 800) o Enterprise 80 (sin tope)
+     *   Mikrowisp: Premium 40 (200), Gold I 54 (300), Platinum II 85 (1.000) o Ilimitada 120
+     *   AdminOLT Pro y SmartOLT: 25 por cada OLT
+     * El precio de Netvula no se escribe aquí: sale de los planes vigentes.
+     */
+    'comparativo' => [
+        'activo'      => (bool) env('PLATAFORMA_COMPARATIVO', true),
+        'fecha_texto' => '30 de septiembre de 2026',
+        'trm'         => 3341.23,
+        'tamanos'     => [
+            // El plan más chico de ellos (200) contra el más chico nuestro (300): la comparación no empieza
+            // justo encima de su corte, donde la diferencia se vería inflada.
+            ['clientes' => 200,  'olts' => 1],
+            ['clientes' => 300,  'olts' => 1],
+            ['clientes' => 900,  'olts' => 2],
+            ['clientes' => 1500, 'olts' => 2],
+            ['clientes' => 3000, 'olts' => 4],
+        ],
+        'alternativas' => [
+            ['nombre' => 'WispHub + AdminOLT',   'detalle' => 'Gestión del ISP y gestor de OLT, contratados por separado', 'usd' => [45, 75, 130, 130, 180]],
+            ['nombre' => 'Mikrowisp + SmartOLT', 'detalle' => 'Gestión del ISP y gestor de OLT, contratados por separado', 'usd' => [65, 79, 135, 170, 220]],
+        ],
+        // El complemento TR-069 frente al de quien lo vende aparte, por los mismos tramos de
+        // 'complementos.tr069.tramos' (500 / 1.000 / 2.000 equipos). AdminOLT: USD 50 / 70 / 100.
+        'tr069' => [
+            ['nombre' => 'AdminOLT', 'detalle' => 'Complemento TR-069, aparte del cobro por OLT', 'usd' => [50, 70, 100]],
+        ],
+        'fuentes' => [
+            ['nombre' => 'WispHub',   'url' => 'https://wisphub.net/precios/'],
+            ['nombre' => 'AdminOLT',  'url' => 'https://adminolt.com/precios/'],
+            ['nombre' => 'Mikrowisp', 'url' => 'https://mikrowisp.net/clientes/index.php/store/mikrowisp-manager'],
+            ['nombre' => 'SmartOLT',  'url' => 'https://www.smartolt.com/'],
+        ],
+    ],
+
+    /** A dónde escribe una empresa para pagar o reactivar su cuenta. */
+    /**
+     * Los correos de cobro a las empresas: recordatorio antes de vencer, aviso de vencido con la
+     * fecha límite, último aviso, cuenta suspendida y cuenta reactivada. Salen de la revisión
+     * diaria (plataforma:revisar-suscripciones). Apagados, la revisión sólo dice a quién le
+     * escribiría. 'copia' recibe una copia de cada uno, para llevar el control.
+     */
+    'avisos_correo' => [
+        'activos' => (bool) env('PLATAFORMA_AVISOS_CORREO', false),
+        'copia'   => env('PLATAFORMA_AVISOS_CORREO_COPIA'),
+    ],
+
+    'soporte' => [
+        'whatsapp' => env('PLATAFORMA_SOPORTE_WHATSAPP', env('PLATAFORMA_TELEFONO')),
+        'correo'   => env('PLATAFORMA_SOPORTE_CORREO', env('PLATAFORMA_CORREO_DATOS')),
+    ],
+
+    /**
      * La consola de Netvula vive en su propia dirección.
      *
      * No es el panel de ninguna empresa: tiene sus propios usuarios, su propio
@@ -69,18 +198,19 @@ return [
 
     'prueba_dias' => 15,
 
-    'nota_precios' => 'Precios mensuales en pesos colombianos, más IVA. Con pago anual, 2 meses gratis.',
+    'nota_precios' => 'Precios mensuales en pesos colombianos, más IVA. Con pago anual, 2 meses gratis. '
+        . 'Complemento opcional TR-069 (WiFi, reinicio y consumo del equipo del cliente, y configuración automática de la ONT): '
+        . 'desde $59.900 al mes según la cantidad de equipos; en Operador Plus, $89.900 fijo, y en Red completa, incluido.',
 
     /** Lo que trae cualquier plan. */
     'incluye_todos' => [
         'Clientes, planes, contratos, instalaciones y traslados',
         'Facturación, cartera, abonos y cortes automáticos por mora',
         'Pasarela de pago en línea',
-        'OLT Huawei y C-Data: autorizar ONT, señal, perfiles y VLAN',
+        'OLT Huawei, ZTE y C-Data: autorizar ONT, señal, perfiles y VLAN, sin costo por OLT',
         'MikroTik: PPPoE, colas y control de ancho de banda',
-        'TR-069: WiFi, reinicio y consumo del equipo del cliente',
         'CRM de WhatsApp: bandeja del equipo, avisos y campañas',
-        'Portal de clientes con tu nombre y tu logo',
+        'Portal de clientes con su nombre y su logo',
         'Tickets, mapa de técnicos, inventario y empleados',
         'Alertas de caída de red al grupo de WhatsApp',
     ],

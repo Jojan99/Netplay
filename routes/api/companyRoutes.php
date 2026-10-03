@@ -27,6 +27,8 @@ Route::prefix('company')->group(function () {
 
     // ── Cualquier usuario autenticado ─────────────────────────────────────────
     Route::get('my-modules',             [CompanyController::class, 'getMyModules']);
+    // La cuenta con Netvula: prueba por vencer o pago pendiente, para el aviso del panel.
+    Route::get('mi-cuenta',              [\App\Http\Controllers\MiCuentaController::class, 'ver']);
     // Novedades de la plataforma: lo que se fue agregando, con su puntito.
     Route::get('novedades',        [\App\Http\Controllers\NovedadController::class, 'index']);
     Route::post('novedades/vistas', [\App\Http\Controllers\NovedadController::class, 'vistas']);

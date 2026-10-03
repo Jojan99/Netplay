@@ -189,6 +189,8 @@ class FacturacionDeLaPlataforma
             'updated_at' => now(),
         ]);
 
+        EstadoDeCuenta::alPonerseAlDia($companyId);
+
         if (Referidos::ajustes()['acreditar_en'] === 'primer_pago') {
             Referidos::acreditar($companyId, $pagado);
         }

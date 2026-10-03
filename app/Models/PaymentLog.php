@@ -6,6 +6,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class PaymentLog extends Model
 {
+    use \App\Models\Concerns\FechasEnHoraLocal;
+
     protected $fillable = [
         'company_id',
         'det_facturation_id',

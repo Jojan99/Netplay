@@ -118,7 +118,7 @@ class UserRepository implements UserRepositoryInterface
             'pppoe_user'         => $data['pppoe_user'] ?? null,
             'pppoe_password'     => $data['pppoe_password'] ?? null,
             'pppoe_profile'      => $data['pppoe_profile'] ?? null,
-        ]);
+        ] + \App\Support\DatosDelCliente::columnas(array_intersect_key($data->all(), \App\Support\DatosDelCliente::reglas())));
     }
 
     /**
@@ -286,6 +286,8 @@ class UserRepository implements UserRepositoryInterface
                 'user_data.control_velocidad',
                 'user_data.pppoe_user',
                 'user_data.pppoe_profile',
+                // Suspendido a mano por algo que no es la mora: no vuelve solo.
+                'user_data.no_reactivar_auto',
                 // El trato especial: la ficha lo muestra y lo deja cambiar.
                 'user_data.descuento_tipo',
                 'user_data.descuento_valor',
@@ -423,7 +425,7 @@ class UserRepository implements UserRepositoryInterface
         $results = DB::table('det_facturations')
             ->selectRaw('
               SUM(CASE WHEN det_facturations.paid = 1 THEN 1 ELSE 0 END) AS count_paid,
-            SUM(CASE WHEN det_facturations.paid = 0 THEN det_facturations.price_total - det_facturations.price_discount - det_facturations.price_abone ELSE 0 END) AS valor_pending,
+            SUM(CASE WHEN det_facturations.paid = 0 AND det_facturations.anulada_en IS NULL THEN det_facturations.price_total - det_facturations.price_discount - det_facturations.price_abone ELSE 0 END) AS valor_pending,
             SUM(CASE WHEN det_facturations.abone != 1 AND det_facturations.paid = 1 THEN (det_facturations.price_total - det_facturations.price_discount) ELSE 0 END) AS valor_ingreso,
             SUM(CASE WHEN det_facturations.abone = 1 AND det_facturations.paid != 1 THEN (det_facturations.price_abone) ELSE 0 END) AS valor_abone
         ')

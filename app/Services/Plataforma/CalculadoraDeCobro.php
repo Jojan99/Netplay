@@ -11,7 +11,8 @@ use Illuminate\Support\Facades\DB;
  *
  *   1. precio pactado  (el de la suscripción; si no hay, el de lista del plan)
  *   2. cupón           (porcentaje o monto fijo, nunca más que el precio)
- *   3. crédito         (saldo a favor por referidos; el sobrante queda para después)
+ *   3. complementos    (TR-069, si la empresa lo contrató; el cupón no los descuenta)
+ *   4. crédito         (saldo a favor por referidos; el sobrante queda para después)
  *
  * Un cobro nunca queda negativo: lo que no se alcanza a descontar sigue
  * disponible para el período siguiente.
@@ -74,7 +75,24 @@ class CalculadoraDeCobro
             }
         }
 
-        $subtotal = round($precio - $descuento, 2);
+        // Complementos contratados aparte del plan. El cupón no los toca: descuenta el plan.
+        // En ciclo anual se cobran diez meses, igual que los planes.
+        $complemento = 0.0;
+
+        if (ComplementoTr069::contratado($companyId)) {
+            $complemento = round(ComplementoTr069::precio($companyId) * ($ciclo === 'anual' ? 10 : 1), 2);
+            $equipos     = (int) ComplementoTr069::equipos($companyId);
+            // Con precio fijo del plan no hay tramo que mostrar.
+            $hasta       = ComplementoTr069::precioDelPlan($companyId) === null ? (ComplementoTr069::tramoPara($equipos)['hasta'] ?? null) : null;
+            $renglones[] = [
+                'concepto' => ComplementoTr069::incluidoEnElPlan($companyId)
+                    ? 'Complemento TR-069 (incluido en el plan)'
+                    : 'Complemento TR-069' . ($hasta ? ', hasta ' . number_format($hasta, 0, ',', '.') . ' equipos' : '') . ' (' . ($ciclo === 'anual' ? 'anual' : 'mensual') . ')',
+                'monto'    => $complemento,
+            ];
+        }
+
+        $subtotal = round($precio - $descuento + $complemento, 2);
 
         // 3. Crédito por referidos, hasta donde llegue.
         $saldo    = SuscripcionDeEmpresa::credito($companyId);
@@ -99,6 +117,7 @@ class CalculadoraDeCobro
             'precio'           => round($precio, 2),
             'cupon'            => $cupon ? ['id' => (int) $cupon->id, 'codigo' => $cupon->codigo, 'tipo' => $cupon->tipo, 'valor' => (float) $cupon->valor] : null,
             'descuento'        => $descuento,
+            'complemento_tr069' => $complemento,
             'subtotal'         => $subtotal,
             'credito_saldo'    => round(max($saldo, 0), 2),
             'credito_aplicado' => $credito,

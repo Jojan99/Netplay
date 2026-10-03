@@ -75,7 +75,8 @@ class RouterDelCliente
             return ['clave' => 'ok', 'titulo' => '', 'detalle' => ''];
         }
 
-        $ont = \App\Models\OltOnt::where('user_data_id', $this->userId)
+        // olt_onts.user_data_id guarda el id de la ficha, no el de «users».
+        $ont = \App\Models\OltOnt::where('user_data_id', (int) \Illuminate\Support\Facades\DB::table('user_data')->where('user_id', $this->userId)->value('id'))
             ->whereHas('olt', fn ($q) => $q->where('company_id', $this->companyId))
             ->with('olt')
             ->first();

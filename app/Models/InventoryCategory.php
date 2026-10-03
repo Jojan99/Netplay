@@ -9,6 +9,8 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class InventoryCategory extends Model
 {
+    use \App\Models\Concerns\FechasEnHoraLocal;
+
     use HasFactory, SoftDeletes;
 
     protected $fillable = [

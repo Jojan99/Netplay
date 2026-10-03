@@ -153,8 +153,13 @@ class AprovisionamientoDeOnt
     {
         $g = GestionRemota::where('company_id', $this->companyId)->first();
 
-        $tieneOnt = DB::table('olt_onts as o')->join('olt_admins as a', 'a.id', '=', 'o.olt_id')
-            ->where('a.company_id', $this->companyId)->where('o.user_data_id', $userId)->exists();
+        // $userId es el de «users» (así lo usa toda esta clase); «olt_onts.user_data_id»
+        // es el de «user_data» —otro contador—. Compararlos directo daba falso vacío
+        // cada vez que los dos ids no coincidían de casualidad.
+        $userDataId = DB::table('user_data')->where('user_id', $userId)->value('id');
+
+        $tieneOnt = $userDataId && DB::table('olt_onts as o')->join('olt_admins as a', 'a.id', '=', 'o.olt_id')
+            ->where('a.company_id', $this->companyId)->where('o.user_data_id', $userDataId)->exists();
 
         $ultimo = Aprovisionamiento::where('company_id', $this->companyId)->where('user_id', $userId)
             ->where('estado', '<>', 'reemplazado')->latest('id')->first();
@@ -182,7 +187,7 @@ class AprovisionamientoDeOnt
         $enCurso = CambioDeConexion::enCurso($this->companyId, $userId);
 
         return [
-            'habilitado' => (bool) ($g?->aprovisionar && $g->aprov_wan),
+            'habilitado' => (bool) ($g?->aprovisionar && $g->aprov_wan && \App\Services\Plataforma\ComplementoTr069::permitido($this->companyId)),
             'tiene_ont'  => $tieneOnt,
             'ultimo'     => $ultimo ? $this->fila($ultimo) : null,
             'arp'        => $arp,
@@ -357,7 +362,8 @@ class AprovisionamientoDeOnt
         $g = $companyId ? GestionRemota::where('company_id', $companyId)->first() : null;
 
         // $forzar: un equipo puntual, aunque la empresa lo tenga apagado.
-        if (!$g || (!$g->aprovisionar && !$forzar) || trim($serial) === '') {
+        // Sin el complemento TR-069 no se configura nada por el ACS: el equipo se deja a mano.
+        if (!$g || (!$g->aprovisionar && !$forzar) || trim($serial) === '' || !\App\Services\Plataforma\ComplementoTr069::permitido($companyId)) {
             return null;
         }
 
@@ -518,7 +524,8 @@ class AprovisionamientoDeOnt
             return ['texto' => 'El servidor TR-069 no tiene leída la conexión de internet del equipo: solicite leerla y vuelva a intentar.', 'id' => null];
         }
 
-        if (CambioDeConexion::enCurso($companyId, (int) $ont->user_data_id)) {
+        // enCurso() va por el id de «users»; $ont->user_data_id es el de la ficha.
+        if (CambioDeConexion::enCurso($companyId, (int) DB::table('user_data')->where('id', $ont->user_data_id)->value('user_id'))) {
             return ['texto' => 'Hay un cambio de conexión en curso en este equipo: espere a que termine.', 'id' => null];
         }
 
@@ -535,7 +542,9 @@ class AprovisionamientoDeOnt
             'fsp'        => $fsp,
             'ont_id'     => $ontId,
             'serial'     => $ont->serial,
-            'user_id'    => $ont->user_data_id,
+            // «aprovisionamientos.user_id» es el de «users»; $ont->user_data_id es el de
+            // «user_data» —otro contador—. Ver el mismo comentario en deCliente().
+            'user_id'    => $ont->user_data_id ? DB::table('user_data')->where('id', $ont->user_data_id)->value('user_id') : null,
             // Los pasos de la conexión se dan por hechos: sólo corre el del TR-069.
             'datos'      => [
                 'cliente' => $ont->description, 'avisos' => [], 'origen' => 'tr069_por_internet',
@@ -564,13 +573,17 @@ class AprovisionamientoDeOnt
     {
         $g = GestionRemota::where('company_id', $companyId)->first();
 
-        if (!$g?->aprovisionar || !$g->aprov_wan) {
+        if (!$g?->aprovisionar || !$g->aprov_wan || !\App\Services\Plataforma\ComplementoTr069::permitido($companyId)) {
             return null;
         }
 
-        $ont = DB::table('olt_onts as o')->join('olt_admins as a', 'a.id', '=', 'o.olt_id')
-            ->where('a.company_id', $companyId)->where('o.user_data_id', $userId)
-            ->orderByDesc('o.updated_at')->first(['o.olt_id', 'o.fsp', 'o.ont_id', 'o.serial', 'o.service_ports']);
+        // $userId es el de «users»; «olt_onts.user_data_id» es el de «user_data». Ver
+        // el mismo comentario en deCliente().
+        $userDataId = DB::table('user_data')->where('user_id', $userId)->value('id');
+
+        $ont = $userDataId ? DB::table('olt_onts as o')->join('olt_admins as a', 'a.id', '=', 'o.olt_id')
+            ->where('a.company_id', $companyId)->where('o.user_data_id', $userDataId)
+            ->orderByDesc('o.updated_at')->first(['o.olt_id', 'o.fsp', 'o.ont_id', 'o.serial', 'o.service_ports']) : null;
 
         if (!$ont || !$ont->serial) {
             return null;
@@ -1044,6 +1057,11 @@ class AprovisionamientoDeOnt
 
         foreach (GestionRemota::where('aprovisionar', true)->where('aprov_wan', true)->pluck('company_id')->unique() as $companyId) {
             $companyId = (int) $companyId;
+
+            if (!\App\Services\Plataforma\ComplementoTr069::permitido($companyId)) {
+                continue;
+            }
+
             $acs = GenieAcs::deEmpresa($companyId);
 
             // Arrancaron en las últimas horas y ya tuvieron unos minutos para acomodarse.

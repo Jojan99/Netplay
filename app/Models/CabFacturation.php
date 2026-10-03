@@ -8,6 +8,8 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 
 class CabFacturation extends Authenticatable
 {
+    use \App\Models\Concerns\FechasEnHoraLocal;
+
     use HasFactory;
     protected $fillable = [
         'user_id',

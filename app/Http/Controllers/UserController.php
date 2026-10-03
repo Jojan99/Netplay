@@ -531,12 +531,14 @@ class UserController extends Controller
 
     public function getAuditLog(int $user_id): object
     {
-        $logs = DB::table('user_audit_logs')
-            ->where('user_id', $user_id)
-            ->where('company_id', getSessionCompanyId())
-            ->orderBy('created_at', 'desc')
+        $logs = DB::table('user_audit_logs as l')
+            // Quién hizo el cambio; sin nadie, fue el sistema.
+            ->leftJoin('user_data as q', 'q.user_id', '=', 'l.changed_by')
+            ->where('l.user_id', $user_id)
+            ->where('l.company_id', getSessionCompanyId())
+            ->orderBy('l.created_at', 'desc')
             ->limit(100)
-            ->get();
+            ->get(['l.*', DB::raw("NULLIF(TRIM(CONCAT(COALESCE(q.names,''), ' ', COALESCE(q.lastname,''))), '') as hecho_por")]);
         return standardApiReponse('ok', $logs, 0, JsonResponse::HTTP_OK);
     }
 

@@ -450,7 +450,8 @@ class InstallationOrderController extends Controller
                 'data'   => [
                     'onts'        => [],
                     'inventario'  => \App\Services\Instalaciones\EquipoDelInventario::ontsConStock((int) $orden->company_id),
-                    'aprovisiona' => (bool) \App\Models\GestionRemota::where('company_id', $orden->company_id)->value('aprovisionar'),
+                    'aprovisiona' => (bool) \App\Models\GestionRemota::where('company_id', $orden->company_id)->value('aprovisionar')
+                    && \App\Services\Plataforma\ComplementoTr069::permitido((int) $orden->company_id),
                     'olts'        => $olts,
                     'olt_id'      => null,
                     'falta_olt'   => true,
@@ -505,7 +506,8 @@ class InstallationOrderController extends Controller
             'data'   => [
                 'onts'        => $sinAutorizar,
                 'inventario'  => \App\Services\Instalaciones\EquipoDelInventario::ontsConStock((int) $orden->company_id),
-                'aprovisiona' => (bool) \App\Models\GestionRemota::where('company_id', $orden->company_id)->value('aprovisionar'),
+                'aprovisiona' => (bool) \App\Models\GestionRemota::where('company_id', $orden->company_id)->value('aprovisionar')
+                    && \App\Services\Plataforma\ComplementoTr069::permitido((int) $orden->company_id),
 
                 // Para poder corregir en el terreno lo que se planeó en la oficina.
                 'olts'        => $olts,
@@ -611,6 +613,27 @@ class InstallationOrderController extends Controller
             'message' => $r['message'],
             'data'    => ['pasos' => $r['pasos'], 'avisos' => $r['avisos']] + $r['data'],
         ], $r['ok'] ? 200 : 422);
+    }
+
+    /**
+     * GET /api/installations/{id}/aprovisionamiento
+     *
+     * Cómo va la configuración automática que quedó programada al terminar la instalación (paso 5 de
+     * InstalarYAprovisionar): el técnico la consulta para ver, en vivo, cuándo el equipo se reportó al
+     * TR-069 y qué se le aplicó. No es la ventana de administración (esa sigue siendo de admin, en
+     * Gestión remota): esto sólo deja ver el aprovisionamiento de ESTA orden.
+     */
+    public function aprovisionamiento(int $id)
+    {
+        $orden = InstallationOrder::where('company_id', getSessionCompanyId())->findOrFail($id);
+
+        if (!$orden->aprovisionamiento_id) {
+            return response()->json(['status' => 'success', 'data' => null]);
+        }
+
+        $a = (new \App\Services\Red\AprovisionamientoDeOnt((int) $orden->company_id))->uno((int) $orden->aprovisionamiento_id);
+
+        return response()->json(['status' => 'success', 'data' => $a]);
     }
 
     /**

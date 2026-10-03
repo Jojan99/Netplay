@@ -92,6 +92,40 @@ private const OID_OPT_BIAS      = '1.3.6.1.4.1.2011.6.128.1.1.2.51.1.8'; // + .<
 
     /** hwGponDeviceOntControlLastDownCause: por qué se cayó la ONT la última vez. */
     private const OID_ONT_LAST_DOWN_CAUSE = '1.3.6.1.4.1.2011.6.128.1.1.2.46.1.24';
+    /** hwGponDeviceOntControlLastUpTime / LastDownTime: cuándo volvió y cuándo cayó. */
+    private const OID_ONT_LAST_UP_TIME    = '1.3.6.1.4.1.2011.6.128.1.1.2.46.1.22';
+    private const OID_ONT_LAST_DOWN_TIME  = '1.3.6.1.4.1.2011.6.128.1.1.2.46.1.23';
+
+    /**
+     * Una fecha «DateAndTime» de SNMP, a ISO 8601 con su zona.
+     *
+     * Llega como «Hex-STRING: 07 EA 0A 02 02 0C 0A 00 2B 08 00»: año (2 bytes), mes, día, hora,
+     * minuto, segundo, décimas y la zona (signo, horas, minutos). La zona importa: esta OLT tiene
+     * el reloj en +08:00, y leída como hora local daba trece horas de diferencia.
+     */
+    public static function fechaSnmp(string $crudo): ?string
+    {
+        if (!preg_match('/Hex-STRING:\s*((?:[0-9A-F]{2}\s*){8,11})/i', $crudo, $m)) {
+            return null;
+        }
+
+        $b = array_map('hexdec', preg_split('/\s+/', trim($m[1])));
+        $anio = ($b[0] << 8) | $b[1];
+
+        if ($anio < 2000 || $anio > 2100 || $b[2] < 1 || $b[2] > 12 || $b[3] < 1 || $b[3] > 31) {
+            return null;   // «00 00 00…»: la ONT nunca se cayó (o nunca subió).
+        }
+
+        $zona = isset($b[10]) ? sprintf('%s%02d:%02d', chr($b[8]) === '-' ? '-' : '+', $b[9], $b[10]) : null;
+
+        try {
+            $f = \Carbon\Carbon::create($anio, $b[2], $b[3], $b[4], $b[5], $b[6], $zona ?: config('app.timezone'));
+
+            return $f->setTimezone(config('app.timezone'))->toIso8601String();
+        } catch (\Throwable) {
+            return null;
+        }
+    }
 
     /**
      * Causa de la última caída de cada ONT, por "0/slot/puerto:ont".
@@ -118,6 +152,31 @@ private const OID_OPT_BIAS      = '1.3.6.1.4.1.2011.6.128.1.1.2.51.1.8'; // + .<
         }
 
         return $causas;
+    }
+
+    /**
+     * Sólo si cada ONT está en línea: un walk de una columna (~2 s con 500 ONT). Es lo que
+     * usa la detección de fallas de sector, que corre cada pocos minutos y no necesita la
+     * potencia ni el serial.
+     *
+     * @return array<string, bool>  "0/1/3:12" => en línea
+     */
+    public function enLinea(): array
+    {
+        $estados = [];
+
+        foreach ($this->walk(self::OID_ONT_RUNSTATE) as $oidSuffix => $raw) {
+            $idx = $this->parseIndex($oidSuffix);
+
+            if ($idx === null) {
+                continue;
+            }
+
+            [$slot, $port, $ontId] = $idx;
+            $estados["0/{$slot}/{$port}:{$ontId}"] = (int) $this->extractInt((string) $raw) === 1;
+        }
+
+        return $estados;
     }
 
     /**
@@ -198,6 +257,14 @@ public function getOntInfo(string $fsp, int $ontId): array
         'description' => $this->extractString($this->get(self::OID_ONT_DESC . '.' . $suffix)),
         'status'      => $this->extractInt($this->get(self::OID_ONT_RUNSTATE . '.' . $suffix)) == 1 ? 'online' : 'offline',
     ];
+
+    // La última caída: por qué fue (energía, fibra, reinicio) y cuándo cayó y volvió. Es lo que
+    // dice si un equipo apagado está sin luz o sin señal, y si un reinicio fue por un corte.
+    if (preg_match('/-?\d+/', (string) preg_replace('/^.*:\s*/', '', $this->get(self::OID_ONT_LAST_DOWN_CAUSE . '.' . $suffix)), $m)) {
+        $info['last_down_cause'] = (int) $m[0];
+    }
+    $info['last_up_time']   = self::fechaSnmp($this->get(self::OID_ONT_LAST_UP_TIME . '.' . $suffix));
+    $info['last_down_time'] = self::fechaSnmp($this->get(self::OID_ONT_LAST_DOWN_TIME . '.' . $suffix));
 
     // Datos ópticos.
     //

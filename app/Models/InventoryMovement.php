@@ -9,12 +9,15 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class InventoryMovement extends Model
 {
+    use \App\Models\Concerns\FechasEnHoraLocal;
+
     use HasFactory, SoftDeletes;
 
     public const TYPE_ENTRADA = 'entrada';
     public const TYPE_SALIDA = 'salida';
     public const TYPE_AJUSTE = 'ajuste';
 
+    /** Los tres que se registran a mano. Entrega, devolución y consumo los pone Bodega. */
     public static array $types = [
         self::TYPE_ENTRADA,
         self::TYPE_SALIDA,
@@ -33,6 +36,7 @@ class InventoryMovement extends Model
         'description',
         'reference',
         'serial_number',
+        'tecnico_id',
         'batch_number',
         'expiry_date',
         'user_id',

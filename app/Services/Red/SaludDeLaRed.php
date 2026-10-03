@@ -122,8 +122,9 @@ class SaludDeLaRed
     {
         $fecha = $momento->toDateString();
 
-        $clientes = DB::table('olt_onts')->where('olt_id', $olt->id)
-            ->get(['fsp', 'ont_id', 'user_data_id'])
+        // red_equipo_dia.user_id es el de «users»; la ONT guarda el de la ficha.
+        $clientes = DB::table('olt_onts as oo')->leftJoin('user_data as ud', 'ud.id', '=', 'oo.user_data_id')->where('oo.olt_id', $olt->id)
+            ->get(['oo.fsp', 'oo.ont_id', 'ud.user_id as user_data_id'])
             ->keyBy(fn ($o) => $o->fsp . ':' . $o->ont_id);
 
         foreach ($onts as $ont) {

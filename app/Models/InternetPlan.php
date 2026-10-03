@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class InternetPlan extends Model
 {
+    use \App\Models\Concerns\FechasEnHoraLocal;
+
     use HasFactory;
     protected $fillable = [
         'company_id',

@@ -244,12 +244,25 @@ public function UpdateStatus(GestionUserRequest $gestionUserRequest): array
             }
         }
 
-        // Registrar en auto_suspend_logs para que el proceso automático lo tenga en cuenta
-        $action = ($gestionUserRequest['status'] == 2) ? 'suspended' : 'reactivated';
+        // Trazabilidad: qué se hizo, por qué y quién. La reactivación automática ya no depende
+        // de esta fila; lo que sí respeta es la marca de la ficha: suspendido a mano por algo
+        // que no es la mora → no vuelve solo aunque quede al día. Reactivar la quita siempre.
+        $suspende    = $gestionUserRequest['status'] == 2;
+        $noReactivar = $suspende && filter_var($gestionUserRequest['no_reactivar'] ?? false, FILTER_VALIDATE_BOOLEAN);
+        $detalle     = trim((string) ($gestionUserRequest['motivo'] ?? ''));
+
+        \Illuminate\Support\Facades\DB::table('user_data')
+            ->where('user_id', $gestionUserRequest['id_user'])
+            ->where('company_id', getSessionCompanyId())
+            ->update(['no_reactivar_auto' => $noReactivar ? 1 : 0]);
+
         \Illuminate\Support\Facades\DB::table('auto_suspend_logs')->insert([
             'company_id'     => getSessionCompanyId(),
             'user_id'        => $gestionUserRequest['id_user'],
-            'action'         => $action,
+            'action'         => $suspende ? 'suspended' : 'reactivated',
+            'motivo'         => 'manual',
+            'detalle'        => mb_substr(($noReactivar ? 'No reactivar automáticamente. ' : '') . $detalle, 0, 255) ?: null,
+            'hecho_por'      => getSessionUserId(),
             'invoices_count' => 0,
             'created_at'     => now(),
         ]);

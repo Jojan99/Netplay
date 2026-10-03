@@ -38,7 +38,7 @@ class ClientAccountController extends Controller
             ->join('cab_facturations as cab', 'cab.id', '=', 'd.cab_id')
             ->where('cab.user_id', $user->id)
             ->where('cab.company_id', $user->company_id)
-            ->where('d.paid', 0)
+            ->where('d.paid', 0)->whereNull('d.anulada_en')
             ->selectRaw('COUNT(*) as n, COALESCE(SUM(GREATEST(0, d.price_total - COALESCE(d.price_discount,0) - COALESCE(d.price_abone,0))),0) as total, MIN(d.date_facturation) as oldest')
             ->first();
 
@@ -47,7 +47,7 @@ class ClientAccountController extends Controller
         $vencidas = DB::table('det_facturations as d')
             ->join('cab_facturations as cab', 'cab.id', '=', 'd.cab_id')
             ->where('cab.user_id', $user->id)->where('cab.company_id', $user->company_id)
-            ->where('d.paid', 0)->whereDate('d.date_facturation', '<', now()->toDateString())
+            ->where('d.paid', 0)->whereNull('d.anulada_en')->whereDate('d.date_facturation', '<', now()->toDateString())
             ->count();
 
         $company = DB::table('companies')->where('id', $user->company_id)->first(['name', 'phone', 'email', 'invoice_payment_info']);
@@ -189,6 +189,7 @@ class ClientAccountController extends Controller
         DB::table('det_facturations as d')
             ->join('cab_facturations as cab', 'cab.id', '=', 'd.cab_id')
             ->where('cab.user_id', $user->id)->where('cab.company_id', $user->company_id)
+            ->whereNull('d.anulada_en')
             ->orderByDesc('d.id')->limit(10)
             ->get(['d.id', 'd.number_facture', 'd.date_facturation', 'd.paid', 'd.paid_at', 'd.created_at'])
             ->each(function ($d) use ($items) {

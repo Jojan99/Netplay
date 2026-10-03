@@ -110,7 +110,7 @@ class DiagnosticoDeTicket
             ->join('cab_facturations as cab', 'cab.id', '=', 'd.cab_id')
             ->where('cab.user_id', $userId)
             ->where('cab.company_id', $empresa)
-            ->where('d.paid', 0)
+            ->where('d.paid', 0)->whereNull('d.anulada_en')
             ->whereDate('d.date_facturation', '<', now()->toDateString())
             ->count();
 
@@ -128,8 +128,8 @@ class DiagnosticoDeTicket
     {
         $resultado = ['lineas' => [], 'hay' => false, 'error' => false, 'en_linea' => null, 'causa' => null, 'estado' => null, 'potencia' => null, 'corte' => null];
 
-        // olt_onts.user_data_id guarda users.id, pese al nombre.
-        $asignada = OltOnt::where('user_data_id', $userId)
+        // olt_onts.user_data_id guarda el id de la ficha (user_data.id); aquí llega el de «users».
+        $asignada = OltOnt::where('user_data_id', (int) DB::table('user_data')->where('user_id', $userId)->value('id'))
             ->whereHas('olt', fn ($q) => $q->where('company_id', $empresa))
             ->with('olt')
             ->first();

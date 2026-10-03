@@ -334,6 +334,15 @@ TXT;
 
     private function enviar(string $texto): void
     {
+        // Nada de la maquinaria interna (nombres de herramientas, etiquetas) le llega al cliente.
+        $texto = SalidaLimpia::de($texto);
+
+        if ($texto === '') {
+            Log::warning('[Cobranza] El mensaje quedó vacío al quitarle lo interno: no se envió', ['caso' => $this->caso->id]);
+
+            return;
+        }
+
         $companyId = (int) $this->caso->company_id;
         $linea = $this->linea();
         $instancia = $linea?->instance_id;

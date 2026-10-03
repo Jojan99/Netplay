@@ -78,6 +78,8 @@ class CrmCustomerController extends Controller
         return DB::table('det_facturations as d')
             ->join('cab_facturations as cab', 'cab.id', '=', 'd.cab_id')
             ->where('cab.user_id', $userId)->where('cab.company_id', $companyId)
+            // Las anuladas no se deben: sin esto el agente las veía como pendientes y podía cobrarlas.
+            ->whereNull('d.anulada_en')
             ->orderByDesc('d.id')
             ->limit($limit)
             ->get(['d.id', 'd.number_facture', 'd.date_facturation', 'd.price_total', 'd.price_discount', 'd.price_abone', 'd.paid', 'd.paid_at', 'd.created_at'])
@@ -116,7 +118,7 @@ class CrmCustomerController extends Controller
         $unpaid   = $invoices->where('paid', false);
         $debtAll  = DB::table('det_facturations as d')
             ->join('cab_facturations as cab', 'cab.id', '=', 'd.cab_id')
-            ->where('cab.user_id', $user->user_id)->where('cab.company_id', $conv->company_id)->where('d.paid', 0)
+            ->where('cab.user_id', $user->user_id)->where('cab.company_id', $conv->company_id)->where('d.paid', 0)->whereNull('d.anulada_en')
             ->selectRaw('COUNT(*) as n, COALESCE(SUM(GREATEST(0, d.price_total - COALESCE(d.price_discount,0) - COALESCE(d.price_abone,0))),0) as total, MIN(d.date_facturation) as oldest')
             ->first();
 

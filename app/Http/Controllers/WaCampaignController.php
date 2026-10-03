@@ -34,6 +34,8 @@ class WaCampaignController extends Controller
         return response()->json([
             'ok'        => true,
             'filtros'   => ClientAudience::FILTROS,
+            'grupos'    => getSessionCompanyId() ? $this->audiencia->grupos((int) getSessionCompanyId()) : [],
+            'limite'    => getSessionCompanyId() ? $this->campañas->limiteDiario((int) getSessionCompanyId()) : null,
             'variables' => collect(WaTemplateBinding::VARIABLES)
                 ->map(fn (array $v, string $k) => $v + ['key' => $k])
                 ->values(),
@@ -292,6 +294,7 @@ class WaCampaignController extends Controller
             'solo_vigentes' => filter_var($request->query('solo_vigentes', 'true'), FILTER_VALIDATE_BOOLEAN),
             'servicio'      => (string) $request->query('servicio', 'todos'),
             'deuda'         => (string) $request->query('deuda', 'todos'),
+            'grupo'         => (string) $request->query('grupo', 'todos'),
         ];
     }
 

@@ -62,7 +62,9 @@ class InventoryItemRepository implements InventoryItemRepositoryInterface
             'description'  => $data['description'] ?? null,
             'sku'          => $data['sku'] ?? null,
             'code'         => $data['code'] ?? null,
-            'quantity'     => $data['quantity'] ?? 0,
+            'barcode'      => $data['barcode'] ?? null,
+            'usa_serial'   => !empty($data['usa_serial']),
+            'quantity'     => 0,
             'stock_min'    => $data['stock_min'] ?? 0,
             'stock_max'    => $data['stock_max'] ?? null,
             'unit_price'   => $data['unit_price'] ?? 0,
@@ -79,18 +81,26 @@ class InventoryItemRepository implements InventoryItemRepositoryInterface
             return null;
         }
 
-        $item->update([
-            'category_id'  => $data['category_id'] ?? $item->category_id,
-            'name'         => $data['name'] ?? $item->name,
-            'description'  => $data['description'] ?? $item->description,
-            'sku'          => $data['sku'] ?? $item->sku,
-            'code'         => $data['code'] ?? $item->code,
-            'stock_min'    => $data['stock_min'] ?? $item->stock_min,
-            'stock_max'    => $data['stock_max'] ?? $item->stock_max,
-            'unit_price'   => $data['unit_price'] ?? $item->unit_price,
-            'unit'         => $data['unit'] ?? $item->unit,
-            'location'     => $data['location'] ?? $item->location,
-        ]);
+        // Sólo lo que llegó en la petición. Con «?? el valor anterior» no se podía vaciar un
+        // campo: quitar la categoría o borrar el máximo dejaba todo como estaba.
+        $campos = ['category_id', 'name', 'description', 'sku', 'code', 'barcode', 'usa_serial', 'stock_min', 'stock_max', 'unit_price', 'unit', 'location'];
+        $cambios = array_intersect_key($data, array_flip($campos));
+
+        if (array_key_exists('name', $cambios) && trim((string) $cambios['name']) === '') {
+            unset($cambios['name']);
+        }
+        if (array_key_exists('stock_min', $cambios) && $cambios['stock_min'] === null) {
+            $cambios['stock_min'] = 0;
+        }
+        if (array_key_exists('unit', $cambios) && !$cambios['unit']) {
+            unset($cambios['unit']);
+        }
+        if (array_key_exists('usa_serial', $cambios)) {
+            // Un ítem con equipos registrados no puede dejar de llevarse por serial.
+            $cambios['usa_serial'] = !empty($cambios['usa_serial']) || \Illuminate\Support\Facades\DB::table('inventory_units')->where('inventory_id', $item->id)->exists();
+        }
+
+        $item->update($cambios);
 
         return $item->fresh('category');
     }

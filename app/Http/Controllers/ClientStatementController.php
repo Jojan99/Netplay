@@ -57,13 +57,54 @@ class ClientStatementController extends Controller
         }
 
         $company = DB::table('companies')->where('id', DB::table('users')->where('id', $userId)->value('company_id'))
-            ->first(['name', 'phone', 'invoice_business_name', 'invoice_logo_base64']);
+            ->first(['name', 'phone', 'invoice_business_name', 'invoice_logo_base64', 'invoice_payment_info', 'invoice_phone']);
 
         if ($request->query('format') === 'json') {
             return response()->json(['message' => 'OK', 'data' => $data, 'error' => 0]);
         }
 
+        $this->token = $token;
+        $this->companyId = (int) DB::table('users')->where('id', $userId)->value('company_id');
+
         return response($this->html($data, $company))->header('Content-Type', 'text/html; charset=UTF-8');
+    }
+
+    private ?string $token = null;
+    private int $companyId = 0;
+
+    /**
+     * Acceso a «Mi WiFi y mi servicio» del portal desde el mismo enlace: cambiar la clave,
+     * ver los equipos conectados, reiniciar el router y ver el estado. Sólo si la empresa
+     * tiene el TR-069 (sin él esas pantallas no funcionan). Pide la cédula al entrar.
+     */
+    private function miServicio(): string
+    {
+        if (!$this->token || !$this->companyId || !\App\Services\Plataforma\ComplementoTr069::permitido($this->companyId)) {
+            return '';
+        }
+
+        $url = htmlspecialchars('/portal/entrar?t=' . rawurlencode($this->token), ENT_QUOTES, 'UTF-8');
+
+        return '<div class="card"><div style="padding:14px 16px;border-bottom:1px solid #eef2f6;font-weight:700;font-size:14px;">Mi WiFi y mi servicio</div>'
+            . '<div style="padding:14px 16px;font-size:14px;line-height:1.6;color:#334155;">Cambie la clave de su WiFi, vea qué equipos están conectados, reinicie su router o revise si su servicio está bien, sin llamar a soporte.'
+            . '<a href="' . $url . '" style="display:block;margin-top:12px;text-align:center;background:#0f766e;color:#fff;text-decoration:none;font-weight:700;padding:12px;border-radius:10px;">Administrar mi WiFi</a></div></div>';
+    }
+
+    /**
+     * Cómo pagar: los medios que la empresa escribió en su factura, tal cual. A esta página llega
+     * el botón «Pagar ahora» de WhatsApp cuando la empresa no cobra en línea, así que aquí tiene
+     * que estar la respuesta a «¿y dónde pago?». Sin medios cargados, no se muestra nada.
+     */
+    private function comoPagar(?object $company, float $saldo): string
+    {
+        $medios = trim((string) ($company->invoice_payment_info ?? ''));
+
+        if ($saldo <= 0 || $medios === '' || preg_match('/^[\-–—.\s]*$/u', $medios)) {
+            return '';
+        }
+
+        return '<div class="card"><div style="padding:14px 16px;border-bottom:1px solid #eef2f6;font-weight:700;font-size:14px;">Cómo pagar</div>'
+            . '<div style="padding:14px 16px;font-size:14px;line-height:1.7;color:#0f172a;">' . nl2br(htmlspecialchars($medios, ENT_QUOTES, 'UTF-8')) . '</div></div>';
     }
 
     /* ── Página del enlace público ───────────────────────────────────── */
@@ -155,8 +196,11 @@ class ClientStatementController extends Controller
     <table>' . ($filas ?: '<tr><td style="padding:26px;text-align:center;color:#94a3b8;font-size:13px;">Todavía no hay facturas.</td></tr>') . '</table>
   </div>
 
+  ' . $this->comoPagar($company, (float) $s['balance']) . '
+  ' . $this->miServicio() . '
+
   <div style="text-align:center;font-size:12px;color:#94a3b8;line-height:1.7;">
-    ' . $e($empresa) . ($company->phone ?? null ? ' · ' . $e($company->phone) : '') . '<br>
+    ' . $e($empresa) . ((($company->invoice_phone ?? null) ?: ($company->phone ?? null)) ? ' · ' . $e(($company->invoice_phone ?? null) ?: $company->phone) : '') . '<br>
     Este enlace es personal, no lo compartas.
   </div>
 </div></body></html>';

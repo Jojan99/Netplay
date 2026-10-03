@@ -425,6 +425,12 @@ class PanoramaDeEmpresas
             'codigo_referido'=> $s->codigo_referido,
             'referida_por'   => $s->referida_por ? (int) $s->referida_por : null,
             'credito'        => SuscripcionDeEmpresa::credito((int) $s->company_id),
+            // El complemento TR-069: si lo tiene contratado y a cuánto (pactado o el de lista del plan).
+            'tr069_activo'   => (bool) ($s->tr069_activo ?? false),
+            'tr069_pactado'  => ($s->tr069_precio ?? null) === null ? null : (float) $s->tr069_precio,
+            'tr069_precio'   => ComplementoTr069::precio((int) $s->company_id),
+            'tr069_equipos'  => ($equiposTr069 = ComplementoTr069::equipos((int) $s->company_id)),
+            'tr069_hasta'    => ComplementoTr069::tramoPara((int) $equiposTr069)['hasta'] ?? null,
             'uso' => [
                 'clientes'    => $enPlan,
                 // El desglose, para que quien lo lee entienda de dónde sale el número.

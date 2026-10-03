@@ -6,6 +6,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class Contract extends Model
 {
+    use \App\Models\Concerns\FechasEnHoraLocal;
+
     protected $fillable = [
         'company_id',
         'title',

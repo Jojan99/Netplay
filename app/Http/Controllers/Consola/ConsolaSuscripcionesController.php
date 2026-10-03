@@ -40,6 +40,8 @@ class ConsolaSuscripcionesController extends Controller
             'prueba_hasta'        => 'nullable|date',
             'proxima_facturacion' => 'nullable|date',
             'notas'               => 'nullable|string|max:2000',
+            'tr069_activo'        => 'nullable|boolean',
+            'tr069_precio'        => 'nullable|numeric|min:0|max:99999999',
         ]);
 
         $antes = SuscripcionDeEmpresa::asegurar($id);
@@ -58,6 +60,10 @@ class ConsolaSuscripcionesController extends Controller
             'prueba_hasta'        => $datos['prueba_hasta'] ?? null,
             'proxima_facturacion' => $datos['proxima_facturacion'] ?? null,
             'notas'               => $datos['notas'] ?? null,
+            'tr069_activo'        => (bool) ($datos['tr069_activo'] ?? $antes->tr069_activo ?? false),
+            'tr069_precio'        => array_key_exists('tr069_precio', $datos) ? $datos['tr069_precio'] : ($antes->tr069_precio ?? null),
+            // Una persona intervino: si sigue vencida, la gracia vuelve a contarse desde el próximo aviso.
+            'aviso_vencimiento_en' => null,
             'updated_at'          => now(),
         ]);
 
@@ -65,7 +71,7 @@ class ConsolaSuscripcionesController extends Controller
 
         Bitacora::anotar('suscripcion.editada', $id, [
             'antes' => ['plan' => $antes->plan_id, 'ciclo' => $antes->ciclo, 'precio' => $antes->precio_pactado, 'estado' => $antes->estado],
-            'ahora' => ['plan' => $datos['plan_id'] ?? null, 'ciclo' => $datos['ciclo'], 'precio' => $datos['precio_pactado'] ?? null, 'estado' => $datos['estado']],
+            'ahora' => ['plan' => $datos['plan_id'] ?? null, 'ciclo' => $datos['ciclo'], 'precio' => $datos['precio_pactado'] ?? null, 'estado' => $datos['estado'], 'tr069' => (bool) ($datos['tr069_activo'] ?? $antes->tr069_activo ?? false)],
         ], 'suscripcion', $antes->id);
 
         return standardApiReponse(

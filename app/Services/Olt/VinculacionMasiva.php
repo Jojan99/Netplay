@@ -192,7 +192,18 @@ class VinculacionMasiva
                 continue;
             }
 
-            $ont->update(['user_data_id' => (int) $par['user_id']]);
+            // «olt_onts.user_data_id» guarda el id de «user_data», no el de «users» que usa el
+            // resto de esta clase (clientes() lo indexa por users.id, como el buscador de
+            // clientes). Escribir $par['user_id'] tal cual dejó cientos de ONT apuntando a la
+            // ficha de otra persona —cualquiera cuyo user_data.id coincidiera con ese número—.
+            $userDataId = DB::table('user_data')->where('user_id', $par['user_id'])->value('id');
+
+            if (!$userDataId) {
+                $errores[] = "El cliente {$par['user_id']} no tiene ficha (user_data).";
+                continue;
+            }
+
+            $ont->update(['user_data_id' => $userDataId]);
             $vinculadas++;
         }
 
@@ -223,14 +234,14 @@ class VinculacionMasiva
             ->all();
     }
 
-    /** @return array<int,true> */
+    /** Por users.id, como el resto de esta clase (clientes(), $par['user_id']…). @return array<int,true> */
     private function clientesConOnt(): array
     {
         return DB::table('olt_onts as o')
             ->join('olt_admins as a', 'a.id', '=', 'o.olt_id')
+            ->join('user_data as ud', 'ud.id', '=', 'o.user_data_id')
             ->where('a.company_id', $this->companyId)
-            ->whereNotNull('o.user_data_id')
-            ->pluck('o.user_data_id')
+            ->pluck('ud.user_id')
             ->flip()
             ->map(fn () => true)
             ->all();

@@ -1691,6 +1691,8 @@ class GestionRemotaDeOnt
 
         $userId = OltOnt::whereHas('olt', fn ($q) => $q->where('company_id', $this->companyId))
             ->where('serial', $serial)->whereNotNull('user_data_id')->latest('updated_at')->value('user_data_id');
+        // Lo que guarda la ONT es el id de la ficha; routerDelCliente() va por el de «users».
+        $userId = $userId ? \Illuminate\Support\Facades\DB::table('user_data')->where('id', $userId)->value('user_id') : null;
 
         try {
             $api = $userId ? (new AprovisionamientoDeOnt($this->companyId))->routerDelCliente((int) $userId) : null;

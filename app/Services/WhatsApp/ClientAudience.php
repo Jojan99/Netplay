@@ -40,6 +40,7 @@ class ClientAudience
             'opciones' => [
                 'todos' => 'Deban o no',
                 'con'   => 'Solo los que deben',
+                'vencida' => 'Solo los que deben una factura ya vencida',
                 'sin'   => 'Solo los que están al día',
             ],
             'default'  => 'todos',
@@ -76,10 +77,20 @@ class ClientAudience
             $query->where('ud.status_internet_id', self::SERVICIO_SUSPENDIDO);
         }
 
-        if ($deuda !== 'todos') {
-            $conDeuda = $this->userIdsConDeuda($companyId);
+        // El grupo de corte (día 15, día 30…): un aviso de suspensión es para los de UN corte,
+        // no para todo el que deba algo. Sin esto se le escribía también al que su factura
+        // todavía no vence.
+        $grupo = $filtros['grupo'] ?? 'todos';
 
-            if ($deuda === 'con') {
+        if ($grupo !== 'todos' && $grupo !== '' && $grupo !== null) {
+            $query->whereIn('ud.user_id', fn ($q) => $q->select('cf.user_id')->from('cab_facturations as cf')
+                ->where('cf.company_id', $companyId)->where('cf.group', (int) $grupo));
+        }
+
+        if ($deuda !== 'todos') {
+            $conDeuda = $this->userIdsConDeuda($companyId, $deuda === 'vencida');
+
+            if ($deuda === 'con' || $deuda === 'vencida') {
                 if ($conDeuda === []) {
                     return collect();
                 }
@@ -107,6 +118,20 @@ class ClientAudience
             ]);
     }
 
+    /**
+     * Los grupos de corte de la empresa, para elegir en el panel.
+     *
+     * @return list<array{grupo:int, dia:int, clientes:int}>
+     */
+    public function grupos(int $companyId): array
+    {
+        $clientes = DB::table('cab_facturations')->where('company_id', $companyId)->selectRaw('`group` as g, COUNT(*) n')->groupBy('g')->pluck('n', 'g');
+
+        return DB::table('company_billing_schedules')->where('company_id', $companyId)->where('active', 1)->orderBy('grupo')
+            ->get(['grupo', 'billing_day', 'nombre'])
+            ->map(fn ($g) => ['grupo' => (int) $g->grupo, 'dia' => (int) $g->billing_day, 'nombre' => $g->nombre, 'clientes' => (int) ($clientes[$g->grupo] ?? 0)])->all();
+    }
+
     /** Solo cuántos son. Para confirmar antes de gastar mensajes. */
     public function count(int $companyId, array $filtros = [], array $excluidos = []): int
     {
@@ -121,13 +146,15 @@ class ClientAudience
      *
      * @return array<int, int>
      */
-    public function userIdsConDeuda(int $companyId): array
+    public function userIdsConDeuda(int $companyId, bool $soloVencidas = false): array
     {
         return DB::table('cab_facturations as cf')
             ->join('det_facturations as df', 'df.cab_id', '=', 'cf.id')
             ->where('cf.company_id', $companyId)
-            ->where('df.paid', 0)
+            ->where('df.paid', 0)->whereNull('df.anulada_en')
             ->whereRaw('(df.price_total - COALESCE(df.price_discount,0) - COALESCE(df.price_abone,0)) > 0')
+            // Vencida: su fecha límite ya pasó. La factura del mes que todavía no vence no cuenta.
+            ->when($soloVencidas, fn ($q) => $q->whereDate('df.date_facturation', '<', now()->toDateString()))
             ->distinct()
             ->pluck('cf.user_id')
             ->map(fn ($id) => (int) $id)

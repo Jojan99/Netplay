@@ -211,7 +211,7 @@ class ClientesEnRiesgo
         $filas = \App\Models\DetFacturation::join('cab_facturations as cab', 'cab.id', '=', 'det_facturations.cab_id')
             ->where('cab.company_id', $companyId)
             ->whereIn('cab.user_id', $userIds)
-            ->where('det_facturations.paid', 0)
+            ->where('det_facturations.paid', 0)->whereNull('det_facturations.anulada_en')
             ->select('cab.user_id', 'det_facturations.*')
             ->get();
 

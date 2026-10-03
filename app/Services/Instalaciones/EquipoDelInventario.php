@@ -29,65 +29,9 @@ class EquipoDelInventario
         ?int $inventoryId = null,
         ?int $tecnicoId = null,
     ): array {
-        $item = $inventoryId
-            ? DB::table('inventories')->where('company_id', $companyId)->where('id', $inventoryId)->first()
-            : self::adivinarElItem($companyId, $serial);
-
-        if (!$item) {
-            return [
-                'ok' => false,
-                'detalle' => "El serial {$serial} no se encontró en el inventario. El equipo quedó instalado igual; revise el stock desde la oficina.",
-                'inventory_id' => null,
-            ];
-        }
-
-        if ((float) $item->quantity <= 0) {
-            return [
-                'ok' => false,
-                'detalle' => "«{$item->name}» figura en cero en el inventario. El equipo quedó instalado igual.",
-                'inventory_id' => (int) $item->id,
-            ];
-        }
-
-        try {
-            DB::transaction(function () use ($item, $companyId, $serial, $userId, $ordenId, $tecnicoId) {
-                $quedan = (float) $item->quantity - 1;
-
-                DB::table('inventories')->where('id', $item->id)->update([
-                    'quantity'   => $quedan,
-                    'updated_at' => now(),
-                ]);
-
-                DB::table('inventory_movements')->insert([
-                    'company_id'    => $companyId,
-                    'inventory_id'  => $item->id,
-                    'type'          => 'salida',
-                    'quantity'      => 1,
-                    'balance_after' => $quedan,
-                    'unit_price'    => $item->unit_price,
-                    'description'   => 'Instalada en casa del cliente',
-                    // Con esto se llega de vuelta a la orden y al cliente sin
-                    // tener que cruzar tablas a mano.
-                    'reference'     => "instalacion:{$ordenId} cliente:{$userId}",
-                    'serial_number' => $serial,
-                    'user_id'       => $tecnicoId,
-                    'created_at'    => now(),
-                    'updated_at'    => now(),
-                ]);
-            });
-        } catch (\Throwable $e) {
-            Log::warning('[Instalación] No se pudo descontar del inventario', [
-                'serial' => $serial, 'error' => $e->getMessage(),
-            ]);
-
-            return ['ok' => false, 'detalle' => 'No se pudo descontar del inventario: ' . $e->getMessage(), 'inventory_id' => (int) $item->id];
-        }
-
-        return [
-            'ok' => true,
-            'detalle' => "«{$item->name}», serial {$serial}. Quedan " . ((float) $item->quantity - 1) . " en stock.",
-            'inventory_id' => (int) $item->id,
-        ];
+        // La cuenta, el candado y de dónde sale el equipo (de la bodega o de lo que ya tenía
+        // el técnico) los resuelve Bodega, que es el único lugar que mueve existencias.
+        return (new \App\Services\Inventario\Bodega($companyId))->instalar($serial, $ordenId, $userId, $tecnicoId, $inventoryId);
     }
 
     /**
@@ -128,14 +72,6 @@ class EquipoDelInventario
      */
     public static function ontsConStock(int $companyId): array
     {
-        return DB::table('inventories')
-            ->where('company_id', $companyId)
-            ->whereNull('deleted_at')
-            ->where('quantity', '>', 0)
-            ->where(fn ($q) => $q->where('name', 'like', '%ont%')->orWhere('name', 'like', '%onu%'))
-            ->orderBy('name')
-            ->get(['id', 'name', 'sku', 'quantity'])
-            ->map(fn ($i) => (array) $i)
-            ->all();
+        return \App\Services\Inventario\Bodega::renglonesDeOnt($companyId);
     }
 }

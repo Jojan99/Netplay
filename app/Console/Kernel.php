@@ -12,6 +12,12 @@ class Kernel extends ConsoleKernel
      */
     protected function schedule(Schedule $schedule): void
     {
+        // Los candados del programador van a Redis y no al caché de archivos: quien lo corre es
+        // root (cron), y cada candado dejaba una carpeta del caché con dueño root donde la web
+        // (www-data) ya no podía escribir. Cualquier pantalla que guardara algo en caché y cayera
+        // en esa carpeta respondía «Server Error».
+        $schedule->useCache('redis');
+
         // Revisa cada hora qué empresas tienen proceso programado para este día y hora exacta
         $schedule->command('billing:auto')->hourly();
 
@@ -55,6 +61,13 @@ class Kernel extends ConsoleKernel
         // Cobranza inteligente: detecta deudores, cierra lo pagado y, en el
         // horario de cada empresa, el asistente escribe y recuerda.
         $schedule->command('cobranza:revisar')->everyFiveMinutes()->user('www-data')->withoutOverlapping(20)->runInBackground();
+
+        // Asistente de soporte: termina los cambios de clave que esperaban al
+        // equipo, reintenta lo que quedó sin contestar y cierra casos abandonados.
+        // Sin withoutOverlapping: el candado lo lleva el propio comando en Redis.
+        $schedule->command('soporte:revisar')->everyMinute()->user('www-data')->runInBackground();
+        // Fallas de sector: cada empresa elige cada cuántos minutos se lee su OLT (módulo Fallas de sector).
+        $schedule->command('red:fallas-sector')->everyMinute()->user('www-data')->runInBackground();
 
         // Pagos en línea que quedaron colgados: la pasarela avisa por webhook y
         // el cliente vuelve a la página de retorno, pero las dos cosas fallan
@@ -124,7 +137,28 @@ class Kernel extends ConsoleKernel
         $schedule->command('wa:avisos')
             ->dailyAt('09:00')
             ->user('www-data');
-        
+
+        // Factura electrónica (DIAN): emite lo cobrado por las empresas que lo tienen en automático,
+        // reintenta lo que quedó a medias y saca las notas crédito de lo revertido o anulado.
+        $schedule->command('factura-electronica:emitir')
+            // Sin withoutOverlapping: ese candado lo crea el programador (root) y la tarea,
+            // que corre como www-data, no lo puede soltar. El comando trae el suyo por empresa.
+            ->everyFiveMinutes()->user('www-data')->runInBackground();
+
+        // Inventario: lo que llegó al mínimo y nadie avisó; los lunes, qué técnicos tienen
+        // equipos hace tiempo. El aviso inmediato lo dispara el propio movimiento.
+        $schedule->command('inventory:avisar')->dailyAt('08:20')->user('www-data');
+
+        // Alegra: refresca la copia local (facturas, pagos, contactos) de las empresas que lo tienen
+        // conectado. Sólo lee. Sin withoutOverlapping: el servicio trae su propio candado.
+        $schedule->command('alegra:sincronizar')->hourlyAt(20)->user('www-data')->runInBackground();
+
+        // Pruebas y cobros vencidos de las empresas con Netvula: primer aviso,
+        // días de gracia y, agotados, suspensión del panel.
+        $schedule->command('plataforma:revisar-suscripciones')
+            ->dailyAt('06:30')
+            ->user('www-data');
+
     }
 
     /**

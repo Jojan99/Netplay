@@ -125,8 +125,10 @@ class FacturationRepository implements FacturationRepositoryInterface
             'total','price_total','porcentage_discount','days_facture','discount',
             'price_discount','create_facture_manual','paid','price_abone','abone',
             DB::raw('price_total - price_abone as balance'),
-            DB::raw('(SELECT SUM(price_total - price_abone) FROM det_facturations WHERE cab_id = ? AND paid = 0) as total_pending'),
-            DB::raw('(SELECT COUNT(*) FROM det_facturations WHERE cab_id = ? AND paid = 0) as months_pending')
+            // Las anuladas no se deben: el modelo ya las deja fuera, pero estas dos sumas van
+            // escritas a mano y las estaban contando en el pendiente del cliente.
+            DB::raw('(SELECT SUM(GREATEST(0, price_total - COALESCE(price_discount, 0) - COALESCE(price_abone, 0))) FROM det_facturations WHERE cab_id = ? AND paid = 0 AND anulada_en IS NULL) as total_pending'),
+            DB::raw('(SELECT COUNT(*) FROM det_facturations WHERE cab_id = ? AND paid = 0 AND anulada_en IS NULL) as months_pending')
         )
         ->addBinding([$cabId, $cabId], 'select')
         ->where('cab_id', $cabId)
@@ -151,6 +153,8 @@ class FacturationRepository implements FacturationRepositoryInterface
             ->join('users', 'users.id', '=', 'us.user_id')
             ->where('users.company_id', getSessionCompanyId())
             ->where('dt.paid', 0)
+            // Consulta directa: no pasa por el modelo, así que las anuladas se excluyen aquí.
+            ->whereNull('dt.anulada_en')
             ->select(['cb.date_init_facturation','us.names','us.lastname','us.dni',
                 'us.user_id','us.phone','us.email','us.address','dt.paid',
                 'dt.price_total','dt.id','dt.cab_id','dt.price_discount','dt.price_abone'])
@@ -524,8 +528,12 @@ class FacturationRepository implements FacturationRepositoryInterface
             return ['ok' => false, 'mensaje' => 'No encontramos esa factura.'];
         }
 
-        if (!$det->paid) {
-            return ['ok' => false, 'mensaje' => 'Esa factura no está pagada.'];
+        // No sólo la que quedó totalmente pagada: un abono parcial (la factura sigue
+        // pendiente) también se puede revertir. Antes esto sólo dejaba deshacer una
+        // factura ya pagada del todo, y no había forma de quitar un abono que se le
+        // cargó de más a una que seguía abierta.
+        if (!$det->paid && (float) ($det->price_abone ?? 0) <= 0) {
+            return ['ok' => false, 'mensaje' => 'Esa factura no tiene ningún pago para revertir.'];
         }
 
         // Lo que de verdad se cobró sale de los movimientos, no de la resta:
@@ -570,7 +578,9 @@ class FacturationRepository implements FacturationRepositoryInterface
         ]);
         });
 
-        return ['ok' => true, 'mensaje' => 'El pago se revirtió y la factura volvió a quedar pendiente.'];
+        $dian = \App\Services\FacturaElectronica\FacturacionElectronica::alDeshacerCobro((int) $empresa, (int) $det->id, getSessionUserId());
+
+        return ['ok' => true, 'mensaje' => 'El pago se revirtió y la factura volvió a quedar pendiente.' . ($dian ? ' ' . $dian : '')];
     }
 
     /**
@@ -653,7 +663,53 @@ class FacturationRepository implements FacturationRepositoryInterface
             'anulada_motivo' => mb_substr($motivo, 0, 255),
         ]);
 
-        return ['ok' => true, 'mensaje' => 'La factura quedó anulada.'];
+        $dian = \App\Services\FacturaElectronica\FacturacionElectronica::alDeshacerCobro((int) $empresa, (int) $det->id, getSessionUserId());
+
+        return ['ok' => true, 'mensaje' => 'La factura quedó anulada.' . ($dian ? ' ' . $dian : '')];
+    }
+
+    /**
+     * Anula varias facturas de un cliente de una sola vez, todas con el mismo motivo.
+     *
+     * Cada una pasa por las mismas reglas que anular una sola (no se salta ninguna): la que
+     * ya estaba anulada o la que está pagada se deja aparte, con el motivo, y se anulan las
+     * demás. No es todo o nada —si fuera así, una factura pagada por error en la lista
+     * bloquearía la anulación de las otras diez que sí están bien—.
+     *
+     * @return array{anuladas:int, errores:list<string>, avisos:list<string>}
+     */
+    public function anularBulk(array $detIds, string $motivo): array
+    {
+        $empresa = getSessionCompanyId();
+        $anuladas = 0;
+        $errores = [];
+        // Lo que pasó con la DIAN en las que ya tenían factura electrónica.
+        $avisos = [];
+
+        foreach ($detIds as $detId) {
+            $det = DetFacturation::where('det_facturations.id', $detId)
+                ->join('cab_facturations', 'cab_facturations.id', '=', 'det_facturations.cab_id')
+                ->where('cab_facturations.company_id', $empresa)
+                ->select('det_facturations.*')
+                ->first();
+
+            if (!$det) { $errores[] = "Factura {$detId}: no la encontramos."; continue; }
+            if ($det->anulada_en) { $errores[] = "{$det->number_facture}: ya estaba anulada."; continue; }
+            if ($det->paid) { $errores[] = "{$det->number_facture}: está pagada, primero hay que revertir el pago."; continue; }
+
+            $det->update([
+                'anulada_en'     => now(),
+                'anulada_por'    => getSessionUserId(),
+                'anulada_motivo' => mb_substr($motivo, 0, 255),
+            ]);
+            $anuladas++;
+
+            if ($dian = \App\Services\FacturaElectronica\FacturacionElectronica::alDeshacerCobro((int) $empresa, (int) $det->id, getSessionUserId())) {
+                $avisos[] = "{$det->number_facture}: {$dian}";
+            }
+        }
+
+        return ['anuladas' => $anuladas, 'errores' => $errores, 'avisos' => $avisos];
     }
 
     /**
@@ -830,6 +886,8 @@ class FacturationRepository implements FacturationRepositoryInterface
             ->join('user_data as us', 'us.user_id', '=', 'cb.user_id')
             ->join('users', 'users.id', '=', 'us.user_id')
             ->where('users.company_id', $companyId)
+            // Una factura anulada no es un cobro ni una deuda: no va en la exportación.
+            ->whereNull('dt.anulada_en')
             ->select([
                 'dt.number_facture', 'dt.date_facturation', 'dt.price_total',
                 'dt.price_abone', 'dt.price_discount', 'dt.paid', 'dt.abone',

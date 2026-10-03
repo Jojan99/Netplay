@@ -404,6 +404,12 @@ class AvisosAlGrupo
      * menos uno: con eso se marca la alerta como avisada. Si no salió por
      * ninguno se reintenta en la próxima revisión en vez de perderse.
      */
+    /** Un aviso suelto al grupo de la red (lo usan las fallas de sector). */
+    public function avisar(string $texto): bool
+    {
+        return $this->enviar($texto, 'alerta_red');
+    }
+
     private function enviar(string $texto, string $evento): bool
     {
         $destinos = $this->destinos($evento);

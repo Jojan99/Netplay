@@ -211,6 +211,9 @@ class ConsolaController extends Controller
 
             DB::table('plataforma_suscripciones')->where('company_id', $id)
                 ->update(['estado' => $enMora ? 'en_mora' : 'al_dia', 'updated_at' => now()]);
+
+            // Reactivada a mano: si sigue debiendo, la gracia se cuenta de nuevo.
+            \App\Services\Plataforma\EstadoDeCuenta::olvidarAviso($id);
         }
 
         Bitacora::anotar('empresa.reactivada', $id, [], 'empresa', $id);

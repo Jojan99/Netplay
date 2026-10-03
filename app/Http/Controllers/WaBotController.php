@@ -67,7 +67,9 @@ class WaBotController extends Controller
         ]);
 
         $config = WaBotConfig::firstOrNew(['company_id' => $companyId]);
-        $config->enabled = $request->boolean('enabled', false);
+        // Si la petición no trae el interruptor, se respeta como estaba. Antes un guardado sin ese
+        // dato lo dejaba en apagado, y el bot dejaba de contestar sin que nadie lo hubiera pedido.
+        $config->enabled = $request->has('enabled') ? $request->boolean('enabled') : (bool) $config->enabled;
         $config->trigger_word = $request->input('trigger_word', 'hola');
         $config->welcome_message = $request->input('welcome_message');
         $config->menu_type = $request->input('menu_type', $config->menu_type ?? 'text');

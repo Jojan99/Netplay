@@ -75,6 +75,7 @@ class CobranzaController extends Controller
             'wa_linea_id'               => ['nullable', 'integer', Rule::exists('wa_lineas', 'id')->where('company_id', $companyId)],
             'pago_link'                 => 'nullable|boolean',
             'pago_texto'                => 'nullable|string|max:1000',
+            'pago_texto_fe'             => 'nullable|string|max:3000',
         ], [
             'hora_hasta.after' => 'La hora de fin tiene que ser después de la de inicio.',
             'dias.regex'       => 'Seleccione al menos un día.',
@@ -82,7 +83,7 @@ class CobranzaController extends Controller
 
         // Los medios de pago son de una migración nueva: si todavía no se corrió,
         // se guarda el resto igual en vez de reventar.
-        foreach (['pago_link', 'pago_texto'] as $campo) {
+        foreach (['pago_link', 'pago_texto', 'pago_texto_fe'] as $campo) {
             if (array_key_exists($campo, $datos) && !Schema::hasColumn('cobranza_configs', $campo)) {
                 unset($datos[$campo]);
             }

@@ -76,7 +76,7 @@ class SendPendingInvoiceEmailsCommand extends Command
             ->join('cab_facturations as cb', 'cb.id', '=', 'dt.cab_id')
             ->where('cb.company_id', $companyId)
             ->whereNull('dt.email_sent_at')
-            ->where('dt.paid', 0)
+            ->where('dt.paid', 0)->whereNull('dt.anulada_en')
             ->orderBy('dt.id');
 
         if ($periodo) {

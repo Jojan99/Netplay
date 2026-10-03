@@ -63,6 +63,7 @@ class CheckPaymentCommitmentsCommand extends Command
                     $unpaidCount = DB::table('det_facturations')
                         ->whereIn('id', $linkedInvoiceIds)
                         ->where('paid', '!=', 1)
+                        ->whereNull('anulada_en')
                         ->count();
                     $hasPaid = ($unpaidCount === 0);
                 }
@@ -99,6 +100,18 @@ class CheckPaymentCommitmentsCommand extends Command
                     'status'       => 'broken',
                     'suspended_at' => $suspended ? now() : null,
                 ]);
+
+                if ($suspended) {
+                    DB::table('auto_suspend_logs')->insert([
+                        'company_id'     => $commitment->company_id,
+                        'user_id'        => $commitment->user_id,
+                        'action'         => 'suspended',
+                        'motivo'         => 'compromiso',
+                        'detalle'        => "Compromiso de pago #{$commitment->id} incumplido",
+                        'invoices_count' => 0,
+                        'created_at'     => now(),
+                    ]);
+                }
 
                 $this->warn("🚫 Compromiso #{$commitment->id} incumplido — " . ($suspended ? 'servicio suspendido.' : 'no se pudo suspender.'));
 

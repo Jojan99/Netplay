@@ -73,10 +73,72 @@ class PlataformaController extends Controller
                 'incluye_todos' => config('plataforma.incluye_todos', []),
                 // Los planes salen de la base cuando existe la tabla; si no,
                 // del config de siempre. La página pública no se entera.
-                'planes'        => \App\Services\Plataforma\PlanesDeLaPlataforma::publicos(),
+                'planes'        => ($planes = \App\Services\Plataforma\PlanesDeLaPlataforma::publicos()),
+                'comparativo'   => $this->comparativo($planes),
                 'modulos' => $modulos,
+                // Lo que se contrata aparte del plan, con su precio de lista.
+                'complementos' => [[
+                    'clave'  => 'tr069',
+                    'nombre' => 'TR-069',
+                    // Por tramos de equipos; 'precio' es el del primer tramo («desde»).
+                    'tramos' => ($tramos = \App\Services\Plataforma\ComplementoTr069::tramos()),
+                    'precio' => $tramos[0]['precio'] ?? null,
+                ]],
             ],
         ]);
+    }
+
+    /**
+     * El comparativo de precios, con el de Netvula calculado de los planes
+     * vigentes: el plan más barato que admite esa cantidad de clientes.
+     */
+    private function comparativo(array $planes): ?array
+    {
+        $c = (array) config('plataforma.comparativo', []);
+
+        if (empty($c['activo']) || empty($c['tamanos']) || empty($c['alternativas'])) {
+            return null;
+        }
+
+        $trm = (float) ($c['trm'] ?? 0);
+        $tamanos = [];
+
+        foreach ($c['tamanos'] as $t) {
+            $sirven = array_filter($planes, fn ($p) => ($p['precio_mensual'] ?? null) !== null
+                && (($p['clientes'] ?? null) === null || $p['clientes'] >= $t['clientes']));
+            usort($sirven, fn ($a, $b) => $a['precio_mensual'] <=> $b['precio_mensual']);
+            $plan = $sirven[0] ?? null;
+
+            // Sin plan para algún tamaño no hay comparación honesta: no se muestra.
+            if (!$plan) {
+                return null;
+            }
+
+            $tamanos[] = $t + ['netvula' => (float) $plan['precio_mensual'], 'plan' => $plan['nombre'], 'plan_clientes' => $plan['clientes'] ?? null];
+        }
+
+        return [
+            'fecha'   => $c['fecha_texto'] ?? null,
+            'trm'     => $trm,
+            'tamanos' => $tamanos,
+            'alternativas' => array_map(fn ($a) => [
+                'nombre'  => $a['nombre'],
+                'detalle' => $a['detalle'] ?? null,
+                'usd'     => $a['usd'],
+                'cop'     => array_map(fn ($usd) => round($usd * $trm, -3), $a['usd']),
+            ], $c['alternativas']),
+            // El complemento TR-069, tramo por tramo, contra quien también lo vende aparte.
+            'tr069' => [
+                'tramos'       => \App\Services\Plataforma\ComplementoTr069::tramos(),
+                'alternativas' => array_map(fn ($a) => [
+                    'nombre'  => $a['nombre'],
+                    'detalle' => $a['detalle'] ?? null,
+                    'usd'     => $a['usd'],
+                    'cop'     => array_map(fn ($usd) => round($usd * $trm, -3), $a['usd']),
+                ], $c['tr069'] ?? []),
+            ],
+            'fuentes' => $c['fuentes'] ?? [],
+        ];
     }
 
     /**

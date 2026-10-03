@@ -63,7 +63,7 @@ class ManagementRouterRepository implements ManagementRouterRepositoryInterface
             'field_changed' => 'estado_internet',
             'old_value'     => $oldStatusId == 1 ? 'ACTIVE' : 'INACTIVE',
             'new_value'     => $status == 1 ? 'ACTIVE' : 'INACTIVE',
-            'description'   => 'Cambio de estado de internet',
+            'description'   => self::descripcionDelCambio($data, (int) $status),
             'created_at'    => now(),
             'updated_at'    => now(),
         ]);
@@ -81,10 +81,13 @@ class ManagementRouterRepository implements ManagementRouterRepositoryInterface
      */
 public function GetUsersPendding(): array
 {
-    return DetFacturation::from('det_facturations as det')
+    // Con alias, el filtro de anuladas del modelo apunta a un nombre de tabla que ya no
+    // existe en la consulta y la rompe: se quita y se pone a mano sobre el alias.
+    return DetFacturation::conAnuladas()->from('det_facturations as det')
         ->join('cab_facturations as cab', 'det.cab_id', '=', 'cab.id')
         ->join('users as us', 'us.id', '=', 'cab.user_id')
         ->where('det.paid', '<>', 1)
+        ->whereNull('det.anulada_en')
         ->distinct()
         ->select([
             'us.username',
@@ -95,4 +98,16 @@ public function GetUsersPendding(): array
         ->toArray();
 }
 
+
+    /** Lo que queda en el historial del cliente: manual, con el motivo que escribió el operador. */
+    private static function descripcionDelCambio($data, int $status): string
+    {
+        $leer = fn (string $k) => is_array($data) ? ($data[$k] ?? null) : ($data->{$k} ?? null);
+        $motivo = trim((string) $leer('motivo'));
+        $noReactivar = $status != 1 && filter_var($leer('no_reactivar') ?? false, FILTER_VALIDATE_BOOLEAN);
+
+        return mb_substr(($status == 1 ? 'Reactivación manual' : 'Suspensión manual')
+            . ($noReactivar ? ' · no reactivar automáticamente' : '')
+            . ($motivo !== '' ? ' · ' . $motivo : ''), 0, 250);
+    }
 }

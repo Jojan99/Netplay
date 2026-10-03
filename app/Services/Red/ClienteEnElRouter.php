@@ -92,6 +92,97 @@ class ClienteEnElRouter
     }
 
     /**
+     * Ping desde el MikroTik a la IP del cliente: la de su sesión PPPoE o la de su ARP.
+     *
+     * Antes el ping vivía dentro de un controlador y sólo buscaba en el ARP: a un cliente
+     * PPPoE sano le daba «sin conexión». Aquí sirve para los dos y no depende de la sesión
+     * del panel, así que lo puede usar un proceso en segundo plano.
+     *
+     * @return array{ok:bool, error:?string, ip:?string, enviados:int, recibidos:int, perdida:int, promedio_ms:?float, maximo_ms:?float}
+     */
+    public function ping(int $userId, int $cuantos = 5): array
+    {
+        $r = ['ok' => false, 'error' => null, 'ip' => null, 'enviados' => 0, 'recibidos' => 0, 'perdida' => 100, 'promedio_ms' => null, 'maximo_ms' => null];
+        $cliente = $this->cliente($userId);
+        $router  = $cliente ? $this->router($cliente) : null;
+
+        if (!$cliente || !$router) {
+            return ['error' => 'El cliente no tiene un MikroTik asignado.'] + $r;
+        }
+
+        try {
+            $api = $this->conexion->conection($router->token);
+            $encontrado = $this->buscar($api, $cliente);
+
+            // «sesiones» trae TODAS las sesiones PPPoE del router, por nombre de usuario. Las de
+            // este cliente son las que llevan el nombre de una de SUS credenciales. Tomar «la
+            // primera» era hacerle ping a otro cliente y decir que éste respondía.
+            $ip = null;
+            foreach ($encontrado['secrets'] as $secret) {
+                $suya = $encontrado['sesiones'][$secret['name'] ?? ''] ?? null;
+                $ip = $ip ?: ($suya['ip'] ?? null);
+            }
+            // Un cliente PPPoE sin sesión no tiene a dónde hacerle ping: una entrada ARP
+            // vieja con su IP anterior contestaría por él (o por quien la tenga ahora)
+            // y el ping diría «responde» de un equipo que no está conectado.
+            $esPppoe = ($cliente->connection_type ?? 'static') === 'pppoe';
+
+            if (!$esPppoe) {
+                foreach ($encontrado['arp'] as $a) {
+                    if (($a['disabled'] ?? 'false') !== 'true') {
+                        $ip = $ip ?: ($a['address'] ?? null);
+                    }
+                }
+            }
+
+            if (!$ip || !filter_var($ip, FILTER_VALIDATE_IP)) {
+                return ['error' => $esPppoe ? 'El equipo no tiene sesión PPPoE abierta: no hay a quién hacerle ping.' : 'El cliente no tiene una IP habilitada en el router.'] + $r;
+            }
+
+            $cuantos = max(1, min(10, $cuantos));
+            $q = (new \RouterOS\Query('/ping'))->equal('address', $ip)->equal('count', (string) $cuantos)->equal('interval', '0.3');
+            $tiempos = [];
+
+            foreach ($api->query($q)->read() as $fila) {
+                if (!isset($fila['seq']) && !isset($fila['time']) && !isset($fila['status'])) {
+                    continue;
+                }
+                $r['enviados']++;
+
+                if (isset($fila['time']) && !isset($fila['status'])) {
+                    $tiempos[] = self::aMilisegundos((string) $fila['time']);
+                }
+            }
+
+            $r['enviados']  = max($r['enviados'], $cuantos);
+            $r['recibidos'] = count($tiempos);
+            $r['perdida']   = (int) round(($r['enviados'] - $r['recibidos']) / $r['enviados'] * 100);
+            $r['promedio_ms'] = $tiempos ? round(array_sum($tiempos) / count($tiempos), 1) : null;
+            $r['maximo_ms']   = $tiempos ? round(max($tiempos), 1) : null;
+
+            return ['ok' => true, 'ip' => $ip] + $r;
+        } catch (\Throwable $e) {
+            return ['error' => 'No se pudo hacer ping desde el MikroTik: ' . $e->getMessage()] + $r;
+        }
+    }
+
+    /** «5ms», «350us», «1ms500us», «1s20ms» → milisegundos. */
+    private static function aMilisegundos(string $tiempo): float
+    {
+        $total = 0.0;
+
+        if (preg_match_all('/([\d.]+)\s*(us|ms|s|m)/', $tiempo, $m, PREG_SET_ORDER)) {
+            foreach ($m as [, $valor, $unidad]) {
+                $total += (float) $valor * ['us' => 0.001, 'ms' => 1, 's' => 1000, 'm' => 60000][$unidad];
+            }
+
+            return $total;
+        }
+
+        return (float) $tiempo;
+    }
+
+    /**
      * Borra del router todo lo del cliente: credencial PPPoE (cortando la
      * sesión abierta), ARP y entradas de address-list con su documento.
      *

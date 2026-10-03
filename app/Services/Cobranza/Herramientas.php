@@ -252,7 +252,7 @@ class Herramientas
         }
 
         if ($medios['texto']) {
-            $partes[] = "Medios de pago de la empresa (cópialos tal cual, sin cambiar ni un número):\n" . $medios['texto'];
+            $partes[] = "Medios de pago de la empresa (dáselos al cliente con sus palabras, sin cambiar ni un número y sin escribir el nombre de esta herramienta ni corchetes):\n" . $medios['texto'];
         }
 
         $partes[] = 'Después pídele que le mande el comprobante cuando pague.';
@@ -269,15 +269,7 @@ class Herramientas
      */
     private function medios(): array
     {
-        $m = $this->cfg->mediosDePago($this->hayPasarela());
-
-        if (!$this->conFacturaElectronica()) {
-            $m['link'] = false;
-            $m['qr'] = null;
-            $m['hay'] = (bool) $m['texto'];
-        }
-
-        return $m;
+        return $this->cfg->mediosPara($this->conFacturaElectronica(), $this->hayPasarela());
     }
 
     /**

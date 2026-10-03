@@ -114,8 +114,10 @@ Route::prefix('management')->middleware('empresa.propia')->group(function () {
     });
 
     // ── Router del cliente por TR-069 (GenieACS) ───────────────────────────
-    Route::prefix('acs')->group(function () {
+    Route::prefix('acs')->middleware('complemento.tr069')->group(function () {
         Route::get('/cliente/{userId}', [\App\Http\Controllers\AcsController::class, 'deCliente'])
+            ->whereNumber('userId')->middleware('module:router,usuario');
+        Route::get('/cliente/{userId}/parametros', [\App\Http\Controllers\AcsController::class, 'parametrosDeCliente'])
             ->whereNumber('userId')->middleware('module:router,usuario');
 
         // El asistente: toca redes y túneles, así que sólo administradores.
@@ -154,14 +156,16 @@ Route::prefix('management')->middleware('empresa.propia')->group(function () {
     });
 
     // ── Acceso remoto a los equipos de los clientes (VLAN de gestión) ──────
-    Route::prefix('gestion-remota')->middleware('role:admin')->group(function () {
+    Route::prefix('gestion-remota')->middleware(['role:admin', 'complemento.tr069'])->group(function () {
         Route::get('/',             [\App\Http\Controllers\GestionRemotaController::class, 'estado']);
         Route::get('/sugerencias',  [\App\Http\Controllers\GestionRemotaController::class, 'sugerencias']);
         Route::post('/activar',     [\App\Http\Controllers\GestionRemotaController::class, 'activar']);
         Route::post('/desactivar',  [\App\Http\Controllers\GestionRemotaController::class, 'desactivar']);
         Route::post('/al-dia',      [\App\Http\Controllers\GestionRemotaController::class, 'alDia']);
         Route::post('/olt/{oltId}/ont', [\App\Http\Controllers\GestionRemotaController::class, 'darAcceso'])->whereNumber('oltId');
-        Route::post('/olt/{oltId}/ont/reiniciar', [\App\Http\Controllers\GestionRemotaController::class, 'reiniciar'])->whereNumber('oltId');
+        // Reinicia por la OLT, no por el ACS: no depende del complemento.
+        Route::post('/olt/{oltId}/ont/reiniciar', [\App\Http\Controllers\GestionRemotaController::class, 'reiniciar'])->whereNumber('oltId')
+            ->withoutMiddleware('complemento.tr069');
         Route::get('/diagnostico',  [\App\Http\Controllers\GestionRemotaController::class, 'diagnostico']);
         Route::get('/aprovisionamiento', [\App\Http\Controllers\GestionRemotaController::class, 'aprovisionamiento']);
         Route::put('/aprovisionamiento', [\App\Http\Controllers\GestionRemotaController::class, 'guardarAprovisionamiento']);

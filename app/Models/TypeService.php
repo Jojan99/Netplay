@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class TypeService extends Model
 {
+    use \App\Models\Concerns\FechasEnHoraLocal;
+
     use HasFactory;
 
     protected $table = 'ticket_type_services';

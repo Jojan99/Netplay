@@ -38,6 +38,9 @@ class GestionUserRequest extends FormRequest
             'company_id' => 'nullable|int',
             'vlan' => 'nullable|string',
             'new_ip' => 'nullable|string',
+            // Suspensión a mano por algo que no es la mora: que no vuelva sola al quedar al día.
+            'no_reactivar' => 'nullable|boolean',
+            'motivo' => 'nullable|string|max:255',
         ];
     }
 

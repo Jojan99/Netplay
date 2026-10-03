@@ -52,7 +52,7 @@ class SearchRepository implements SearchRepositoryInterface
                 ->join('cab_facturations as cb', 'cb.user_id', '=', 'us.user_id')
                 ->join('det_facturations as dt', 'cb.id', '=', 'dt.cab_id')
                 ->join('users', 'users.id', '=', 'us.user_id')
-                ->where('dt.paid', 0)
+                ->where('dt.paid', 0)->whereNull('dt.anulada_en')
                 ->where('users.company_id', getSessionCompanyId())
                 ->select([
                     'cb.date_init_facturation',

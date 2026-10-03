@@ -20,6 +20,11 @@ class ConsumoRegistrar extends Command
             : DB::table('companies')->pluck('id')->map(fn ($id) => (int) $id)->all();
 
         foreach ($empresas as $empresa) {
+            // El consumo sale de los contadores del TR-069: sin el complemento no hay qué leer.
+            if (!\App\Services\Plataforma\ComplementoTr069::permitido($empresa)) {
+                continue;
+            }
+
             try {
                 $r = (new ConsumoDelCliente($empresa))->registrar();
             } catch (\Throwable $e) {

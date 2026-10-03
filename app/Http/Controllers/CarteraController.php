@@ -77,7 +77,7 @@ class CarteraController extends Controller
             ->join('cab_facturations as c', 'c.id', '=', 'd.cab_id')
             ->join('user_data as ud', 'ud.user_id', '=', 'c.user_id')
             ->where('c.company_id', $empresa)
-            ->where('d.paid', 0)
+            ->where('d.paid', 0)->whereNull('d.anulada_en')
             ->where('ud.active', 1)
             ->groupBy('c.user_id', 'ud.names', 'ud.lastname')
             ->havingRaw("SUM(CASE WHEN d.date_facturation < ? THEN {$saldo} ELSE 0 END) > 0", [$limite])
@@ -118,7 +118,7 @@ class CarteraController extends Controller
             ->join('cab_facturations as c', 'c.id', '=', 'd.cab_id')
             ->join('user_data as ud', 'ud.user_id', '=', 'c.user_id')
             ->where('c.company_id', $empresa)
-            ->where('d.paid', 0)
+            ->where('d.paid', 0)->whereNull('d.anulada_en')
             ->where('ud.active', 1)
             ->whereRaw('DATEDIFF(?, d.date_facturation) > ?', [$hoy, self::DIAS_PARA_MORA])
             ->selectRaw("
@@ -147,7 +147,7 @@ class CarteraController extends Controller
         $enMora = DB::table('det_facturations as d')
             ->join('cab_facturations as c', 'c.id', '=', 'd.cab_id')
             ->join('user_data as ud', 'ud.user_id', '=', 'c.user_id')
-            ->where('c.company_id', $empresa)->where('d.paid', 0)->where('ud.active', 1)
+            ->where('c.company_id', $empresa)->where('d.paid', 0)->whereNull('d.anulada_en')->where('ud.active', 1)
             ->whereRaw('DATEDIFF(?, d.date_facturation) > ?', [$hoy, self::DIAS_PARA_MORA])
             ->distinct()->count('c.user_id');
 
@@ -179,7 +179,7 @@ class CarteraController extends Controller
             ->join('user_data as ud', 'ud.user_id', '=', 'c.user_id')
             ->leftJoin('internet_status as ist', 'ist.id', '=', 'ud.status_internet_id')
             ->where('c.company_id', $empresa)
-            ->where('d.paid', 0)
+            ->where('d.paid', 0)->whereNull('d.anulada_en')
             ->groupBy('c.user_id', 'ud.names', 'ud.lastname', 'ud.dni', 'ud.phone', 'ud.active', 'ist.name')
             ->havingRaw("SUM({$saldo}) > 0")
             ->selectRaw("c.user_id, ud.active,

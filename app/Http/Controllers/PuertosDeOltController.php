@@ -27,9 +27,9 @@ class PuertosDeOltController extends Controller
         $capacidad = strtolower((string) $olt->brand) === 'huawei' ? self::CAPACIDAD['gpon'] : self::CAPACIDAD['epon'];
         $limiteMora = now()->subDays(CarteraController::DIAS_PARA_MORA)->toDateString();
 
-        // olt_onts.user_data_id guarda users.id, pese al nombre.
+        // olt_onts.user_data_id guarda el id de la ficha (user_data.id); la cartera va por users.id.
         $puertos = DB::table('olt_onts as o')
-            ->leftJoin('user_data as ud', 'ud.user_id', '=', 'o.user_data_id')
+            ->leftJoin('user_data as ud', 'ud.id', '=', 'o.user_data_id')
             ->leftJoin('internet_status as ist', 'ist.id', '=', 'ud.status_internet_id')
             ->where('o.olt_id', $oltId)
             ->groupBy('o.fsp')
@@ -39,7 +39,7 @@ class PuertosDeOltController extends Controller
                 SUM(o.user_data_id IS NOT NULL AND ist.name IS NOT NULL AND UPPER(ist.name) NOT LIKE 'ACT%') AS suspendidos,
                 SUM(o.user_data_id IS NOT NULL AND EXISTS (
                     SELECT 1 FROM det_facturations d JOIN cab_facturations c ON c.id = d.cab_id
-                    WHERE c.user_id = o.user_data_id AND c.company_id = ? AND d.paid = 0 AND d.date_facturation < ?
+                    WHERE c.user_id = ud.user_id AND c.company_id = ? AND d.paid = 0 AND d.anulada_en IS NULL AND d.date_facturation < ?
                 )) AS en_mora", [$olt->company_id, $limiteMora])
             ->orderBy('o.fsp')
             ->get();

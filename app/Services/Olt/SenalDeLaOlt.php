@@ -474,7 +474,7 @@ class SenalDeLaOlt
     private static function armar(OltAdmin $olt, array $vacio, array $onts): array
     {
         $duenos = DB::table('olt_onts as oo')
-            ->leftJoin('user_data as ud', 'ud.user_id', '=', 'oo.user_data_id')
+            ->leftJoin('user_data as ud', 'ud.id', '=', 'oo.user_data_id')
             ->where('oo.olt_id', $olt->id)
             ->get(['oo.fsp', 'oo.ont_id', 'ud.user_id', 'ud.names', 'ud.lastname'])
             ->keyBy(fn ($o) => $o->fsp . ':' . $o->ont_id);

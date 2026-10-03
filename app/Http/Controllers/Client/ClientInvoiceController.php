@@ -42,6 +42,8 @@ class ClientInvoiceController extends Controller
 
         $invoices = DB::table('det_facturations')
             ->where('cab_id', $cab->id)
+            // Una factura anulada no se le muestra ni se le cobra al cliente.
+            ->whereNull('anulada_en')
             ->orderByDesc('date_facturation')
             ->get()
             ->map(function ($invoice) use ($today) {
@@ -111,6 +113,7 @@ class ClientInvoiceController extends Controller
             ->join('cab_facturations as cf', 'cf.id', '=', 'df.cab_id')
             ->where('cf.user_id', $user->id)
             ->where('cf.company_id', $user->company_id)
+            ->whereNull('df.anulada_en')
             ->select('df.*', 'cf.user_id', 'cf.company_id');
 
         if (is_numeric($id)) {
@@ -179,6 +182,7 @@ class ClientInvoiceController extends Controller
             ->join('cab_facturations as cf', 'cf.id', '=', 'df.cab_id')
             ->where('cf.user_id', $user->id)
             ->where('cf.company_id', $user->company_id)
+            ->whereNull('df.anulada_en')
             ->select('df.id', 'df.number_facture');
 
         if (is_numeric($id)) {
@@ -250,6 +254,7 @@ class ClientInvoiceController extends Controller
             ->join('cab_facturations as cf', 'cf.id', '=', 'df.cab_id')
             ->where('cf.user_id', $user->id)
             ->where('cf.company_id', $user->company_id)
+            ->whereNull('df.anulada_en')
             ->select('df.id', 'df.number_facture');
 
         if (is_numeric($id)) {
@@ -318,6 +323,7 @@ class ClientInvoiceController extends Controller
             ->join('cab_facturations as cf', 'cf.id', '=', 'df.cab_id')
             ->where('cf.user_id', $user->id)
             ->where('cf.company_id', $user->company_id)
+            ->whereNull('df.anulada_en')
             ->select('df.id', 'df.number_facture');
 
         if (is_numeric($id)) {
@@ -361,6 +367,7 @@ class ClientInvoiceController extends Controller
             ->join('cab_facturations as cf', 'cf.id', '=', 'df.cab_id')
             ->where('cf.user_id', $user->id)
             ->where('cf.company_id', $user->company_id)
+            ->whereNull('df.anulada_en')
             ->select('df.id', 'df.number_facture');
 
         if (is_numeric($id)) {

@@ -22,12 +22,15 @@ class RegisterCompanyRequest extends FormRequest
             'admin_password.min'     => 'La contraseña debe tener al menos 6 caracteres.',
             'admin_username.unique'  => 'Ese usuario ya está tomado. Pruebe con otro.',
             'admin_username.regex'   => 'El usuario admite letras, números, punto, guion y guion bajo.',
+            'acepta_terminos.accepted' => 'Para crear la empresa debe aceptar los términos y la política de tratamiento de datos.',
         ];
     }
 
     public function rules(): array
     {
         return [
+            // Autorización previa y expresa (Ley 1581, art. 9): sin ella no hay alta.
+            'acepta_terminos' => 'accepted',
             'name'           => 'required|string|max:255',
             'nit'            => 'required|string|max:50|unique:companies,nit',
             'email'          => 'required|email|unique:companies,email',

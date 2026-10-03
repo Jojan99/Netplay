@@ -15,6 +15,8 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
  */
 class User extends Authenticatable implements JWTSubject
 {
+    use \App\Models\Concerns\FechasEnHoraLocal;
+
     use HasFactory;
 
     /**

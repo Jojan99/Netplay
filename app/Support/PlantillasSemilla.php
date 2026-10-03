@@ -80,15 +80,19 @@ class PlantillasSemilla
                 'boton_url'   => ['texto' => 'Pagar ahora', 'url' => $base . '/api/pay/{{1}}', 'ejemplo' => $base . '/api/pay/abc123'],
             ],
 
+            // Avisa ANTES de cortar: el saldo total, los días de mora y hasta cuándo puede pagar.
+            // La versión anterior hablaba de una sola factura («su factura X por $Y») y no decía
+            // la fecha del corte, que es justo lo que el cliente necesita saber. Lleva nombre
+            // nuevo porque Meta no deja cambiarle el texto a una plantilla ya aprobada.
             'suspension_mora' => [
                 'evento'      => 'suspension_mora',
-                'nombre'      => 'netplay_suspension_mora',
+                'nombre'      => 'netplay_aviso_suspension',
                 'categoria'   => 'UTILITY',
                 'idioma'      => 'es',
-                'descripcion' => 'Avisa que el servicio se suspenderá si no se paga.',
-                'variables'   => ['cliente', 'numero_factura', 'valor_numero', 'fecha_vence', 'dias_mora', 'empresa'],
-                'cuerpo'      => "Hola {{1}},\n\nSu factura {{2}} por \${{3}} venció el {{4}} y lleva {{5}} días sin pago.\n\nPara evitar la suspensión del servicio, regularice el pago lo antes posible.\n\nQuedamos atentos desde el equipo de {{6}} para ayudarle.",
-                'pie'         => 'Si ya pagó, escribinos y lo verificamos.',
+                'descripcion' => 'Avisa que el servicio se suspenderá si no se paga antes de la fecha de corte.',
+                'variables'   => ['cliente', 'valor_numero', 'dias_mora', 'fecha_vencimiento', 'empresa'],
+                'cuerpo'      => "Hola {{1}},\n\nSu servicio de internet presenta un saldo pendiente de \${{2}}, con {{3}} días de mora.\n\nSi no registramos el pago antes del {{4}}, el servicio será suspendido.\n\nPuede ver el detalle y cómo pagar desde el botón de abajo. Un saludo del equipo de {{5}}, gracias por su preferencia.",
+                'pie'         => 'Si ya pagó, escríbanos y lo verificamos.',
                 'boton_url'   => ['texto' => 'Pagar ahora', 'url' => $base . '/api/pay/{{1}}', 'ejemplo' => $base . '/api/pay/abc123'],
             ],
 
@@ -243,6 +247,7 @@ class PlantillasSemilla
             'valor'           => '$60.000',
             'fecha_emision'   => '01/09/2026',
             'fecha_vence'     => '15/09/2026',
+            'fecha_vencimiento' => '20/09/2026',
             'dias_mora'       => '5',
             'medio_pago'      => 'Wompi',
             'motivo'          => 'Fondos insuficientes',

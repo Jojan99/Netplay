@@ -92,6 +92,7 @@ class LoteDePagos
         }
 
         $ya = !empty($fila->revertido_en);
+        $resumenGuardado = json_decode((string) $fila->resumen, true) ?: [];
 
         return [
             'existe' => true, 'ya_revertido' => $ya, 'revertido_en' => $fila->revertido_en,
@@ -105,6 +106,10 @@ class LoteDePagos
                 'con_pagos_posteriores' => count(array_filter($items, fn ($i) => $i['movimientos_posteriores'] > 0)),
                 'quedan_pendientes' => count(array_filter($items, fn ($i) => !$i['pagada_quedaria'])),
             ],
+            // Los que salieron «posible duplicado» al aplicar este lote, con la cédula ya
+            // resuelta: para el botón de «Aplicar los posibles duplicados» del detalle.
+            'duplicados'       => $resumenGuardado['duplicados'] ?? [],
+            'duplicados_lote'  => $fila->duplicados_lote,
         ];
     }
 

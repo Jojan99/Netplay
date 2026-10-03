@@ -37,6 +37,8 @@ class UpdateInventoryRequest extends FormRequest
                     ->ignore($itemId),
             ],
             'code'        => 'nullable|string|max:50',
+            'barcode'     => 'nullable|string|max:80',
+            'usa_serial'  => 'nullable|boolean',
             'quantity'    => 'nullable|numeric|min:0',
             'stock_min'   => 'nullable|numeric|min:0',
             'stock_max'   => 'nullable|numeric|min:0',

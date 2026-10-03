@@ -43,6 +43,24 @@ class TemplateContext
             $contexto['saldo']           = $contexto['total_pendiente'];
         }
 
+        // La factura más vieja sin pagar: de ahí salen los días de mora y el número de factura.
+        // Los avisos automáticos ya traen estos datos; un envío masivo no, y sin esto la
+        // plantilla salía con guiones en «días de mora».
+        if ($this->necesita($extra, ['dias_mora', 'factura', 'fecha_emision'])) {
+            $vieja = DB::table('det_facturations as df')->join('cab_facturations as cf', 'cf.id', '=', 'df.cab_id')
+                ->where('cf.company_id', $company->id)->where('cf.user_id', (int) $cliente->user_id)
+                ->where('df.paid', 0)->whereNull('df.anulada_en')
+                ->whereRaw('(df.price_total - COALESCE(df.price_discount,0) - COALESCE(df.price_abone,0)) > 0')
+                ->orderBy('df.date_facturation')->first(['df.number_facture', 'df.date_facturation']);
+
+            if ($vieja) {
+                $emision = \Carbon\Carbon::parse($vieja->date_facturation)->startOfDay();
+                $contexto['factura']       = (string) $vieja->number_facture;
+                $contexto['fecha_emision'] = $emision->format('d/m/Y');
+                $contexto['dias_mora']     = (string) max(0, (int) $emision->diffInDays(now()->startOfDay(), false));
+            }
+        }
+
         $contexto = array_merge($contexto, array_map(
             static fn ($v) => (string) $v,
             array_filter($extra, static fn ($v) => $v !== null)
@@ -56,6 +74,18 @@ class TemplateContext
         }
 
         return $contexto;
+    }
+
+    /**
+     * El texto que escribe el operador puede llevar datos del cliente entre llaves:
+     * «Tienes un saldo de {total_pendiente}». Se reemplazan los que existan; lo demás queda igual.
+     * Meta no acepta saltos de renglón ni tabulaciones dentro de una variable: se vuelven espacios.
+     */
+    public function rellenar(string $texto, array $contexto): string
+    {
+        $texto = preg_replace_callback('/\{\s*([a-z_]+)\s*\}/u', fn ($m) => array_key_exists($m[1], $contexto) && $m[1] !== 'texto_libre' ? (string) $contexto[$m[1]] : $m[0], $texto);
+
+        return trim((string) preg_replace('/ {4,}/', '   ', (string) preg_replace('/[\r\n\t]+/u', ' ', (string) $texto)));
     }
 
     /**
@@ -92,8 +122,11 @@ class TemplateContext
     {
         $params = [];
 
+        // Las plantillas que crea el sistema nombran dos datos distinto que los avisos viejos.
+        $alias = ['numero_factura' => 'factura', 'fecha_vence' => 'fecha_vencimiento'];
+
         foreach ($orden as $variable) {
-            $valor = trim((string) ($contexto[$variable] ?? ''));
+            $valor = trim((string) ($contexto[$variable] ?? $contexto[$alias[$variable] ?? ''] ?? ''));
             $params[] = $valor !== '' ? $valor : '-';
         }
 
@@ -162,7 +195,7 @@ class TemplateContext
             ->join('det_facturations as df', 'df.cab_id', '=', 'cf.id')
             ->where('cf.company_id', $companyId)
             ->where('cf.user_id', $userId)
-            ->where('df.paid', 0)
+            ->where('df.paid', 0)->whereNull('df.anulada_en')
             ->sum(DB::raw('GREATEST(df.price_total - COALESCE(df.price_discount,0) - COALESCE(df.price_abone,0), 0)'));
     }
 

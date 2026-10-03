@@ -154,8 +154,42 @@ class EstadoDeUnaOnt
             'corriente'   => $info['laser_current'] ?? null,
             'voltaje'     => $info['voltage'] ?? null,
             'temperatura' => $info['temperature'] ?? null,
+            'causa_codigo'  => $info['last_down_cause'] ?? null,
+            'ultima_caida'  => $info['last_down_time'] ?? null,
+            'ultima_subida' => $info['last_up_time'] ?? null,
             'error'       => $info['error'] ?? null,
         ];
+    }
+
+    /**
+     * Por qué se cayó la ONT la última vez, en tres causas que el operador puede explicar.
+     *
+     * Huawei lo da en número (1-6 la fibra, 13 dying-gasp, 9 y 31-33 reinicios); C-Data y ZTE,
+     * en texto («dying-gasp», «LOS»). «energia» es que el equipo avisó que se quedaba sin
+     * corriente antes de apagarse: el cliente lo desenchufó o se fue la luz, no es la red.
+     *
+     * @return array{0:?string,1:?string}  [clave, explicación]
+     */
+    public static function causaDeCaida(mixed $codigo, mixed $texto = null): array
+    {
+        $t = strtolower(trim((string) $texto));
+        $n = is_numeric($codigo) ? (int) $codigo : null;
+
+        return match (true) {
+            $n === 13, str_contains($t, 'dying'), str_contains($t, 'gasp'), str_contains($t, 'power')
+                => ['energia', 'Se quedó sin energía (el equipo avisó antes de apagarse)'],
+            $n !== null && $n >= 1 && $n <= 6, str_contains($t, 'los'), str_contains($t, 'lof'), str_contains($t, 'sf')
+                => ['fibra', 'Perdió la señal de la fibra'],
+            in_array($n, [9, 31, 32, 33], true), str_contains($t, 'reset'), str_contains($t, 'reboot')
+                => ['reinicio', match ($n) {
+                    32 => 'Lo reiniciaron con el botón del equipo',
+                    33 => 'Se reinició solo (su propio software)',
+                    default => 'Reinicio ordenado desde la OLT o la plataforma',
+                }],
+            in_array($n, [7, 8, 18, 30, 34, 37], true), str_contains($t, 'deactiv')
+                => ['desactivada', 'La OLT la desactivó'],
+            default => [null, null],
+        };
     }
 
     /**
@@ -224,6 +258,11 @@ class EstadoDeUnaOnt
             'voltaje'     => $apagada ? null : self::enRango($f['voltaje'] ?? null, 0, 20),
             'temperatura' => $apagada ? null : self::enRango($f['temperatura'] ?? null, -40, 120),
             'estado'      => $apagada ? 'sin_senal' : SenalDeLaOlt::clasificar($potencia),
+            // La última caída: energía, fibra o reinicio, y cuándo cayó y volvió.
+            'causa_caida'   => self::causaDeCaida($f['causa_codigo'] ?? null, $f['causa_caida'] ?? $f['causa'] ?? null)[0],
+            'causa_texto'   => self::causaDeCaida($f['causa_codigo'] ?? null, $f['causa_caida'] ?? $f['causa'] ?? null)[1],
+            'ultima_caida'  => $f['ultima_caida'] ?? null,
+            'ultima_subida' => $f['ultima_subida'] ?? null,
             'medido_en'   => now()->toIso8601String(),
             'error'       => $error,
         ];

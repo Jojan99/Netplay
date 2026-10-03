@@ -139,13 +139,21 @@ class InstalarYAprovisionar
         // ── 5. Aprovisionar, si la empresa lo tiene encendido ───────────────
         $aprovisionamiento = null;
 
+        // AprovisionamientoDeOnt::cliente() —y con ella toda la clase, columna
+        // «aprovisionamientos.user_id» incluida— busca por el id de «users» (la
+        // convención de facturación), no por el de «user_data» que se usa acá para la
+        // orden, la OLT y el inventario. Pasarle $userId tal cual no encontraba al
+        // cliente y dejaba sin configurar la conexión a internet —sólo entraban WiFi
+        // y la cuenta de administración, que no pasan por cliente()—.
+        $authUserId = (int) DB::table('user_data')->where('id', $userId)->value('user_id');
+
         try {
             $aprovisionamiento = AprovisionamientoDeOnt::programar(
                 (int) $olt->id,
                 (string) $equipo['fsp'],
                 $ontId,
                 $serial,
-                $userId,
+                $authUserId ?: null,
                 $real['vlan'] ? (int) $real['vlan'] : null,
                 self::loQuePidioElCliente($orden),
             );

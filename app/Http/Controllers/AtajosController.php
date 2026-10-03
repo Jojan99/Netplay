@@ -107,7 +107,7 @@ class AtajosController extends Controller
             ->leftJoin('tabla_ips as ip', function ($j) use ($empresa) {
                 $j->on('ip.id', '=', 'ud.ip_assignment_id')->where('ip.company_id', $empresa);
             })
-            ->leftJoinSub($ontDelCliente, 'primera', 'primera.user_data_id', '=', 'ud.user_id')
+            ->leftJoinSub($ontDelCliente, 'primera', 'primera.user_data_id', '=', 'ud.id')
             ->leftJoin('olt_onts as ont', 'ont.id', '=', 'primera.id')
             ->leftJoin('olt_admins as olt', 'olt.id', '=', 'ont.olt_id')
             ->where('u.company_id', $empresa)

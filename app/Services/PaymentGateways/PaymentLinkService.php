@@ -108,8 +108,18 @@ class PaymentLinkService
         }
 
         $company = Company::find($link->company_id);
-        if (!$company || !$company->pg_active || !$company->pg_gateway) {
+        if (!$company) {
             throw new PaymentLinkException('El pago en línea no está disponible en este momento.');
+        }
+
+        // Sin pasarela de pagos el botón «Pagar ahora» no puede cobrar, pero tampoco tiene que
+        // dejar al cliente frente a un error: lo lleva a su estado de cuenta, donde ve cuánto
+        // debe, de qué facturas y los medios de pago que la empresa puso en su factura.
+        if (!$company->pg_active || !$company->pg_gateway) {
+            $link->increment('used_count');
+            $link->update(['last_used_at' => now()]);
+
+            return ['url' => \App\Services\ClientStatementService::urlFor((int) $link->user_id), 'reference' => '', 'amount' => 0.0];
         }
 
         $invoices = $this->pendingInvoices($link);

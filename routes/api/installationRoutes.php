@@ -22,6 +22,8 @@ Route::prefix('installations')->middleware('module:installations')->group(functi
     // Lo que hace el técnico en la calle: elegir el equipo y dejar todo listo.
     Route::get('/{id}/equipos',      [InstallationOrderController::class, 'equiposDisponibles']);
     Route::post('/{id}/provisionar', [InstallationOrderController::class, 'provisionar']);
+    // Para la animación de "se está configurando sola": el técnico la consulta con polling.
+    Route::get('/{id}/aprovisionamiento', [InstallationOrderController::class, 'aprovisionamiento']);
 
     Route::get('/{id}/logs', [InstallationOrderController::class, 'logs']);
     Route::post('/{id}/logs', [InstallationOrderController::class, 'createLog']);

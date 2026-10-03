@@ -43,6 +43,9 @@ final class MensajeDeAviso
     /** Cierre en una línea, sin etiqueta. */
     private ?string $cierre = null;
 
+    /** Archivo que acompaña al aviso (la imagen de un comprobante): ['url', 'nombre']. */
+    private ?array $adjunto = null;
+
     private function __construct(string $titulo, ?int $companyId, string $marcador)
     {
         $this->titulo    = trim($titulo);
@@ -178,6 +181,15 @@ final class MensajeDeAviso
         return $this->texto();
     }
 
+    /** El aviso sale como pie de esta imagen (o documento). Sin dirección pública, no se adjunta nada. */
+    public function adjunto(?string $url, ?string $nombre = null): self
+    {
+        $url = trim((string) $url);
+        $this->adjunto = $url !== '' ? ['url' => $url, 'nombre' => $nombre] : null;
+
+        return $this;
+    }
+
     /** Arma el mensaje y lo manda al destino que la empresa eligió para el evento. */
     public function enviar(string $evento, ?int $companyId = null): void
     {
@@ -187,7 +199,7 @@ final class MensajeDeAviso
             return;
         }
 
-        NotificationRouterService::dispatch($empresa, $evento, $this->texto());
+        NotificationRouterService::dispatch($empresa, $evento, $this->texto(), $this->adjunto);
     }
 
     // ── Ayudas ───────────────────────────────────────────────────────────────

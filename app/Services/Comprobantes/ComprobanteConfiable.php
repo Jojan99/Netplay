@@ -19,8 +19,21 @@ use Illuminate\Support\Facades\DB;
  */
 class ComprobanteConfiable
 {
-    /** Un pago de hace más de esto no se aplica solo: puede ser un reenvío. */
-    private const DIAS_DE_GRACIA = 30;
+    /**
+     * Un pago de hace más de esto no se aplica solo y tampoco se avisa al grupo
+     * de reporte de pagos: puede ser un reenvío de un comprobante viejo, o un
+     * pago que ya se aplicó por otro camino. Queda para revisión en la pantalla
+     * de Comprobantes. Pedido expreso del dueño: eran siete días, ahora tres.
+     */
+    public const DIAS_DE_GRACIA = 3;
+
+    /** ¿El pago del comprobante es más viejo que los días de gracia? */
+    public static function esViejo(PaymentProof $p): bool
+    {
+        // Por día y no por hora: la fecha del comprobante no trae hora, y un pago de hace
+        // exactamente tres días todavía vale. Viejo es del cuarto día hacia atrás.
+        return (bool) $p->payment_date && $p->payment_date->lt(now()->subDays(self::DIAS_DE_GRACIA)->startOfDay());
+    }
 
     /**
      * Cuánto puede pasarse del saldo sin levantar sospecha.
@@ -70,7 +83,10 @@ class ComprobanteConfiable
             $motivos[] = 'esa referencia ya se usó en otro comprobante';
         }
 
-        if ($p->payment_date && $p->payment_date->lt(now()->subDays(self::DIAS_DE_GRACIA))) {
+        // Sin fecha legible tampoco se aplica: no hay cómo saber si es reciente.
+        if (!$p->payment_date) {
+            $motivos[] = 'no se pudo leer la fecha del pago';
+        } elseif (self::esViejo($p)) {
             $motivos[] = 'el pago es de hace más de ' . self::DIAS_DE_GRACIA . ' días';
         }
 

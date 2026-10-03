@@ -79,7 +79,15 @@ class ConciliacionPagosController extends Controller
 
         $r = $this->correr($d, true, 'aplicado');
 
-        \App\Services\Facturacion\LoteDePagos::cerrar($this->empresa(), $d['lote'], $r['resumen']);
+        // Los que quedaron «posible duplicado» no se guardaban en ningún lado: si más tarde
+        // alguien confirmaba que sí eran otro pago, había que volver a pegar la lista entera
+        // a mano (y adivinar cuáles eran). Quedan acá, con cédula ya resuelta, para poder
+        // reforzarlos después desde el detalle del lote sin repetir el cruce por nombre.
+        $duplicados = collect($r['filas'])->where('estado', 'posible_duplicado')
+            ->map(fn ($f) => ['ref' => $f['ref'], 'cedula' => $f['cedula'], 'nombre' => $f['nombre'], 'valor' => $f['valor']])
+            ->values()->all();
+
+        \App\Services\Facturacion\LoteDePagos::cerrar($this->empresa(), $d['lote'], $r['resumen'] + ['duplicados' => $duplicados]);
 
         Log::info('[Conciliación] Pagos aplicados', [
             'empresa' => $this->empresa(), 'lote' => $d['lote'], 'por' => getSessionUserId(),
@@ -121,6 +129,59 @@ class ConciliacionPagosController extends Controller
         }
 
         return standardApiReponse($r['message'], $r, $r['ok'] ? 0 : 1, JsonResponse::HTTP_OK);
+    }
+
+    /**
+     * 4) Aplica los que quedaron «posible duplicado» al aplicar este lote —ya con la cédula
+     * resuelta, guardada en su momento— sin tener que volver a pegar la lista a mano. Queda
+     * como un lote nuevo, hijo del original, para poder deshacerlo aparte si hace falta.
+     */
+    public function reforzarDuplicados(string $lote): JsonResponse
+    {
+        $companyId = $this->empresa();
+        $fila = DB::table('conciliacion_pagos_lotes')->where('company_id', $companyId)->where('lote', $lote)->first();
+
+        if (!$fila) {
+            return standardApiReponse('Ese lote no existe.', null, 1, JsonResponse::HTTP_OK);
+        }
+        if ($fila->duplicados_lote) {
+            return standardApiReponse('Los posibles duplicados de este lote ya se reforzaron (lote ' . $fila->duplicados_lote . ').', null, 1, JsonResponse::HTTP_OK);
+        }
+
+        $duplicados = json_decode((string) $fila->resumen, true)['duplicados'] ?? [];
+
+        if (!$duplicados) {
+            return standardApiReponse('Este lote no tiene posibles duplicados para reforzar.', null, 1, JsonResponse::HTTP_OK);
+        }
+
+        $nuevoLote = 'refuerzo-' . $lote . '-' . now()->format('His');
+
+        $d = [
+            'filas'     => array_map(fn ($f) => $f + ['forzar' => true], $duplicados),
+            'orden'     => $fila->orden,
+            'metodo_id' => (int) $fila->payment_method_id,
+            'fecha'     => $fila->fecha_pago,
+            'titulo'    => 'Refuerzo de posibles duplicados · ' . $lote,
+            'lote'      => $nuevoLote,
+        ];
+
+        $plan = $this->correr($d, false, 'simulacion');
+        $ids = collect($plan['filas'])->flatMap(fn ($f) => collect($f['movimientos'])->pluck('det_id'))->unique()->values()->all();
+
+        \App\Services\Facturacion\LoteDePagos::abrir($companyId, $nuevoLote, getSessionUserId(), (int) $fila->payment_method_id, $fila->orden, $fila->fecha_pago, $d['titulo'], $ids, 'web');
+
+        $r = $this->correr($d, true, 'aplicado');
+
+        \App\Services\Facturacion\LoteDePagos::cerrar($companyId, $nuevoLote, $r['resumen']);
+
+        DB::table('conciliacion_pagos_lotes')->where('company_id', $companyId)->where('lote', $lote)->update(['duplicados_lote' => $nuevoLote]);
+
+        Log::info('[Conciliación] Reforzados posibles duplicados', [
+            'empresa' => $companyId, 'lote_original' => $lote, 'lote_nuevo' => $nuevoLote, 'por' => getSessionUserId(),
+            'pagos' => $r['resumen']['pagos_aplicados'], 'aplicado' => $r['resumen']['aplicado'],
+        ]);
+
+        return standardApiReponse('Posibles duplicados aplicados', $r + ['lote' => $nuevoLote], 0, JsonResponse::HTTP_OK);
     }
 
     // ── Piezas ────────────────────────────────────────────────────────────

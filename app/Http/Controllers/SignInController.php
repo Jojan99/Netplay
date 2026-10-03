@@ -145,8 +145,11 @@ class SignInController extends Controller
         // corriendo. Sólo se cierra el panel del operador.
         if (self::empresaSuspendida((int) $authenticatedUser->company_id)) {
             return standardApiReponse(
-                'El acceso de su empresa a la plataforma está suspendido. Escribinos para reactivarlo.',
-                ApiResponseConstants::DATA_NULL,
+                'El acceso de su empresa a la plataforma está suspendido. Escríbanos para reactivarlo.',
+                [
+                    'codigo' => 'EMPRESA_SUSPENDIDA',
+                    'cuenta' => \App\Services\Plataforma\EstadoDeCuenta::de((int) $authenticatedUser->company_id),
+                ],
                 ApiResponseConstants::ERROR,
                 JsonResponse::HTTP_OK
             );

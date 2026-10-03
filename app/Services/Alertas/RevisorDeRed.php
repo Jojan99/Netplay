@@ -46,6 +46,8 @@ class RevisorDeRed
         // Lo que ya no aparece, se cierra: la alerta vive mientras el problema.
         $cerradas = Alerta::where('company_id', $this->companyId)
             ->abiertas()
+            // Las de inventario no son de esta revisión: las abre y las cierra AvisosDeInventario.
+            ->where('tipo', '!=', 'inventario')
             ->when($vistas, fn ($q) => $q->whereNotIn('clave', $vistas))
             ->update(['cerrada_en' => now()]);
 
@@ -89,7 +91,9 @@ class RevisorDeRed
                 }
 
                 $ligada = $clientes[$clave] ?? null;
-                $nombre = $ligada ? $this->nombreDelCliente((int) $ligada->user_data_id) : ($ont['description'] ?? $clave);
+                // La ONT guarda el id de la FICHA del cliente; el nombre y la alerta van por el de «users».
+                $usuario = $ligada ? $this->usuarioDeLaFicha((int) $ligada->user_data_id) : null;
+                $nombre = $usuario ? $this->nombreDelCliente($usuario) : ($ont['description'] ?? $clave);
 
                 $claves[] = $this->anotar(
                     "senal:{$olt->id}:{$clave}",
@@ -101,7 +105,7 @@ class RevisorDeRed
                         'olt' => $olt->name, 'fsp' => $ont['fsp'], 'ont_id' => $ont['ont_id'],
                         'potencia' => $ont['potencia'], 'estado' => $ont['estado'],
                     ],
-                    $ligada?->user_data_id,
+                    $usuario,
                 );
             }
 
@@ -171,15 +175,16 @@ class RevisorDeRed
                 continue;
             }
 
-            // olt_onts.user_data_id guarda users.id, pese al nombre.
+            // olt_onts.user_data_id guarda el id de la FICHA (user_data.id), no el de «users».
+            $usuario = $this->usuarioDeLaFicha((int) $ligada->user_data_id);
             $claves[] = $this->anotar(
                 "caida:{$olt->id}:{$clave}",
                 'caida',
                 'critico',
-                'Cliente caído por fibra · ' . $this->nombreDelCliente((int) $ligada->user_data_id),
+                'Cliente caído por fibra · ' . ($usuario ? $this->nombreDelCliente($usuario) : "equipo {$clave}"),
                 'La ONT perdió la señal óptica y no avisó corte de luz: fibra cortada, conector suelto o roseta dañada.',
                 ['olt' => $olt->name, 'fsp' => $ont['fsp'], 'ont_id' => $ont['ont_id'], 'causa' => $causas[$clave]],
-                (int) $ligada->user_data_id,
+                $usuario,
             );
         }
 
@@ -314,8 +319,9 @@ class RevisorDeRed
                 }
 
                 $fila = OltOnt::where('olt_id', $olt->id)->where('fsp', $ont['fsp'])->where('ont_id', $ont['ont_id'])->first();
-                $nombre = $fila?->user_data_id
-                    ? $this->nombreDelCliente((int) $fila->user_data_id)
+                $usuario = $fila?->user_data_id ? $this->usuarioDeLaFicha((int) $fila->user_data_id) : null;
+                $nombre = $usuario
+                    ? $this->nombreDelCliente($usuario)
                     : str_replace('_', ' ', (string) ($ont['descripcion'] ?: 'Equipo ' . $ont['fsp'] . ':' . $ont['ont_id']));
 
                 $claves[] = $this->anotar(
@@ -326,7 +332,7 @@ class RevisorDeRed
                     'La ONT está registrada en la OLT pero sin service-port: prende y no navega. '
                         . 'Se arregla desde Admin OLT, completando el service-port con la VLAN del cliente.',
                     ['olt' => $olt->name, 'fsp' => $ont['fsp'], 'ont_id' => $ont['ont_id'], 'serial' => $ont['serial']],
-                    $fila?->user_data_id,
+                    $usuario,
                 );
             }
         }
@@ -429,6 +435,24 @@ class RevisorDeRed
         exec('ping -c 1 -W 2 ' . escapeshellarg($host) . ' 2>/dev/null', $salida, $codigo);
 
         return $codigo === 0;
+    }
+
+    /**
+     * El id de «users» del cliente dueño de una ficha.
+     *
+     * «olt_onts.user_data_id» guarda el id de la ficha (user_data.id). Usarlo como si fuera el de
+     * «users» nombraba en la alerta a OTRO cliente: el que tuviera ese número como id de usuario.
+     */
+    private function usuarioDeLaFicha(int $fichaId): ?int
+    {
+        static $cache = [];
+
+        if (!array_key_exists($fichaId, $cache)) {
+            $id = DB::table('user_data')->where('id', $fichaId)->where('company_id', $this->companyId)->value('user_id');
+            $cache[$fichaId] = $id ? (int) $id : null;
+        }
+
+        return $cache[$fichaId];
     }
 
     private function nombreDelCliente(int $userId): string

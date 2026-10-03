@@ -109,13 +109,17 @@ class CorreoController extends Controller
         $remitente = $correo->remitente();
         $nombre = trim((string) $company->invoice_business_name) ?: trim((string) $company->name);
 
-        $html = "<p>Hola,</p>"
-            . "<p>Esta es una prueba de correo de <strong>" . e($nombre) . "</strong>.</p>"
-            . "<p>Salió desde <strong>" . e($remitente['email']) . "</strong> ("
-            . ($remitente['origen'] === Correo::PROPIA ? 'la cuenta de Mailjet de su empresa' : 'la cuenta de correo de Netvula') . ")."
-            . ($remitente['responder_a'] ? " Las respuestas llegan a " . e($remitente['responder_a']) . "." : '')
-            . "</p>"
-            . "<p>Si recibiste este mensaje, el envío de facturas y avisos por correo va a funcionar.</p>";
+        $propia = $remitente['origen'] === Correo::PROPIA;
+        $html = ($propia ? \App\Services\Correo\PlantillaDeCorreo::deEmpresa($company) : \App\Services\Correo\PlantillaDeCorreo::netvula())
+            ->antetitulo('Prueba de correo')
+            ->titulo('El correo de ' . ($nombre ?: 'su empresa') . ' funciona', 'ok')
+            ->parrafo('Este es un mensaje de prueba. Si lo está leyendo, el envío de facturas y avisos por correo ya funciona.')
+            ->datos([
+                'Salió desde' => $remitente['email'],
+                'Cuenta' => $propia ? 'La cuenta de Mailjet de su empresa' : 'La cuenta de correo de Netvula',
+                'Las respuestas llegan a' => $remitente['responder_a'] ?: null,
+            ])
+            ->html();
 
         $resultado = $correo->enviar($destino, 'Prueba de correo — ' . ($nombre ?: 'Netvula'), $html);
 

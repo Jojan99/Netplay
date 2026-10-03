@@ -64,6 +64,8 @@ class InventoryMovementRepository implements InventoryMovementRepositoryInterfac
             'cost_after'    => $data['cost_after'] ?? 0,
             'description'   => $data['description'] ?? null,
             'reference'     => $data['reference'] ?? null,
+            // Faltaba: el serial se pedía, se validaba y se perdía aquí.
+            'serial_number' => $data['serial_number'] ?? null,
             'batch_number'  => $data['batch_number'] ?? null,
             'expiry_date'   => $data['expiry_date'] ?? null,
             'user_id'       => $data['user_id'] ?? null,

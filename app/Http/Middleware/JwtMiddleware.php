@@ -36,7 +36,7 @@ class JwtMiddleware
             // sirve. Sólo cierra el panel del operador; el portal de sus
             // clientes vive en jwt.client y no pasa por aquí.
             if ($user && $this->empresaSuspendida($user)) {
-                return $this->empresaCerrada();
+                return $this->empresaCerrada((int) (is_object($user) ? $user->company_id : $user['company_id']));
             }
 
             session(['user' => $user]);
@@ -121,11 +121,19 @@ class JwtMiddleware
         return (bool) \Illuminate\Support\Facades\DB::table('companies')->where('id', $companyId)->value('plataforma_suspendida');
     }
 
-    private function empresaCerrada()
+    /**
+     * El 403 lleva el código y el estado de la cuenta: con eso el panel deja
+     * de mostrar pantallas vacías y abre la de «cuenta suspendida», con el
+     * motivo, lo pendiente y a dónde escribir.
+     */
+    private function empresaCerrada(int $companyId)
     {
         return response()->json([
-            'message' => 'El acceso de su empresa a la plataforma está suspendido. Escribinos para reactivarlo.',
-            'data'    => null,
+            'message' => 'El acceso de su empresa a la plataforma está suspendido. Escríbanos para reactivarlo.',
+            'data'    => [
+                'codigo' => 'EMPRESA_SUSPENDIDA',
+                'cuenta' => \App\Services\Plataforma\EstadoDeCuenta::de($companyId),
+            ],
             'error'   => 1,
         ], 403);
     }

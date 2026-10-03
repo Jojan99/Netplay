@@ -12,6 +12,8 @@ use Illuminate\Database\Eloquent\Model;
  */
 class PlataformaUsuario extends Model
 {
+    use \App\Models\Concerns\FechasEnHoraLocal;
+
     protected $table = 'plataforma_usuarios';
 
     protected $fillable = ['nombre', 'email', 'password', 'activo'];

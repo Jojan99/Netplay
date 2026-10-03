@@ -91,20 +91,21 @@ class EquiposDelAcs
 
         $filas = DB::table('olt_onts as o')
             ->join('olt_admins as a', 'a.id', '=', 'o.olt_id')
-            ->join('user_data as ud', 'ud.user_id', '=', 'o.user_data_id')
+            ->join('user_data as ud', 'ud.id', '=', 'o.user_data_id')
             ->join('users as u', 'u.id', '=', 'ud.user_id')
             ->where('a.company_id', $this->companyId)
             ->where('ud.active', 1)
             ->orderBy('a.name')->orderBy('o.fsp')->orderBy('o.ont_id')
             ->get([
-                'o.id', 'o.fsp', 'o.ont_id', 'o.serial', 'o.status', 'o.user_data_id',
+                // olt_onts.user_data_id es el id de la ficha; hacia afuera va el de «users».
+                'o.id', 'o.fsp', 'o.ont_id', 'o.serial', 'o.status', 'ud.user_id as usuario_id',
                 'a.name as olt', 'ud.names', 'ud.lastname', 'ud.dni', 'ud.address', 'ud.phone',
             ]);
 
         $pendientes = [];
 
         foreach ($filas as $f) {
-            if ($serialesEnAcs->has(self::serial((string) $f->serial)) || $clientesEnAcs->has((int) $f->user_data_id)) {
+            if ($serialesEnAcs->has(self::serial((string) $f->serial)) || $clientesEnAcs->has((int) $f->usuario_id)) {
                 continue;
             }
 
@@ -116,7 +117,7 @@ class EquiposDelAcs
                 'serial'    => $f->serial,
                 'estado'    => $f->status,
                 'cliente'   => [
-                    'user_id'   => (int) $f->user_data_id,
+                    'user_id'   => (int) $f->usuario_id,
                     'nombre'    => trim($f->names . ' ' . $f->lastname),
                     'documento' => $f->dni,
                     'direccion' => $f->address,
@@ -242,6 +243,43 @@ class EquiposDelAcs
         }
 
         return $cuentas;
+    }
+
+    /**
+     * Todo lo que el equipo publica por TR-069, listo para mostrar: ruta, valor y cuándo se leyó.
+     *
+     * Es el documento completo pero sin lo que no debe salir a una pantalla: claves de WiFi, de
+     * PPPoE, de administración y de telnet/ssh van tapadas (se ve que el dato existe, no su valor).
+     *
+     * @return list<array{ruta:string, valor:?string, leido_en:?string, oculto:bool}>
+     */
+    public function parametrosDeCliente(int $userId): array
+    {
+        foreach ($this->lista() as $fila) {
+            if (($fila['cliente']['user_id'] ?? null) !== $userId) {
+                continue;
+            }
+
+            $d = $this->acs->dispositivo($fila['id']) ?? [];
+            $lista = [];
+
+            foreach (self::parametros($d) as $ruta => $valor) {
+                $oculto = (bool) preg_match('/passw|passphrase|presharedkey|wepkey|secret|\.key$|community|\.pin$|credential|token/i', $ruta);
+
+                $lista[] = [
+                    'ruta'     => $ruta,
+                    'valor'    => $oculto ? null : (is_scalar($valor) ? mb_substr((string) (is_bool($valor) ? ($valor ? 'true' : 'false') : $valor), 0, 300) : null),
+                    'leido_en' => self::marca($d, $ruta),
+                    'oculto'   => $oculto,
+                ];
+            }
+
+            usort($lista, fn ($x, $y) => strnatcasecmp($x['ruta'], $y['ruta']));
+
+            return $lista;
+        }
+
+        return [];
     }
 
     /**
@@ -527,7 +565,7 @@ class EquiposDelAcs
                 ->leftJoin('tabla_ips as t', 't.id', '=', 'ud.ip_assignment_id')
                 ->where('u.company_id', $this->companyId)
                 ->where('ud.active', 1)
-                ->get(['ud.user_id', 'ud.names', 'ud.lastname', 'ud.dni', 'ud.pppoe_user', 't.ip']);
+                ->get(['ud.id as ficha_id', 'ud.user_id', 'ud.names', 'ud.lastname', 'ud.dni', 'ud.pppoe_user', 't.ip']);
 
             $ips = [];
             $pppoe = [];
@@ -544,7 +582,8 @@ class EquiposDelAcs
                 }
             }
 
-            $porUsuario = $clientes->keyBy('user_id');
+            // olt_onts.user_data_id guarda el id de la ficha.
+            $porUsuario = $clientes->keyBy('ficha_id');
             $series = [];
 
             foreach (DB::table('olt_onts as o')

@@ -62,6 +62,7 @@ class ComprobanteWhatsAppWeb
                 return [
                     'ok'       => true,
                     'proof_id' => (int) $repetido->id,
+                    'viejo'    => \App\Services\Comprobantes\ComprobanteConfiable::esViejo($repetido),
                     'motivo'   => 'ya_registrado',
                     'cliente'  => trim($cliente->names . ' ' . $cliente->lastname),
                 ];
@@ -86,6 +87,7 @@ class ComprobanteWhatsAppWeb
                 return [
                     'ok'       => true,
                     'proof_id' => (int) $mismaRef->id,
+                    'viejo'    => \App\Services\Comprobantes\ComprobanteConfiable::esViejo($mismaRef),
                     'motivo'   => 'ya_registrado',
                     'cliente'  => trim($cliente->names . ' ' . $cliente->lastname),
                 ];
@@ -105,7 +107,8 @@ class ComprobanteWhatsAppWeb
             'file_hash'        => $archivo['hash'],
             'reported_amount'  => $detalle['amount'] ?? null,
             'detected_amount'  => $detalle['amount'] ?? null,
-            'payment_date'     => $detalle['date'] ?? null,
+            // El lector la devuelve como «payment_date»: con «date» se perdía siempre.
+            'payment_date'     => $detalle['payment_date'] ?? null,
             'reference_number' => $referencia,
             'bank_name'        => $detalle['bank_name'] ?? null,
             'ocr_text'         => $ocr ?: null,
@@ -127,8 +130,11 @@ class ComprobanteWhatsAppWeb
         $aplicado = false;
 
         try {
-            $aplicado = app(\App\Http\Controllers\PaymentProofController::class)
-                ->aplicarSiEsConfiable($proof)['aplicado'] ?? false;
+            // «solo_revision»: lo registra una persona a mano (un comprobante que el bot dejó sin
+            // atender). Queda esperando autorización; no se aplica solo.
+            $aplicado = empty($datos['solo_revision'])
+                && (app(\App\Http\Controllers\PaymentProofController::class)
+                    ->aplicarSiEsConfiable($proof)['aplicado'] ?? false);
         } catch (\Throwable $e) {
             // Que no se pueda aplicar solo no puede perder el comprobante:
             // queda registrado y alguien lo revisa.
@@ -151,6 +157,10 @@ class ComprobanteWhatsAppWeb
             'ok'       => true,
             'proof_id' => (int) $proof->id,
             'aplicado' => $aplicado,
+            // Pago de hace más de tres días: al cliente NO se le dice que quedó registrado (puede
+            // ser un comprobante viejo reenviado) y no va al grupo de reporte de pagos.
+            'viejo'    => !$aplicado && \App\Services\Comprobantes\ComprobanteConfiable::esViejo($proof->fresh() ?? $proof),
+            'dias'     => \App\Services\Comprobantes\ComprobanteConfiable::DIAS_DE_GRACIA,
             'cliente'  => trim($cliente->names . ' ' . $cliente->lastname),
         ];
     }
@@ -163,19 +173,74 @@ class ComprobanteWhatsAppWeb
     public static function avisar(int $companyId, string $cliente, PaymentProof $proof, string $origen): void
     {
         try {
-            \App\Services\Avisos\MensajeDeAviso::nuevo('Comprobante de pago recibido', $companyId, '🧾')
+            // Aplicado solo o para revisión: que en el grupo se distinga de un vistazo, con el porqué.
+            $aplicado = in_array($proof->status, ['approved', 'auto_approved'], true);
+            $motivos  = $aplicado ? [] : \App\Services\Comprobantes\ComprobanteConfiable::revisar($proof)['motivos'];
+            $viejo    = \App\Services\Comprobantes\ComprobanteConfiable::esViejo($proof);
+
+            // Un comprobante con más de tres días no se manda al grupo de reporte de pagos: casi
+            // siempre es un reenvío y llenaba el grupo de avisos que nadie tenía que atender ahí.
+            // No se pierde: queda para revisión en la pantalla de Comprobantes, con el motivo.
+            if ($viejo && !$aplicado) {
+                Log::info('[Comprobante] Viejo: no se avisa al grupo, queda en revisión', ['empresa' => $companyId, 'proof' => $proof->id, 'fecha_del_pago' => (string) $proof->payment_date]);
+
+                return;
+            }
+
+            \App\Services\Avisos\MensajeDeAviso::nuevo(
+                $aplicado ? 'Comprobante de pago aplicado' : ($viejo ? 'Comprobante viejo: REVISAR' : 'Comprobante de pago para revisión'),
+                $companyId,
+                $aplicado ? '✅' : ($viejo ? '⚠️' : '🧾')
+            )
                 ->dato('Cliente', $cliente)
                 ->dinero('Valor', $proof->reported_amount)
                 ->dato('Banco', $proof->bank_name)
                 ->dato('Referencia', $proof->reference_number)
                 ->fecha('Fecha del pago', $proof->payment_date, false)
                 ->dato('Llegó por', $origen)
+                ->dato('Al WhatsApp', self::lineaQueLoRecibio($proof))
                 ->fecha('Recibido', now())
-                ->cierre('Queda pendiente de revisión en Comprobantes.')
+                ->cierre($aplicado
+                    ? 'Pasó la revisión y se aplicó solo a la factura.'
+                    : 'Va a revisión en Comprobantes' . ($motivos ? ': ' . implode('; ', $motivos) . '.' : '.'))
+                ->adjunto(self::direccionDelArchivo($proof), $proof->file_name)
                 ->enviar('comprobante_pago');
         } catch (\Throwable $e) {
             Log::warning('[Comprobante] No se pudo avisar', ['empresa' => $companyId, 'error' => $e->getMessage()]);
         }
+    }
+
+    /** A qué línea de WhatsApp de la empresa le escribió el cliente: su nombre y su número. */
+    private static function lineaQueLoRecibio(PaymentProof $proof): ?string
+    {
+        if (!$proof->wa_linea_id) {
+            return null;
+        }
+
+        $linea = \Illuminate\Support\Facades\DB::table('wa_lineas')->where('id', $proof->wa_linea_id)->first(['nombre', 'telefono']);
+
+        if (!$linea) {
+            return null;
+        }
+
+        $numero = preg_replace('/\D/', '', (string) $linea->telefono);
+        // 573103398607 → 310 339 8607: el indicativo de Colombia no aporta al leerlo en el grupo.
+        $numero = preg_replace('/^57(?=\d{10}$)/', '', (string) $numero);
+        $numero = strlen((string) $numero) === 10 ? substr($numero, 0, 3) . ' ' . substr($numero, 3, 3) . ' ' . substr($numero, 6) : $numero;
+
+        return trim(($linea->nombre ?: 'Línea') . ($numero ? ' (' . $numero . ')' : ''));
+    }
+
+    /** La dirección pública del archivo del comprobante, para mandarlo junto al aviso. */
+    private static function direccionDelArchivo(PaymentProof $proof): ?string
+    {
+        $ruta = trim((string) $proof->file_path);
+
+        if ($ruta === '') {
+            return null;
+        }
+
+        return preg_match('#^https?://#i', $ruta) ? $ruta : url('storage/' . ltrim($ruta, '/'));
     }
 
     /* ── Cliente ─────────────────────────────────────────────────────────── */
@@ -226,7 +291,7 @@ class ComprobanteWhatsAppWeb
             ->join('cab_facturations as cab', 'cab.id', '=', 'd.cab_id')
             ->where('cab.company_id', $companyId)
             ->where('cab.user_id', $userId)
-            ->where('d.paid', 0)
+            ->where('d.paid', 0)->whereNull('d.anulada_en')
             ->orderBy('d.date_facturation')
             ->first(['d.id']);
     }

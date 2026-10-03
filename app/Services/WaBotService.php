@@ -85,8 +85,20 @@ class WaBotService
         // "menu" vale siempre, como la palabra clave: es la salida que el bot le
         // ofrece al cliente en cada mensaje, y no puede quedar bloqueada por la
         // espera justo después de que él mismo se la sugirió al cerrar.
-        $pideMenu       = in_array($normalizedMessage, ['menu', 'menú', 'inicio'], true);
+        // «Ir al menú» es un botón que el bot ofrece al terminar un pago: su id llega como
+        // «payment_menu» y, si la conversación ya había cerrado, nadie lo entendía.
+        $pideMenu       = in_array($normalizedMessage, ['menu', 'menú', 'inicio', 'payment_menu', 'ir al menu', 'ir al menú'], true);
         $esPalabraClave = in_array($normalizedMessage, $triggerWords, true) || $pideMenu;
+
+        // Una foto o un documento sin conversación abierta: si es un comprobante, se registra.
+        if (!$session && !empty($payload['payment_proof_media']) && $this->recibirComprobanteSuelto($company, $from, $normalizedMessage, $payload)) {
+            return true;
+        }
+
+        // Una foto que no es un comprobante no abre el menú: la ve el agente en el CRM.
+        if (!$session && !empty($payload['payment_proof_media'])) {
+            return false;
+        }
 
         // Si el bot acaba de cerrar, se queda callado un rato: así no interrumpe
         // una conversación con un agente humano saludando a cada mensaje.
@@ -235,9 +247,10 @@ class WaBotService
             ['key' => '1', 'label' => 'Consultar factura', 'flow' => 'consultar_factura'],
         ];
 
-        // "Pagar mi factura" solo aparece si la pasarela está realmente operativa:
-        // ofrecerla sin configurar sería llevar al cliente a un callejón sin salida.
-        if ($this->onlinePaymentAvailable($company) && !$this->hasOption($options, 'pagar_factura')) {
+        // "Pagar mi factura" aparece si hay CÓMO pagar: la pasarela en línea, o los medios que la
+        // empresa cargó (Nequi, llave, QR). Antes sólo contaba la pasarela, y una empresa que cobra
+        // por Nequi se quedaba sin la opción aunque el bot supiera perfectamente qué contestar.
+        if ($this->paymentAvailable($company) && !$this->hasOption($options, 'pagar_factura')) {
             $options[] = ['label' => 'Pagar mi factura', 'flow' => 'pagar_factura'];
         }
 
@@ -301,6 +314,179 @@ class WaBotService
     private function onlinePaymentAvailable(Company $company): bool
     {
         return (bool) $company->pg_active && !empty($company->pg_gateway);
+    }
+
+    /**
+     * Los medios de pago que la empresa cargó para cobrar sin pasarela (los de Cobranza
+     * inteligente): el texto general, el QR y las instrucciones para factura electrónica.
+     *
+     * @return array{qr:?string, texto:?string, hay:bool}
+     */
+    private function mediosManuales(Company $company, ?bool $conFacturaElectronica = null): array
+    {
+        try {
+            $cfg = \App\Models\CobranzaConfig::deEmpresa((int) $company->id);
+
+            // Sin saber de qué cliente se trata: ¿la empresa tiene ALGO cargado?
+            if ($conFacturaElectronica === null) {
+                $hay = trim((string) $cfg->pago_texto) !== '' || trim((string) $cfg->pago_qr) !== '' || trim((string) $cfg->pago_texto_fe) !== '';
+
+                return ['qr' => null, 'texto' => null, 'hay' => $hay];
+            }
+
+            $m = $cfg->mediosPara($conFacturaElectronica, false);
+        } catch (\Throwable $e) {
+            return ['qr' => null, 'texto' => null, 'hay' => false];
+        }
+
+        return ['qr' => $m['qr'], 'texto' => $m['texto'], 'hay' => (bool) ($m['qr'] || $m['texto'])];
+    }
+
+    /** ¿Hay alguna forma de pagar que el bot pueda ofrecer? Pasarela o medios cargados. */
+    private function paymentAvailable(Company $company): bool
+    {
+        return $this->onlinePaymentAvailable($company) || $this->mediosManuales($company)['hay'];
+    }
+
+    /**
+     * Sin pasarela: le dice al cliente cuánto debe y cómo pagar con los medios de la empresa.
+     *
+     *  · Con facturación electrónica: la imagen del QR y, debajo, sus instrucciones propias.
+     *    No se le mandan los medios de los demás clientes: su pago debe entrar a la cuenta
+     *    de la empresa.
+     *  · Sin facturación electrónica: los medios escritos (Nequi, Daviplata).
+     *
+     * La conversación queda esperando el comprobante: cuando el cliente manda la foto, entra al
+     * mismo camino de «Reportar pago» (auditoría de comprobantes, aplicación automática y aviso
+     * al grupo).
+     */
+    private function sendManualPaymentInfo(Company $company, string $phone, object $client, $invoices, float $total): bool
+    {
+        $conFe = (bool) DB::table('cab_facturations')->where('company_id', $company->id)->where('user_id', $client->user_id)->value('billing_electronic');
+        $medios = $this->mediosManuales($company, $conFe);
+
+        $detalle = $invoices->count() > 1
+            ? "\n" . $invoices->map(fn ($inv) => '• Factura #' . $inv->number_facture . ': ' . $this->formatMoney($this->invoiceBalance($inv)))->implode("\n")
+            : '';
+        $saludo = "Hola {$client->names}, tiene " . $invoices->count() . ' factura(s) pendiente(s) por un total de *' . $this->formatMoney($total) . "*.{$detalle}";
+
+        if (!$medios['hay']) {
+            $this->sendTextMessage($company, $phone, $saludo . "\n\nPara indicarle cómo pagar, un asesor le escribe por este mismo chat.");
+            $this->clearSession($company->id, $phone);
+
+            return true;
+        }
+
+        if ($conFe) {
+            $this->sendTextMessage($company, $phone, $saludo);
+
+            // El QR y sus instrucciones van en UN solo mensaje: el texto es el pie de la foto.
+            // WhatsApp admite hasta 1024 caracteres de pie; si el texto es más largo, va aparte.
+            $pie = (string) ($medios['texto'] ?? '');
+            $cabe = $medios['qr'] && $pie !== '' && mb_strlen($pie) <= 1024;
+
+            if ($medios['qr']) {
+                try {
+                    (new WhatsAppService($company->id, false, 'meta'))->sendImage($phone, asset('storage/' . $medios['qr']), $cabe ? $pie : 'Código QR para pagar');
+                    $this->recordBotConversationMessage($company, $phone, 'system', '[Imagen: código QR para pagar]' . ($cabe ? "\n" . $pie : ''));
+                } catch (\Throwable $e) {
+                    Log::warning('[Bot] No se pudo enviar el QR de pago', ['company_id' => $company->id, 'error' => $e->getMessage()]);
+                    $cabe = false;
+                }
+            }
+
+            if ($pie !== '' && !$cabe) {
+                $this->sendTextMessage($company, $phone, $pie);
+            }
+        } else {
+            $this->sendTextMessage($company, $phone, $saludo . "\n\nPuede pagar por estos medios:\n\n" . $medios['texto']);
+        }
+
+        $this->esperarComprobante($company, $phone, $client, $invoices);
+        $this->sendTextMessage($company, $phone, 'Cuando realice el pago, envíeme la foto del comprobante por este chat y lo registramos.');
+
+        return true;
+    }
+
+    /**
+     * Deja la conversación lista para recibir el comprobante: el titular ya está identificado y
+     * el pago va a su factura pendiente más vieja. Lo que llegue después entra por «Reportar pago».
+     */
+    private function esperarComprobante(Company $company, string $phone, object $client, $invoices, array $extra = []): WaBotSession
+    {
+        $factura = $invoices->sortBy('date_facturation')->first();
+        $ficha = UserData::where('company_id', $company->id)->where('user_id', $client->user_id)->first();
+
+        WaBotSession::where('company_id', $company->id)->where('phone', $phone)->delete();
+
+        return $this->createSession($company->id, $phone, 'reportar_pago', 'awaiting_payment_proof', $extra + [
+            'client_id' => $ficha?->id,
+            'client_name' => $client->names,
+            'client_dni' => $ficha?->dni,
+            'selected_invoice_id' => $factura->id,
+            'selected_invoice_number' => $factura->number_facture,
+            'selected_invoice_balance' => $this->invoiceBalance($factura),
+        ]);
+    }
+
+    /**
+     * Llegó una foto o un documento sin que hubiera una conversación abierta con el bot.
+     *
+     * Antes el bot contestaba con el menú y el comprobante se perdía de vista. Ahora hace lo
+     * mismo que la línea de WhatsApp Web: si es un comprobante, lo registra en la auditoría a
+     * nombre del titular. Si reconoce al cliente por su teléfono, directo; si no, le pregunta de
+     * quién es el pago y guarda la foto mientras tanto.
+     *
+     * Devuelve false si la imagen no parece un comprobante: sigue su camino normal al CRM.
+     */
+    private function recibirComprobanteSuelto(Company $company, string $phone, string $message, array $payload): bool
+    {
+        $media = (array) ($payload['payment_proof_media'] ?? []);
+
+        if (empty($media['id'])) {
+            return false;
+        }
+
+        // ¿Es un comprobante? Un documento casi siempre lo es; una foto se lee antes de decidir,
+        // para no tratar como pago la foto de un equipo o un chiste.
+        if (($payload['type'] ?? '') === 'image') {
+            $archivo = $this->storePaymentProofMedia($company, $media);
+            $leido = $archivo['local_path'] ? (string) $this->extractTextFromProof($archivo['local_path']) : '';
+            $d = $this->extractPaymentProofDetails(trim($message . "\n" . $leido));
+
+            if (empty($d['amount']) && empty($d['reference']) && empty($d['bank_name'])) {
+                return false;
+            }
+        }
+
+        $this->recordBotConversationMessage($company, $phone, 'customer', '[Comprobante de pago]', $payload['id'] ?? null);
+
+        // El que escribe es un cliente (y uno solo): el pago es suyo, sin preguntar.
+        $deEseTelefono = UserData::where('company_id', $company->id)->where('active', 1)->get()
+            ->filter(fn (UserData $c): bool => $this->phonesMatch($c->phone, $phone))->unique('user_id')->values();
+
+        if ($deEseTelefono->count() === 1) {
+            $client = $deEseTelefono->first();
+            $invoices = $this->pendingInvoicesFor($company, (int) $client->user_id);
+
+            if ($invoices->isEmpty()) {
+                $this->sendTextMessage($company, $phone, "Hola {$client->names}, recibimos su comprobante, pero no tiene facturas pendientes. Un asesor lo revisa y le confirma por este chat.");
+                $this->clearSession($company->id, $phone);
+
+                return true;
+            }
+
+            $session = $this->esperarComprobante($company, $phone, $client, $invoices);
+
+            return $this->handleReportarPago($company, $session, $phone, $message === 'comprobante' ? '' : $message, $payload);
+        }
+
+        // No se sabe de quién es: se guarda la foto y se pregunta por el titular.
+        WaBotSession::where('company_id', $company->id)->where('phone', $phone)->delete();
+        $this->createSession($company->id, $phone, 'reportar_pago', 'ask_dni', ['comprobante_en_espera' => ['media' => $media, 'type' => $payload['type'] ?? 'image', 'caption' => $message === 'comprobante' ? '' : $message]]);
+        $this->sendTextMessage($company, $phone, 'Recibimos su comprobante. Para registrarlo, envíeme el número de cédula del titular del servicio.');
+
+        return true;
     }
 
     /** ¿El menú configurado ya trae ese flujo? */
@@ -562,7 +748,7 @@ class WaBotService
         if (in_array($flow, self::FLUJOS_CON_CEDULA, true)
             && ($conocido = WaIdentity::lookup($company->id, $phone))) {
 
-            if ($flow === 'pagar_factura' && !$this->onlinePaymentAvailable($company)) {
+            if ($flow === 'pagar_factura' && !$this->paymentAvailable($company)) {
                 $this->sendTextMessage($company, $phone, "El pago en línea no está disponible por ahora.\n\nEscribe *menu* para volver al inicio.");
                 $this->clearSession($company->id, $phone);
                 return true;
@@ -603,14 +789,16 @@ class WaBotService
         }
 
         if ($flow === 'pagar_factura') {
-            if (!$this->onlinePaymentAvailable($company)) {
+            if (!$this->paymentAvailable($company)) {
                 $this->sendTextMessage($company, $phone, "El pago en línea no está disponible por ahora.\n\nEscribe *menu* para volver al inicio.");
                 $this->clearSession($company->id, $phone);
                 return true;
             }
 
             $this->createSession($company->id, $phone, 'pagar_factura', 'ask_dni');
-            $this->sendTextMessage($company, $phone, "Para generar su link de pago, envíame el número de cédula del titular de la cuenta.");
+            $this->sendTextMessage($company, $phone, $this->onlinePaymentAvailable($company)
+                ? "Para generar su link de pago, envíame el número de cédula del titular de la cuenta."
+                : "Para decirle cuánto debe y cómo pagar, envíeme el número de cédula del titular de la cuenta.");
             return true;
         }
 
@@ -1016,6 +1204,13 @@ class WaBotService
                 }
             }
 
+            // Con un comprobante ya enviado basta la cédula del titular: es habitual que pague un
+            // familiar desde su propio teléfono (así lo hace también la línea de WhatsApp Web).
+            // Registrar un pago a nombre de alguien no le muestra nada de esa cuenta a quien escribe.
+            if (!$client && !empty($data['comprobante_en_espera'])) {
+                $client = $possibleClients->sortByDesc('active')->first();
+            }
+
             if (!$client) {
                 $this->sendTextMessage($company, $phone, "No pudimos validar esa cédula con este número de WhatsApp. Verifica los datos del titular y vuelve a ingresar el numero de cedula.");
                 return true;
@@ -1054,6 +1249,21 @@ class WaBotService
                     'balance' => $balance,
                     'status' => ($invoice->paid ?? false) ? 'Pagada' : 'Pendiente',
                 ];
+            }
+
+            // El comprobante ya llegó: va a la factura pendiente más vieja y se procesa ahora mismo.
+            if (!empty($data['comprobante_en_espera'])) {
+                $espera = (array) $data['comprobante_en_espera'];
+                $vieja = collect($invoiceList)->last();
+
+                $session->update([
+                    'current_step' => 'awaiting_payment_proof',
+                    'data' => ['client_id' => $client->id, 'client_name' => $client->names, 'client_dni' => $dni,
+                        'selected_invoice_id' => $vieja['id'], 'selected_invoice_number' => $vieja['number_facture'], 'selected_invoice_balance' => $vieja['balance']],
+                    'expires_at' => self::vencimientoSesion(),
+                ]);
+
+                return $this->handleReportarPago($company, $session->fresh(), $phone, (string) ($espera['caption'] ?? ''), ['type' => $espera['type'] ?? 'image', 'payment_proof_media' => (array) ($espera['media'] ?? [])]);
             }
 
             $session->update([
@@ -1128,7 +1338,28 @@ class WaBotService
         }
 
         if ($step === 'awaiting_payment_proof') {
+            // Sin foto ni documento, y sin un monto o una referencia escritos, no hay comprobante
+            // que registrar. Antes cualquier texto (hasta el botón «Ir al menú») creaba en la
+            // auditoría un comprobante vacío «pendiente de revisión».
+            if (empty($payload['payment_proof_media']['id'])) {
+                $escrito = $this->extractPaymentProofDetails($message);
+
+                if (empty($escrito['amount']) && empty($escrito['reference'])) {
+                    $this->sendTextMessage($company, $phone, 'Envíeme la foto o el documento del comprobante, donde se vean el valor, la fecha y la referencia.');
+
+                    return true;
+                }
+            }
+
             $result = $this->validatePaymentProof($company, $session, $phone, $message, $payload);
+
+            // Comprobante de más de tres días: queda en la auditoría y el bot no contesta nada.
+            if ($result['silencio'] ?? false) {
+                WaBotSession::where('company_id', $company->id)->where('phone', $phone)->delete();
+
+                return true;
+            }
+
             $this->sendTextMessage($company, $phone, $result['message']);
 
             if ($result['approved']) {
@@ -1221,7 +1452,10 @@ class WaBotService
         try {
             $proofRecord = PaymentProof::create([
                 'company_id' => $company->id,
-                'user_id' => $client->id,
+                // payment_proofs.user_id es el id de «users». Aquí se guardaba el id de la FICHA
+                // (user_data.id), y en la auditoría el comprobante salía a nombre de otro cliente.
+                'user_id' => $client->user_id,
+                'source' => 'meta',
                 'invoice_id' => $invoice->id,
                 'file_path' => $mediaEvidence['path'],
                 'file_name' => $mediaEvidence['name'],
@@ -1284,6 +1518,26 @@ class WaBotService
             'bot de WhatsApp'
         );
 
+        // Pago de hace más de tres días: puede ser un comprobante viejo reenviado. No se aplica,
+        // no se le dice al cliente que quedó registrado y no va al grupo: lo decide una persona.
+        if (!$aplicado && \App\Services\Comprobantes\ComprobanteConfiable::esViejo($proofRecord)) {
+            $dias = \App\Services\Comprobantes\ComprobanteConfiable::DIAS_DE_GRACIA;
+            $reason = "Comprobante pendiente de revisión: el pago es de hace más de {$dias} días.";
+
+            $proofRecord->update(['status' => 'pending', 'rejection_reason' => $reason]);
+            PaymentProofAudit::create([
+                'payment_proof_id' => $proofRecord->id,
+                'old_status' => 'pending',
+                'new_status' => 'pending',
+                'reason' => $reason,
+                'metadata' => ['source' => 'automatic_validation', 'motivo' => 'comprobante_viejo'],
+            ]);
+
+            // Al cliente no se le dice nada: ni que quedó registrado ni que no. Queda en la
+            // auditoría para que lo revise una persona.
+            return ['approved' => false, 'silencio' => true, 'message' => ''];
+        }
+
         if (!$details['payment_date'] || !$reference) {
             $missingFields = [];
             if (!$details['payment_date']) {
@@ -1320,7 +1574,7 @@ class WaBotService
             $invoice->update([
                 'paid' => $payedAmount >= max(0, $baseAmount - $discount) ? 1 : 0,
                 'paid_at' => $payedAmount >= max(0, $baseAmount - $discount) ? now() : null,
-                'paid_by_user_id' => $client->id,
+                'paid_by_user_id' => $client->user_id,
                 'price_abone' => $payedAmount,
                 'abone' => $payedAmount >= max(0, $baseAmount - $discount) ? 1 : 0,
             ]);
@@ -1848,7 +2102,7 @@ class WaBotService
         $step = $session->current_step;
         $data = $session->data ?? [];
 
-        if (!$this->onlinePaymentAvailable($company)) {
+        if (!$this->paymentAvailable($company)) {
             $this->sendTextMessage($company, $phone, "El pago en línea no está disponible por ahora.\n\nEscribe *menu* para volver al inicio.");
             $this->clearSession($company->id, $phone);
             return true;
@@ -1892,6 +2146,11 @@ class WaBotService
             }
 
             $total = $invoices->sum(fn ($inv) => $this->invoiceBalance($inv));
+
+            // Sin pasarela no hay link que generar: se le dan los medios de pago de la empresa.
+            if (!$this->onlinePaymentAvailable($company)) {
+                return $this->sendManualPaymentInfo($company, $phone, $client, $invoices, (float) $total);
+            }
 
             $session->update([
                 'current_step' => 'choose_scope',

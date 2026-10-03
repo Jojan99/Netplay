@@ -96,8 +96,59 @@ class ClientAuthController extends Controller
             ], JsonResponse::HTTP_OK);
         }
 
-        $user = $clientes->first();
+        return $this->abrirSesion($clientes->first(), $minutos, $dominio);
+    }
 
+    /**
+     * POST /api/client/entrar-con-enlace
+     *
+     * Entrar al portal desde el enlace de pago que le llega por WhatsApp, sin usuario ni
+     * contraseña (casi ningún cliente los recuerda). El enlace no vence y se puede reenviar,
+     * así que además se piden los últimos cuatro dígitos de la cédula del titular, y la
+     * sesión dura una hora: alcanza para cambiar la clave del WiFi o reiniciar el equipo.
+     */
+    public function entrarConEnlace(Request $request): JsonResponse
+    {
+        $datos = $request->validate([
+            'token'     => 'required|string|max:80',
+            'documento' => 'required|string|max:20',
+        ]);
+
+        $error = fn (string $m) => response()->json(['message' => $m, 'data' => null, 'status' => ApiResponseConstants::ERROR], JsonResponse::HTTP_OK);
+
+        $userId = \App\Services\ClientStatementService::userFromToken($datos['token']);
+        if (!$userId) {
+            return $error('El enlace no es válido. Pida uno nuevo por WhatsApp.');
+        }
+
+        // Cinco intentos por enlace cada quince minutos: cuatro dígitos se adivinan probando.
+        $llave = 'portal-enlace:' . $userId;
+        if (\Illuminate\Support\Facades\RateLimiter::tooManyAttempts($llave, 5)) {
+            return $error('Demasiados intentos. Espere unos minutos y vuelva a probar.');
+        }
+
+        $user = \App\Models\User::where('id', $userId)->where('active', 1)->first();
+        $ficha = DB::table('user_data')->where('user_id', $userId)->where('active', 1)->first(['dni']);
+        $perfil = $user ? strtoupper((string) DB::table('profiles')->where('id', $user->profile_id)->value('name')) : '';
+
+        $dni = preg_replace('/\D/', '', (string) ($ficha->dni ?? ''));
+        $dado = preg_replace('/\D/', '', $datos['documento']);
+
+        if (!$user || $perfil !== 'USER' || strlen($dni) < 4 || strlen($dado) < 4 || !hash_equals(substr($dni, -4), substr($dado, -4))) {
+            \Illuminate\Support\Facades\RateLimiter::hit($llave, 15 * 60);
+
+            return $error('Los dígitos no coinciden con la cédula del titular del servicio.');
+        }
+
+        \Illuminate\Support\Facades\RateLimiter::clear($llave);
+        JWTAuth::factory()->setTTL(60);
+
+        return $this->abrirSesion($user, 60, app(\App\Services\Plataforma\EmpresaDelDominio::class));
+    }
+
+    /** El token y los datos con que el portal arranca, igual para cualquier forma de entrar. */
+    private function abrirSesion(\App\Models\User $user, int $minutos, \App\Services\Plataforma\EmpresaDelDominio $dominio): JsonResponse
+    {
         try {
             $token = JWTAuth::fromUser($user);
         } catch (JWTException $e) {

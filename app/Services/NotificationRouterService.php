@@ -26,7 +26,7 @@ class NotificationRouterService
      * Manda el mensaje a cada destino activo del evento.
      * Nunca lanza: si WhatsApp falla, queda en el log y el flujo sigue.
      */
-    public static function dispatch(int $companyId, string $eventType, string $message): void
+    public static function dispatch(int $companyId, string $eventType, string $message, ?array $adjunto = null): void
     {
         try {
             $destinos = self::destinos($companyId, $eventType);
@@ -37,6 +37,12 @@ class NotificationRouterService
 
             foreach (array_keys($destinos) as $destino) {
                 try {
+                    // Con adjunto, el aviso va como pie de la imagen o del documento: un solo
+                    // mensaje. Si el archivo no sale, el aviso se manda igual, sin él.
+                    if ($adjunto && self::conAdjunto($wa, $destino, $message, $adjunto)) {
+                        continue;
+                    }
+
                     $wa->mensajeInformativo($destino, $message);
                 } catch (Throwable $e) {
                     Log::warning("[WA_ROUTE] Error enviando a {$destino}", [
@@ -53,6 +59,34 @@ class NotificationRouterService
                 'error'   => $e->getMessage(),
             ]);
         }
+    }
+
+    /**
+     * Manda el aviso junto con su archivo: imagen con pie, o documento si no es imagen.
+     *
+     * @param  array{url:string, nombre?:?string}  $adjunto
+     */
+    private static function conAdjunto(WhatsAppService $wa, string $destino, string $message, array $adjunto): bool
+    {
+        $url = (string) ($adjunto['url'] ?? '');
+
+        if (!preg_match('#^https?://#i', $url)) {
+            return false;
+        }
+
+        $ruta      = (string) parse_url($url, PHP_URL_PATH);
+        $extension = strtolower(pathinfo($ruta, PATHINFO_EXTENSION));
+
+        $r = in_array($extension, ['jpg', 'jpeg', 'png', 'webp'], true)
+            ? $wa->sendImage($destino, $url, $message)
+            : $wa->sendDocument($destino, $url, (string) ($adjunto['nombre'] ?? basename($ruta)), $message);
+
+        // El servicio de WhatsApp Web responde {"status":"ok"} y lanza una excepción si falla;
+        // Meta responde {"success":true}. Sólo cuenta como fallo lo que lo dice expresamente.
+        return is_array($r)
+            && ($r['success'] ?? true) !== false
+            && !in_array(strtolower((string) ($r['status'] ?? 'ok')), ['error', 'failed', 'fail'], true)
+            && empty($r['error']);
     }
 
     /**
@@ -162,6 +196,16 @@ class NotificationRouterService
                 'titulo'     => 'Instalación agendada',
                 'icono'      => 'agenda',
                 'cuando'     => 'Al agendar una orden en el módulo Instalaciones, con fecha, dirección, plan y técnicos.',
+                'solo_grupo' => false,
+            ],
+
+            // ── Inventario ───────────────────────────────────────────────────
+            [
+                'clave'      => 'inventario_bajo',
+                'seccion'    => 'Inventario',
+                'titulo'     => 'Un equipo o material se está acabando',
+                'icono'      => 'caja',
+                'cuando'     => 'Cuando lo que queda en bodega llega al mínimo que usted fijó, con cuánto queda y para cuántos días alcanza. También el resumen semanal de lo que tienen los técnicos hace tiempo.',
                 'solo_grupo' => false,
             ],
 

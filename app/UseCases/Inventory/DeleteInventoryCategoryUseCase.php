@@ -4,8 +4,9 @@ namespace App\UseCases\Inventory;
 
 use App\Constants\ApiResponseConstants;
 use App\Repositories\Interfaces\InventoryCategoryRepositoryInterface;
+use App\UseCases\Inventory\Interfaces\DeleteInventoryCategoryUseCaseInterface;
 
-class DeleteInventoryCategoryUseCase
+class DeleteInventoryCategoryUseCase implements DeleteInventoryCategoryUseCaseInterface
 {
     public function __construct(
         private InventoryCategoryRepositoryInterface $categoryRepository

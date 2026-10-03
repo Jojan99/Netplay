@@ -59,6 +59,12 @@ class AcsController extends Controller
         return $this->responder(fn (EquiposDelAcs $acs) => $acs->deCliente($userId));
     }
 
+    /** Todo lo que el equipo del cliente publica por TR-069, con las claves tapadas. */
+    public function parametrosDeCliente(int $userId): JsonResponse
+    {
+        return $this->responder(fn (EquiposDelAcs $acs) => $acs->parametrosDeCliente($userId));
+    }
+
     public function refrescar(Request $request): JsonResponse
     {
         return $this->accion($request, 'refrescar', fn (EquiposDelAcs $acs, string $id) => $acs->refrescar($id));

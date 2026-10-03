@@ -259,7 +259,8 @@ class GestionPorInternet
     private static function empresas(): array
     {
         return GestionRemota::where('aprovisionar', true)->where('aprov_wan', true)->whereNotNull('vlan')
-            ->pluck('company_id')->map(fn ($c) => (int) $c)->unique()->values()->all();
+            ->pluck('company_id')->map(fn ($c) => (int) $c)->unique()
+            ->filter(fn ($c) => \App\Services\Plataforma\ComplementoTr069::permitido($c))->values()->all();
     }
 
     /**

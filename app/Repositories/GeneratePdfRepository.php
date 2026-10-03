@@ -85,7 +85,7 @@ class GeneratePdfRepository implements GeneratePdfRepositoryInterface
     return DB::table('det_facturations')
     ->select(DB::raw('SUM(price_total - price_discount - price_abone) as priceantfactura'))
     ->where('cab_id', $id_cab)
-    ->where('paid', 0)
+    ->where('paid', 0)->whereNull('anulada_en')
     ->where('number_facture', '!=', $numberFactura)
     ->value('priceantfactura');
 }
@@ -98,6 +98,7 @@ class GeneratePdfRepository implements GeneratePdfRepositoryInterface
     ->select(DB::raw('SUM(price_total - price_discount - price_abone) as priceantfactura'))
     ->where('cab_id', $id_cab)
     ->where('paid', '!=', 1)
+    ->whereNull('anulada_en')
     // ->where('number_facture', '!=', $numberFactura)
     ->value('priceantfactura');
 }

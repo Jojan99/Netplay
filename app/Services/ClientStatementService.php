@@ -58,6 +58,8 @@ class ClientStatementService
             ->join('cab_facturations as cab', 'cab.id', '=', 'd.cab_id')
             ->where('cab.user_id', $userId)
             ->where('cab.company_id', $companyId)
+            // Las anuladas no se deben ni se cobraron: fuera del estado de cuenta (sumaban al saldo).
+            ->whereNull('d.anulada_en')
             ->orderByDesc('d.date_facturation')->orderByDesc('d.id')
             ->get(['d.id', 'd.number_facture', 'd.date_facturation', 'd.price_total', 'd.price_discount',
                    'd.price_abone', 'd.paid', 'd.paid_at', 'd.created_at']);
