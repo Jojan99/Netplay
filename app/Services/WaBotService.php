@@ -1467,22 +1467,24 @@ class WaBotService
                 'expires_at' => self::vencimientoSesion(),
             ]);
 
-            $this->sendTextMessage($company, $phone, "Perfecto. La factura seleccionada es #{$selectedInvoice['number_facture']} por $" . number_format($selectedInvoice['balance'], 0, ',', '.') . ".\n\nAhora envía la foto o documento del comprobante. Si lo prefieres, también escribe: monto y fecha, por ejemplo: 'Monto: 140000 Fecha: 30/08/2026'.");
+            $this->sendTextMessage($company, $phone, "Perfecto. La factura seleccionada es #{$selectedInvoice['number_facture']} por $" . number_format($selectedInvoice['balance'], 0, ',', '.') . ".\n\nAhora envíe la foto o el documento del comprobante, donde se vean el valor, la fecha y la referencia.");
             return true;
         }
 
         if ($step === 'awaiting_payment_proof') {
-            // Sin foto ni documento, y sin un monto o una referencia escritos, no hay comprobante
-            // que registrar. Antes cualquier texto (hasta el botón «Ir al menú») creaba en la
-            // auditoría un comprobante vacío «pendiente de revisión».
+            // Sin foto ni documento no hay comprobante. Antes bastaba con escribir
+            // «Monto: 55000 Fecha: …» y quedaba en la auditoría como un pago, sin ninguna
+            // prueba de que existiera; cualquier texto podía pasar por pago.
             if (empty($payload['payment_proof_media']['id'])) {
-                $escrito = $this->extractPaymentProofDetails($message);
-
-                if (empty($escrito['amount']) && empty($escrito['reference'])) {
-                    $this->sendTextMessage($company, $phone, 'Envíeme la foto o el documento del comprobante, donde se vean el valor, la fecha y la referencia.');
-
-                    return true;
+                // Una queja escrita no se queda en «envíe la foto»: va a un asesor.
+                if (!$this->esRespuestaDeBoton && count(preg_split('/\s+/u', trim($message), -1, PREG_SPLIT_NO_EMPTY)) >= 4
+                    && empty($this->extractPaymentProofDetails($message)['amount'])) {
+                    return $this->pasarAUnAsesor($company, $phone, 'el cliente escribió algo que el bot no entendió');
                 }
+
+                $this->sendTextMessage($company, $phone, 'Para registrar el pago necesito la foto o el documento del comprobante, donde se vean el valor, la fecha y la referencia. Escribir el monto no basta.');
+
+                return true;
             }
 
             $result = $this->validatePaymentProof($company, $session, $phone, $message, $payload);
@@ -1565,6 +1567,16 @@ class WaBotService
 
         $text = trim($message);
         $media = $payload['payment_proof_media'] ?? [];
+
+        // Sin archivo no hay comprobante (ver el paso awaiting_payment_proof): nada se
+        // registra en la auditoría a partir de un texto escrito.
+        if (empty($media['id'])) {
+            return [
+                'approved' => false,
+                'can_continue' => true,
+                'message' => 'Para registrar el pago necesito la foto o el documento del comprobante.',
+            ];
+        }
         $mediaEvidence = $this->storePaymentProofMedia($company, $media);
         $ocrText = $mediaEvidence['local_path'] ? $this->extractTextFromProof($mediaEvidence['local_path']) : null;
 

@@ -51,6 +51,12 @@ class ComprobanteConfiable
     {
         $motivos = [];
 
+        // Un pago escrito a mano («Monto: 55000 Fecha: …») no es un comprobante: sin la
+        // foto o el documento, cualquiera podría inventarlo. Nunca se aplica solo.
+        if (trim((string) $p->file_path) === '') {
+            $motivos[] = 'no tiene foto ni documento del comprobante';
+        }
+
         if (!$p->user_id) {
             $motivos[] = 'no se sabe de qué cliente es';
         }
