@@ -156,11 +156,7 @@ class PaymentProofController extends Controller
 
         if ($request->filled('client')) {
             $term = trim($request->string('client')->toString());
-            $query->whereHas('user', function ($userQuery) use ($term) {
-                $userQuery->where('dni', 'like', "%{$term}%")
-                    ->orWhere('names', 'like', "%{$term}%")
-                    ->orWhere('lastname', 'like', "%{$term}%");
-            });
+            $query->whereHas('user', fn ($userQuery) => \App\Support\BusquedaPorPalabras::aplicar($userQuery, $term, ['dni', 'names', 'lastname', 'phone'], ['dni', 'phone']));
         }
 
         if ($request->filled('amount')) {

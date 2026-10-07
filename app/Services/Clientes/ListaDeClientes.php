@@ -130,19 +130,14 @@ class ListaDeClientes
             $query->where('users.id', $clienteId);
         }
 
-        if ($q !== '') {
-            $like = '%' . addcslashes($q, '%_\\') . '%';
-            $query->where(function ($w) use ($like) {
-                $w->where('user_data.names', 'like', $like)
-                  ->orWhere('user_data.lastname', 'like', $like)
-                  ->orWhereRaw("CONCAT_WS(' ', user_data.names, user_data.lastname) LIKE ?", [$like])
-                  ->orWhere('user_data.dni', 'like', $like)
-                  ->orWhere('user_data.phone', 'like', $like)
-                  ->orWhere('user_data.email', 'like', $like)
-                  ->orWhere('tabla_ips.ip', 'like', $like)
-                  ->orWhere('users.username', 'like', $like);
-            });
-        }
+        // Por palabras y en cualquier orden: «gabriel giraldo» encuentra a «GABRIEL DE
+        // JESUS GIRALDO SUESCUN», y «311 629 0588» al celular «+573116290588».
+        \App\Support\BusquedaPorPalabras::aplicar(
+            $query,
+            $q,
+            ['user_data.names', 'user_data.lastname', 'user_data.dni', 'user_data.phone', 'user_data.email', 'tabla_ips.ip', 'users.username'],
+            ['user_data.dni', 'user_data.phone'],
+        );
 
         return $query;
     }

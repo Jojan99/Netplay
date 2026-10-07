@@ -202,9 +202,7 @@ class AlegraController extends Controller
             ->when($r->query('pagadas') === 'si', fn ($x) => $x->where('d.paid', 1))
             ->when($r->query('pagadas') === 'no', fn ($x) => $x->where('d.paid', 0))
             ->when($r->boolean('marcados'), fn ($x) => $x->where('c.billing_electronic', 1))
-            ->when(trim((string) $r->query('q')), fn ($x, $t) => $x->where(fn ($y) => $y
-                ->where('d.number_facture', 'like', "%{$t}%")->orWhere('u.dni', 'like', "%{$t}%")
-                ->orWhere(DB::raw("CONCAT(u.names, ' ', u.lastname)"), 'like', "%{$t}%")));
+            ->when(trim((string) $r->query('q')), fn ($x, $t) => \App\Support\BusquedaPorPalabras::aplicar($x, $t, ['d.number_facture', 'u.dni', 'u.names', 'u.lastname'], ['u.dni']));
 
         $suma = (clone $q)->selectRaw('COUNT(*) n, COALESCE(SUM(d.price_total - COALESCE(d.price_discount, 0)), 0) total')->first();
 
@@ -263,8 +261,7 @@ class AlegraController extends Controller
         $t = trim((string) $r->query('q'));
 
         if ($r->query('vinculo') === 'netvula_sin_alegra') {
-            $q = $this->clientesSinContacto()->when($t, fn ($x) => $x->where(fn ($y) => $y
-                ->where('u.dni', 'like', "%{$t}%")->orWhere(DB::raw("CONCAT(u.names, ' ', u.lastname)"), 'like', "%{$t}%")));
+            $q = $this->clientesSinContacto()->when($t, fn ($x) => \App\Support\BusquedaPorPalabras::aplicar($x, $t, ['u.dni', 'u.names', 'u.lastname'], ['u.dni']));
             $total = (clone $q)->count();
             $filas = $q->orderBy('u.names')->forPage($this->pagina($r), self::POR_PAGINA)->get([
                 DB::raw('NULL as alegra_id'), 'u.user_id', 'u.dni as identificacion', 'u.email', 'u.phone as telefono', DB::raw("'solo_netvula' as estado"),
@@ -340,8 +337,7 @@ class AlegraController extends Controller
         ];
 
         if ($r->query('lado') === 'sin_recurrente') {
-            $q = $this->clientesSinRecurrente()->when($t, fn ($x) => $x->where(fn ($y) => $y
-                ->where('u.dni', 'like', "%{$t}%")->orWhere(DB::raw("CONCAT(u.names, ' ', u.lastname)"), 'like', "%{$t}%")));
+            $q = $this->clientesSinRecurrente()->when($t, fn ($x) => \App\Support\BusquedaPorPalabras::aplicar($x, $t, ['u.dni', 'u.names', 'u.lastname'], ['u.dni']));
 
             return $this->responder('OK', $base + [
                 'total' => (clone $q)->count(),

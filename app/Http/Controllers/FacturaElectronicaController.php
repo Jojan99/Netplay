@@ -179,9 +179,7 @@ class FacturaElectronicaController extends Controller
             ->leftJoin('user_data as u', fn ($j) => $j->on('u.user_id', '=', 'fe.user_id')->where('u.company_id', $empresa))
             ->where('fe.company_id', $empresa)
             ->when($request->input('estado'), fn ($x, $e) => $x->where('fe.estado', $e))
-            ->when(trim((string) $request->input('q')), fn ($x, $t) => $x->where(fn ($y) => $y
-                ->where('fe.numero', 'like', "%{$t}%")->orWhere('d.number_facture', 'like', "%{$t}%")
-                ->orWhere('u.dni', 'like', "%{$t}%")->orWhere(DB::raw("CONCAT(u.names, ' ', u.lastname)"), 'like', "%{$t}%")));
+            ->when(trim((string) $request->input('q')), fn ($x, $t) => \App\Support\BusquedaPorPalabras::aplicar($x, $t, ['fe.numero', 'd.number_facture', 'u.dni', 'u.names', 'u.lastname'], ['u.dni']));
 
         $total = (clone $q)->count();
         $filas = $q->orderByDesc('fe.id')->forPage(max(1, (int) $request->input('pagina', 1)), 25)

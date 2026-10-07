@@ -27,21 +27,9 @@ class AtajosController extends Controller
             return standardApiReponse('ok', ['clientes' => []], 0, JsonResponse::HTTP_OK);
         }
 
-        $like = '%' . addcslashes($q, '%_\\') . '%';
-        $digitos = preg_replace('/\D/', '', $q);
-
         $clientes = $this->baseDeClientes($empresa)
-            ->where(function ($w) use ($like, $digitos, $q) {
-                $w->where(DB::raw("CONCAT_WS(' ', ud.names, ud.lastname)"), 'like', $like)
-                  ->orWhere('ud.dni', 'like', $like)
-                  ->orWhere('u.username', 'like', $like)
-                  ->orWhere('ip.ip', 'like', $like)
-                  ->orWhere('ont.serial', 'like', $like);
-                // El teléfono se guarda con o sin espacios y prefijo.
-                if (strlen($digitos) >= 6) {
-                    $w->orWhere(DB::raw("REPLACE(REPLACE(ud.phone, ' ', ''), '+', '')"), 'like', '%' . $digitos . '%');
-                }
-            })
+            // Por palabras y en cualquier orden; el teléfono, solo por sus dígitos.
+            ->tap(fn ($w) => \App\Support\BusquedaPorPalabras::aplicar($w, $q, ['ud.names', 'ud.lastname', 'ud.dni', 'u.username', 'ip.ip', 'ont.serial'], ['ud.dni', 'ud.phone']))
             ->orderBy('ud.names')
             ->limit(self::LIMITE)
             ->get()

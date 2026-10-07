@@ -883,13 +883,7 @@ public function buscarClienteParaVincular(Request $request): JsonResponse
     $clientes = DB::table('user_data as u')
         ->join('cab_facturations as cab', 'cab.user_id', '=', 'u.user_id')
         ->where('cab.company_id', $companyId)
-        ->where(function ($w) use ($q) {
-            $w->where('u.names', 'like', "%{$q}%")
-              ->orWhere('u.lastname', 'like', "%{$q}%")
-              ->orWhere('u.dni', 'like', "%{$q}%")
-              ->orWhere('u.phone', 'like', "%{$q}%")
-              ->orWhereRaw("CONCAT(u.names, ' ', u.lastname) LIKE ?", ["%{$q}%"]);
-        })
+        ->tap(fn ($w) => \App\Support\BusquedaPorPalabras::aplicar($w, $q, ['u.names', 'u.lastname', 'u.dni', 'u.phone'], ['u.dni', 'u.phone']))
         ->distinct()
         ->limit(15)
         ->get(['u.user_id', 'u.names', 'u.lastname', 'u.dni', 'u.phone', 'u.address', 'u.active']);

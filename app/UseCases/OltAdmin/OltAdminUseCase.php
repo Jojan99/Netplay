@@ -2005,14 +2005,7 @@ class OltAdminUseCase
             ->leftJoin('internet_plans as p', 'p.id', '=', 'ud.internet_plans_id')
             ->where('u.company_id', $companyId)
             ->where('ud.active', 1)
-            ->when($busca, function ($q) use ($busca) {
-                $t = '%' . trim($busca) . '%';
-
-                $q->where(fn ($w) => $w->where('ud.names', 'like', $t)
-                    ->orWhere('ud.lastname', 'like', $t)
-                    ->orWhere('ud.dni', 'like', $t)
-                    ->orWhere('ud.address', 'like', $t));
-            })
+            ->when($busca, fn ($q) => \App\Support\BusquedaPorPalabras::aplicar($q, $busca, ['ud.names', 'ud.lastname', 'ud.dni', 'ud.address'], ['ud.dni']))
             ->orderBy('ud.names')
             ->get([
                 'ud.id',

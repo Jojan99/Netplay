@@ -119,7 +119,7 @@ class SoporteAsistenteController extends Controller
         };
 
         if ($b = trim((string) $request->query('q', ''))) {
-            $q->where(fn ($w) => $w->where('s.telefono', 'like', "%{$b}%")->orWhere('u.names', 'like', "%{$b}%")->orWhere('u.lastname', 'like', "%{$b}%")->orWhere('u.dni', 'like', "%{$b}%"));
+            \App\Support\BusquedaPorPalabras::aplicar($q, $b, ['s.telefono', 'u.names', 'u.lastname', 'u.dni'], ['s.telefono', 'u.dni']);
         }
 
         $filas = $q->orderByDesc('s.id')->limit(150)->get(['s.id', 's.user_id', 's.telefono', 's.provider', 's.estado', 's.verificado', 's.resultado', 's.resumen', 's.diagnostico', 's.ticket_id', 's.conversation_id', 's.consultas_ia', 's.created_at', 's.cerrado_en', 's.ultimo_mensaje_en', 'u.names', 'u.lastname']);
