@@ -116,6 +116,28 @@ class PaymentProofController extends Controller
         ]);
     }
 
+    /**
+     * Cuántos comprobantes esperan en la auditoría, por cliente.
+     *
+     * Es UNA consulta para toda la pantalla, como los tickets abiertos: la lista
+     * de clientes pinta la burbuja de pago sin pedir cliente por cliente. El
+     * comprobante en sí se pide al pasar el mouse por encima.
+     */
+    public function porAplicar(): JsonResponse
+    {
+        $filas = $this->scoped()
+            ->where('status', 'pending')
+            ->whereNotNull('user_id')
+            ->groupBy('user_id')
+            ->selectRaw('user_id, COUNT(*) AS total, MAX(created_at) AS ultimo')
+            ->get();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $filas->mapWithKeys(fn ($f) => [(int) $f->user_id => ['total' => (int) $f->total, 'ultimo' => $f->ultimo]]),
+        ]);
+    }
+
     public function index(Request $request): JsonResponse
     {
         $query = $this->scoped()->with(['user', 'invoice', 'audits'])->orderByDesc('created_at');

@@ -21,6 +21,8 @@ class ListaDeClientes
     private const SIN_WA = 'COALESCE(user_data.whatsapp_enabled, 1) = 0';
     /** Los que cobran por la pasarela: la marca vive en la factura. */
     private const CON_FE = 'COALESCE(cab_facturations.billing_electronic, 0) = 1';
+    /** Mandó un comprobante que todavía espera en la auditoría (la burbuja de pago). */
+    private const CON_PAGO = "EXISTS (SELECT 1 FROM payment_proofs pp WHERE pp.user_id = users.id AND pp.company_id = users.company_id AND pp.status = 'pending')";
 
     public function pagina(array $filtros): array
     {
@@ -32,7 +34,8 @@ class ListaDeClientes
             COALESCE(SUM(internet_status.name <> 'ACTIVE'), 0) AS suspendidos,
             COALESCE(SUM(" . self::SIN_IP . "), 0) AS sin_ip,
             COALESCE(SUM(" . self::SIN_WA . "), 0) AS sin_wa,
-            COALESCE(SUM(" . self::CON_FE . "), 0) AS con_fe
+            COALESCE(SUM(" . self::CON_FE . "), 0) AS con_fe,
+            COALESCE(SUM(" . self::CON_PAGO . "), 0) AS con_pago
         ")->first();
 
         $conteos = [
@@ -42,6 +45,7 @@ class ListaDeClientes
             'sin_ip'      => (int) $c->sin_ip,
             'sin_wa'      => (int) $c->sin_wa,
             'con_fe'      => (int) $c->con_fe,
+            'con_pago'    => (int) $c->con_pago,
         ];
 
         $query = clone $base;
@@ -52,6 +56,7 @@ class ListaDeClientes
             case 'noip':      $query->whereRaw(self::SIN_IP); $total = $conteos['sin_ip']; break;
             case 'nowa':      $query->whereRaw(self::SIN_WA); $total = $conteos['sin_wa']; break;
             case 'fe':        $query->whereRaw(self::CON_FE); $total = $conteos['con_fe']; break;
+            case 'pago':      $query->whereRaw(self::CON_PAGO); $total = $conteos['con_pago']; break;
             default:          $total = $conteos['todos'];
         }
 

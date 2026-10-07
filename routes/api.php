@@ -7,6 +7,8 @@ use Illuminate\Support\Facades\Route;
 Route::middleware(['api', 'role:admin,contador'])->group(function () {
     // Va antes de '/{id}': si no, «automatico» se lee como un id.
     Route::match(['get', 'post'], '/payment-proofs/automatico', [\App\Http\Controllers\PaymentProofController::class, 'automatico']);
+    // Qué clientes tienen un comprobante esperando: la burbuja de pago junto al nombre.
+    Route::get('/payment-proofs/por-aplicar', [\App\Http\Controllers\PaymentProofController::class, 'porAplicar']);
     Route::post('/payment-proofs/aplicar-pendientes', [\App\Http\Controllers\PaymentProofController::class, 'aplicarPendientes']);
     Route::get('/payment-proofs', [\App\Http\Controllers\PaymentProofController::class, 'index']);
     Route::get('/payment-proofs/{id}', [\App\Http\Controllers\PaymentProofController::class, 'show']);
