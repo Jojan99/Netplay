@@ -164,14 +164,15 @@ class SendMessageUseCase implements SendMessageUseCaseInterface
     // del método: el mensaje se quedaba "pending" para siempre, sin avisarle nada al agente ni
     // ofrecerle el botón de «Reintentar» que la pantalla ya tiene para mensajes fallidos.
     try {
-        $whats = match ($messageType) {
+        // El mensaje del asesor ya está guardado: que el registro de envíos de Meta no lo repita.
+        $whats = \App\Services\Crm\SalidasDeMetaAlCrm::sinAnotar(fn () => match ($messageType) {
             'sticker'  => $whatsAppService->sendSticker($conversation->phone, $mediaUrl, $quotedArg),
             'location' => $whatsAppService->sendLocation($conversation->phone, (float)($extra['latitude'] ?? 0), (float)($extra['longitude'] ?? 0), $extra['name'] ?? null, $extra['address'] ?? null, $quotedArg),
             'contact'  => $whatsAppService->sendContact($conversation->phone, $extra['contact_name'] ?? null, (string)($extra['contact_phone'] ?? ''), $quotedArg),
             'reaction' => $whatsAppService->sendReaction($conversation->phone, (string)$target['external_id'], $target['sender_type'] !== 'customer', $content),
             'poll'     => $whatsAppService->sendPoll($conversation->phone, trim((string)($extra['question'] ?? '')) ?: explode("\n", $content)[0], $pollOptions, (int)($extra['selectable'] ?? 1)),
             default    => $whatsAppService->mensajeInformativo($conversation->phone, $content, $quotedArg),
-        };
+        });
     } catch (\Throwable $e) {
         \Illuminate\Support\Facades\Log::error('[CRM] No se pudo enviar el mensaje', [
             'conversation' => $conversation->id, 'message' => $message->id, 'error' => $e->getMessage(),

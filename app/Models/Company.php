@@ -111,4 +111,32 @@ class Company extends Model
     {
         return $this->belongsTo(InvoiceTemplate::class);
     }
+
+    /**
+     * ¿A este cliente se le puede cobrar en línea?
+     *
+     * Con la pasarela encendida, a todos. Apagada, solo a los celulares piloto
+     * (services.pasarela_piloto): así se prueba en producción sin que a los
+     * clientes les llegue nada.
+     */
+    public function pasarelaPara(int $userId): bool
+    {
+        if (!$this->pg_gateway) {
+            return false;
+        }
+
+        if ($this->pg_active) {
+            return true;
+        }
+
+        $piloto = (array) config('services.pasarela_piloto', []);
+
+        if (!$piloto) {
+            return false;
+        }
+
+        return \Illuminate\Support\Facades\DB::table('user_data')
+            ->where('company_id', $this->id)->where('user_id', $userId)->pluck('phone')
+            ->contains(fn ($tel) => in_array(substr(preg_replace('/\D/', '', (string) $tel), -10), $piloto, true));
+    }
 }

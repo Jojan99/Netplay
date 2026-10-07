@@ -126,4 +126,11 @@ return [
         'url'    => env('ANTHROPIC_URL', 'https://api.anthropic.com/v1/messages'),
     ],
 
+    // Celulares que ven el pago en línea aunque la pasarela esté apagada: para
+    // probar en producción sin que les llegue a los clientes. Separados por coma.
+    'pasarela_piloto' => array_values(array_filter(array_map(
+        fn ($t) => substr(preg_replace('/\D/', '', $t), -10),
+        explode(',', (string) env('PASARELA_PILOTO_TELEFONOS', ''))
+    ))),
+
 ];

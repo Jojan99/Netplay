@@ -95,7 +95,7 @@ class FlowDePago
         }
 
         $empresa = Company::find($companyId);
-        $medios  = $this->mediosDisponibles($empresa);
+        $medios  = $this->mediosDisponibles($empresa, $userId, $deuda['total']);
 
         if (!$medios) {
             return $this->cerrar(
@@ -176,6 +176,11 @@ class FlowDePago
             return $this->cerrar('No se pudo', 'No encontramos facturas pendientes para cobrar.');
         }
 
+        // La pantalla ya no ofrece Nequi sin pasarela, pero el cobro se cuida solo.
+        if (!$company->pasarelaPara($userId)) {
+            return $this->cerrar('Pago en línea no disponible', 'Ahora mismo no podemos cobrarte por aquí. Escríbenos y le pasamos los datos de pago.');
+        }
+
         if (strlen($numero) !== 10) {
             return $this->cerrar('Revisa el número', 'Ese número no parece un celular colombiano. Inténtalo de nuevo.');
         }
@@ -250,9 +255,14 @@ class FlowDePago
      *
      * @return list<array{id:string, title:string, description:string}>
      */
-    private function mediosDisponibles(?Company $empresa): array
+    private function mediosDisponibles(?Company $empresa, int $userId, float $total): array
     {
-        if (!$empresa || !$empresa->pg_active || strtolower((string) $empresa->pg_gateway) !== 'wompi') {
+        if (!$empresa || !$empresa->pasarelaPara($userId) || strtolower((string) $empresa->pg_gateway) !== 'wompi') {
+            return [];
+        }
+
+        // Por debajo del mínimo Wompi rechaza cualquier medio: mejor no ofrecer nada.
+        if ($total < WompiGateway::MONTO_MINIMO) {
             return [];
         }
 

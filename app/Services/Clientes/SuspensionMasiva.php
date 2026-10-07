@@ -121,7 +121,7 @@ class SuspensionMasiva
             'grupos' => app(ClientAudience::class)->grupos($this->companyId),
             'meta' => (bool) $conMeta,
             'limite' => $conMeta ? app(CampaignService::class)->limiteDiario($this->companyId) : null,
-            'avisos' => $conMeta ? array_values(array_filter([$this->plantillaDe('suspension'), $this->plantillaDe('informacion')])) : [],
+            'avisos' => $conMeta ? array_values(array_filter([$this->plantillaDe('suspension'), $this->plantillaDe('suspension_v2'), $this->plantillaDe('informacion')])) : [],
         ];
     }
 
@@ -132,7 +132,10 @@ class SuspensionMasiva
      */
     private function plantillaDe(string $aviso): ?array
     {
-        $evento = $aviso === 'suspension' ? 'suspension_mora' : 'pago_pendiente';
+        // «suspension_v2»: la plantilla que la empresa tiene enlazada al evento de suspensión
+        // (en Netplay, suspendido_por_mora_v2, con «Consultar facturas» y «Pagar ahora»), como
+        // opción aparte de la que crea el sistema.
+        $evento = in_array($aviso, ['suspension', 'suspension_v2'], true) ? 'suspension_mora' : 'pago_pendiente';
         $b = WaTemplateBinding::where('company_id', $this->companyId)->where('event', $evento)->first();
 
         // Candidatas, en orden: la que el sistema crea para cada empresa (su botón abre el dominio
@@ -144,7 +147,11 @@ class SuspensionMasiva
             $candidatas[] = ['nombre' => $semilla['nombre'], 'idioma' => $semilla['idioma'], 'variables' => $semilla['variables']];
         }
 
-        if ($b && $b->template_name) {
+        if ($aviso === 'suspension_v2' && (!$b || !$b->template_name || ($semilla && $b->template_name === $semilla['nombre']))) {
+            return null;
+        }
+
+        if ($b && $b->template_name && $aviso !== 'suspension') {
             $v = is_array($b->params) ? $b->params : (json_decode((string) $b->params, true) ?: []);
             $candidatas[] = ['nombre' => (string) $b->template_name, 'idioma' => $b->language ?: 'es_CO', 'variables' => is_string($v) ? (json_decode($v, true) ?: []) : $v];
         }
@@ -189,7 +196,11 @@ class SuspensionMasiva
 
         return [
             'id' => $aviso,
-            'nombre' => $aviso === 'suspension' ? 'Aviso de suspensión por mora' : 'Información general (texto que usted escribe)',
+            'nombre' => match ($aviso) {
+                'suspension' => 'Aviso de suspensión por mora',
+                'suspension_v2' => 'Suspendido por mora (' . $c['nombre'] . ')',
+                default => 'Información general (texto que usted escribe)',
+            },
             'plantilla' => $b->template_name,
             'idioma' => $b->language ?: 'es_CO',
             'variables' => array_values($variables),

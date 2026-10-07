@@ -91,6 +91,30 @@ class PaymentLinkService
         ],
     ];
 
+    /**
+     * Sin pasarela, el «Pagar» de las plantillas abre el chat del bot de WhatsApp con «Menú» ya
+     * escrito: el cliente sólo envía y el bot le muestra «Consultar factura» y «Pagar mi
+     * factura», con los medios de pago que le corresponden. El botón es de URL (no se puede
+     * cambiar sin editar la plantilla en Meta), así que un enlace wa.me es lo más cerca de
+     * «responderle al bot» que se puede llegar.
+     *
+     * Sólo si el bot de Meta está encendido; si no, el estado de cuenta, como antes.
+     */
+    private function alChatDelBot(Company $company): ?string
+    {
+        try {
+            if ($company->wa_provider !== 'meta' || !\App\Models\WaBotConfig::where('company_id', $company->id)->value('enabled')) {
+                return null;
+            }
+
+            $numero = (new \App\Services\MetaWhatsAppService($company->id))->businessPhoneNumber();
+
+            return $numero ? 'https://wa.me/' . $numero . '?text=' . rawurlencode('Menú') : null;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
     public function resolveToCheckout(string $token, ?string $method = null): array
     {
         $link = PaymentLink::where('token', $token)->first();
@@ -115,11 +139,11 @@ class PaymentLinkService
         // Sin pasarela de pagos el botón «Pagar ahora» no puede cobrar, pero tampoco tiene que
         // dejar al cliente frente a un error: lo lleva a su estado de cuenta, donde ve cuánto
         // debe, de qué facturas y los medios de pago que la empresa puso en su factura.
-        if (!$company->pg_active || !$company->pg_gateway) {
+        if (!$company->pasarelaPara((int) $link->user_id)) {
             $link->increment('used_count');
             $link->update(['last_used_at' => now()]);
 
-            return ['url' => \App\Services\ClientStatementService::urlFor((int) $link->user_id), 'reference' => '', 'amount' => 0.0];
+            return ['url' => $this->alChatDelBot($company) ?? \App\Services\ClientStatementService::urlFor((int) $link->user_id), 'reference' => '', 'amount' => 0.0];
         }
 
         $invoices = $this->pendingInvoices($link);

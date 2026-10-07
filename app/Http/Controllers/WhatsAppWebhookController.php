@@ -7,6 +7,7 @@ use App\Models\Company;
 use App\UseCases\Crm\Interfaces\ReceiveConversationMessageUseCaseInterface;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -209,6 +210,13 @@ class WhatsAppWebhookController extends Controller
                             $esDeSoporte = $companyId && $metaMessage['from']
                                 && \App\Services\Soporte\AgenteDeSoporte::esParaSoporte((int) $companyId, 'meta', (string) $metaMessage['from'], $metaMessage['text']['body'] ?? null);
 
+                            if ($esDeSoporte) {
+                                // Si el bot tenía una consulta abierta, la suelta: si no, a los
+                                // cinco minutos le diría al cliente «no recibimos ninguna
+                                // consulta» mientras el asistente lo está atendiendo.
+                                $this->botService->soltar((int) $companyId, (string) $metaMessage['from']);
+                            }
+
                             $handledByBot = $esDeSoporte ? false : $this->botService->handleIncomingMessage($metaMessage, $phoneNumberId);
                         }
 
@@ -235,7 +243,35 @@ class WhatsAppWebhookController extends Controller
                 $statuses = $value['statuses'] ?? [];
                 foreach ($statuses as $status) {
                     Log::info('[Meta Webhook] Status update', $status);
-                    // Aquí puedes agregar lógica para actualizar el estado de mensajes enviados
+
+                    // sent → delivered → read, o failed con el motivo. Se anota sobre el envío para
+                    // poder responder «¿le llegó?» sin adivinar.
+                    $errores = $status['errors'] ?? [];
+                    $motivo = $errores ? mb_substr(implode(' | ', array_map(fn ($e) => trim(($e['code'] ?? '') . ' ' . ($e['title'] ?? '') . ': ' . ($e['error_data']['details'] ?? $e['message'] ?? '')), $errores)), 0, 500) : null;
+
+                    if (($status['status'] ?? '') === 'failed') {
+                        Log::warning('[Meta Webhook] Mensaje NO entregado', ['para' => $status['recipient_id'] ?? null, 'motivo' => $motivo]);
+                    }
+
+                    // Las palomitas del mensaje en el CRM (y el «no entregado» si falló).
+                    try {
+                        $estado = (string) ($status['status'] ?? '');
+                        if (!empty($status['id']) && in_array($estado, ['sent', 'delivered', 'read', 'failed'], true)) {
+                            $hit = app(\App\Repositories\Interfaces\ConversationRepositoryInterface::class)->applyMessageStatus((string) $status['id'], $estado);
+                            if ($hit) {
+                                broadcast(new \App\Events\MessageStatusEvent($hit['conversation_id'], $hit['id'], $estado));
+                            }
+                        }
+                    } catch (\Throwable $e) {
+                        // Es informativo.
+                    }
+
+                    try {
+                        DB::table('wa_meta_logs')->where('meta_msg_id', $status['id'] ?? '')->where('direction', 'outbound')
+                            ->update(array_filter(['status' => $status['status'] ?? null, 'error' => $motivo, 'updated_at' => now()], fn ($v) => $v !== null));
+                    } catch (\Throwable $e) {
+                        // Es informativo.
+                    }
                 }
             }
         }
@@ -347,6 +383,18 @@ class WhatsAppWebhookController extends Controller
             case 'reaction':
                 $content = "👍 Reacción: " . ($message['reaction']['emoji'] ?? '');
                 break;
+        }
+
+        // Meta no manda el archivo sino su id: hay que bajarlo. Sin esto toda foto que el bot
+        // no tomaba como comprobante quedaba en el CRM como «[Imagen recibida]», sin la foto.
+        if (!$mediaUrl && $companyId && !empty($message[$msgType]['id'])
+            && in_array($msgType, ['image', 'video', 'audio', 'voice', 'document', 'sticker'], true)) {
+            try {
+                $company = Company::find($companyId);
+                $mediaUrl = $company ? $this->botService->archivoDeMeta($company, (array) $message[$msgType]) : null;
+            } catch (\Throwable $e) {
+                Log::warning('[Meta Webhook] No se pudo bajar el archivo', ['message_id' => $message['id'] ?? null, 'error' => $e->getMessage()]);
+            }
         }
 
         // Fallback: si no hay contenido ni media, poner un placeholder

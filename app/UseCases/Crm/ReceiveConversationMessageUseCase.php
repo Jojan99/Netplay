@@ -738,7 +738,7 @@ public function execute(array $payload): array
             try {
                 $text = $settings['off_hours_message'] ?: \App\Support\CrmSettings::DEFAULT_OFF_HOURS;
                 // Por la misma línea por la que escribió, no por la principal.
-                (new WhatsAppService($companyId, false, $provider, $instanceId))->mensajeInformativo($phone, $text);
+                \App\Services\Crm\SalidasDeMetaAlCrm::sinAnotar(fn () => (new WhatsAppService($companyId, false, $provider, $instanceId))->mensajeInformativo($phone, $text));
                 $sys = $this->repository->storeMessage([
                     'conversation_id' => $conversationId, 'wa_linea_id' => $lineaId, 'sender_type' => 'system', 'message_type' => 'text',
                     'content' => $text, 'status' => 'sent', 'created_at' => now(),

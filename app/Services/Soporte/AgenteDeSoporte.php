@@ -22,6 +22,9 @@ use Symfony\Component\Process\PhpExecutableFinder;
 class AgenteDeSoporte
 {
     /** Frases que, sin tildes y en minúscula, suenan a «tengo un problema con el servicio». */
+    /** «no (tengo|tenemos|hay|…) [un par de palabras] internet/servicio/señal/wifi/conexión», ya en plano. */
+    private const SIN_SERVICIO = '/\bno (?:me |nos |le |les )?(?:tengo|tenemos|tiene|tienen|hay|llega|ha (?:vuelto|llegado|regresado)|han (?:vuelto|llegado|activado|conectado|reconectado|restablecido|puesto|devuelto))(?: \w+){0,2}? (?:internet|servicio|senal|wifi|conexion)\b/';
+
     private const PALABRAS = [
         'sin internet', 'no tengo internet', 'no hay internet', 'no me llega internet', 'se fue el internet', 'se cayo el internet',
         'internet lento', 'internet esta lento', 'esta muy lento', 'muy lento', 'lentitud', 'internet malo', 'internet pesimo',
@@ -57,7 +60,10 @@ class AgenteDeSoporte
             }
         }
 
-        return false;
+        // La lista fija solo conoce la primera persona: «no tenemos internet», «no nos
+        // ha llegado el servicio» o «no han conectado el internet» se quedaban sin
+        // reconocer y el mensaje terminaba en el bot de facturas.
+        return preg_match(self::SIN_SERVICIO, $t) === 1;
     }
 
     /**

@@ -51,7 +51,7 @@ class SuspensionMasivaController extends Controller
             'accion' => 'required|in:avisar,suspender,suspender_y_avisar',
             'clientes' => 'required|array|min:1|max:2000',
             'clientes.*' => 'integer',
-            'aviso' => 'nullable|in:suspension,informacion',
+            'aviso' => 'nullable|in:suspension,suspension_v2,informacion',
             'texto' => 'nullable|string|max:900',
             'fecha_limite' => 'nullable|string|max:20',
             'motivo' => 'nullable|string|max:250',

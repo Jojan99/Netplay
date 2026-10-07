@@ -745,6 +745,29 @@ class MetaWhatsAppService
             'response' => $response->json(),
         ]);
 
+        // Que Meta lo acepte no es que llegue: la entrega (o el fallo) llega después por el
+        // webhook y se anota sobre esta misma fila (ver WhatsAppWebhookController).
+        try {
+            DB::table('wa_meta_logs')->insert([
+                'company_id'  => $this->companyId,
+                'phone'       => (string) ($payload['to'] ?? ''),
+                'type'        => mb_substr($payload['type'] === 'template' ? 'plantilla:' . ($payload['template']['name'] ?? '') : (string) ($payload['type'] ?? ''), 0, 30),
+                'direction'   => 'outbound',
+                'status'      => 'accepted',
+                'meta_msg_id' => $response->json('messages.0.id'),
+                'payload'     => json_encode($payload, JSON_UNESCAPED_UNICODE),
+                'created_at'  => now(),
+                'updated_at'  => now(),
+            ]);
+        } catch (\Throwable $e) {
+            // Anotarlo nunca puede tumbar el envío.
+        }
+
+        // Y en la conversación del cliente en el CRM (plantillas, avisos, todo lo que sale).
+        if ($this->companyId) {
+            (new \App\Services\Crm\SalidasDeMetaAlCrm($this->companyId))->anotar($payload, $response->json('messages.0.id'));
+        }
+
         return $response->json();
     }
 

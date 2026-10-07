@@ -151,7 +151,10 @@ class ComprobanteWhatsAppWeb
             'aplicado_solo' => $aplicado,
         ]);
 
-        self::avisar($companyId, trim($cliente->names . ' ' . $cliente->lastname), $proof->fresh(), 'WhatsApp Web');
+        // Registrados en tanda desde la consola: no se llena el grupo con un aviso por cada uno.
+        if (empty($datos['sin_aviso'])) {
+            self::avisar($companyId, trim($cliente->names . ' ' . $cliente->lastname), $proof->fresh(), 'WhatsApp Web');
+        }
 
         return [
             'ok'       => true,

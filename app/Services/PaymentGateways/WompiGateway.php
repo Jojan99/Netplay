@@ -77,10 +77,13 @@ class WompiGateway implements PaymentGatewayInterface
      */
     private const NEQUI_TOPE = 2000000.0;
 
+    /** Wompi rechaza cualquier cobro por debajo de esto («El monto mínimo de una transacción es $1,500»). */
+    public const MONTO_MINIMO = 1500.0;
+
     /** ¿Se le puede cobrar este monto por Nequi con esta cuenta? */
     public function aceptaNequi(float $monto): bool
     {
-        if ($monto <= 0 || $monto > self::NEQUI_TOPE) {
+        if ($monto < self::MONTO_MINIMO || $monto > self::NEQUI_TOPE) {
             return false;
         }
 
@@ -272,7 +275,8 @@ class WompiGateway implements PaymentGatewayInterface
             $id = $r['data']['id'] ?? null;
 
             if (!$id) {
-                Log::warning('[Wompi] Nequi no aceptó el cobro', ['error' => $r['error'] ?? null]);
+                // Como error: de advertencia no quedaba en el log y no se veía por qué falló.
+                Log::error('[Wompi] Nequi no aceptó el cobro', ['error' => $r['error'] ?? null]);
 
                 return null;
             }

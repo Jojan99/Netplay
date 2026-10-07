@@ -36,6 +36,19 @@ class WaBotService
      */
     public function handleIncomingMessage(array $payload, string $phoneNumberId): bool
     {
+        // Lo que el bot responde ya lo guarda él en el CRM (recordBotConversationMessage).
+        return \App\Services\Crm\SalidasDeMetaAlCrm::sinAnotar(fn () => $this->atenderMensaje($payload, $phoneNumberId));
+    }
+
+    /**
+     * ¿El mensaje que se atiende es un botón o una fila de lista (y no texto escrito)?
+     *
+     * Un texto escrito a mano puede ser una consulta de verdad; un botón nunca.
+     */
+    private bool $esRespuestaDeBoton = false;
+
+    private function atenderMensaje(array $payload, string $phoneNumberId): bool
+    {
         $company = $this->findCompanyByPhoneNumberId($phoneNumberId);
         if (!$company) {
             return false;
@@ -52,6 +65,8 @@ class WaBotService
         }
 
         $message = $payload['text']['body'] ?? null;
+        // Los botones de plantilla llegan como texto, pero con bot_selection_label.
+        $this->esRespuestaDeBoton = isset($payload['bot_selection_label']) || (($payload['type'] ?? null) === 'interactive');
         if (!$message && (($payload['type'] ?? null) === 'interactive')) {
             $message = $payload['interactive']['button_reply']['id']
                 ?? $payload['interactive']['list_reply']['id']
@@ -107,7 +122,22 @@ class WaBotService
         }
 
         // Se registra solo lo que el bot va a atender; lo demás lo guarda el CRM.
-        $this->recordBotConversationMessage($company, $from, 'customer', $payload['bot_selection_label'] ?? $message, $payload['id'] ?? null);
+        $archivo = $this->archivoDelMensaje($company, $payload);
+        // Una foto sin texto llega como «comprobante»: eso no lo escribió el cliente.
+        $this->recordBotConversationMessage($company, $from, 'customer', $payload['bot_selection_label'] ?? ($archivo && $message === 'comprobante' ? '' : $message), $payload['id'] ?? null, $archivo);
+
+        // Una falla del servicio o el pedido de hablar con alguien: eso no lo
+        // resuelve un menú. Antes «ya la factura está paga y no tenemos
+        // internet» volvía a abrir la consulta de facturas por la palabra
+        // «factura», y la queja terminaba en un cierre por inactividad.
+        if (!$esPalabraClave && $this->esParaUnaPersona($company, $normalizedMessage)) {
+            return $this->pasarAUnAsesor($company, $from, 'falla del servicio o pide un asesor');
+        }
+
+        // La palabra «factura» abre la consulta solo si no hay otra cosa en
+        // curso: dentro de un flujo, lo que escribe el cliente le toca al paso.
+        $enMenu = $session && $session->current_flow === 'menu';
+        $invoiceIntent = $invoiceIntent && (!$session || $enMenu);
 
         // Sin sesión abierta, cualquier cosa que escriba el cliente abre el
         // menú: no tiene por qué adivinar la palabra mágica. "hola", "buenas" o
@@ -154,7 +184,9 @@ class WaBotService
         foreach ($vencidas as $sesion) {
             $company = Company::find($sesion->company_id);
 
-            if (!$company) {
+            // Sin empresa, o con el bot en pausa porque ya lo atiende una persona:
+            // se cierra sin decir nada, para no hablarle encima al asesor.
+            if (!$company || DB::table('wa_bot_pauses')->where(['company_id' => $sesion->company_id, 'provider' => 'meta', 'phone' => $sesion->phone])->exists()) {
                 $sesion->delete();
                 continue;
             }
@@ -163,7 +195,9 @@ class WaBotService
                 $this->sendTextMessage(
                     $company,
                     $sesion->phone,
-                    'No recibimos ninguna consulta, así que cerramos por ahora. '
+                    // No «no recibimos ninguna consulta»: el cliente pudo haber escrito
+                    // y simplemente no contestó la última pregunta.
+                    'Como no recibimos respuesta, cerramos esta consulta por ahora. '
                     . 'Escríbenos cuando quieras y con gusto le ayudamos.'
                 );
             } catch (\Throwable $e) {
@@ -179,6 +213,12 @@ class WaBotService
         }
 
         return $cerradas;
+    }
+
+    /** Deja de atender a ese número sin decirle nada: otro (el asistente, un asesor) lo toma. */
+    public function soltar(int $companyId, string $phone): void
+    {
+        WaBotSession::where('company_id', $companyId)->where('phone', $phone)->delete();
     }
 
     private function findCompanyByPhoneNumberId(string $phoneNumberId): ?Company
@@ -269,8 +309,6 @@ class WaBotService
 
         $menuText = ($config->welcome_message ?: "Hola, bienvenido a {$company->name}.\n\n¿En qué puedo ayudarte?");
 
-        $wa = new WhatsAppService($company->id, false, 'meta');
-
         // Texto numerado: lo elige quien no quiere botones (o para un número
         // que todavía no tiene la plantilla aprobada).
         if ($config->menu_type === 'text') {
@@ -296,7 +334,7 @@ class WaBotService
                 ];
             }
 
-            $wa->sendInteractiveList($to, $menuText, [['title' => 'Opciones', 'rows' => $rows]], 'Ver opciones');
+            $this->enviarLista($company, $to, $menuText, [['title' => 'Opciones', 'rows' => $rows]], 'Ver opciones');
             return;
         }
 
@@ -307,7 +345,7 @@ class WaBotService
             $buttons[] = ['id' => $key, 'title' => $label];
         }
 
-        $wa->sendInteractiveButtons($to, $menuText, $buttons);
+        $this->enviarBotones($company, $to, $menuText, $buttons);
     }
 
     /** ¿La empresa tiene una pasarela configurada y encendida? */
@@ -454,12 +492,12 @@ class WaBotService
             $leido = $archivo['local_path'] ? (string) $this->extractTextFromProof($archivo['local_path']) : '';
             $d = $this->extractPaymentProofDetails(trim($message . "\n" . $leido));
 
-            if (empty($d['amount']) && empty($d['reference']) && empty($d['bank_name'])) {
+            if ((empty($d['amount']) && empty($d['reference']) && empty($d['bank_name'])) || !\App\Services\Comprobantes\PareceComprobante::es($message . "\n" . $leido)) {
                 return false;
             }
         }
 
-        $this->recordBotConversationMessage($company, $phone, 'customer', '[Comprobante de pago]', $payload['id'] ?? null);
+        $this->recordBotConversationMessage($company, $phone, 'customer', $message !== '' && $message !== 'comprobante' ? $message : '', $payload['id'] ?? null, $this->archivoDelMensaje($company, $payload));
 
         // El que escribe es un cliente (y uno solo): el pago es suyo, sin preguntar.
         $deEseTelefono = UserData::where('company_id', $company->id)->where('active', 1)->get()
@@ -525,8 +563,10 @@ class WaBotService
                 return $this->startFlow($company, $phone, 'pagar_factura');
             }
 
-            $this->sendTextMessage($company, $phone, "Opción no válida. Por favor escribe una de las opciones del menú.");
-            return true;
+            return $this->noEntendido($company, $phone, $message, function () use ($company, $config, $phone) {
+                $this->sendTextMessage($company, $phone, "No reconocí esa opción. Elige una de estas:", false);
+                $this->sendWelcomeMenu($company, $config, $phone);
+            });
         }
 
         return $this->routeFlow($company, $session, $phone, $message, $payload);
@@ -758,6 +798,8 @@ class WaBotService
                 // Sin esto, a quien escribe sin teléfono se le volvería a pedir
                 // el celular: la comprobación ya se hizo, se reutiliza.
                 'verified_phone' => $conocido->verified_phone,
+                // Ya la validó: no se le vuelve a preguntar «¿es correcta su cédula?».
+                'identidad_conocida' => true,
             ]);
 
             $this->sendTextMessage(
@@ -847,8 +889,14 @@ class WaBotService
                 'expires_at' => self::vencimientoSesion(),
             ]);
 
-            $wa = new WhatsAppService($company->id, false, 'meta');
-            $wa->sendInteractiveButtons(
+            // Si el bot acaba de decir «continúo con la cédula que ya validaste»,
+            // preguntar enseguida si es correcta sobra: se va derecho a las facturas.
+            if (!empty($data['identidad_conocida'])) {
+                return $this->handleConsultarFactura($company, $session->fresh(), $phone, 'confirm_yes');
+            }
+
+            $this->enviarBotones(
+                $company,
                 $phone,
                 "¿Es correcta su cédula: {$dni}?",
                 [
@@ -871,8 +919,16 @@ class WaBotService
             }
 
             if (!in_array($message, ['confirm_yes', 'sí', 'si', '1', 'yes', 'correcto'], true)) {
-                // Si no es una respuesta válida, ignorar
-                return true;
+                // Antes se ignoraba en silencio y el cliente se quedaba sin respuesta.
+                return $this->noEntendido($company, $phone, $message, fn () => $this->enviarBotones(
+                    $company,
+                    $phone,
+                    "¿Es correcta su cédula: " . ($data['client_dni'] ?? '') . "?",
+                    [
+                        ['id' => 'confirm_yes', 'title' => 'Sí, es correcta'],
+                        ['id' => 'confirm_no', 'title' => 'No, intenta de nuevo'],
+                    ]
+                ));
             }
 
             // Get latest invoices
@@ -1016,8 +1072,14 @@ class WaBotService
             }
 
             if (!$selectedInvoice) {
-                $this->sendTextMessage($company, $phone, "Opción no válida. Por favor intenta de nuevo.");
-                return true;
+                // Un botón de un mensaje anterior, o algo escrito: se le vuelven a
+                // mostrar las facturas en vez de dejarlo con «Opción no válida».
+                return $this->noEntendido($company, $phone, $message, fn () => $this->sendInvoicePicker(
+                    $company,
+                    $phone,
+                    $invoices,
+                    'No reconocí esa opción. Selecciona una de sus facturas:'
+                ));
             }
 
             // Get the actual invoice record
@@ -1036,8 +1098,8 @@ class WaBotService
                 'expires_at' => self::vencimientoSesion(),
             ]);
 
-            $wa = new WhatsAppService($company->id, false, 'meta');
-            $wa->sendInteractiveButtons(
+            $this->enviarBotones(
+                $company,
                 $phone,
                 "¿Descargar factura #{$selectedInvoice['number_facture']}?",
                 [
@@ -1060,7 +1122,15 @@ class WaBotService
             }
 
             if (!in_array($message, ['download_yes', 'sí', 'si', '1', 'yes', 'descargar'], true)) {
-                return true; // Ignorar respuestas inesperadas
+                return $this->noEntendido($company, $phone, $message, fn () => $this->enviarBotones(
+                    $company,
+                    $phone,
+                    "¿Descargar factura #" . ($data['selected_number'] ?? '') . "?",
+                    [
+                        ['id' => 'download_yes', 'title' => 'Descargar PDF'],
+                        ['id' => 'download_no', 'title' => 'Elegir otra'],
+                    ]
+                ));
             }
 
             // Send the PDF
@@ -1089,8 +1159,8 @@ class WaBotService
                 'expires_at' => self::vencimientoSesion(),
             ]);
 
-            $wa = new WhatsAppService($company->id, false, 'meta');
-            $wa->sendInteractiveButtons(
+            $this->enviarBotones(
+                $company,
                 $phone,
                 "¿Deseas descargar otra factura?",
                 [
@@ -1117,7 +1187,15 @@ class WaBotService
                 return $this->returnToMenu($company, $phone);
             }
 
-            return true;
+            return $this->noEntendido($company, $phone, $message, fn () => $this->enviarBotones(
+                $company,
+                $phone,
+                "¿Deseas descargar otra factura?",
+                [
+                    ['id' => 'another_yes', 'title' => 'Otra factura'],
+                    ['id' => 'another_no', 'title' => 'Ir al menú'],
+                ]
+            ));
         }
 
         return true;
@@ -1135,10 +1213,9 @@ class WaBotService
     {
         if ($invoices === []) return;
 
-        $wa = new WhatsAppService($company->id, false, 'meta');
 
         if (count($invoices) > 3) {
-            $wa->sendInteractiveList($phone, $bodyText, [[
+            $this->enviarLista($company, $phone, $bodyText, [[
                 'title' => 'Sus facturas',
                 'rows'  => array_map(fn ($inv) => [
                     'id'          => "invoice_{$inv['option']}",
@@ -1153,7 +1230,7 @@ class WaBotService
             return;
         }
 
-        $wa->sendInteractiveButtons($phone, $bodyText, array_map(fn ($inv) => [
+        $this->enviarBotones($company, $phone, $bodyText, array_map(fn ($inv) => [
             'id' => "invoice_{$inv['option']}",
             // Las sesiones abiertas antes de este cambio no traen el título.
             'title' => $inv['button_title'] ?? ('#' . $inv['number_facture']),
@@ -1285,7 +1362,8 @@ class WaBotService
             ], $invoiceList);
 
             try {
-                (new WhatsAppService($company->id, false, 'meta'))->sendInteractiveList(
+                $this->enviarLista(
+                    $company,
                     $phone,
                     'Selecciona la factura que deseas pagar. Verá el abono acumulado y el saldo pendiente.',
                     [['title' => 'Facturas pendientes', 'rows' => $rows]],
@@ -1367,7 +1445,8 @@ class WaBotService
                     'current_step' => 'payment_complete',
                     'expires_at' => self::vencimientoSesion(),
                 ]);
-                (new WhatsAppService($company->id, false, 'meta'))->sendInteractiveButtons(
+                $this->enviarBotones(
+                    $company,
                     $phone,
                     '¿Qué deseas hacer ahora?',
                     [
@@ -1383,7 +1462,8 @@ class WaBotService
                     'current_step' => 'payment_complete',
                     'expires_at' => self::vencimientoSesion(),
                 ]);
-                (new WhatsAppService($company->id, false, 'meta'))->sendInteractiveButtons(
+                $this->enviarBotones(
+                    $company,
                     $phone,
                     'Puedes reenviar el comprobante, elegir otra factura pendiente o volver al menú principal.',
                     [
@@ -1431,6 +1511,18 @@ class WaBotService
         $media = $payload['payment_proof_media'] ?? [];
         $mediaEvidence = $this->storePaymentProofMedia($company, $media);
         $ocrText = $mediaEvidence['local_path'] ? $this->extractTextFromProof($mediaEvidence['local_path']) : null;
+
+        // Una foto que no es un pago (una pantalla, un equipo, un chiste) no se registra como
+        // comprobante: antes cualquier imagen enviada en este paso quedaba en auditoría y al
+        // cliente se le decía «recibimos su comprobante». Se le pide de nuevo y sigue esperando.
+        if (($payload['type'] ?? 'image') === 'image' && !\App\Services\Comprobantes\PareceComprobante::es($text . "\n" . ($ocrText ?? ''))) {
+            return [
+                'approved' => false,
+                'can_continue' => true,
+                'message' => "Esa imagen no parece un comprobante de pago. 🤔\n\nEnvíeme la captura del pago donde se vean el banco o Nequi, el valor y la fecha o la referencia.",
+            ];
+        }
+
         $details = $this->extractPaymentProofDetails(trim($text . "\n" . ($ocrText ?? '')));
         $reference = $details['reference'] ?: $details['invoice_number'];
 
@@ -1538,6 +1630,27 @@ class WaBotService
             return ['approved' => false, 'silencio' => true, 'message' => ''];
         }
 
+        // Lo aplicó la auditoría (aplicación automática encendida y comprobante sin dudas):
+        // solo falta contarle al cliente cómo quedó la factura.
+        if ($aplicado) {
+            $invoice = $invoice->fresh() ?: $invoice;
+            $abonado = (float) ($invoice->price_abone ?? 0);
+            $saldo = max(0, max(0, $baseAmount - $discount) - $abonado);
+            $monto = (float) ($proofRecord->reported_amount ?? $details['amount'] ?? 0);
+
+            return [
+                'approved' => true,
+                'message' => ($saldo <= 0 ? 'Pago registrado exitosamente.' : 'Abono registrado exitosamente.') . "\n\nResumen de su reporte:\n"
+                    . "Factura: #{$invoice->number_facture}\n"
+                    . 'Valor recibido: $' . number_format($monto, 0, ',', '.') . "\n"
+                    . 'Referencia: ' . ($reference ?: 'No identificada') . "\n"
+                    . 'Fecha del comprobante: ' . ($details['payment_date'] ? date('d/m/Y', strtotime($details['payment_date'])) : 'No identificada') . "\n"
+                    . 'Entidad: ' . ($details['bank_name'] ?: 'No identificada') . "\n"
+                    . 'Abonos acumulados: $' . number_format($abonado, 0, ',', '.') . "\n"
+                    . 'Saldo pendiente: $' . number_format($saldo, 0, ',', '.'),
+            ];
+        }
+
         if (!$details['payment_date'] || !$reference) {
             $missingFields = [];
             if (!$details['payment_date']) {
@@ -1569,57 +1682,28 @@ class WaBotService
         $amountMatches = $details['amount'] !== null && $details['amount'] >= $minAccepted && $details['amount'] <= $maxAccepted;
         $invoiceMatches = $details['invoice_number'] === null || (string) $invoice->number_facture === (string) $details['invoice_number'];
 
+        // Coincide pero no lo aplicó la auditoría: queda para que lo apruebe una persona.
+        // Aquí antes se aplicaba el pago directo a la factura, sin mirar si la empresa tenía
+        // encendida la aplicación automática y sin dejar el movimiento: así entraron pagos
+        // de Meta que nadie revisó (y, con la aplicación automática encendida, se sumaban dos veces).
         if ($invoiceMatches && $amountMatches) {
-            $payedAmount = (float) ($invoice->price_abone ?? 0) + $details['amount'];
-            $invoice->update([
-                'paid' => $payedAmount >= max(0, $baseAmount - $discount) ? 1 : 0,
-                'paid_at' => $payedAmount >= max(0, $baseAmount - $discount) ? now() : null,
-                'paid_by_user_id' => $client->user_id,
-                'price_abone' => $payedAmount,
-                'abone' => $payedAmount >= max(0, $baseAmount - $discount) ? 1 : 0,
-            ]);
+            $reason = 'Comprobante pendiente de revisión: monto, fecha y referencia coinciden con la factura.';
 
-            $proofRecord->update([
-                'status' => 'approved',
-                'rejection_reason' => null,
-                'reported_amount' => $details['amount'],
-                'payment_date' => $details['payment_date'],
-            ]);
-
+            $proofRecord->update(['status' => 'pending', 'rejection_reason' => $reason]);
             PaymentProofAudit::create([
                 'payment_proof_id' => $proofRecord->id,
                 'old_status' => 'pending',
-                'new_status' => 'approved',
-                'reason' => 'Aprobado automáticamente: monto, fecha y referencia coinciden con la factura seleccionada.',
-                'metadata' => [
-                    'source' => 'automatic_validation',
-                    'approved_amount' => $details['amount'],
-                    'reference_number' => $reference,
-                ],
+                'new_status' => 'pending',
+                'reason' => $reason,
+                'metadata' => ['source' => 'automatic_validation', 'detected_amount' => $details['amount'], 'reference_number' => $reference],
             ]);
-
-            UserData::where('id', $client->id)->update([
-                'active' => true,
-                'status' => true,
-            ]);
-
-            $invoiceTotal = max(0, $baseAmount - $discount);
-            $remainingAmount = max(0, $invoiceTotal - $payedAmount);
-            $messageStatus = $remainingAmount === 0 ? 'Pago registrado exitosamente.' : 'Abono registrado exitosamente.';
-            $paymentDate = $details['payment_date'] ? date('d/m/Y', strtotime($details['payment_date'])) : 'No identificada';
-            $referenceText = $reference ?: 'No identificada';
-            $bankText = $details['bank_name'] ?: 'No identificada';
 
             return [
-                'approved' => true,
-                'message' => "{$messageStatus}\n\nResumen de su reporte:\n"
-                    . "Factura: #{$invoice->number_facture}\n"
-                    . 'Valor recibido: $' . number_format($details['amount'], 0, ',', '.') . "\n"
-                    . "Referencia: {$referenceText}\n"
-                    . "Fecha del comprobante: {$paymentDate}\n"
-                    . "Entidad: {$bankText}\n"
-                    . 'Abonos acumulados: $' . number_format($payedAmount, 0, ',', '.') . "\n"
-                    . 'Saldo pendiente: $' . number_format($remainingAmount, 0, ',', '.'),
+                'approved' => false,
+                'message' => "Recibimos su comprobante para la factura #{$invoice->number_facture}.\n\n"
+                    . 'Valor: $' . number_format($details['amount'], 0, ',', '.') . "\n"
+                    . "Referencia: {$reference}\n\n"
+                    . 'Lo estamos verificando y le confirmamos por este chat apenas quede aplicado.',
             ];
         }
 
@@ -1637,7 +1721,32 @@ class WaBotService
         return ['approved' => false, 'can_continue' => true, 'message' => 'Recibimos el comprobante, pero aún no fue posible identificar sus datos de pago. No se aplicó ningún pago.'];
     }
 
+    /**
+     * Baja de Meta la foto, el audio o el documento de un mensaje y devuelve su dirección.
+     *
+     * Meta no manda el archivo, solo su id: sin bajarlo, lo que el bot no tomaba como
+     * comprobante llegaba al CRM como «[Imagen recibida]» y la foto se perdía.
+     */
+    public function archivoDeMeta(Company $company, array $media): ?string
+    {
+        return empty($media['id']) ? null : $this->storePaymentProofMedia($company, $media)['path'];
+    }
+
+    /** @var array<string,array> Archivos ya bajados de Meta en este mensaje (se usan dos veces). */
+    private array $archivosBajados = [];
+
     private function storePaymentProofMedia(Company $company, array $media): array
+    {
+        $mediaId = $media['id'] ?? null;
+
+        if ($mediaId && isset($this->archivosBajados[$mediaId])) {
+            return $this->archivosBajados[$mediaId];
+        }
+
+        return $this->archivosBajados[$mediaId ?? ''] = $this->bajarArchivoDeMeta($company, $media);
+    }
+
+    private function bajarArchivoDeMeta(Company $company, array $media): array
     {
         $mediaId = $media['id'] ?? null;
         if (!$mediaId || !$company->wa_access_token) {
@@ -1708,11 +1817,27 @@ class WaBotService
      */
     public function pasadasDeOcr(string $path): array
     {
+        // El mismo comprobante se leía dos veces en el mismo mensaje (¿es un comprobante? y
+        // después sus datos): seis Tesseract por foto en vez de tres.
+        $clave = $path . ':' . (@filemtime($path) ?: '');
+
+        return $this->lecturasHechas[$clave] ??= $this->leerConOcr($path);
+    }
+
+    /** @var array<string,list<string>> Lecturas de OCR ya hechas en este mensaje. */
+    private array $lecturasHechas = [];
+
+    /** @return list<string> */
+    private function leerConOcr(string $path): array
+    {
         $textos = [];
 
         foreach (self::FORMAS_DE_LEER as $psm) {
             try {
-                $process = new Process(['tesseract', $path, 'stdout', '-l', 'spa', '--psm', $psm]);
+                // Un solo núcleo por lectura. Por defecto cada Tesseract usa los cuatro, y con
+                // cinco comprobantes a la vez se estorbaban tanto que ninguna lectura terminaba
+                // en sus 30 s: medido, 180 s por comprobante y el OCR vacío. Con un núcleo, 6 s.
+                $process = new Process(['tesseract', $path, 'stdout', '-l', 'spa', '--psm', $psm], null, ['OMP_THREAD_LIMIT' => '1']);
                 $process->setTimeout(30);
                 $process->run();
 
@@ -2166,9 +2291,8 @@ class WaBotService
                 return $this->sendPaymentLink($company, $session, $phone, null, $total, $invoices->count());
             }
 
-            $wa = new WhatsAppService($company->id, false, 'meta');
-            $this->recordBotConversationMessage($company, $phone, 'system', 'Opciones de pago');
-            $wa->sendInteractiveButtons(
+            $this->enviarBotones(
+                $company,
                 $phone,
                 "Hola {$client->names}, tienes {$invoices->count()} facturas pendientes por un total de " . $this->formatMoney($total) . ".\n\n¿Qué deseas pagar?",
                 [
@@ -2321,9 +2445,8 @@ class WaBotService
 
                 $session->update(['current_step' => 'choose_invoice', 'expires_at' => self::vencimientoSesion()]);
 
-                $wa = new WhatsAppService($company->id, false, 'meta');
-                $this->recordBotConversationMessage($company, $phone, 'system', 'Listado de facturas por pagar');
-                $wa->sendInteractiveList(
+                $this->enviarLista(
+                    $company,
                     $phone,
                     'Selecciona la factura que deseas pagar:',
                     [['title' => 'Pendientes', 'rows' => $rows]],
@@ -2411,9 +2534,7 @@ class WaBotService
             ]);
 
             $texto = "Total a pagar: " . $this->formatMoney($amount) . "\n\n¿Cómo prefieres pagar?";
-            $this->recordBotConversationMessage($company, $phone, 'system', $texto);
-
-            (new WhatsAppService($company->id, false, 'meta'))->sendInteractiveButtons($phone, $texto, [
+            $this->enviarBotones($company, $phone, $texto, [
                 ['id' => 'pm_nequi',  'title' => 'Pagar con Nequi'],
                 ['id' => 'pm_all',    'title' => 'PSE y otros'],
                 ['id' => 'pm_cancel', 'title' => 'Cancelar'],
@@ -2466,9 +2587,7 @@ class WaBotService
         $texto = "Le enviamos el cobro a su app de Nequi y lo apruebas ahí mismo, sin salir de WhatsApp.\n\n"
             . "¿Le lo enviamos al *{$this->celularBonito($guardado)}*?";
 
-        $this->recordBotConversationMessage($company, $phone, 'system', $texto);
-
-        (new WhatsAppService($company->id, false, 'meta'))->sendInteractiveButtons($phone, $texto, [
+        $this->enviarBotones($company, $phone, $texto, [
             ['id' => 'nq_si',     'title' => 'Sí, a ese'],
             ['id' => 'nq_otro',   'title' => 'Otro número'],
             ['id' => 'pm_cancel', 'title' => 'Cancelar'],
@@ -2699,9 +2818,132 @@ class WaBotService
             : $text . "\n\nEscribe *menu* para volver al inicio.";
     }
 
-    private function sendTextMessage(Company $company, string $to, string $text): void
+    /**
+     * Botones, dejándolos también en el CRM.
+     *
+     * El bot envía con las salidas a Meta calladas (se anota él mismo), y solo
+     * anotaba los textos: el asesor veía al cliente contestar «Sí, es correcta»
+     * a una pregunta que no aparecía en el chat.
+     */
+    private function enviarBotones(Company $company, string $to, string $body, array $buttons, string $header = ''): array
     {
-        $text = $this->conSalidaAlMenu($text);
+        $this->recordBotConversationMessage($company, $to, 'system', $this->textoConOpciones($body, array_column($buttons, 'title')));
+
+        return (new WhatsAppService($company->id, false, 'meta'))->sendInteractiveButtons($to, $body, $buttons, $header);
+    }
+
+    /** Lista interactiva, dejándola también en el CRM (ver enviarBotones). */
+    private function enviarLista(Company $company, string $to, string $body, array $sections, string $buttonText = 'Opciones'): array
+    {
+        $titulos = [];
+        foreach ($sections as $seccion) {
+            foreach ($seccion['rows'] ?? [] as $fila) {
+                $titulos[] = trim(($fila['title'] ?? '') . (!empty($fila['description']) ? ' · ' . $fila['description'] : ''));
+            }
+        }
+
+        $this->recordBotConversationMessage($company, $to, 'system', $this->textoConOpciones($body, $titulos));
+
+        return (new WhatsAppService($company->id, false, 'meta'))->sendInteractiveList($to, $body, $sections, $buttonText);
+    }
+
+    /** Como muestra el CRM un mensaje con opciones (igual que SalidasDeMetaAlCrm). */
+    private function textoConOpciones(string $body, array $opciones): string
+    {
+        $opciones = array_filter(array_map('strval', $opciones));
+
+        return $body . ($opciones ? "\n\n" . implode("\n", array_map(fn ($o) => "▫️ {$o}", $opciones)) : '');
+    }
+
+    /**
+     * Le deja la conversación a una persona.
+     *
+     * Lo que el bot no sabe resolver (el cliente pagó y sigue sin internet, una
+     * queja escrita a mano) no puede quedarse en un «Opción no válida» o en un
+     * cierre por inactividad: se calla y la conversación queda para un asesor.
+     */
+    private function pasarAUnAsesor(Company $company, string $phone, string $motivo): bool
+    {
+        // Sin «escribe menu»: con el bot en pausa, el menú ya no contestaría.
+        $this->sendTextMessage(
+            $company,
+            $phone,
+            'Entiendo. Le paso con un asesor, que revisa su caso y le responde por este mismo chat.',
+            false
+        );
+
+        DB::table('wa_bot_pauses')->updateOrInsert(
+            ['company_id' => $company->id, 'provider' => 'meta', 'phone' => $phone],
+            ['paused_at' => now(), 'updated_at' => now(), 'created_at' => now()],
+        );
+
+        // Que quede en la bandeja como chat por atender, no como uno cerrado.
+        $ultima = DB::table('crm_conversations as c')
+            ->join('crm_customers as k', 'k.id', '=', 'c.customer_id')
+            ->where('c.company_id', $company->id)
+            ->where('c.provider', 'meta')
+            ->where('k.phone', $phone)
+            ->orderByDesc('c.id')
+            ->first(['c.id', 'c.status']);
+
+        if ($ultima && $ultima->status === 'closed') {
+            DB::table('crm_conversations')->where('id', $ultima->id)->update(['status' => 'new', 'updated_at' => now()]);
+        }
+
+        Log::info('[WaBotService] Conversación pasada a un asesor', ['company_id' => $company->id, 'motivo' => $motivo]);
+
+        $this->clearSession($company->id, $phone);
+
+        return true;
+    }
+
+    /**
+     * ¿Es una consulta que el bot no sabe atender?
+     *
+     * Una falla del servicio («ya pagué y no tenemos internet») o el pedido de
+     * hablar con una persona. Si el asistente de soporte la hubiera tomado, no
+     * habría llegado hasta aquí.
+     */
+    private function esParaUnaPersona(Company $company, string $message): bool
+    {
+        if ($this->esRespuestaDeBoton) {
+            return false;
+        }
+
+        $palabras = null;
+        try {
+            $palabras = \App\Models\SoporteConfig::deEmpresa($company->id)->palabras;
+        } catch (\Throwable $e) {
+            // Sin configuración valen las palabras de siempre.
+        }
+
+        if (\App\Services\Soporte\AgenteDeSoporte::suena($message, $palabras)) {
+            return true;
+        }
+
+        return preg_match('/\b(asesor|asesora|agente|una persona|un humano|operador|operadora)\b/u', $message) === 1;
+    }
+
+    /**
+     * Lo que el cliente escribió no es ninguna de las opciones del paso.
+     *
+     * Un texto escrito a mano y de varias palabras es una consulta de verdad: va
+     * a un asesor. Un botón viejo o una palabra suelta: se le repite la pregunta.
+     */
+    private function noEntendido(Company $company, string $phone, string $message, callable $repetir): bool
+    {
+        if (!$this->esRespuestaDeBoton && count(preg_split('/\s+/u', trim($message), -1, PREG_SPLIT_NO_EMPTY)) >= 4) {
+            return $this->pasarAUnAsesor($company, $phone, 'texto libre que el bot no entendió');
+        }
+
+        $repetir();
+
+        return true;
+    }
+
+    private function sendTextMessage(Company $company, string $to, string $text, bool $conMenu = true): void
+    {
+        $text = $conMenu ? $this->conSalidaAlMenu($text) : $text;
 
         $this->recordBotConversationMessage($company, $to, 'system', $text);
 
@@ -2721,7 +2963,26 @@ class WaBotService
         }
     }
 
-    private function recordBotConversationMessage(Company $company, string $phone, string $senderType, string $content, ?string $externalId = null): void
+    /**
+     * La foto o el documento que mandó el cliente, guardado, para mostrarlo en el CRM. Antes en el
+     * chat de Meta sólo quedaba «[Comprobante de pago]» y el asesor no veía la imagen.
+     *
+     * @return array{tipo:string, url:string}|null
+     */
+    private function archivoDelMensaje(Company $company, array $payload): ?array
+    {
+        $media = (array) ($payload['payment_proof_media'] ?? []);
+
+        if (!$media) {
+            return null;
+        }
+
+        $archivo = $this->storePaymentProofMedia($company, $media);
+
+        return $archivo['path'] ? ['tipo' => ($payload['type'] ?? '') === 'document' ? 'document' : 'image', 'url' => $archivo['path']] : null;
+    }
+
+    private function recordBotConversationMessage(Company $company, string $phone, string $senderType, string $content, ?string $externalId = null, ?array $archivo = null): void
     {
         // Duplicado solo dentro de la empresa: el mismo id puede estar en otra.
         if ($externalId && DB::table('crm_messages as m')
@@ -2765,8 +3026,9 @@ class WaBotService
         $messageId = DB::table('crm_messages')->insertGetId([
             'conversation_id' => $conversationId,
             'sender_type' => $senderType,
-            'message_type' => 'text',
+            'message_type' => $archivo['tipo'] ?? 'text',
             'content' => $content,
+            'media_url' => $archivo['url'] ?? null,
             'external_id' => $externalId,
             'created_at' => now(),
             'updated_at' => now(),
@@ -2785,11 +3047,15 @@ class WaBotService
         $filename = 'factura_' . preg_replace('/[^A-Za-z0-9_-]/', '_', $number) . '.pdf';
         // Enlace firmado: la ruta por número de factura ya no es pública.
         $pdfUrl = \App\Http\Controllers\InvoiceLinkController::urlFor((int) $invoice->id);
+        $pie = "Factura #{$number}. Abre el documento para descargarla.";
+
+        $this->recordBotConversationMessage($company, $to, 'system', $pie, null, ['tipo' => 'document', 'url' => $pdfUrl]);
+
         $result = (new WhatsAppService($company->id, false, 'meta'))->sendDocument(
             $to,
             $pdfUrl,
             $filename,
-            "Factura pendiente #{$number}. Abre el documento para descargarla."
+            $pie
         );
 
         if (($result['success'] ?? true) === false) {

@@ -160,7 +160,7 @@ try {
     }
 }else {
 
-        $sendResult = match ($type) {
+        $sendResult = \App\Services\Crm\SalidasDeMetaAlCrm::sinAnotar(fn () => match ($type) {
             'image' => $this->whatsAppService->sendImage(
                 $conversation->phone,
                 $publicUrl,
@@ -177,7 +177,7 @@ try {
                 $originalName
             ),
             default => throw new \Exception('Tipo no soportado'),
-        };
+        });
 
         $finalMediaUrl = $publicUrl;
         $finalMime     = $mimeType;

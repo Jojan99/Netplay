@@ -16,8 +16,9 @@ class Mensajero
     /** Devuelve el id que WhatsApp le da al mensaje, o null. */
     public function enviar(int $companyId, string $provider, ?string $instancia, string $telefono, string $texto): ?string
     {
+        // El asistente guarda su propio mensaje en el CRM.
         return \App\Services\Cobranza\Mensajero::idDe(
-            (new WhatsAppService($companyId, false, $provider, $instancia))->mensajeInformativo($telefono, $texto)
+            \App\Services\Crm\SalidasDeMetaAlCrm::sinAnotar(fn () => (new WhatsAppService($companyId, false, $provider, $instancia))->mensajeInformativo($telefono, $texto))
         );
     }
 

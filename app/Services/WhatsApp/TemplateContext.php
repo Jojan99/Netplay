@@ -176,6 +176,19 @@ class TemplateContext
      */
     private function soporte(Company $company): string
     {
+        // Con WhatsApp por Meta, el número de contacto es el mismo de la línea de Meta: así el
+        // cliente responde por donde le llegó el mensaje y lo atiende el bot o el CRM de Meta.
+        if ($company->wa_provider === 'meta') {
+            try {
+                $meta = (string) (new \App\Services\MetaWhatsAppService($company->id))->businessPhoneNumber();
+                if ($meta !== '') {
+                    return strlen($meta) === 12 && str_starts_with($meta, '57') ? substr($meta, 2) : $meta;
+                }
+            } catch (\Throwable $e) {
+                // Si Meta no contesta, el número propio de la empresa.
+            }
+        }
+
         $propio = trim((string) ($company->invoice_phone ?: $company->phone ?: ''));
 
         if ($propio !== '') {
