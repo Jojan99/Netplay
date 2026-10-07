@@ -178,6 +178,26 @@ class AutoSuspendService
      * @param  array<int,int> $userIds  ids de «users»
      * @return ?array<int,int>  los que el router confirmó; null si no hubo conexión con ninguno
      */
+    /**
+     * Deja al cliente en el router como está en la plataforma: cortado si está
+     * suspendido, habilitado si está activo. Es lo que corrige un descuadre de la
+     * revisión «plataforma contra router» (ver PlataformaContraRouter).
+     *
+     * @return bool|null true si el router quedó como la plataforma; null si no hubo conexión.
+     */
+    public function aplicarEstadoDeLaPlataforma(int $companyId, int $userId): ?bool
+    {
+        $estado = DB::table('user_data')->where('company_id', $companyId)->where('user_id', $userId)->where('active', 1)->value('status_internet_id');
+
+        if ($estado === null) {
+            return false;
+        }
+
+        $hechos = $this->aplicarEnElRouter($companyId, [$userId], (int) $estado === 2);
+
+        return $hechos === null ? null : in_array($userId, array_map('intval', $hechos), true);
+    }
+
     private function aplicarEnElRouter(int $companyId, array $userIds, bool $suspender): ?array
     {
         if (empty($userIds)) return [];

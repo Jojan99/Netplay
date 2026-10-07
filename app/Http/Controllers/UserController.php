@@ -516,17 +516,57 @@ class UserController extends Controller
         $results = DB::table('user_data as ud')
             ->join('users', 'users.id', '=', 'ud.user_id')
             ->where('users.company_id', getSessionCompanyId())
-            ->where(function ($query) use ($q) {
-                $query->where('ud.names', 'like', "%{$q}%")
-                      ->orWhere('ud.lastname', 'like', "%{$q}%")
-                      ->orWhere('ud.dni', 'like', "%{$q}%")
-                      ->orWhere('users.username', 'like', "%{$q}%");
-            })
+            ->tap(fn ($query) => \App\Support\BusquedaPorPalabras::aplicar($query, $q, ['ud.names', 'ud.lastname', 'ud.dni', 'users.username'], ['ud.dni', 'ud.phone']))
             ->select('ud.user_id as id', 'ud.names', 'ud.lastname', 'ud.dni', 'ud.phone', 'ud.email', 'ud.router_id')
             ->limit(10)
             ->get();
 
         return standardApiReponse('ok', $results, 0, JsonResponse::HTTP_OK);
+    }
+
+    /** Quién está de una forma en la plataforma y de otra en el MikroTik. Solo lee. */
+    public function descuadresConElRouter(\App\Services\Red\PlataformaContraRouter $revision): object
+    {
+        $companyId = (int) getSessionCompanyId();
+
+        return standardApiReponse('Revisión hecha', $revision->revisar($companyId), 0, JsonResponse::HTTP_OK);
+    }
+
+    /** Corrige un descuadre: deja al cliente en el router como está en la plataforma. */
+    public function aplicarEstadoEnRouter(int $id, \App\Services\AutoSuspendService $servicio): object
+    {
+        $companyId = (int) getSessionCompanyId();
+        $r = $servicio->aplicarEstadoDeLaPlataforma($companyId, $id);
+
+        if ($r) {
+            DB::table('user_audit_logs')->insert([
+                'user_id' => $id, 'changed_by' => getSessionUserId(), 'company_id' => $companyId,
+                'field_changed' => 'router', 'old_value' => null, 'new_value' => null,
+                'description' => 'Router igualado al estado de la plataforma (revisión plataforma contra router)',
+                'created_at' => now(), 'updated_at' => now(),
+            ]);
+        }
+
+        return $r
+            ? standardApiReponse('Listo: el router quedó como la plataforma.', true, 0, JsonResponse::HTTP_OK)
+            : standardApiReponse($r === null ? 'No hubo conexión con el MikroTik.' : 'El router no aplicó el cambio: revíselo a mano.', false, 1, JsonResponse::HTTP_OK);
+    }
+
+    /**
+     * Corrige el documento del cliente en todos lados (ficha, usuario, router, CRM,
+     * bot y tickets). En «Editar» es de solo lectura: ver CambioDeDocumento.
+     */
+    public function cambiarDocumento(int $id, Request $request, \App\Services\Clientes\CambioDeDocumento $cambio): object
+    {
+        $companyId = (int) getSessionCompanyId();
+
+        if (!$companyId) {
+            return standardApiReponse('Sesión sin empresa asociada', null, 1, JsonResponse::HTTP_UNAUTHORIZED);
+        }
+
+        $r = $cambio->cambiar($companyId, $id, (string) $request->input('documento', ''), getSessionUserId());
+
+        return standardApiReponse($r['mensaje'], $r, $r['ok'] ? 0 : 1, $r['ok'] ? JsonResponse::HTTP_OK : JsonResponse::HTTP_UNPROCESSABLE_ENTITY);
     }
 
     public function getAuditLog(int $user_id): object

@@ -25,6 +25,11 @@ Route::prefix('user')->group(function () {
         Route::get('{id}/en-router', [UserController::class, 'enRouter'])->whereNumber('id');
         // Facturación electrónica del cliente (cobra por la pasarela).
         Route::post('{id}/facturacion-electronica', [UserController::class, 'facturacionElectronica'])->whereNumber('id');
+        // Corregir la cédula: se cambia también en el router, el CRM, el bot y los tickets.
+        Route::post('{id}/documento', [UserController::class, 'cambiarDocumento'])->whereNumber('id');
+        // Plataforma contra MikroTik: descuadres (solo lee) y su corrección, cliente por cliente.
+        Route::get('router/descuadres', [UserController::class, 'descuadresConElRouter']);
+        Route::post('{id}/router/aplicar-estado', [UserController::class, 'aplicarEstadoEnRouter'])->whereNumber('id');
         // Trato especial: el descuento que se le aplica todos los meses.
         Route::post('{id}/descuento', [UserController::class, 'guardarDescuento'])->whereNumber('id');
     });

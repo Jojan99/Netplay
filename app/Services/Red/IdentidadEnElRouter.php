@@ -90,7 +90,9 @@ class IdentidadEnElRouter
                 'connection_type' => (string) ($f->connection_type ?: 'static'),
                 'router_id'       => $f->router_id ? (int) $f->router_id : null,
                 'activo'          => (bool) $f->active,
-                'suspendido'      => (int) $f->status === 1,
+                // El estado real es status_internet_id; STATUS es un campo viejo que la
+                // suspensión manual no escribía y no siempre está al día.
+                'suspendido'      => (int) $f->status_internet_id === 2,
                 'status_internet_id' => (int) $f->status_internet_id,
             ];
         }

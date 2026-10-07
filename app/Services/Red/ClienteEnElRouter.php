@@ -246,6 +246,57 @@ class ClienteEnElRouter
         });
     }
 
+    /**
+     * Cambia el documento en el comment de lo que el cliente tiene en el router.
+     *
+     * El router reconoce a cada cliente por el documento que va en el comment.
+     * Al corregirle la cédula, las entradas quedaban con la vieja: los de IP fija
+     * se seguían encontrando por la IP, pero quien mirara el router veía otro
+     * número. Solo se reescribe el comment, y solo donde aparece el documento
+     * viejo: el usuario PPPoE no se toca (es lo que tiene configurado el equipo
+     * del cliente) ni las entradas que se reconocieron por otra vía.
+     *
+     * Hay que llamarlo ANTES de cambiar el documento en la base: con la cédula
+     * nueva ya guardada, las entradas viejas no se reconocerían como suyas.
+     *
+     * @return array{ok:bool, quitado:list<string>, errores:list<string>}
+     */
+    public function cambiarDocumento(int $userId, string $viejo, string $nuevo): array
+    {
+        $viejo = trim($viejo);
+        $nuevo = trim($nuevo);
+
+        if ($viejo === '' || $nuevo === '' || $viejo === $nuevo) {
+            return ['ok' => true, 'quitado' => [], 'errores' => []];
+        }
+
+        return $this->aplicar($userId, function ($api, array $encontrado) use ($viejo, $nuevo) {
+            $hecho = [];
+
+            foreach ([
+                '/ppp/secret/set'                  => [$encontrado['secrets'], 'credencial PPPoE', 'name'],
+                '/ip/arp/set'                      => [$encontrado['arp'], 'ARP', 'address'],
+                '/ip/firewall/address-list/set'    => [$encontrado['listas'], 'lista', 'address'],
+            ] as $comando => [$entradas, $que, $campo]) {
+                foreach ($entradas as $e) {
+                    $comment = (string) ($e['comment'] ?? '');
+
+                    if ($comment === '' || !str_contains($comment, $viejo)) {
+                        continue;
+                    }
+
+                    $api->query((new Query($comando))
+                        ->equal('.id', $e['.id'])
+                        ->equal('comment', str_replace($viejo, $nuevo, $comment)))->read();
+
+                    $hecho[] = trim($que . ' ' . ($e['list'] ?? '') . ' ' . ($e[$campo] ?? ''));
+                }
+            }
+
+            return $hecho;
+        });
+    }
+
     /* ── Interno ──────────────────────────────────────────────────────────── */
 
     /**

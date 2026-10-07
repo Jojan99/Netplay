@@ -52,7 +52,11 @@ class ManagementRouterRepository implements ManagementRouterRepositoryInterface
         UserData::where('user_id', $data['id_user'])
         ->when($companyId, fn($q) => $q->where('company_id', $companyId))
         ->update([
-            'status_internet_id' => $status
+            'status_internet_id' => $status,
+            // El campo viejo, al día con el estado: la suspensión y la reactivación
+            // automáticas ya lo escribían y la manual no, y quedaban clientes activos
+            // marcados «suspendidos» (y al revés) para quien leyera STATUS.
+            'STATUS' => (int) $status === 2 ? 1 : 0,
         ]);
 
         // Audit log for internet status change
