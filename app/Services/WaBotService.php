@@ -131,7 +131,7 @@ class WaBotService
         // internet» volvía a abrir la consulta de facturas por la palabra
         // «factura», y la queja terminaba en un cierre por inactividad.
         if (!$esPalabraClave && $this->esParaUnaPersona($company, $normalizedMessage)) {
-            return $this->pasarAUnAsesor($company, $from, 'falla del servicio o pide un asesor');
+            return $this->pasarAUnAsesor($company, $from, 'el cliente reporta una falla o pide hablar con alguien');
         }
 
         // La palabra «factura» abre la consulta solo si no hay otra cosa en
@@ -213,6 +213,62 @@ class WaBotService
         }
 
         return $cerradas;
+    }
+
+    /**
+     * Vuelve a encender el bot con ese número, si la pausa la puso el sistema.
+     *
+     * La pausa (el bot le pasó el chat a un asesor, o el asesor contestó desde su
+     * teléfono) no tenía fin: si nadie la quitaba a mano, el cliente se quedaba sin
+     * bot para siempre. La que puso una persona desde el CRM (paused_by) se respeta,
+     * y también la del asistente de soporte mientras tenga el caso abierto.
+     */
+    public function reanudar(int $companyId, string $phone): bool
+    {
+        if (\App\Models\SoporteCaso::abiertoCon($companyId, 'meta', $phone)) {
+            return false;
+        }
+
+        return DB::table('wa_bot_pauses')
+            ->where(['company_id' => $companyId, 'provider' => 'meta', 'phone' => $phone])
+            ->whereNull('paused_by')
+            ->delete() > 0;
+    }
+
+    /**
+     * Las pausas del sistema que quedaron olvidadas: nadie del equipo escribió en
+     * ese chat en $horas. Lo llama wa:cerrar-sesiones-inactivas.
+     *
+     * @return int Cuántas se quitaron.
+     */
+    public function reanudarPausasOlvidadas(int $horas = 24): int
+    {
+        $limite = now()->subHours($horas);
+        $reanudadas = 0;
+
+        $pausas = DB::table('wa_bot_pauses')
+            ->where('provider', 'meta')
+            ->whereNull('paused_by')
+            ->where('paused_at', '<', $limite)
+            ->get(['company_id', 'phone']);
+
+        foreach ($pausas as $pausa) {
+            $asesorReciente = DB::table('crm_messages as m')
+                ->join('crm_conversations as c', 'c.id', '=', 'm.conversation_id')
+                ->join('crm_customers as k', 'k.id', '=', 'c.customer_id')
+                ->where('c.company_id', $pausa->company_id)
+                ->where('c.provider', 'meta')
+                ->where('k.phone', $pausa->phone)
+                ->where('m.sender_type', 'agent')
+                ->where('m.created_at', '>=', $limite)
+                ->exists();
+
+            if (!$asesorReciente && $this->reanudar((int) $pausa->company_id, (string) $pausa->phone)) {
+                $reanudadas++;
+            }
+        }
+
+        return $reanudadas;
     }
 
     /** Deja de atender a ese número sin decirle nada: otro (el asistente, un asesor) lo toma. */
@@ -2886,8 +2942,28 @@ class WaBotService
             ->orderByDesc('c.id')
             ->first(['c.id', 'c.status']);
 
-        if ($ultima && $ultima->status === 'closed') {
-            DB::table('crm_conversations')->where('id', $ultima->id)->update(['status' => 'new', 'updated_at' => now()]);
+        if ($ultima) {
+            // Prioridad alta y, si estaba cerrada, de vuelta a la bandeja.
+            DB::table('crm_conversations')->where('id', $ultima->id)->update([
+                'status'     => $ultima->status === 'closed' ? 'new' : $ultima->status,
+                'priority'   => 'high',
+                'updated_at' => now(),
+            ]);
+
+            // Que suene y avise en el panel: los mensajes que atiende el bot no
+            // avisan a nadie, y este cliente esperó dos horas a que alguien mirara.
+            try {
+                broadcast(new \App\Events\InboxUpdatedEvent(
+                    (int) $ultima->id,
+                    $ultima->status === 'closed' ? 'new' : (string) $ultima->status,
+                    'customer',
+                    'meta',
+                    (int) $company->id,
+                    'El bot pasó un chat a un asesor: ' . $motivo,
+                ));
+            } catch (\Throwable $e) {
+                // Sin tiempo real, el chat igual queda en la bandeja con prioridad alta.
+            }
         }
 
         Log::info('[WaBotService] Conversación pasada a un asesor', ['company_id' => $company->id, 'motivo' => $motivo]);
@@ -2933,7 +3009,7 @@ class WaBotService
     private function noEntendido(Company $company, string $phone, string $message, callable $repetir): bool
     {
         if (!$this->esRespuestaDeBoton && count(preg_split('/\s+/u', trim($message), -1, PREG_SPLIT_NO_EMPTY)) >= 4) {
-            return $this->pasarAUnAsesor($company, $phone, 'texto libre que el bot no entendió');
+            return $this->pasarAUnAsesor($company, $phone, 'el cliente escribió algo que el bot no entendió');
         }
 
         $repetir();

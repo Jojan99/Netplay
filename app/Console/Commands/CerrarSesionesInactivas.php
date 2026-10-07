@@ -27,6 +27,12 @@ class CerrarSesionesInactivas extends Command
             ? 'No había conversaciones que cerrar.'
             : "Se cerraron {$cerradas} conversación(es) por inactividad.");
 
+        // El bot que se pausó para un asesor y nadie volvió a encender.
+        $reanudadas = $bot->reanudarPausasOlvidadas();
+        if ($reanudadas > 0) {
+            $this->info("Se volvió a encender el bot con {$reanudadas} número(s) sin atención de un asesor en 24 h.");
+        }
+
         return self::SUCCESS;
     }
 }

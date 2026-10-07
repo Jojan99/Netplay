@@ -23,6 +23,15 @@ class ListaDeClientes
     private const CON_FE = 'COALESCE(cab_facturations.billing_electronic, 0) = 1';
     /** Mandó un comprobante que todavía espera en la auditoría (la burbuja de pago). */
     private const CON_PAGO = "EXISTS (SELECT 1 FROM payment_proofs pp WHERE pp.user_id = users.id AND pp.company_id = users.company_id AND pp.status = 'pending')";
+    /** Sin facturas por pagar: el mismo criterio con el que AutoSuspendService reactiva solo. */
+    private const AL_DIA = 'NOT EXISTS (SELECT 1 FROM det_facturations df WHERE df.cab_id = cab_facturations.id AND df.paid = 0 AND df.anulada_en IS NULL AND df.abone <> 1)';
+    /**
+     * Pagó y sigue suspendido: está al día, o mandó un comprobante que espera en la
+     * auditoría. Es el cliente que escribe «ya pagué y no tengo internet». Los que un
+     * operador suspendió con «no reactivar automáticamente» no cuentan: están así a propósito.
+     */
+    private const PAGO_SUSPENDIDO = "(internet_status.name <> 'ACTIVE' AND COALESCE(user_data.no_reactivar_auto, 0) = 0 AND ("
+        . self::AL_DIA . ' OR ' . self::CON_PAGO . '))';
 
     public function pagina(array $filtros): array
     {
@@ -35,7 +44,8 @@ class ListaDeClientes
             COALESCE(SUM(" . self::SIN_IP . "), 0) AS sin_ip,
             COALESCE(SUM(" . self::SIN_WA . "), 0) AS sin_wa,
             COALESCE(SUM(" . self::CON_FE . "), 0) AS con_fe,
-            COALESCE(SUM(" . self::CON_PAGO . "), 0) AS con_pago
+            COALESCE(SUM(" . self::CON_PAGO . "), 0) AS con_pago,
+            COALESCE(SUM(" . self::PAGO_SUSPENDIDO . "), 0) AS pago_suspendido
         ")->first();
 
         $conteos = [
@@ -46,6 +56,7 @@ class ListaDeClientes
             'sin_wa'      => (int) $c->sin_wa,
             'con_fe'      => (int) $c->con_fe,
             'con_pago'    => (int) $c->con_pago,
+            'pago_suspendido' => (int) $c->pago_suspendido,
         ];
 
         $query = clone $base;
@@ -57,6 +68,7 @@ class ListaDeClientes
             case 'nowa':      $query->whereRaw(self::SIN_WA); $total = $conteos['sin_wa']; break;
             case 'fe':        $query->whereRaw(self::CON_FE); $total = $conteos['con_fe']; break;
             case 'pago':      $query->whereRaw(self::CON_PAGO); $total = $conteos['con_pago']; break;
+            case 'pagosusp':  $query->whereRaw(self::PAGO_SUSPENDIDO); $total = $conteos['pago_suspendido']; break;
             default:          $total = $conteos['todos'];
         }
 
@@ -82,7 +94,10 @@ class ListaDeClientes
             'user_data.connection_type',
             'user_data.control_velocidad',
             DB::raw('COALESCE(user_data.whatsapp_enabled, 1) AS whatsapp_enabled'),
-            DB::raw('COALESCE(cab_facturations.billing_electronic, 0) AS billing_electronic')
+            DB::raw('COALESCE(cab_facturations.billing_electronic, 0) AS billing_electronic'),
+            // Por qué está en «Pagó y sigue suspendido»: al día se reactiva ya; con
+            // comprobante, primero hay que aprobarlo en la auditoría.
+            DB::raw('(' . self::AL_DIA . ') AS al_dia')
         )
             // Los más recientes primero: el cliente recién creado queda a la vista.
             ->orderByDesc('users.id')

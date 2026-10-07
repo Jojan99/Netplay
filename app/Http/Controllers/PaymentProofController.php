@@ -129,12 +129,12 @@ class PaymentProofController extends Controller
             ->where('status', 'pending')
             ->whereNotNull('user_id')
             ->groupBy('user_id')
-            ->selectRaw('user_id, COUNT(*) AS total, MAX(created_at) AS ultimo')
+            ->selectRaw('user_id, COUNT(*) AS total, MAX(created_at) AS ultimo, MIN(created_at) AS desde')
             ->get();
 
         return response()->json([
             'status' => 'success',
-            'data' => $filas->mapWithKeys(fn ($f) => [(int) $f->user_id => ['total' => (int) $f->total, 'ultimo' => $f->ultimo]]),
+            'data' => $filas->mapWithKeys(fn ($f) => [(int) $f->user_id => ['total' => (int) $f->total, 'ultimo' => $f->ultimo, 'desde' => $f->desde]]),
         ]);
     }
 
