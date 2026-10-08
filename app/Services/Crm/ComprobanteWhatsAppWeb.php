@@ -59,6 +59,8 @@ class ComprobanteWhatsAppWeb
                 ->first();
 
             if ($repetido) {
+                $this->completarTitular($repetido, $cliente, $companyId);
+
                 // Devolver el cliente también aquí: sin esto el bot respondía
                 // "lo registramos a nombre de undefined".
                 return [
@@ -87,6 +89,8 @@ class ComprobanteWhatsAppWeb
                 ->first();
 
             if ($mismaRef) {
+                $this->completarTitular($mismaRef, $cliente, $companyId);
+
                 return [
                     'ok'       => true,
                     'proof_id' => (int) $mismaRef->id,
@@ -297,6 +301,34 @@ class ComprobanteWhatsAppWeb
     }
 
     /** La factura pendiente más vieja: es la que el cliente suele estar pagando. */
+    /**
+     * Un comprobante que entró «sin titular» y vuelve a llegar ya con el cliente
+     * (dio la cédula un momento después): se le asigna. Antes la plataforma solo
+     * respondía «ya registrado» y el comprobante se quedaba sin titular.
+     */
+    private function completarTitular(PaymentProof $proof, ?object $cliente, int $companyId): void
+    {
+        if (!$cliente || $proof->user_id || $proof->status !== 'pending') {
+            return;
+        }
+
+        $factura = $this->facturaPendiente($companyId, (int) $cliente->user_id);
+
+        $proof->update([
+            'user_id'     => $cliente->user_id,
+            'invoice_id'  => $proof->invoice_id ?: $factura?->id,
+            'raw_payload' => ['sin_titular' => false, 'dni' => $cliente->dni] + (array) ($proof->raw_payload ?? []),
+        ]);
+
+        \App\Models\PaymentProofAudit::create([
+            'payment_proof_id' => $proof->id,
+            'old_status' => 'pending',
+            'new_status' => 'pending',
+            'reason' => 'Titular identificado cuando el cliente dio sus datos: ' . trim($cliente->names . ' ' . $cliente->lastname),
+            'metadata' => ['source' => 'whatsapp_web', 'user_id' => $cliente->user_id, 'factura' => $factura?->id],
+        ]);
+    }
+
     public function facturaPendiente(int $companyId, int $userId): ?object
     {
         return DB::table('det_facturations as d')

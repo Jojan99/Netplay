@@ -106,4 +106,19 @@ class ComprobanteSinTitularTest extends TestCase
         $this->assertSame($this->clienteId, (int) $proof->user_id);
         $this->assertSame($this->facturaId, (int) $proof->invoice_id);
     }
+
+    public function test_si_despues_da_la_cedula_el_mismo_comprobante_queda_con_su_cliente(): void
+    {
+        // Primero llega sin poder identificarlo (el caso del 8 de octubre, #437).
+        $primero = $this->registrarConCedula('5365699');
+        $this->assertTrue($primero['sin_titular']);
+
+        // Un momento después da su cédula: es el mismo archivo.
+        $segundo = $this->registrarConCedula('1122334455');
+
+        $this->assertSame($primero['proof_id'], $segundo['proof_id'], 'No se duplica el comprobante.');
+        $proof = PaymentProof::find($primero['proof_id']);
+        $this->assertSame($this->clienteId, (int) $proof->user_id);
+        $this->assertSame($this->facturaId, (int) $proof->invoice_id);
+    }
 }
