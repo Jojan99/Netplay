@@ -540,7 +540,7 @@ class UserController extends Controller
 
         if ($r) {
             DB::table('user_audit_logs')->insert([
-                'user_id' => $id, 'changed_by' => getSessionUserId(), 'company_id' => $companyId,
+                'user_id' => $id, 'changed_by' => getSessionUserId() ?? 0, 'company_id' => $companyId,
                 'field_changed' => 'router', 'old_value' => null, 'new_value' => null,
                 'description' => 'Router igualado al estado de la plataforma (revisión plataforma contra router)',
                 'created_at' => now(), 'updated_at' => now(),

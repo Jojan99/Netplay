@@ -71,8 +71,8 @@ class CambioDeDocumento
 
         // Primero el router: con la cédula nueva ya guardada, las entradas que
         // llevan la vieja dejarían de reconocerse como suyas.
-        $enRouter = (new ClienteEnElRouter(app(\App\Managers\Interfaces\ConectionRouterManagerInterface::class), $companyId))
-            ->cambiarDocumento($userId, $viejo, $nuevo);
+        $router = new ClienteEnElRouter(app(\App\Managers\Interfaces\ConectionRouterManagerInterface::class), $companyId);
+        $enRouter = $router->cambiarDocumento($userId, $viejo, $nuevo);
 
         if ($enRouter['ok']) {
             $hecho[] = $enRouter['quitado']
@@ -83,40 +83,52 @@ class CambioDeDocumento
             $avisos[] = 'No se pudo actualizar el MikroTik (' . implode('; ', $enRouter['errores']) . '). El cliente sigue funcionando; corrija el comentario a mano.';
         }
 
-        DB::transaction(function () use ($companyId, $userId, $viejo, $nuevo, $cambiaUsuario, $autor, &$hecho) {
-            DB::table('user_data')->where('company_id', $companyId)->where('user_id', $userId)->update(['dni' => $nuevo, 'updated_at' => now()]);
-            $hecho[] = 'Ficha del cliente';
+        try {
+            DB::transaction(function () use ($companyId, $userId, $viejo, $nuevo, $cambiaUsuario, $autor, &$hecho) {
+                DB::table('user_data')->where('company_id', $companyId)->where('user_id', $userId)->update(['dni' => $nuevo, 'updated_at' => now()]);
+                $hecho[] = 'Ficha del cliente';
 
-            if ($cambiaUsuario) {
-                DB::table('users')->where('id', $userId)->update(['username' => $nuevo, 'updated_at' => now()]);
-                $hecho[] = 'Usuario de acceso';
-            }
-
-            $copias = [
-                'CRM'                    => DB::table('crm_customers')->where('company_id', $companyId)->where('user_id', $userId)->update(['dni' => $nuevo, 'updated_at' => now()]),
-                'Identificación del CRM' => DB::table('crm_identificaciones')->where('company_id', $companyId)->where('user_id', $userId)->where('dni', $viejo)->update(['dni' => $nuevo, 'updated_at' => now()]),
-                'Bot de WhatsApp'        => DB::table('wa_identities')->where('company_id', $companyId)->where('user_id', $userId)->update(['dni' => $nuevo, 'updated_at' => now()]),
-                'Tickets'                => DB::table('tickets')->where('company_id', $companyId)->where('user_id', $userId)->where('cedula', $viejo)->update(['cedula' => $nuevo, 'updated_at' => now()]),
-            ];
-
-            foreach ($copias as $donde => $filas) {
-                if ($filas > 0) {
-                    $hecho[] = "{$donde} ({$filas})";
+                if ($cambiaUsuario) {
+                    DB::table('users')->where('id', $userId)->update(['username' => $nuevo, 'updated_at' => now()]);
+                    $hecho[] = 'Usuario de acceso';
                 }
+
+                $copias = [
+                    'CRM'                    => DB::table('crm_customers')->where('company_id', $companyId)->where('user_id', $userId)->update(['dni' => $nuevo, 'updated_at' => now()]),
+                    'Identificación del CRM' => DB::table('crm_identificaciones')->where('company_id', $companyId)->where('user_id', $userId)->where('dni', $viejo)->update(['dni' => $nuevo, 'updated_at' => now()]),
+                    'Bot de WhatsApp'        => DB::table('wa_identities')->where('company_id', $companyId)->where('user_id', $userId)->update(['dni' => $nuevo, 'updated_at' => now()]),
+                    'Tickets'                => DB::table('tickets')->where('company_id', $companyId)->where('user_id', $userId)->where('cedula', $viejo)->update(['cedula' => $nuevo, 'updated_at' => now()]),
+                ];
+
+                foreach ($copias as $donde => $filas) {
+                    if ($filas > 0) {
+                        $hecho[] = "{$donde} ({$filas})";
+                    }
+                }
+
+                DB::table('user_audit_logs')->insert([
+                    'user_id'       => $userId,
+                    // La columna no admite nulo: 0 es «el sistema», como en el resto del historial.
+                    'changed_by'    => $autor ?? 0,
+                    'company_id'    => $companyId,
+                    'field_changed' => 'dni',
+                    'old_value'     => $viejo,
+                    'new_value'     => $nuevo,
+                    'description'   => 'Cambio de documento',
+                    'created_at'    => now(),
+                    'updated_at'    => now(),
+                ]);
+            });
+        } catch (\Throwable $e) {
+            // La base no se cambió: el router no puede quedar con la cédula nueva.
+            if ($enRouter['ok'] && $enRouter['quitado']) {
+                $router->cambiarDocumento($userId, $nuevo, $viejo);
             }
 
-            DB::table('user_audit_logs')->insert([
-                'user_id'       => $userId,
-                'changed_by'    => $autor,
-                'company_id'    => $companyId,
-                'field_changed' => 'dni',
-                'old_value'     => $viejo,
-                'new_value'     => $nuevo,
-                'description'   => 'Cambio de documento',
-                'created_at'    => now(),
-                'updated_at'    => now(),
-            ]);
-        });
+            Log::error('[Clientes] Falló el cambio de documento', ['cliente' => $userId, 'error' => $e->getMessage()]);
+
+            return ['ok' => false, 'mensaje' => 'No se pudo cambiar el documento; no quedó nada a medias. Intente de nuevo.'];
+        }
 
         if (DB::table('alegra_contactos')->where('user_id', $userId)->exists()) {
             $avisos[] = 'En Alegra el contacto sigue con el documento ' . $viejo . ': corríjalo allá y se actualiza al sincronizar.';
