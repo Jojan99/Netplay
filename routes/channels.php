@@ -20,13 +20,11 @@ Broadcast::channel('conversation.{conversationId}', function ($user, $conversati
     // return $user->conversations()->where('id', $conversationId)->exists();
 });
 
-Broadcast::channel('crm.inbox', function ($user) {
-    // Sólo el equipo: antes aceptaba a cualquier usuario autenticado.
-    return !\App\Http\Middleware\JwtMiddleware::esCliente($user);
-});
+// 'crm.inbox' era una bandeja común a todas las empresas: cada panel recibía los
+// avisos de las demás. Ya nadie emite por ahí y nadie se puede suscribir.
+Broadcast::channel('crm.inbox', fn ($user) => false);
 
-// Bandeja por empresa. 'crm.inbox' (global) queda solo mientras el panel compilado
-// no se actualice para escuchar este canal.
+// Bandeja por empresa: la única que se usa.
 Broadcast::channel('crm.inbox.{companyId}', function ($user, $companyId) {
     if (\App\Http\Middleware\JwtMiddleware::esCliente($user)) return false;
     return (int) $user->company_id === (int) $companyId;

@@ -20,7 +20,11 @@ class InboxMessageEvent implements ShouldBroadcast
 
     public function broadcastOn()
     {
-        return new PrivateChannel('crm.inbox');
+        // Lleva el contenido del mensaje: nunca por 'crm.inbox', que escuchaban todas
+        // las empresas. Solo por el canal de la empresa de la conversación.
+        $empresa = (int) \Illuminate\Support\Facades\DB::table('crm_conversations')->where('id', $this->conversationId)->value('company_id');
+
+        return $empresa ? [new PrivateChannel('crm.inbox.' . $empresa)] : [];
     }
 
     public function broadcastAs()

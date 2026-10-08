@@ -17,8 +17,8 @@ class ConversationClosedEvent implements ShouldBroadcast
 
     public function broadcastOn()
     {
-        // 'crm.inbox' global solo por compatibilidad; el de la empresa es el que debe usarse.
-        $channels = [new PrivateChannel('crm.inbox')];
+        // Solo el canal de la empresa: 'crm.inbox' lo escuchaban todas.
+        $channels = [];
         if ($this->companyId) $channels[] = new PrivateChannel('crm.inbox.' . $this->companyId);
         return $channels;
     }

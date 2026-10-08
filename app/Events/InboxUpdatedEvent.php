@@ -21,11 +21,9 @@ class InboxUpdatedEvent implements ShouldBroadcast
 
     public function broadcastOn()
     {
-        // 'crm.inbox' es global y lo escuchan todas las empresas: queda solo por
-        // compatibilidad con el panel compilado. El canal correcto es el de la empresa.
-        $channels = [new PrivateChannel('crm.inbox')];
-        if ($this->companyId) $channels[] = new PrivateChannel('crm.inbox.' . $this->companyId);
-        return $channels;
+        // Solo el canal de la empresa. 'crm.inbox' lo escuchaban todas las empresas y a
+        // cada panel le llegaban los avisos (y los ids de conversación) de las demás.
+        return $this->companyId ? [new PrivateChannel('crm.inbox.' . $this->companyId)] : [];
     }
 
     public function broadcastAs()
