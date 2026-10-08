@@ -35,7 +35,7 @@ class RevisorDeRed
     {
         $vistas = [];
 
-        foreach ([$this->senalYCortes(...), $this->tuneles(...), $this->oltsSinSincronizar(...), $this->datosIncompletos(...), $this->sinCaminoDeDatos(...), $this->routerContraPlataforma(...)] as $revision) {
+        foreach ([$this->senalYCortes(...), $this->tuneles(...), $this->oltsSinSincronizar(...), $this->datosIncompletos(...), $this->sinCaminoDeDatos(...), $this->routerContraPlataforma(...), $this->chatsSinAtender(...)] as $revision) {
             try {
                 $vistas = array_merge($vistas, $revision());
             } catch (\Throwable $e) {
@@ -442,6 +442,69 @@ class RevisorDeRed
         }
 
         return array_values(array_unique($claves));
+    }
+
+    /** Minutos que puede esperar un chat que el bot pasó a un asesor. */
+    private const MINUTOS_PARA_ATENDER = 15;
+
+    /**
+     * Chats que el bot le pasó a un asesor y nadie contestó.
+     *
+     * El bot ya avisa y se calla, pero si nadie mira la bandeja el cliente queda
+     * esperando: el primer caso que se corrigió («ya pagué y no tenemos
+     * internet») esperó dos horas. Crítico, para que llegue también al grupo. Se
+     * cierra solo cuando un asesor escribe en ese chat.
+     *
+     * @return list<string>
+     */
+    private function chatsSinAtender(): array
+    {
+        $claves = [];
+
+        // El último traspaso de cada conversación abierta en el último día. Todos los
+        // bots (Meta y WhatsApp Web) cierran el mensaje igual.
+        $traspasos = DB::table('crm_messages as m')
+            ->join('crm_conversations as c', 'c.id', '=', 'm.conversation_id')
+            ->join('crm_customers as k', 'k.id', '=', 'c.customer_id')
+            ->where('c.company_id', $this->companyId)
+            ->whereIn('c.status', ['new', 'in_progress'])
+            ->where('m.sender_type', 'system')
+            ->where(fn ($q) => $q->where('m.content', 'like', '%Le paso con un asesor%')->orWhere('m.content', 'like', '%le responde por este mismo chat%'))
+            ->where('m.created_at', '>=', now()->subDay())
+            ->where('m.created_at', '<=', now()->subMinutes(self::MINUTOS_PARA_ATENDER))
+            ->groupBy('c.id', 'c.provider', 'k.name', 'k.phone', 'k.user_id')
+            ->selectRaw('c.id, c.provider, k.name, k.phone, k.user_id, MAX(m.created_at) AS desde')
+            ->get();
+
+        foreach ($traspasos as $t) {
+            $contesto = DB::table('crm_messages')
+                ->where('conversation_id', $t->id)
+                ->where('sender_type', 'agent')
+                ->where('created_at', '>=', $t->desde)
+                ->exists();
+
+            if ($contesto) {
+                continue;
+            }
+
+            // Sin nombre guardado (o el genérico del CRM), el teléfono dice más.
+            $nombre = trim((string) $t->name);
+            $quien = ($nombre === '' || $nombre === 'Cliente WhatsApp') ? (string) $t->phone : $nombre;
+            $canal = $t->provider === 'meta' ? 'WhatsApp (Meta)' : 'WhatsApp Web';
+            $hora = \Illuminate\Support\Carbon::parse($t->desde)->format('H:i');
+
+            $claves[] = $this->anotar(
+                "chat-sin-atender:{$t->id}",
+                'crm',
+                'critico',
+                "{$quien} espera un asesor desde las {$hora}",
+                "El bot le pasó el chat a un asesor por {$canal} ({$t->phone}) y nadie le ha contestado. Ábralo en el CRM.",
+                ['conversacion' => (int) $t->id, 'telefono' => $t->phone],
+                $t->user_id ? (int) $t->user_id : null,
+            );
+        }
+
+        return $claves;
     }
 
     // ── Interno ───────────────────────────────────────────────────────────
