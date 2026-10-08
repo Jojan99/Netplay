@@ -106,6 +106,18 @@ class ComprobanteConfiable
             }
         }
 
+        // Dos comprobantes para la misma factura pueden ser el mismo pago mandado dos
+        // veces (dos capturas, o una foto y un PDF): aplicar los dos dejaba un abono
+        // doble. Con otro esperando o ya aprobado para esa factura, lo mira una persona.
+        if ($factura && DB::table('payment_proofs')
+            ->where('company_id', $p->company_id)
+            ->where('invoice_id', $factura->id)
+            ->where('id', '<>', $p->id)
+            ->whereIn('status', ['pending', 'approved', 'auto_approved'])
+            ->exists()) {
+            $motivos[] = 'hay otro comprobante para la misma factura';
+        }
+
         return ['puede' => $motivos === [], 'monto' => $monto > 0 ? $monto : null, 'motivos' => $motivos];
     }
 
