@@ -128,6 +128,11 @@ return [
 
     // Celulares que ven el pago en línea aunque la pasarela esté apagada: para
     // probar en producción sin que les llegue a los clientes. Separados por coma.
+    // Dónde guarda el servicio de WhatsApp Web sus pausas del bot (para levantar las olvidadas).
+    'whatsapp_web' => [
+        'archivo_pausas' => env('WA_WEB_ARCHIVO_PAUSAS', '/var/www/whatsapp-service/bot_pauses.json'),
+    ],
+
     'pasarela_piloto' => array_values(array_filter(array_map(
         fn ($t) => substr(preg_replace('/\D/', '', $t), -10),
         explode(',', (string) env('PASARELA_PILOTO_TELEFONOS', ''))

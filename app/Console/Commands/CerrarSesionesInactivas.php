@@ -31,6 +31,9 @@ class CerrarSesionesInactivas extends Command
         // De a 30 por vuelta: la primera vez había 424 en WhatsApp Web, y cada una
         // es un llamado al servicio de Node. Corre cada minuto, así que se ponen al día rápido.
         $reanudadas = $bot->reanudarPausasOlvidadas(24, 30);
+        // Y las que solo conoce el servicio de WhatsApp Web.
+        $reanudadas += $bot->reanudarPausasHuerfanasDeNode(24, 30);
+
         if ($reanudadas > 0) {
             $this->info("Se volvió a encender el bot con {$reanudadas} número(s) sin atención de un asesor en 24 h.");
         }

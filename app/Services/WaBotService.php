@@ -316,6 +316,65 @@ class WaBotService
         return $reanudadas;
     }
 
+    /**
+     * Pausas que solo existen en el servicio de WhatsApp Web.
+     *
+     * Node guarda su propia lista (bot_pauses.json) y la plataforma solo conoce
+     * las que pasaron por ella: las demás no se levantaban nunca y esos clientes
+     * se quedaban sin bot. Toda pausa que pone una persona o el asistente de
+     * soporte tiene su fila en wa_bot_pauses; una que solo está en Node la puso
+     * el sistema, y pasadas $horas se levanta.
+     *
+     * Las de líneas que ya no existen se saltan: esas líneas no reciben mensajes.
+     *
+     * @return int Cuántas se levantaron.
+     */
+    public function reanudarPausasHuerfanasDeNode(int $horas = 24, int $maximo = 30): int
+    {
+        $archivo = (string) config('services.whatsapp_web.archivo_pausas', '/var/www/whatsapp-service/bot_pauses.json');
+        $pausas = is_readable($archivo) ? json_decode((string) file_get_contents($archivo), true) : null;
+
+        if (!is_array($pausas)) {
+            return 0;
+        }
+
+        $conocidas = DB::table('wa_bot_pauses')->where('provider', 'netplay')->pluck('phone')
+            ->map(fn ($t) => substr(preg_replace('/\D/', '', (string) $t), -10))->flip();
+        $limite = (now()->timestamp - $horas * 3600) * 1000;
+        $hechas = 0;
+
+        foreach ($pausas as $clave => $desde) {
+            if ($hechas >= $maximo) {
+                break;
+            }
+
+            [$instancia, $telefono] = array_pad(explode(':', (string) $clave, 2), 2, '');
+
+            if ($telefono === '' || isset($conocidas[$telefono]) || (int) $desde >= $limite) {
+                continue;
+            }
+
+            $empresa = \App\Services\WhatsApp\LineasDeWhatsApp::empresaDeInstancia($instancia);
+
+            if (!$empresa) {
+                continue;
+            }
+
+            try {
+                $r = (new \App\Services\NetplayWhatsAppService((int) $empresa, false, $instancia))->setBotPaused($telefono, false);
+
+                if (is_array($r) && ($r['status'] ?? null) === 'ok') {
+                    $hechas++;
+                }
+            } catch (\Throwable $e) {
+                // Si la línea dejó de existir, la próxima vuelta se la salta igual.
+                Log::info('[WaBotService] No se pudo levantar una pausa de Node', ['instancia' => $instancia, 'error' => $e->getMessage()]);
+            }
+        }
+
+        return $hechas;
+    }
+
     /** Deja de atender a ese número sin decirle nada: otro (el asistente, un asesor) lo toma. */
     public function soltar(int $companyId, string $phone): void
     {
