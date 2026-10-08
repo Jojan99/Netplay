@@ -223,47 +223,92 @@ class WaBotService
      * bot para siempre. La que puso una persona desde el CRM (paused_by) se respeta,
      * y también la del asistente de soporte mientras tenga el caso abierto.
      */
-    public function reanudar(int $companyId, string $phone): bool
+    public function reanudar(int $companyId, string $phone, string $provider = 'meta'): bool
     {
-        if (\App\Models\SoporteCaso::abiertoCon($companyId, 'meta', $phone)) {
+        if (\App\Models\SoporteCaso::abiertoCon($companyId, $provider, $phone)) {
             return false;
         }
 
-        return DB::table('wa_bot_pauses')
-            ->where(['company_id' => $companyId, 'provider' => 'meta', 'phone' => $phone])
-            ->whereNull('paused_by')
-            ->delete() > 0;
+        $pausa = DB::table('wa_bot_pauses')
+            ->where(['company_id' => $companyId, 'provider' => $provider, 'phone' => $phone])
+            ->whereNull('paused_by');
+
+        if (!(clone $pausa)->exists()) {
+            return false;
+        }
+
+        // El bot de WhatsApp Web corre en el servicio de Node y lleva su propia lista:
+        // borrar la fila aquí no lo despierta. Se le avisa primero y, si no confirma,
+        // la pausa se deja como está para no quedar a medias.
+        if ($provider === 'netplay' && !$this->despertarEnNode($companyId, $phone)) {
+            return false;
+        }
+
+        return $pausa->delete() > 0;
+    }
+
+    /** Le dice al servicio de WhatsApp Web que el bot vuelve a atender a ese número, en su línea. */
+    private function despertarEnNode(int $companyId, string $phone): bool
+    {
+        try {
+            $lineaId = DB::table('crm_conversations as c')
+                ->join('crm_customers as k', 'k.id', '=', 'c.customer_id')
+                ->where('c.company_id', $companyId)->where('c.provider', 'netplay')->where('k.phone', $phone)
+                ->orderByDesc('c.id')->value('c.wa_linea_id');
+
+            $r = (new \App\Services\NetplayWhatsAppService(
+                $companyId,
+                false,
+                \App\Services\WhatsApp\LineasDeWhatsApp::instanciaDeConversacion($lineaId ? (int) $lineaId : null, $companyId)
+            ))->setBotPaused($phone, false);
+
+            return is_array($r) && ($r['status'] ?? null) === 'ok';
+        } catch (\Throwable $e) {
+            // 403/404: la línea ya no existe en el servicio (se reemplazó por otra). No
+            // recibe mensajes, así que no hay bot que despertar: la pausa sobra.
+            if (preg_match('/\bWA (403|404)\b/', $e->getMessage())) {
+                return true;
+            }
+
+            Log::warning('[WaBotService] No se pudo reanudar el bot en WhatsApp Web', ['company_id' => $companyId, 'error' => $e->getMessage()]);
+
+            return false;
+        }
     }
 
     /**
      * Las pausas del sistema que quedaron olvidadas: nadie del equipo escribió en
-     * ese chat en $horas. Lo llama wa:cerrar-sesiones-inactivas.
+     * ese chat en $horas. Vale para Meta y para WhatsApp Web (donde había 424 con
+     * más de un día: clientes a los que el bot no les volvía a contestar).
+     * Lo llama wa:cerrar-sesiones-inactivas.
      *
      * @return int Cuántas se quitaron.
      */
-    public function reanudarPausasOlvidadas(int $horas = 24): int
+    public function reanudarPausasOlvidadas(int $horas = 24, ?int $maximo = null): int
     {
         $limite = now()->subHours($horas);
         $reanudadas = 0;
 
         $pausas = DB::table('wa_bot_pauses')
-            ->where('provider', 'meta')
+            ->whereIn('provider', ['meta', 'netplay'])
             ->whereNull('paused_by')
             ->where('paused_at', '<', $limite)
-            ->get(['company_id', 'phone']);
+            ->orderBy('paused_at')
+            ->when($maximo, fn ($q) => $q->limit($maximo))
+            ->get(['company_id', 'provider', 'phone']);
 
         foreach ($pausas as $pausa) {
             $asesorReciente = DB::table('crm_messages as m')
                 ->join('crm_conversations as c', 'c.id', '=', 'm.conversation_id')
                 ->join('crm_customers as k', 'k.id', '=', 'c.customer_id')
                 ->where('c.company_id', $pausa->company_id)
-                ->where('c.provider', 'meta')
+                ->where('c.provider', $pausa->provider)
                 ->where('k.phone', $pausa->phone)
                 ->where('m.sender_type', 'agent')
                 ->where('m.created_at', '>=', $limite)
                 ->exists();
 
-            if (!$asesorReciente && $this->reanudar((int) $pausa->company_id, (string) $pausa->phone)) {
+            if (!$asesorReciente && $this->reanudar((int) $pausa->company_id, (string) $pausa->phone, (string) $pausa->provider)) {
                 $reanudadas++;
             }
         }

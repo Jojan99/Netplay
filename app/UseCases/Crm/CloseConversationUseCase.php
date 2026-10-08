@@ -33,9 +33,9 @@ class CloseConversationUseCase implements CloseConversationUseCaseInterface
 
         // Cerrada la conversación, el bot vuelve a atender a ese número (si la pausa
         // la puso el sistema y no una persona desde el CRM).
-        if (($conversation->provider ?? null) === 'meta' && $phone) {
+        if (in_array($conversation->provider ?? null, ['meta', 'netplay'], true) && $phone) {
             try {
-                app(\App\Services\WaBotService::class)->reanudar((int) $conversation->company_id, (string) $phone);
+                app(\App\Services\WaBotService::class)->reanudar((int) $conversation->company_id, (string) $phone, (string) $conversation->provider);
             } catch (\Throwable $e) {
                 Log::warning('[Cierre de conversación] No se pudo reanudar el bot', ['conversation_id' => $conversationId, 'error' => $e->getMessage()]);
             }
