@@ -75,6 +75,10 @@ class Kernel extends ConsoleKernel
         // queda pagando sin que la factura se entere. Esto lo pregunta.
         $schedule->command('pagos:conciliar')->everyFiveMinutes()->user('www-data')->withoutOverlapping(10)->runInBackground();
 
+        // Suspensiones temporales pedidas por el cliente: empiezan y terminan solas. Cada
+        // hora a los 20 (después del corte automático de las 7 y la facturación de la 1).
+        $schedule->command('clientes:suspensiones-temporales')->hourlyAt(20)->user('www-data')->withoutOverlapping();
+
         // El semáforo de comprobantes vuelve a aprender de lo aprobado y rechazado del día.
         $schedule->command('comprobantes:aprender')->dailyAt('02:40')->user('www-data');
 

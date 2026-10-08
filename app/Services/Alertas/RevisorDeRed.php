@@ -35,7 +35,7 @@ class RevisorDeRed
     {
         $vistas = [];
 
-        foreach ([$this->senalYCortes(...), $this->tuneles(...), $this->oltsSinSincronizar(...), $this->datosIncompletos(...), $this->sinCaminoDeDatos(...), $this->routerContraPlataforma(...), $this->chatsSinAtender(...)] as $revision) {
+        foreach ([$this->senalYCortes(...), $this->tuneles(...), $this->oltsSinSincronizar(...), $this->datosIncompletos(...), $this->sinCaminoDeDatos(...), $this->routerContraPlataforma(...), $this->chatsSinAtender(...), $this->suspensionesConDeuda(...)] as $revision) {
             try {
                 $vistas = array_merge($vistas, $revision());
             } catch (\Throwable $e) {
@@ -442,6 +442,39 @@ class RevisorDeRed
         }
 
         return array_values(array_unique($claves));
+    }
+
+    /**
+     * Clientes que terminaron su suspensión temporal debiendo: no se reactivaron
+     * solos y alguien tiene que llamarlos. Crítico. Se cierra cuando se reactiva
+     * (a mano) o se resuelve la suspensión.
+     *
+     * @return list<string>
+     */
+    private function suspensionesConDeuda(): array
+    {
+        $claves = [];
+
+        $casos = DB::table('suspensiones_temporales as s')
+            ->join('user_data as u', fn ($j) => $j->on('u.user_id', '=', 's.user_id')->on('u.company_id', '=', 's.company_id'))
+            ->where('s.company_id', $this->companyId)
+            ->where('s.estado', 'requiere_atencion')
+            ->get(['s.id', 's.user_id', 's.hasta', 's.nota', 'u.names', 'u.lastname', 'u.dni']);
+
+        foreach ($casos as $c) {
+            $claves[] = $this->anotar(
+                "suspension-temporal:{$c->id}",
+                'clientes',
+                'critico',
+                trim("{$c->names} {$c->lastname}") . ' terminó su suspensión temporal y necesita atención',
+                'Debía volver el ' . \Illuminate\Support\Carbon::parse($c->hasta)->format('d/m/Y') . '. ' . ($c->nota ?: 'Tiene facturas pendientes: no se reactivó.')
+                . ' Cuando pague, reactívelo desde su ficha.',
+                ['documento' => $c->dni],
+                (int) $c->user_id,
+            );
+        }
+
+        return $claves;
     }
 
     /** Minutos que puede esperar un chat que el bot pasó a un asesor. */

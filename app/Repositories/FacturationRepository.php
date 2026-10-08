@@ -39,6 +39,10 @@ class FacturationRepository implements FacturationRepositoryInterface
             ->join('internet_plans', 'internet_plans.id', '=', 'user_data.internet_plans_id')
             ->where('cab_facturations.group', $periodo)
             ->where('user_data.active', 1)
+            // En suspensión temporal no se factura: los días que usó se cobraron al suspender.
+            ->whereNotExists(fn ($q) => $q->selectRaw('1')->from('suspensiones_temporales as st')
+                ->whereColumn('st.user_id', 'cab_facturations.user_id')
+                ->whereIn('st.estado', \App\Services\Clientes\SuspensionTemporal::ESTADOS_SIN_SERVICIO))
             ->where('users.company_id', $companyId)
             ->whereNotIn('users.profile_id', function ($q) use ($companyId) {
                 $q->select('id')->from('profiles')

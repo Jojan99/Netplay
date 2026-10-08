@@ -172,6 +172,18 @@ class CreateDetFacturationUseCase implements CreateDetFacturationUseCaseInterfac
                     $precioFinal = $value['monthly_price'];
                 }
 
+                // Volvió de una suspensión temporal en este período: los días anteriores ya se
+                // cobraron al suspender (o no tuvo servicio), así que solo desde que volvió.
+                $volvio = \App\Services\Clientes\SuspensionTemporal::volvioDespuesDe((int) $value['user_id'], $fechaCorte->copy()->subMonthNoOverflow());
+                if ($volvio && !$volvio->lt($fechaCorte)) {
+                    $volvio = null;
+                }
+                if ($volvio) {
+                    $diasDesdeCreacion = min($diasDesdeCreacion, (int) $volvio->diffInDays($fechaCorte));
+                    $precioFinal = round(($value['monthly_price'] / 30) * $diasDesdeCreacion);
+                    if ($precioFinal <= 0) continue;
+                }
+
                 // El trato especial del cliente, si tiene uno vigente. Antes esto
                 // iba en cero siempre y el descuento había que ponerlo a mano
                 // factura por factura, cada mes.
@@ -183,7 +195,7 @@ class CreateDetFacturationUseCase implements CreateDetFacturationUseCaseInterfac
                 $data['price_total']              = $precioFinal;
                 $data['total']                    = 1;
                 $data['porcentage_discount']      = $trato['porcentaje'];
-                $data['days_facture']             = ($diasDesdeCreacion < 20) ? $diasDesdeCreacion : 30;
+                $data['days_facture']             = ($diasDesdeCreacion < 20 || $volvio) ? $diasDesdeCreacion : 30;
                 $data['discount']                 = $trato['monto'] > 0 ? 1 : 0;
                 $data['price_discount']           = $trato['monto'];
                 $data['paid']                     = 0;

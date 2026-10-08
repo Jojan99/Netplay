@@ -524,6 +524,51 @@ class UserController extends Controller
         return standardApiReponse('ok', $results, 0, JsonResponse::HTTP_OK);
     }
 
+    // ── Suspensión temporal que pide el cliente ────────────────────────────
+
+    /** La que está programada o en curso, y las últimas terminadas. */
+    public function suspensionTemporal(int $id): object
+    {
+        $companyId = (int) getSessionCompanyId();
+        $todas = DB::table('suspensiones_temporales')->where('company_id', $companyId)->where('user_id', $id)->orderByDesc('id')->limit(6)->get();
+
+        return standardApiReponse('ok', [
+            'actual'    => $todas->first(fn ($s) => in_array($s->estado, ['programada', 'activa', 'requiere_atencion'], true)),
+            'historial' => $todas->values(),
+        ], 0, JsonResponse::HTTP_OK);
+    }
+
+    /** Cuánto se le cobraría si se suspende en esa fecha (no hace nada). */
+    public function simularSuspensionTemporal(int $id, Request $request, \App\Services\Clientes\SuspensionTemporal $s): object
+    {
+        $desde = (string) $request->query('desde', today()->toDateString());
+
+        return standardApiReponse('ok', $s->simular((int) getSessionCompanyId(), $id, $desde), 0, JsonResponse::HTTP_OK);
+    }
+
+    public function programarSuspensionTemporal(int $id, Request $request, \App\Services\Clientes\SuspensionTemporal $s): object
+    {
+        $r = $s->programar((int) getSessionCompanyId(), $id, (string) $request->input('desde'), (string) $request->input('hasta'),
+            (string) $request->input('motivo', ''), getSessionUserId());
+
+        return standardApiReponse($r['mensaje'], $r['suspension'] ?? null, $r['ok'] ? 0 : 1, $r['ok'] ? JsonResponse::HTTP_OK : JsonResponse::HTTP_UNPROCESSABLE_ENTITY);
+    }
+
+    /** Cancela la programada, o termina antes la que está en curso (si no debe). */
+    public function cancelarSuspensionTemporal(int $id, \App\Services\Clientes\SuspensionTemporal $s): object
+    {
+        $actual = DB::table('suspensiones_temporales')->where('company_id', (int) getSessionCompanyId())->where('user_id', $id)
+            ->whereIn('estado', ['programada', 'activa', 'requiere_atencion'])->orderByDesc('id')->value('id');
+
+        if (!$actual) {
+            return standardApiReponse('El cliente no tiene una suspensión temporal en curso.', null, 1, JsonResponse::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $r = $s->cancelar((int) $actual, getSessionUserId());
+
+        return standardApiReponse($r['mensaje'], null, $r['ok'] ? 0 : 1, $r['ok'] ? JsonResponse::HTTP_OK : JsonResponse::HTTP_UNPROCESSABLE_ENTITY);
+    }
+
     /** Quién está de una forma en la plataforma y de otra en el MikroTik. Solo lee. */
     public function descuadresConElRouter(\App\Services\Red\PlataformaContraRouter $revision): object
     {

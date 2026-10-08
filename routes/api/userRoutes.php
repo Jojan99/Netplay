@@ -29,6 +29,12 @@ Route::prefix('user')->group(function () {
         Route::post('{id}/documento', [UserController::class, 'cambiarDocumento'])->whereNumber('id');
         // Plataforma contra MikroTik: descuadres (solo lee) y su corrección, cliente por cliente.
         Route::get('router/descuadres', [UserController::class, 'descuadresConElRouter']);
+        // Suspensión temporal que pide el cliente (viaje, temporada): cobra los días usados,
+        // no factura mientras dura y al volver solo reactiva si está al día.
+        Route::get('{id}/suspension-temporal', [UserController::class, 'suspensionTemporal'])->whereNumber('id');
+        Route::get('{id}/suspension-temporal/simular', [UserController::class, 'simularSuspensionTemporal'])->whereNumber('id');
+        Route::post('{id}/suspension-temporal', [UserController::class, 'programarSuspensionTemporal'])->whereNumber('id');
+        Route::post('{id}/suspension-temporal/cancelar', [UserController::class, 'cancelarSuspensionTemporal'])->whereNumber('id');
         Route::post('{id}/router/aplicar-estado', [UserController::class, 'aplicarEstadoEnRouter'])->whereNumber('id');
         // Trato especial: el descuento que se le aplica todos los meses.
         Route::post('{id}/descuento', [UserController::class, 'guardarDescuento'])->whereNumber('id');
