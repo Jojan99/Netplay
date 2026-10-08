@@ -35,7 +35,7 @@ class RevisorDeRed
     {
         $vistas = [];
 
-        foreach ([$this->senalYCortes(...), $this->tuneles(...), $this->oltsSinSincronizar(...), $this->datosIncompletos(...), $this->sinCaminoDeDatos(...)] as $revision) {
+        foreach ([$this->senalYCortes(...), $this->tuneles(...), $this->oltsSinSincronizar(...), $this->datosIncompletos(...), $this->sinCaminoDeDatos(...), $this->routerContraPlataforma(...)] as $revision) {
             try {
                 $vistas = array_merge($vistas, $revision());
             } catch (\Throwable $e) {
@@ -395,6 +395,53 @@ class RevisorDeRed
         }
 
         return $claves;
+    }
+
+    /**
+     * Quién está de una forma en la plataforma y de otra en el MikroTik.
+     *
+     * Lo crítico es el activo que el router tiene cortado: paga y no tiene
+     * internet, y nadie se entera hasta que escribe. Antes había que abrir
+     * «Revisar router» para verlo; ahora se avisa solo (ver PlataformaContraRouter).
+     *
+     * @return list<string>
+     */
+    private function routerContraPlataforma(): array
+    {
+        $r = app(\App\Services\Red\PlataformaContraRouter::class)->revisar($this->companyId);
+        $claves = [];
+
+        // Un router que no se pudo leer no dice nada: sus avisos abiertos se dejan
+        // como están, en vez de cerrarlos como si se hubieran resuelto.
+        if (collect($r['routers'])->contains(fn ($x) => $x['error'] !== null)) {
+            $claves = Alerta::where('company_id', $this->companyId)->abiertas()->where('tipo', 'router')->pluck('clave')->all();
+        }
+
+        foreach ($r['problemas'] as $p) {
+            // El cliente de IP fija sin IP ya tiene su aviso en datosIncompletos.
+            if ($p['problema'] === 'no_esta' && $p['tipo'] === 'static' && $p['donde'] === 'sin IP') {
+                continue;
+            }
+
+            $quien = "{$p['nombre']} ({$p['dni']})";
+            $donde = ($p['tipo'] === 'pppoe' ? 'PPPoE ' : 'IP ') . $p['donde'];
+
+            [$nivel, $titulo, $detalle] = match ($p['problema']) {
+                'activo_cortado' => ['critico', "{$quien} está activo pero cortado en el router",
+                    "En la plataforma está activo y en el MikroTik «{$p['router']}» está cortado ({$donde}): paga y no tiene internet. "
+                    . 'Corríjalo desde Clientes → Revisar router → Habilitar en el router.'],
+                'suspendido_navegando' => ['aviso', "{$quien} está suspendido pero navegando",
+                    "En la plataforma está suspendido y en el MikroTik «{$p['router']}» sigue habilitado ({$donde}). "
+                    . 'Corríjalo desde Clientes → Revisar router → Cortar en el router.'],
+                default => ['aviso', "{$quien} no está en el router",
+                    "Cliente vigente que no aparece en el MikroTik «{$p['router']}» ({$donde}). Revise su IP o su usuario PPPoE, o reinstálelo."],
+            };
+
+            $claves[] = $this->anotar("router:{$p['problema']}:{$p['user_id']}", 'router', $nivel, $titulo, $detalle,
+                ['documento' => $p['dni'], 'router' => $p['router'], 'donde' => $p['donde']], (int) $p['user_id']);
+        }
+
+        return array_values(array_unique($claves));
     }
 
     // ── Interno ───────────────────────────────────────────────────────────
