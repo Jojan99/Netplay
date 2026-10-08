@@ -187,7 +187,9 @@ class PaymentProofController extends Controller
         $lineas = DB::table('wa_lineas')->where('company_id', getSessionCompanyId())
             ->pluck('nombre', 'id');
 
-        $proofs->getCollection()->transform(function ($p) use ($lineas) {
+        $semaforo = app(\App\Services\Comprobantes\SemaforoDeComprobantes::class);
+
+        $proofs->getCollection()->transform(function ($p) use ($lineas, $semaforo) {
             $p->linea_nombre = $p->wa_linea_id ? ($lineas[$p->wa_linea_id] ?? null) : null;
 
             // Lo que el lector no pudo confirmar: la pantalla lo marca para
@@ -195,6 +197,8 @@ class PaymentProofController extends Controller
             $p->dudosos = (array) (($p->raw_payload ?? [])['dudosos'] ?? []);
             // Si lo aplicó la plataforma sola o lo revisó una persona.
             $p->aplicado_solo = (bool) (($p->raw_payload ?? [])['aplicado_solo'] ?? false);
+            // Qué tan creíble es (verde, amarillo o rojo) y por qué.
+            $p->semaforo = $semaforo->evaluar($p);
 
             return $p;
         });
@@ -208,6 +212,7 @@ class PaymentProofController extends Controller
     public function show(int $id): JsonResponse
     {
         $proof = $this->findOwned($id)->load(['user', 'invoice', 'audits']);
+        $proof->semaforo = app(\App\Services\Comprobantes\SemaforoDeComprobantes::class)->evaluar($proof);
 
         return response()->json([
             'status' => 'success',
@@ -462,20 +467,38 @@ class PaymentProofController extends Controller
         ]);
     }
 
+    /** Por qué se rechaza un comprobante. «falso» y «otra_cuenta» le enseñan al semáforo. */
+    public const TIPOS_DE_RECHAZO = [
+        'falso'       => 'Comprobante falso o editado.',
+        'viejo'       => 'Comprobante viejo o ya usado.',
+        'otra_cuenta' => 'El pago no fue a una cuenta de la empresa.',
+        'no_coincide' => 'No coincide con la factura (monto o cliente).',
+        'otro'        => 'Comprobante rechazado por inconsistencias.',
+    ];
+
     public function reject(int $id, Request $request): JsonResponse
     {
         $proof = $this->findOwned($id);
         $previous = $proof->status;
 
+        // Por qué se rechaza: es lo que le enseña al semáforo cómo es un comprobante
+        // falso. Antes el panel mandaba siempre «inconsistencia con la factura» y
+        // reviewed_by = 1, así que ningún rechazo decía nada.
+        $tipo = in_array($request->input('tipo'), array_keys(self::TIPOS_DE_RECHAZO), true) ? $request->input('tipo') : 'otro';
+        $motivo = trim((string) $request->input('reason', '')) ?: self::TIPOS_DE_RECHAZO[$tipo];
+        $revisor = Auth::id() ?? $request->input('reviewed_by');
+
         $proof->update([
             'status' => 'rejected',
-            'rejection_reason' => $request->input('reason', 'Comprobante rechazado por inconsistencias.'),
-            'reviewed_by' => $request->input('reviewed_by', Auth::id() ?? null),
+            'rejection_reason' => $motivo,
+            'reviewed_by' => $revisor,
             'reviewed_at' => now(),
+            'raw_payload' => ['rechazo_tipo' => $tipo] + (array) ($proof->raw_payload ?? []),
         ]);
 
-        $this->audit($proof, $previous, 'rejected', $request->input('reason', 'Comprobante rechazado por inconsistencias.'), [
-            'reviewed_by' => $request->input('reviewed_by', Auth::id() ?? null),
+        $this->audit($proof, $previous, 'rejected', $motivo, [
+            'reviewed_by' => $revisor,
+            'tipo' => $tipo,
         ]);
 
         return response()->json([

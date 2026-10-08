@@ -75,6 +75,9 @@ class Kernel extends ConsoleKernel
         // queda pagando sin que la factura se entere. Esto lo pregunta.
         $schedule->command('pagos:conciliar')->everyFiveMinutes()->user('www-data')->withoutOverlapping(10)->runInBackground();
 
+        // El semáforo de comprobantes vuelve a aprender de lo aprobado y rechazado del día.
+        $schedule->command('comprobantes:aprender')->dailyAt('02:40')->user('www-data');
+
         // Sincroniza ARP MikroTik con STATUS de plataforma — corrige desyncs diariamente
         $schedule->command('arp:sync')->dailyAt('06:00')->user('www-data');
 

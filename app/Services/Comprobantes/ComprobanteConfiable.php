@@ -47,7 +47,7 @@ class ComprobanteConfiable
      * @return array{puede: bool, monto: ?float, motivos: list<string>}
      *         «motivos» es por qué NO se puede; vacío cuando sí.
      */
-    public static function revisar(PaymentProof $p): array
+    public static function revisar(PaymentProof $p, bool $conSemaforo = true): array
     {
         $motivos = [];
 
@@ -116,6 +116,17 @@ class ComprobanteConfiable
             ->whereIn('status', ['pending', 'approved', 'auto_approved'])
             ->exists()) {
             $motivos[] = 'hay otro comprobante para la misma factura';
+        }
+
+        // Lo que aprendió de los aprobados: referencia contra hora, cuenta destino,
+        // historial del cliente. Solo se aplica solo lo que está en verde.
+        // ($conSemaforo = false lo usa el propio semáforo, para no llamarse en círculo.)
+        if ($conSemaforo && $motivos === []) {
+            $semaforo = app(SemaforoDeComprobantes::class)->evaluar($p);
+
+            if ($semaforo['color'] !== 'verde') {
+                $motivos[] = 'el semáforo de autenticidad está en ' . $semaforo['color'];
+            }
         }
 
         return ['puede' => $motivos === [], 'monto' => $monto > 0 ? $monto : null, 'motivos' => $motivos];

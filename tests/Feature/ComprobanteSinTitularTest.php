@@ -33,6 +33,8 @@ class ComprobanteSinTitularTest extends TestCase
 
         // La foto la «baja» de un servidor falso; el OCR no encuentra nada en ella.
         Http::fake(['*' => Http::response('no-es-una-foto-de-verdad', 200)]);
+        // La «foto» va a un disco falso: sin esto quedaba en storage/app/public de verdad.
+        \Illuminate\Support\Facades\Storage::fake('public');
         Event::fake();
 
         $this->empresa = new Company();
