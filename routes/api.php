@@ -14,6 +14,8 @@ Route::middleware(['api', 'role:admin,contador'])->group(function () {
     Route::get('/payment-proofs/{id}', [\App\Http\Controllers\PaymentProofController::class, 'show']);
     Route::post('/payment-proofs/{id}/suspicious', [\App\Http\Controllers\PaymentProofController::class, 'markSuspicious']);
     Route::post('/payment-proofs/{id}/approve', [\App\Http\Controllers\PaymentProofController::class, 'approve']);
+    // Los que llegan sin titular: se les asigna el cliente antes de aprobarlos.
+    Route::post('/payment-proofs/{id}/asignar', [\App\Http\Controllers\PaymentProofController::class, 'asignar']);
     // Volver a leer la imagen: para los que entraron sin lector, o salieron borrosos.
     Route::post('/payment-proofs/{id}/releer', [\App\Http\Controllers\PaymentProofController::class, 'releer']);
     Route::post('/payment-proofs/{id}/reject', [\App\Http\Controllers\PaymentProofController::class, 'reject']);

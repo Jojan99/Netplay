@@ -40,11 +40,13 @@ class ComprobanteWhatsAppWeb
 
         $cliente = $this->resolverCliente($companyId, $dni, $phone);
 
-        if (!$cliente) {
-            return ['ok' => false, 'motivo' => 'cliente_no_encontrado'];
-        }
+        // Sin titular el comprobante se guarda igual: antes se descartaba
+        // («cliente_no_encontrado») y el pago se perdía. Queda en la auditoría
+        // «sin titular» para que una persona le asigne el cliente; mientras tanto
+        // no se puede aprobar ni se aplica solo.
+        $nombreCliente = $cliente ? trim($cliente->names . ' ' . $cliente->lastname) : null;
 
-        $archivo = $this->guardarArchivo($companyId, $datos['media_url'] ?? null, $datos['filename'] ?? null);
+        $archivo = $this->guardarArchivo($companyId, $datos['media_url'] ?? null, $datos['filename'] ?? null, $datos['archivo_local'] ?? null);
 
         if (!$archivo['path']) {
             return ['ok' => false, 'motivo' => 'sin_archivo'];
@@ -64,7 +66,8 @@ class ComprobanteWhatsAppWeb
                     'proof_id' => (int) $repetido->id,
                     'viejo'    => \App\Services\Comprobantes\ComprobanteConfiable::esViejo($repetido),
                     'motivo'   => 'ya_registrado',
-                    'cliente'  => trim($cliente->names . ' ' . $cliente->lastname),
+                    'cliente'  => $nombreCliente,
+                    'sin_titular' => !$cliente,
                 ];
             }
         }
@@ -89,18 +92,19 @@ class ComprobanteWhatsAppWeb
                     'proof_id' => (int) $mismaRef->id,
                     'viejo'    => \App\Services\Comprobantes\ComprobanteConfiable::esViejo($mismaRef),
                     'motivo'   => 'ya_registrado',
-                    'cliente'  => trim($cliente->names . ' ' . $cliente->lastname),
+                    'cliente'  => $nombreCliente,
+                    'sin_titular' => !$cliente,
                 ];
             }
         }
 
-        $factura = $this->facturaPendiente($companyId, (int) $cliente->user_id);
+        $factura = $cliente ? $this->facturaPendiente($companyId, (int) $cliente->user_id) : null;
 
         $proof = PaymentProof::create([
             'company_id'       => $companyId,
             'source'           => 'whatsapp_web',
             'wa_linea_id'      => $datos['wa_linea_id'] ?? null,
-            'user_id'          => $cliente->user_id,
+            'user_id'          => $cliente?->user_id,
             'invoice_id'       => $factura?->id,
             'file_path'        => $archivo['path'],
             'file_name'        => $archivo['nombre'],
@@ -116,7 +120,10 @@ class ComprobanteWhatsAppWeb
             'raw_payload'      => [
                 'origen'   => 'whatsapp_web',
                 'phone'    => $phone,
-                'dni'      => $cliente->dni,
+                'dni'      => $cliente?->dni,
+                // Lo que escribió el cliente cuando no se encontró: ayuda a encontrarlo a mano.
+                'dni_escrito' => $cliente ? null : $dni,
+                'sin_titular' => !$cliente,
                 'caption'  => $datos['caption'] ?? null,
                 'media_url'=> $datos['media_url'] ?? null,
             ],
@@ -146,14 +153,14 @@ class ComprobanteWhatsAppWeb
         Log::info('[Comprobante WhatsApp Web] Registrado', [
             'proof_id'   => $proof->id,
             'company_id' => $companyId,
-            'user_id'    => $cliente->user_id,
+            'user_id'    => $cliente?->user_id,
             'referencia' => $proof->reference_number,
             'aplicado_solo' => $aplicado,
         ]);
 
         // Registrados en tanda desde la consola: no se llena el grupo con un aviso por cada uno.
         if (empty($datos['sin_aviso'])) {
-            self::avisar($companyId, trim($cliente->names . ' ' . $cliente->lastname), $proof->fresh(), 'WhatsApp Web');
+            self::avisar($companyId, $nombreCliente ?? 'SIN TITULAR: asígnelo en Comprobantes', $proof->fresh(), 'WhatsApp Web');
         }
 
         return [
@@ -164,7 +171,9 @@ class ComprobanteWhatsAppWeb
             // ser un comprobante viejo reenviado) y no va al grupo de reporte de pagos.
             'viejo'    => !$aplicado && \App\Services\Comprobantes\ComprobanteConfiable::esViejo($proof->fresh() ?? $proof),
             'dias'     => \App\Services\Comprobantes\ComprobanteConfiable::DIAS_DE_GRACIA,
-            'cliente'  => trim($cliente->names . ' ' . $cliente->lastname),
+            'cliente'  => $nombreCliente,
+            'sin_titular' => !$cliente,
+            'motivo'   => $cliente ? null : 'sin_titular',
         ];
     }
 
@@ -288,7 +297,7 @@ class ComprobanteWhatsAppWeb
     }
 
     /** La factura pendiente más vieja: es la que el cliente suele estar pagando. */
-    private function facturaPendiente(int $companyId, int $userId): ?object
+    public function facturaPendiente(int $companyId, int $userId): ?object
     {
         return DB::table('det_facturations as d')
             ->join('cab_facturations as cab', 'cab.id', '=', 'd.cab_id')
@@ -306,25 +315,33 @@ class ComprobanteWhatsAppWeb
      *
      * @return array{path:?string, ruta_local:?string, nombre:?string, hash:?string}
      */
-    private function guardarArchivo(int $companyId, ?string $url, ?string $nombre): array
+    private function guardarArchivo(int $companyId, ?string $url, ?string $nombre, ?string $local = null): array
     {
         $vacio = ['path' => null, 'ruta_local' => null, 'nombre' => $nombre, 'hash' => null];
 
-        if (!$url) {
+        if (!$url && !$local) {
             return $vacio;
         }
 
         try {
-            $respuesta = Http::timeout(30)->get($url);
+            // Solo para tareas internas (el rescate de comprobantes viejos): el archivo
+            // ya está en el disco del servicio de WhatsApp. Nunca llega desde afuera:
+            // el controlador no deja pasar este campo.
+            if ($local && is_file($local) && str_starts_with(realpath($local) ?: '', '/var/www/whatsapp-service/uploads/')) {
+                $contenido = (string) file_get_contents($local);
+                $url = $url ?: $local;
+            } else {
+                $respuesta = Http::timeout(30)->get($url);
 
-            if (!$respuesta->successful()) {
-                Log::warning('[Comprobante WhatsApp Web] No se pudo bajar el archivo', [
-                    'url' => $url, 'status' => $respuesta->status(),
-                ]);
-                return $vacio;
+                if (!$respuesta->successful()) {
+                    Log::warning('[Comprobante WhatsApp Web] No se pudo bajar el archivo', [
+                        'url' => $url, 'status' => $respuesta->status(),
+                    ]);
+                    return $vacio;
+                }
+
+                $contenido = $respuesta->body();
             }
-
-            $contenido = $respuesta->body();
 
             if ($contenido === '') {
                 return $vacio;

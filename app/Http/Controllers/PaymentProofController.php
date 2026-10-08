@@ -374,6 +374,17 @@ class PaymentProofController extends Controller
 
         $invoice = $proof->invoice;
 
+        // Sin factura, aprobar marcaba el comprobante «aprobado» sin aplicar nada: el
+        // cliente seguía debiendo. Pasa con los que entran sin titular.
+        if (!$invoice) {
+            return response()->json([
+                'status'  => 'error',
+                'message' => $proof->user_id
+                    ? 'El cliente no tiene una factura pendiente a la cual aplicar este pago.'
+                    : 'Este comprobante no tiene titular: asígnele el cliente antes de aprobarlo.',
+            ], 422);
+        }
+
         // Quien revisa puede corregir el monto: si el lector de la imagen no
         // lo encontró, o lo leyó mal, se escribe a mano.
         $proofAmount = $request->filled('amount')
@@ -408,6 +419,46 @@ class PaymentProofController extends Controller
             'status' => 'success',
             'message' => 'Comprobante aprobado.',
             'data' => $proof->fresh(),
+        ]);
+    }
+
+    /**
+     * Le asigna el cliente a un comprobante que llegó sin titular (o con el
+     * equivocado) y lo engancha a su factura pendiente más vieja.
+     */
+    public function asignar(int $id, Request $request): JsonResponse
+    {
+        $proof = $this->findOwned($id);
+        $userId = (int) $request->input('user_id');
+
+        if (in_array($proof->status, ['approved', 'auto_approved'], true)) {
+            return response()->json(['status' => 'error', 'message' => 'Ya está aprobado: reviértalo antes de cambiarle el cliente.'], 422);
+        }
+
+        $cliente = DB::table('user_data')->where('company_id', $proof->company_id)->where('user_id', $userId)
+            ->first(['user_id', 'names', 'lastname', 'dni']);
+
+        if (!$cliente) {
+            return response()->json(['status' => 'error', 'message' => 'Cliente no encontrado.'], 422);
+        }
+
+        $factura = app(\App\Services\Crm\ComprobanteWhatsAppWeb::class)->facturaPendiente((int) $proof->company_id, $userId);
+        $antes = $proof->user_id;
+
+        $proof->update([
+            'user_id'     => $userId,
+            'invoice_id'  => $factura?->id,
+            'raw_payload' => ['sin_titular' => false] + (array) ($proof->raw_payload ?? []),
+        ]);
+
+        $this->audit($proof, $proof->status, $proof->status, 'Cliente asignado a mano: ' . trim("{$cliente->names} {$cliente->lastname}"), [
+            'reviewed_by' => Auth::id(), 'antes' => $antes, 'ahora' => $userId, 'factura' => $factura?->id,
+        ]);
+
+        return response()->json([
+            'status'  => 'success',
+            'message' => $factura ? 'Cliente asignado. Ya se puede aprobar.' : 'Cliente asignado, pero no tiene facturas pendientes.',
+            'data'    => $proof->fresh(['user', 'invoice', 'audits']),
         ]);
     }
 

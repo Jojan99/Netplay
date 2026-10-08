@@ -30,6 +30,9 @@ class ComprobanteWaWebController extends Controller
             'media_url'  => 'required|url|max:1000',
             'filename'   => 'nullable|string|max:180',
             'caption'    => 'nullable|string|max:2000',
+            // Rescate en tanda de comprobantes viejos: sin aviso al grupo y sin aplicar solo.
+            'sin_aviso'     => 'nullable|boolean',
+            'solo_revision' => 'nullable|boolean',
         ]);
 
         $companyId = $datos['company_id'] ?? null;
