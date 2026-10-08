@@ -163,9 +163,10 @@ class ComprobanteWhatsAppWeb
         ]);
 
         // Registrados en tanda desde la consola: no se llena el grupo con un aviso por cada uno.
-        if (empty($datos['sin_aviso'])) {
-            self::avisar($companyId, $nombreCliente ?? 'SIN TITULAR: asígnelo en Comprobantes', $proof->fresh(), 'WhatsApp Web');
-        }
+        // Si la plataforma avisa (con la foto), el servicio de WhatsApp no reenvía la suya:
+        // antes llegaban dos mensajes con la misma imagen al grupo.
+        $avisado = empty($datos['sin_aviso'])
+            && self::avisar($companyId, $nombreCliente ?? 'SIN TITULAR: asígnelo en Comprobantes', $proof->fresh(), 'WhatsApp Web');
 
         return [
             'ok'       => true,
@@ -178,6 +179,7 @@ class ComprobanteWhatsAppWeb
             'cliente'  => $nombreCliente,
             'sin_titular' => !$cliente,
             'motivo'   => $cliente ? null : 'sin_titular',
+            'avisado'  => $avisado,
         ];
     }
 
@@ -186,7 +188,8 @@ class ComprobanteWhatsAppWeb
      * Avisos y destinos. El comprobante queda esperando revisión: si nadie se
      * entera, el cliente pagó y nadie lo aplica.
      */
-    public static function avisar(int $companyId, string $cliente, PaymentProof $proof, string $origen): void
+    /** @return bool Si salió el aviso (la empresa tiene a dónde mandarlo y no es un comprobante viejo). */
+    public static function avisar(int $companyId, string $cliente, PaymentProof $proof, string $origen): bool
     {
         try {
             // Aplicado solo o para revisión: que en el grupo se distinga de un vistazo, con el porqué.
@@ -200,7 +203,7 @@ class ComprobanteWhatsAppWeb
             if ($viejo && !$aplicado) {
                 Log::info('[Comprobante] Viejo: no se avisa al grupo, queda en revisión', ['empresa' => $companyId, 'proof' => $proof->id, 'fecha_del_pago' => (string) $proof->payment_date]);
 
-                return;
+                return false;
             }
 
             \App\Services\Avisos\MensajeDeAviso::nuevo(
@@ -221,8 +224,13 @@ class ComprobanteWhatsAppWeb
                     : 'Va a revisión en Comprobantes' . ($motivos ? ': ' . implode('; ', $motivos) . '.' : '.'))
                 ->adjunto(self::direccionDelArchivo($proof), $proof->file_name)
                 ->enviar('comprobante_pago');
+
+            // Salió si la empresa tiene a dónde mandar el aviso de comprobantes.
+            return \App\Services\NotificationRouterService::destinos($companyId, 'comprobante_pago') !== [];
         } catch (\Throwable $e) {
             Log::warning('[Comprobante] No se pudo avisar', ['empresa' => $companyId, 'error' => $e->getMessage()]);
+
+            return false;
         }
     }
 
