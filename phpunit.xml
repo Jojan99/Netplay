@@ -21,8 +21,13 @@
         <env name="APP_ENV" value="testing"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="CACHE_DRIVER" value="array"/>
-        <!-- <env name="DB_CONNECTION" value="sqlite"/> -->
-        <!-- <env name="DB_DATABASE" value=":memory:"/> -->
+        <!-- Las pruebas corren contra netplay_pruebas: la misma estructura que producción,
+             sin datos de clientes. Antes no había nada aquí y apuntaban a la base real. -->
+        <!-- La configuración en caché de producción ignora estas variables: las pruebas
+             leen la configuración de cero (este archivo no existe a propósito). -->
+        <env name="APP_CONFIG_CACHE" value="bootstrap/cache/config.pruebas-no-existe.php" force="true"/>
+        <env name="DB_DATABASE" value="netplay_pruebas" force="true"/>
+        <env name="BROADCAST_DRIVER" value="null" force="true"/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>
