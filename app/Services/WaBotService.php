@@ -2445,7 +2445,9 @@ class WaBotService
             $total = $invoices->sum(fn ($inv) => $this->invoiceBalance($inv));
 
             // Sin pasarela no hay link que generar: se le dan los medios de pago de la empresa.
-            if (!$this->onlinePaymentAvailable($company)) {
+            // pasarelaPara y no solo «pg_active»: con la pasarela apagada, los celulares piloto
+            // sí pagan en línea (así se prueba en producción); antes este paso los ignoraba.
+            if (!$company->pasarelaPara((int) $client->user_id)) {
                 return $this->sendManualPaymentInfo($company, $phone, $client, $invoices, (float) $total);
             }
 
