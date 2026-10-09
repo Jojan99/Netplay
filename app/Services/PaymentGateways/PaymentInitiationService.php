@@ -55,7 +55,13 @@ class PaymentInitiationService
         // otro. Si no, un cliente que pide pagar dos veces —o al que le llega
         // el cobro por dos lados— termina con dos links por la misma deuda y
         // puede pagarla dos veces. Se devuelve el que ya tiene.
-        if ($vivo = $this->cobroVivo($company, $orderedIds, $amount)) {
+        //
+        // Menos el cobro directo a Nequi: ese no es un link, es una notificación al celular.
+        // Reusar un link vivo hacía que «Pagar con Nequi» no le mandara nada a Wompi y el
+        // bot dijera «ya le enviamos el cobro» (9 de octubre).
+        $esCobroNequi = $paymentMethods === ['NEQUI'] && !empty($customerPhone);
+
+        if (!$esCobroNequi && ($vivo = $this->cobroVivo($company, $orderedIds, $amount))) {
             Log::info('Pago online reusado', [
                 'company_id' => $company->id,
                 'origin'     => $origin,

@@ -2825,7 +2825,15 @@ class WaBotService
             return $this->nequiPorElCheckout($company, $session, $phone, $data);
         }
 
-        if (!isset($r['reference']) || !OnlinePaymentTransaction::where('reference', $r['reference'])->exists()) {
+        // Solo es un cobro enviado si Wompi lo aceptó y devolvió su número de transacción.
+        // Antes bastaba con que existiera la transacción, y un link reusado (o un rechazo de
+        // Wompi) terminaba en «ya le enviamos el cobro» sin que al celular llegara nada.
+        $enviado = isset($r['reference']) && empty($r['reusado'])
+            && OnlinePaymentTransaction::where('reference', $r['reference'])->whereNotNull('gateway_transaction_id')->exists();
+
+        if (!$enviado) {
+            Log::warning('[WaBotService] El cobro por Nequi no salió: se ofrece el link', ['company_id' => $company->id, 'reference' => $r['reference'] ?? null]);
+
             return $this->nequiPorElCheckout($company, $session, $phone, $data);
         }
 
@@ -2834,7 +2842,7 @@ class WaBotService
             . "Le llegó al {$this->celularBonito($celular)}.\n\n"
             . "Apenas lo apruebes le aviso por aquí y sus facturas quedan al día.";
 
-        $this->recordBotConversationMessage($company, $phone, 'system', $texto);
+        // sendTextMessage ya lo deja en el CRM: anotarlo antes lo mostraba dos veces.
         $this->sendTextMessage($company, $phone, $texto);
         $this->clearSession($company->id, $phone);
 
