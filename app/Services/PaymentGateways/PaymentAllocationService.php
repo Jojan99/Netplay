@@ -107,8 +107,31 @@ class PaymentAllocationService
             return;
         }
 
-        // Idempotencia: si ya se distribuyó este pago, no volver a procesar
+        // Idempotencia con candado: el aviso de Wompi y pagos:conciliar pueden llegar a la
+        // vez por el mismo pago. Sin candado, los dos veían allocation_done en falso y lo
+        // aplicaban dos veces. Quien entra segundo espera y vuelve a mirar.
         if ($tx->allocation_done) return;
+
+        $candado = \Illuminate\Support\Facades\Cache::lock('pago-online:' . $tx->id, 120);
+
+        if (!$candado->block(30)) {
+            Log::error('Pago online: no se pudo tomar el candado para aplicar el pago', ['reference' => $reference]);
+            return;
+        }
+
+        try {
+            $tx->refresh();
+            if ($tx->allocation_done) return;
+
+            $this->distribuir($tx, $companyId, $reference, $amountPaid, $gateway, $medio, $banco, $detalle);
+        } finally {
+            $candado->release();
+        }
+    }
+
+    /** Lo que hacía allocate después de la idempotencia: ya con el candado tomado. */
+    private function distribuir(OnlinePaymentTransaction $tx, int $companyId, string $reference, float $amountPaid, string $gateway, ?string $medio, ?string $banco, ?string $detalle): void
+    {
 
         // Un pago no puede abonar más de lo que se autorizó al iniciarlo.
         $expected = round((float) $tx->amount, 2);

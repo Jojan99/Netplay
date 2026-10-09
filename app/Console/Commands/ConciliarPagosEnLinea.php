@@ -129,7 +129,9 @@ class ConciliarPagosEnLinea extends Command
             $minutos = max(5, (int) $this->option('vencen'));
 
             if ($tx->status === 'pending' && $tx->created_at->lt(now()->subMinutes($minutos))) {
-                $tx->update(['status' => 'expired']);
+                // Con lo consultado: así el aviso de Wompi que llegue después no cree que es
+                // el primero y no le repite el mensaje al cliente.
+                $tx->update(['status' => 'expired', 'gateway_payload' => $tx->gateway_payload ?: ['consultado' => $r]]);
 
                 // Sólo se avisa de lo reciente. Escribirle a alguien por un
                 // cobro que abandonó ayer no le aclara nada y lo desconcierta,
@@ -145,7 +147,7 @@ class ConciliarPagosEnLinea extends Command
         if ($estado !== 'approved') {
             $yaAvisado = $tx->status === 'expired';
             $reciente  = $tx->created_at->gt(now()->subHours(self::AVISAR_HASTA_HORAS));
-            $tx->update(['status' => $estado]);
+            $tx->update(['status' => $estado, 'gateway_payload' => $tx->gateway_payload ?: ['consultado' => $r]]);
 
             if (!$yaAvisado && $reciente) {
                 $this->avisar($company, $tx, $estado);

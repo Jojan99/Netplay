@@ -370,7 +370,9 @@ class PaymentGatewayController extends Controller
             }
 
             if (!$company) {
-                Log::warning("Webhook {$gatewayName}: empresa no encontrada", [
+                // Como error: el registro de producción guarda solo errores, y una advertencia
+                // aquí desaparecía. Un aviso de pago que se descarta es justo lo que hay que ver.
+                Log::error("Webhook {$gatewayName}: empresa no encontrada", [
                     'slug' => $companySlug, 'ip' => $request->ip(),
                 ]);
                 return response()->json(['ok' => false], 200);
@@ -379,7 +381,9 @@ class PaymentGatewayController extends Controller
             $gateway = PaymentGatewayFactory::make($company);
 
             if (!$gateway->verifyWebhook($request)) {
-                Log::warning("Webhook {$gatewayName}: firma inválida", ['ip' => $request->ip()]);
+                Log::error("Webhook {$gatewayName}: firma inválida (revise el secreto de eventos)", [
+                    'empresa' => $company->id, 'ip' => $request->ip(), 'referencia' => $request->input('data.transaction.reference'),
+                ]);
                 return response()->json(['ok' => false], 200);
             }
 

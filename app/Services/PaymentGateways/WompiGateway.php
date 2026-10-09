@@ -376,33 +376,35 @@ class WompiGateway implements PaymentGatewayInterface
         }
     }
 
+    /**
+     * ¿El aviso viene de Wompi? SHA256 de los valores de signature.properties, el
+     * timestamp y el secreto de eventos, comparado con el checksum.
+     *
+     * Las propiedades vienen como «transaction.id», «transaction.status»: rutas desde
+     * `data`. Antes se recorrían desde `data.transaction` (buscaba transaction.transaction.id),
+     * todos los valores salían vacíos y ningún aviso de Wompi pasó nunca la verificación;
+     * los pagos se aplicaban solo cuando pagos:conciliar los consultaba. Y Wompi manda el
+     * checksum en mayúsculas.
+     */
     public function verifyWebhook(Request $request): bool
     {
-        $eventsSecret = $this->company->pg_events_secret;
-        $checksum     = $request->header('X-Event-Checksum');
+        $eventsSecret = (string) $this->company->pg_events_secret;
+        $checksum     = (string) ($request->header('X-Event-Checksum') ?: $request->input('signature.checksum', ''));
 
-        if (!$checksum || !$eventsSecret) return false;
+        if ($checksum === '' || $eventsSecret === '') return false;
 
-        $signature = $request->input('signature', []);
-        $properties = $signature['properties'] ?? [];
-        $timestamp  = $request->input('timestamp', '');
-
-        $data = $request->input('data', []);
-        $transaction = $data['transaction'] ?? [];
+        $properties = (array) $request->input('signature.properties', []);
+        $timestamp  = (string) $request->input('timestamp', '');
+        $data       = (array) $request->input('data', []);
 
         $values = [];
         foreach ($properties as $prop) {
-            $keys = explode('.', $prop);
-            $value = $transaction;
-            foreach ($keys as $key) {
-                $value = $value[$key] ?? '';
-            }
-            $values[] = $value;
+            $values[] = (string) data_get($data, (string) $prop, '');
         }
 
         $computed = hash('sha256', implode('', $values) . $timestamp . $eventsSecret);
 
-        return hash_equals($computed, $checksum);
+        return hash_equals(strtolower($computed), strtolower($checksum));
     }
 
     public function getInvoiceReference(Request $request): string
