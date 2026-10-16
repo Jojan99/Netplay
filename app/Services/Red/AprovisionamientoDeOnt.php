@@ -1986,7 +1986,8 @@ class AprovisionamientoDeOnt
         // comentario en dialectoWan(): sin esto la VLAN queda escrita pero el
         // equipo manda sin etiqueta y el cliente no conecta nunca.
         if (!empty($dialecto['modo_vlan'])) {
-            $valores[] = ["{$ruta}.{$dialecto['modo_vlan']}", (string) $dialecto['modo_vlan_valor'], 'xsd:unsignedInt'];
+            // Un número en C-Data (modo 2 = etiquetar), un sí/no en ZTE.
+            $valores[] = ["{$ruta}.{$dialecto['modo_vlan']}", (string) $dialecto['modo_vlan_valor'], $dialecto['modo_vlan_tipo'] ?? 'xsd:unsignedInt'];
         }
 
         // Si ya lleva también el TR-069 ("TR069_INTERNET") se deja así: quitárselo
@@ -2511,7 +2512,7 @@ class AprovisionamientoDeOnt
      * firmwares que dicen una cosa y publican otra.
      *
      * @param array<string,mixed> $d
-     * @return array{vlan:string, servicios:string, lanbind:?string}|null
+     * @return array{vlan:string, servicios:string, lanbind:?string, modo_vlan?:string, modo_vlan_valor?:string, modo_vlan_tipo?:string}|null
      */
     public static function dialectoWan(array $d): ?array
     {
@@ -2540,6 +2541,22 @@ class AprovisionamientoDeOnt
                             // como si ni lo intentara.
                             'modo_vlan' => 'X_CT-COM_VLANMode',
                             'modo_vlan_valor' => '2',
+                        ];
+                    }
+
+                    if (self::v($d, "{$b}.X_ZTE-COM_VLANID") !== null) {
+                        // ZTE (F680…): mismo modelo, otros nombres. El etiquetado es un
+                        // sí/no aparte (X_ZTE-COM_VLANEnable): sin él la VLAN queda escrita
+                        // y el equipo manda sin etiqueta. Antes a un ZTE se le contestaba
+                        // «en esta marca todavía no se configura» (Prueba_TR, 16-10).
+                        return [
+                            'vlan' => 'X_ZTE-COM_VLANID',
+                            'servicios' => 'X_ZTE-COM_ServiceList',
+                            // No reparte puertos LAN por conexión en este modelo.
+                            'lanbind' => null,
+                            'modo_vlan' => 'X_ZTE-COM_VLANEnable',
+                            'modo_vlan_valor' => 'true',
+                            'modo_vlan_tipo' => 'xsd:boolean',
                         ];
                     }
                 }
