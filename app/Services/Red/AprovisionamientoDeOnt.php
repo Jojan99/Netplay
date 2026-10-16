@@ -2333,6 +2333,26 @@ class AprovisionamientoDeOnt
             return ['paso' => $titulo, 'ok' => $r['ok'], 'detalle' => $r['detalle']] + (($r['omitido'] ?? false) ? ['omitido' => true] : []);
         }
 
+        // ZTE (F680…): la cuenta de administración se publica como X_ZTE-COM_AdminAccount,
+        // con la clave y un interruptor, pero sin el usuario: ese es fijo («admin») y no
+        // se puede cambiar. Antes se omitía con «en esta marca todavía no se cambia».
+        $zte = 'InternetGatewayDevice.DeviceInfo.X_ZTE-COM_AdminAccount';
+
+        if (self::v($d, "{$zte}.Enable") !== null || array_key_exists('Password', (array) (\Illuminate\Support\Arr::get($d, $zte) ?? []))) {
+            if (!$g?->onu_admin_clave) {
+                return ['paso' => $titulo, 'ok' => false, 'omitido' => true,
+                    'detalle' => 'La empresa no tiene configurada la clave de administración de las ONT (Gestión remota): no se cambió.'];
+            }
+
+            $r = $acs->tarea((string) $a->acs_id, ['name' => 'setParameterValues', 'parameterValues' => [
+                ["{$zte}.Password", $g->onu_admin_clave, 'xsd:string'],
+                ["{$zte}.Enable", 'true', 'xsd:boolean'],
+            ]]);
+
+            return $this->resultado($acs, (string) $a->acs_id, $r, $titulo,
+                'Usuario admin (en ZTE no se puede cambiar el usuario) con la clave de la empresa');
+        }
+
         if (!$soportado) {
             return ['paso' => $titulo, 'ok' => false, 'omitido' => true, 'detalle' => 'En esta marca todavía no se cambia por TR-069.'];
         }
