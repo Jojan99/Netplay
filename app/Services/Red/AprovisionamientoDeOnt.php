@@ -1804,6 +1804,7 @@ class AprovisionamientoDeOnt
         $borradas = [];
         $quitados = [];
         $puertos = [];
+        $gruposConInternetBorrada = [];
 
         foreach ($ajenas->groupBy('dispositivo') as $grupo => $delGrupo) {
             $todoElGrupo = $todas->where('dispositivo', $grupo)->count() === $delGrupo->count();
@@ -1826,6 +1827,7 @@ class AprovisionamientoDeOnt
             }
 
             if ($r['hecha']) {
+                $gruposConInternetBorrada[] = (string) $grupo;
                 $borradas = array_merge($borradas, $aBorrar->pluck('nombre')->all());
                 foreach ($aBorrar as $c) {
                     $puertos += array_filter(self::puertosDe($d, $c['ruta']));
@@ -1882,6 +1884,18 @@ class AprovisionamientoDeOnt
                 ->first();
 
             $nueva = $vacio !== null ? (string) $vacio : $this->crearObjeto($acs, $equipo, self::WAN);
+
+            // Hay equipos que no dejan crear otro grupo (ZTE F680: «cwmp.9002 Internal
+            // error») porque tienen todas las conexiones en uno solo. Entonces la
+            // conexión va dentro del grupo que ya existe, preferiblemente donde estaba
+            // la de internet que se borró.
+            if (!$nueva) {
+                $existentes = collect(self::hijos($d, self::WAN))->map(fn ($g) => (string) $g)
+                    ->reject(fn ($g) => in_array($g, $quitados, true))->values();
+                $nueva = collect($gruposConInternetBorrada)->first(fn ($g) => $existentes->contains($g))
+                    ?? $existentes->sortByDesc(fn ($g) => $todas->where('dispositivo', $g)->count())->first();
+            }
+
             $conexion = $nueva ? $this->crearObjeto($acs, $equipo, self::WAN . ".{$nueva}.{$objeto}") : null;
 
             if (!$conexion) {
