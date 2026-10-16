@@ -128,6 +128,14 @@ return [
 
     // Celulares que ven el pago en línea aunque la pasarela esté apagada: para
     // probar en producción sin que les llegue a los clientes. Separados por coma.
+    // La llave privada con que se abren los mensajes cifrados del Flow de pago de Meta.
+    // Tiene que estar aquí: con la configuración en caché, env() devuelve vacío fuera de
+    // config/, y el endpoint del Flow no podía descifrar ni el chequeo de salud de Meta
+    // (por eso Meta no dejaba publicarlo: «endpoint_available»).
+    'whatsapp_flow' => [
+        'private_key' => env('WHATSAPP_FLOW_PRIVATE_KEY'),
+    ],
+
     // Dónde guarda el servicio de WhatsApp Web sus pausas del bot (para levantar las olvidadas).
     'whatsapp_web' => [
         'archivo_pausas' => env('WA_WEB_ARCHIVO_PAUSAS', '/var/www/whatsapp-service/bot_pauses.json'),
