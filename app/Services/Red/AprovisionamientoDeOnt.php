@@ -2344,13 +2344,25 @@ class AprovisionamientoDeOnt
                     'detalle' => 'La empresa no tiene configurada la clave de administración de las ONT (Gestión remota): no se cambió.'];
             }
 
-            $r = $acs->tarea((string) $a->acs_id, ['name' => 'setParameterValues', 'parameterValues' => [
+            // En firmware de Claro (F680 V6) esta clave es la de «admin@claro», que sólo
+            // entra por la WAN: desde la red local responde «Current user is forbidden
+            // to login». El técnico en sitio entra con el usuario básico «Wifi@…», cuya
+            // clave de fábrica está en la etiqueta: se le pone también la de la empresa.
+            $valores = [
                 ["{$zte}.Password", $g->onu_admin_clave, 'xsd:string'],
                 ["{$zte}.Enable", 'true', 'xsd:boolean'],
-            ]]);
+            ];
+            $basicos = $this->usuariosBasicosZte($acs, (string) $a->acs_id, $d);
+
+            foreach ($basicos as $i => $usuario) {
+                $valores[] = ["InternetGatewayDevice.User.{$i}.Password", $g->onu_admin_clave, 'xsd:string'];
+            }
+
+            $r = $acs->tarea((string) $a->acs_id, ['name' => 'setParameterValues', 'parameterValues' => $valores]);
 
             return $this->resultado($acs, (string) $a->acs_id, $r, $titulo,
-                'Usuario admin (en ZTE no se puede cambiar el usuario) con la clave de la empresa');
+                'Usuario admin (en ZTE no se puede cambiar el usuario) con la clave de la empresa'
+                . ($basicos ? '; también ' . implode(' y ', $basicos) . ', para entrar desde la red local' : ''));
         }
 
         if (!$soportado) {
@@ -2366,21 +2378,64 @@ class AprovisionamientoDeOnt
         // La de nivel 0 es la de administración. Hay modelos que no informan el
         // nivel (HG8145X6-10: sólo la cuenta 2, "admin"): entonces la que tiene
         // el usuario de la empresa o uno de administración, o la única.
+        // Firmware de Claro (HG8145X7b): no informa el nivel y las cuentas llevan el
+        // serial en el nombre —«admin@096EB7», «claro@096EB7», «Wifi@096EB7»—, con la
+        // de administración desactivada: se reconoce por «admin@» y se activa.
         $cuenta = collect($cuentas)->first(fn ($i) => (string) self::v($d, self::CUENTAS . ".{$i}.UserLevel") === '0')
             ?? collect($cuentas)->first(fn ($i) => in_array(strtolower((string) self::v($d, self::CUENTAS . ".{$i}.UserName")),
                 array_filter([strtolower((string) $g->onu_admin_usuario), 'admin', 'telecomadmin', 'root']), true))
+            ?? collect($cuentas)->first(fn ($i) => str_starts_with(strtolower((string) self::v($d, self::CUENTAS . ".{$i}.UserName")), 'admin@'))
             ?? (count($cuentas) === 1 ? $cuentas[0] : null);
 
         if ($cuenta === null) {
             return ['paso' => $titulo, 'ok' => false, 'omitido' => true, 'detalle' => 'No se encontró la cuenta de administración del equipo: no se cambió.'];
         }
 
-        $r = $acs->tarea((string) $a->acs_id, ['name' => 'setParameterValues', 'parameterValues' => [
+        $valores = [
             [self::CUENTAS . ".{$cuenta}.UserName", $g->onu_admin_usuario, 'xsd:string'],
             [self::CUENTAS . ".{$cuenta}.Password", $g->onu_admin_clave, 'xsd:string'],
-        ]]);
+        ];
+
+        if (self::v($d, self::CUENTAS . ".{$cuenta}.Enable") !== null) {
+            $valores[] = [self::CUENTAS . ".{$cuenta}.Enable", 'true', 'xsd:boolean'];
+        }
+
+        $r = $acs->tarea((string) $a->acs_id, ['name' => 'setParameterValues', 'parameterValues' => $valores]);
 
         return $this->resultado($acs, (string) $a->acs_id, $r, $titulo, "Usuario {$g->onu_admin_usuario} con la clave de la empresa");
+    }
+
+    /**
+     * Los usuarios web básicos de un ZTE («Wifi@C6F1E8»), por número de instancia.
+     *
+     * Viven en InternetGatewayDevice.User, que GenieACS no lee por su cuenta: si
+     * no está cargada se le pide al equipo. Las claves se pueden escribir pero no
+     * leer (el equipo las devuelve vacías).
+     *
+     * @return array<string,string>
+     */
+    private function usuariosBasicosZte(GenieAcs $acs, string $id, array $d): array
+    {
+        if (!self::hijos($d, 'InternetGatewayDevice.User')) {
+            try {
+                $acs->tarea($id, ['name' => 'refreshObject', 'objectName' => 'InternetGatewayDevice.User'], 60);
+                $d = $acs->dispositivo($id) ?? $d;
+            } catch (\Throwable) {
+                return [];
+            }
+        }
+
+        $basicos = [];
+
+        foreach (self::hijos($d, 'InternetGatewayDevice.User') as $i) {
+            $usuario = (string) self::v($d, "InternetGatewayDevice.User.{$i}.Username");
+
+            if (preg_match('/^wifi@/i', $usuario)) {
+                $basicos[$i] = $usuario;
+            }
+        }
+
+        return $basicos;
     }
 
     /**
