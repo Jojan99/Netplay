@@ -36,6 +36,8 @@ Route::prefix('user')->group(function () {
         Route::post('{id}/suspension-temporal', [UserController::class, 'programarSuspensionTemporal'])->whereNumber('id');
         Route::post('{id}/suspension-temporal/cancelar', [UserController::class, 'cancelarSuspensionTemporal'])->whereNumber('id');
         Route::post('{id}/router/aplicar-estado', [UserController::class, 'aplicarEstadoEnRouter'])->whereNumber('id');
+        // Abrir la página web de la ONT del cliente por el puente de equipos.netvula.com.
+        Route::post('{id}/equipo/pagina', [\App\Http\Controllers\PaginaDelEquipoController::class, 'abrir'])->whereNumber('id');
         // Trato especial: el descuento que se le aplica todos los meses.
         Route::post('{id}/descuento', [UserController::class, 'guardarDescuento'])->whereNumber('id');
     });

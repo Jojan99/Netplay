@@ -113,6 +113,10 @@ class RouteServiceProvider extends ServiceProvider
                     require base_path('routes/api/landingRoutes.php');
                 });
 
+            // Puente a la página de las ONT: lo llama nginx, sin sesión de Laravel.
+            Route::prefix('api')
+                ->group(base_path('routes/api/paginaEquipoRoutes.php'));
+
             Route::middleware('web', 'fuera.consola')
                 ->group(base_path('routes/web.php'));
         });

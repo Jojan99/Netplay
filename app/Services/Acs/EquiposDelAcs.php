@@ -654,7 +654,9 @@ class EquiposDelAcs
                 && preg_match('/^([0-9A-Fa-f]{2}[:-]?){5}[0-9A-Fa-f]{2}$/', trim((string) $valor))) {
                 $macs[] = self::serial((string) $valor);
             }
-            if (preg_match('/(ExternalIPAddress|IPv4Address\.\d+\.IPAddress)$/', $ruta)) {
+            // 0.0.0.0 es una conexión sin levantar (en ZTE, las de VOIP e IPTV de fábrica):
+            // tomarla como la IP del equipo tapaba la de la conexión a internet.
+            if (preg_match('/(ExternalIPAddress|IPv4Address\.\d+\.IPAddress)$/', $ruta) && $valor !== '0.0.0.0') {
                 $ips[] = (string) $valor;
             }
             if (preg_match('/(WANPPPConnection\.\d+|PPP\.Interface\.\d+)\.Username$/', $ruta)) {
