@@ -312,19 +312,23 @@ class InstallationOrderController extends Controller
         
         $validated = $request->validate([
             'technical_notes' => 'nullable|string',
+            // GPS del celular del técnico al cerrar: ubica al cliente en el mapa de la red.
+            'lat'       => 'nullable|numeric|between:-90,90|required_with:lng',
+            'lng'       => 'nullable|numeric|between:-180,180|required_with:lat',
+            'precision' => 'nullable|numeric|min:0',
         ]);
-        
+
         $updateData = [
             'status' => 'completed',
             'finished_at' => now()
         ];
-        
+
         if ($request->has('technical_notes')) {
             $updateData['technical_notes'] = $request->technical_notes;
         }
-        
+
         $installation->update($updateData);
-        
+
         // Create log
         InstallationLog::create([
             'installation_id' => $id,
@@ -333,10 +337,31 @@ class InstallationOrderController extends Controller
             'notes' => $request->technical_notes,
             'created_by' => Auth::id(),
         ]);
-        
+
+        // Que la ubicación falle no puede dejar la instalación sin cerrar.
+        try {
+            $ubicacion = \App\Services\Red\UbicacionAlInstalar::registrar(
+                $installation->fresh(),
+                isset($validated['lat']) ? (float) $validated['lat'] : null,
+                isset($validated['lng']) ? (float) $validated['lng'] : null,
+                isset($validated['precision']) ? (float) $validated['precision'] : null,
+            );
+
+            InstallationLog::create([
+                'installation_id' => $id,
+                'action' => 'ubicacion',
+                'description' => $ubicacion['detalle'],
+                'created_by' => Auth::id(),
+            ]);
+        } catch (\Throwable $e) {
+            \Log::error('[Instalación] No se pudo ubicar al cliente en el mapa', ['orden' => $id, 'error' => $e->getMessage()]);
+            $ubicacion = ['ubicado' => false, 'detalle' => 'No se pudo ubicar al cliente en el mapa.'];
+        }
+
         return response()->json([
             'message' => 'Instalación completada',
-            'data' => $installation->fresh()
+            'data' => $installation->fresh(),
+            'ubicacion' => $ubicacion,
         ]);
     }
 
