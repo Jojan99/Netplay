@@ -79,6 +79,7 @@ class RouteServiceProvider extends ServiceProvider
                     require base_path('routes/api/diagnosticoRoutes.php');
                     require base_path('routes/api/suspensionMasivaRoutes.php');
                     require base_path('routes/api/fallasSectorRoutes.php');
+                    require base_path('routes/api/mapaDeRedRoutes.php');
                 });
 
             // Pasarela de pago: config (jwt.verify+role) + webhooks + checkout ePayco (públicos)
