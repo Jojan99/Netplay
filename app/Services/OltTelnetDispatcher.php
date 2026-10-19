@@ -224,7 +224,7 @@ class OltTelnetDispatcher
             'darGestionAOnt'    => method_exists($driver, 'darGestionAOnt')
                                        ? $driver->darGestionAOnt($p['fsp'], (int) $p['ont_id'], (int) $p['vlan'], (int) $p['service_port'],
                                            array_map('intval', (array) ($p['vlans_cliente'] ?? [])), (bool) ($p['pisar_ajenas'] ?? false),
-                                           (bool) ($p['aunque_tenga_tr069'] ?? false)) : null,
+                                           (bool) ($p['aunque_tenga_tr069'] ?? false), (bool) ($p['solo_carril'] ?? false)) : null,
             'perfilDeOnt'       => method_exists($driver, 'perfilDeOnt')
                                        ? $driver->perfilDeOnt((string) $p['fsp'], (int) $p['ont_id']) : null,
             'perfilesDeLinea'   => method_exists($driver, 'perfilesDeLinea')

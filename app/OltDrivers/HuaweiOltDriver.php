@@ -1242,7 +1242,7 @@ public function parseServicePorts(string $output): array
      *                                el ACS no le puede avisar al momento. Se crea
      *                                igual (sin pisar el lugar 2) y después se quita.
      */
-    public function darGestionAOnt(string $fsp, int $ontId, int $vlan, int $servicePort, array $vlansCliente = [], bool $pisarAjenas = false, bool $aunqueTengaTr069 = false): array
+    public function darGestionAOnt(string $fsp, int $ontId, int $vlan, int $servicePort, array $vlansCliente = [], bool $pisarAjenas = false, bool $aunqueTengaTr069 = false, bool $soloCarril = false): array
     {
         [$frame, $slot, $puerto] = $this->parseFsp($fsp);
 
@@ -1268,6 +1268,47 @@ public function parseServicePorts(string $output): array
                 'servicio' => preg_match('/^\s*Service type\s*:\s*(.+)$/m', $bloque, $ms) ? trim($ms[1]) : '',
                 'vlan'     => preg_match('/^\s*Manage VLAN\s*:\s*(\d+)/m', $bloque, $mv) ? (int) $mv[1] : null,
             ];
+        }
+
+        $listar = fn () => $this->runCommand("display service-port port {$frame}/{$slot}/{$puerto} ont {$ontId}");
+        $suyo   = fn (string $tabla) => preg_match('/^\s*(\d+)\s+' . $vlan . '\s+\w+\s+gpon\b/m', $tabla, $m) ? (int) $m[1] : null;
+
+        // La ONT ya tiene su conexión de gestión (la OLT se la puso por OMCI) pero no el
+        // service-port de esa VLAN: queda «Connecting» para siempre y el equipo no vuelve
+        // a reportar. Pasa cuando un reinicio le recrea la WAN de internet sin el TR-069
+        // (CARMEN_URBANEJA, 19-10). Basta con el service-port: «ont ipconfig» no hace
+        // falta y, con internet en el lugar 2, lo borraría.
+        if (collect($wans)->contains(fn ($w) => $w['vlan'] === $vlan && stripos($w['servicio'], 'tr069') !== false)) {
+            $tiene = $suyo($listar());
+            $sp = '';
+
+            if ($tiene === null) {
+                $sp = $this->runCommand(sprintf(
+                    'service-port %d vlan %d gpon %d/%d/%d ont %d gemport 1 multi-service user-vlan %d tag-transform translate',
+                    $servicePort, $vlan, $frame, $slot, $puerto, $ontId, $vlan
+                ));
+                $tiene = $suyo($listar());
+            }
+
+            $this->volverAlPrincipio();
+
+            return [
+                'ok' => $tiene !== null, 'sp_ok' => $tiene !== null, 'sp' => $tiene, 'ip' => null,
+                'omitido' => 'solo_carril',
+                'detalle' => $tiene !== null
+                    ? "El equipo ya tenía su conexión de gestión: se le dejó el service-port {$tiene} en la VLAN {$vlan} (sin tocar sus conexiones)."
+                    : 'No se pudo crear el service-port de gestión: ' . self::primeraLinea($sp),
+            ];
+        }
+
+        // Sólo completar (la recuperación automática): sin conexión de gestión en el equipo
+        // no se crea ninguna. «ont ipconfig» reemplazó la de internet en equipos cuya WAN
+        // la había creado el TR-069 (YUSQUENIS_ESCOBAR y SILEIMI_CHARRIS, 19-10).
+        if ($soloCarril) {
+            $this->volverAlPrincipio();
+
+            return ['ok' => false, 'sp_ok' => true, 'sp' => null, 'ip' => null, 'omitido' => 'sin_gestion',
+                'detalle' => 'El equipo no tiene conexión de gestión: no se crea sola (podría pisar su internet). Revíselo a mano.'];
         }
 
         // Si la ONT no informa sus WAN (otras marcas, o apagada) se sigue como
@@ -1310,9 +1351,6 @@ public function parseServicePorts(string $output): array
         // Si el equipo ya tiene su carril en esta VLAN se reutiliza: la OLT no
         // deja crear un segundo para el mismo equipo y la misma VLAN, y lo
         // rechaza igual que si el número fuera de otro.
-        $listar = fn () => $this->runCommand("display service-port port {$frame}/{$slot}/{$puerto} ont {$ontId}");
-        $suyo   = fn (string $tabla) => preg_match('/^\s*(\d+)\s+' . $vlan . '\s+\w+\s+gpon\b/m', $tabla, $m) ? (int) $m[1] : null;
-
         $sp = '';
         $tiene = $suyo($listar());
 

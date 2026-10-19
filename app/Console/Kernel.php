@@ -74,6 +74,12 @@ class Kernel extends ConsoleKernel
         // solas —un webhook sin configurar, un navegador cerrado— y el cliente
         // queda pagando sin que la factura se entere. Esto lo pregunta.
         $schedule->command('pagos:conciliar')->everyFiveMinutes()->user('www-data')->withoutOverlapping(10)->runInBackground();
+        // La página de los Sagemcom se abre por la WAN sólo mientras se usa el puente.
+        // Clientes de IP fija que se quedan sin servicio porque su ONT cambió de MAC al reiniciarse.
+        $schedule->command('red:revisar-macs')->everyFifteenMinutes()->user('www-data')->withoutOverlapping(30)->runInBackground();
+        // ONT en línea que perdieron el TR-069: sólo se completa el service-port de su gestión.
+        $schedule->command('red:recuperar-gestion')->hourly()->user('www-data')->withoutOverlapping(50)->runInBackground();
+        $schedule->command('pagina-equipo:cerrar')->everyTenMinutes()->user('www-data')->withoutOverlapping(15)->runInBackground();
 
         // Suspensiones temporales pedidas por el cliente: empiezan y terminan solas. Cada
         // hora a los 20 (después del corte automático de las 7 y la facturación de la 1).

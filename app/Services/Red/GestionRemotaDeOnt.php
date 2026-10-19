@@ -962,6 +962,62 @@ class GestionRemotaDeOnt
         )));
     }
 
+    /**
+     * Le devuelve la gestión remota a una ONT que está en línea en la OLT pero dejó de
+     * reportar al TR-069. A diferencia de darAcceso, no confía en que el equipo «ya está en
+     * el servidor» (la ficha del ACS queda aunque lleve horas mudo).
+     *
+     * El caso típico: un reinicio le recrea la conexión de internet sin el TR-069 y su
+     * conexión de gestión (VLAN de gestión, por DHCP) no tiene service-port en la OLT
+     * (CARMEN_URBANEJA, 19-10). El driver sólo crea lo que falta y nunca ejecuta «ont
+     * ipconfig» si con eso pisaría la conexión de internet.
+     *
+     * @return array{ok:bool, detalle:string}
+     */
+    public function recuperarGestion(int $oltId, string $fsp, int $ontId): array
+    {
+        $g = $this->config();
+
+        if (!$g?->vlan) {
+            return ['ok' => false, 'detalle' => 'La empresa no tiene configurada la VLAN de gestión (Gestión remota).'];
+        }
+
+        $evitar = [];
+        $r = null;
+
+        for ($intento = 0; $intento < 2; $intento++) {
+            $numero = $this->servicePortLibre($oltId, $evitar);
+
+            try {
+                $r = app(OltTelnetDispatcher::class)->dispatch($oltId, 'darGestionAOnt', [
+                    'fsp' => $fsp, 'ont_id' => $ontId, 'vlan' => (int) $g->vlan, 'service_port' => $numero,
+                    // NUNCA aunque_tenga_tr069 aquí: con la conexión de internet (que lleva el
+                    // TR-069) en el lugar 1, «ont ipconfig» la reemplazó por la de gestión y la
+                    // clienta se quedó sin internet (YUSQUENIS_ESCOBAR, 0/0/1:17, 19-10). Sólo se
+                    // completa lo que falta (el service-port de una gestión que ya existe).
+                    'vlans_cliente' => [], 'pisar_ajenas' => false, 'aunque_tenga_tr069' => false, 'solo_carril' => true,
+                ]);
+            } catch (\Throwable $e) {
+                return ['ok' => false, 'detalle' => \App\Services\Olt\EstadoDeUnaOnt::explicar($e->getMessage())];
+            }
+
+            if ($r['sp_ok'] ?? false) {
+                break;
+            }
+
+            $evitar[] = $numero;
+        }
+
+        if (($r['ok'] ?? false) && ($r['sp'] ?? null)) {
+            OltOnt::where('olt_id', $oltId)->where('fsp', $fsp)->where('ont_id', $ontId)->update(['gestion_en' => now()]);
+        }
+
+        // «Ya tiene TR-069 en internet» o «lugar ocupado» no cambian nada: no es recuperada.
+        $hizoAlgo = ($r['ok'] ?? false) && !in_array($r['omitido'] ?? null, ['tr069_en_internet', 'lugar_ocupado', 'apagada', 'sin_gestion'], true);
+
+        return ['ok' => $hizoAlgo, 'detalle' => (string) ($r['detalle'] ?? 'La OLT no respondió.')];
+    }
+
     /** @param bool $limpiarAjenas equipo recién autorizado: se reemplazan las conexiones de otra VLAN */
     public function darAcceso(int $oltId, string $fsp, int $ontId, bool $reiniciarSiHaceFalta = false, ?callable $avance = null, bool $limpiarAjenas = false): array
     {
