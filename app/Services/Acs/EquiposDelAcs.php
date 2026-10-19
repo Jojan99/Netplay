@@ -656,8 +656,17 @@ class EquiposDelAcs
             }
             // 0.0.0.0 es una conexión sin levantar (en ZTE, las de VOIP e IPTV de fábrica):
             // tomarla como la IP del equipo tapaba la de la conexión a internet.
-            if (preg_match('/(ExternalIPAddress|IPv4Address\.\d+\.IPAddress)$/', $ruta) && $valor !== '0.0.0.0') {
-                $ips[] = (string) $valor;
+            if (preg_match('/(ExternalIPAddress|IPv4Address\.\d+\.IPAddress|IPCP\.LocalIPAddress)$/', $ruta) && $valor !== '0.0.0.0') {
+                // La del PPPoE va primero: es la de internet, la que el servidor alcanza por el
+                // MikroTik. En ZTE la conexión de gestión que crea la OLT (omci_ipv4_dhcp, red
+                // 10.30.x) aparecía antes en el árbol y el puente intentaba entrar por ahí.
+                // En TR-181 (Sagemcom) la del PPPoE está en PPP.Interface.N.IPCP.LocalIPAddress;
+                // sin leerla se tomaba la de la LAN de la casa (192.168.1.254).
+                if (preg_match('/(WANPPPConnection\.\d+|PPP\.Interface\.\d+)\./', $ruta)) {
+                    array_unshift($ips, (string) $valor);
+                } else {
+                    $ips[] = (string) $valor;
+                }
             }
             if (preg_match('/(WANPPPConnection\.\d+|PPP\.Interface\.\d+)\.Username$/', $ruta)) {
                 $usuarios[] = strtolower((string) $valor);

@@ -37,12 +37,75 @@ class PaginaDelEquipo
     private const CODIGO_VENCE = 120;
     private const SESION_DURA = 1800;
     public const COOKIE = 'np_equipo';
+    private const SAGEMCOM_ABIERTOS = 'pagina-equipo:sagemcom-abiertos';
 
     public function __construct(private int $companyId) {}
 
     public static function dominio(): string
     {
         return (string) config('services.pagina_equipo.dominio', 'equipos.netvula.com');
+    }
+
+    /**
+     * Con qué usuario y clave se entra a la página del equipo del cliente, para que el
+     * técnico no tenga que adivinar: cambia según la marca y el firmware (lo que deja el
+     * aprovisionamiento). La clave es la de la empresa (Gestión remota). Queda registrado
+     * en el historial del cliente quién la consultó.
+     *
+     * @return array{equipo: string, usuario: string, clave: string, nota: ?string, local: ?array{usuario: string, nota: string}}
+     */
+    public function credenciales(int $userId, int $operador): array
+    {
+        $acs = GenieAcs::deEmpresa($this->companyId);
+        $equipo = collect((new EquiposDelAcs($this->companyId, $acs))->lista())
+            ->filter(fn ($f) => ($f['cliente']['user_id'] ?? null) === $userId)
+            ->sortByDesc(fn ($f) => (string) ($f['ultimo_reporte'] ?? ''))
+            ->first();
+
+        if (!$equipo) {
+            throw new \InvalidArgumentException('El cliente no tiene un equipo conectado al TR-069.');
+        }
+
+        $g = GestionRemota::where('company_id', $this->companyId)->first();
+
+        if (!$g?->onu_admin_clave) {
+            throw new \InvalidArgumentException('La empresa no tiene configurada la clave de administración de las ONT (Gestión remota).');
+        }
+
+        $d = $acs->dispositivo((string) $equipo['id']) ?? [];
+        $fabricante = strtoupper((string) ($d['_deviceId']['_Manufacturer'] ?? $equipo['fabricante'] ?? ''));
+        $empresa = (string) ($g->onu_admin_usuario ?: 'adminisp');
+
+        [$usuario, $nota, $local] = match (true) {
+            str_contains($fabricante, 'ZTE') => (function () use ($d) {
+                $admin = self::administradorZte($d);
+                // En firmware de Claro el administrador sólo entra por la WAN; en la casa se
+                // usa el básico «Wifi@…» (el aprovisionamiento le pone la misma clave).
+                $basico = collect(AprovisionamientoDeOnt::hijos($d, 'InternetGatewayDevice.User'))
+                    ->map(fn ($i) => (string) AprovisionamientoDeOnt::v($d, "InternetGatewayDevice.User.{$i}.Username"))
+                    ->first(fn ($u) => (bool) preg_match('/^wifi@/i', $u));
+
+                return [$admin, str_contains($admin, '@') ? 'Este usuario sólo entra a distancia (botón «Abrir página del equipo»).' : null,
+                    $basico ? ['usuario' => $basico, 'nota' => 'En la casa del cliente (red local), con la misma clave.'] : null];
+            })(),
+            str_contains($fabricante, 'SAGEM') => ['admin', 'En Sagemcom la página sólo acepta el nombre «admin».', null],
+            default => [$empresa, null, null],
+        };
+
+        DB::table('user_audit_logs')->insert([
+            'user_id' => $userId, 'changed_by' => $operador, 'company_id' => $this->companyId,
+            'field_changed' => 'equipo', 'old_value' => null, 'new_value' => null,
+            'description' => 'Consultó el usuario y la clave de administración del equipo',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        return [
+            'equipo'  => trim(($equipo['fabricante'] ?? '') . ' ' . ($equipo['modelo'] ?? '')),
+            'usuario' => $usuario,
+            'clave'   => (string) $g->onu_admin_clave,
+            'nota'    => $nota,
+            'local'   => $local,
+        ];
     }
 
     /**
@@ -74,15 +137,30 @@ class PaginaDelEquipo
 
         $d = $acs->dispositivo((string) $equipo['id']) ?? [];
         $fabricante = strtoupper((string) ($d['_deviceId']['_Manufacturer'] ?? $equipo['fabricante'] ?? ''));
-        $marca = str_contains($fabricante, 'ZTE') ? 'zte' : (str_contains($fabricante, 'HUAWEI') ? 'huawei' : null);
+        $marca = match (true) {
+            str_contains($fabricante, 'ZTE')    => 'zte',
+            str_contains($fabricante, 'HUAWEI') => 'huawei',
+            str_contains($fabricante, 'SAGEM')  => 'sagemcom',
+            default                             => null,
+        };
 
         if ($marca === 'huawei') {
             $this->abrirWanHuawei($acs, (string) $equipo['id']);
+        } elseif ($marca === 'zte') {
+            $this->abrirWanZte($acs, (string) $equipo['id'], $ip);
+        } elseif ($marca === 'sagemcom') {
+            $this->abrirWanSagemcom($acs, (string) $equipo['id']);
         }
 
-        $lan = (string) AprovisionamientoDeOnt::v($d, 'InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.IPInterface.1.IPInterfaceIPAddress');
+        $lan = (string) (AprovisionamientoDeOnt::v($d, 'InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.IPInterface.1.IPInterfaceIPAddress')
+            ?? self::ipLanTr181($d));
         $host = filter_var($lan, FILTER_VALIDATE_IP) ? $lan : '192.168.1.1';
-        [$esquema, $puerto, $ingreso] = $marca === 'huawei' ? self::comoAtiendeHuawei($ip, $host) : ['http', 80, '/'];
+        // El Sagemcom manda todo a https://<LAN>/2.0/gui/: el servidor entra cifrado por el 443.
+        [$esquema, $puerto, $ingreso] = match ($marca) {
+            'huawei'   => self::comoAtiendeHuawei($ip, $host),
+            'sagemcom' => ['https', 443, '/2.0/gui/'],
+            default    => ['http', 80, '/'],
+        };
 
         $codigo = Str::random(48);
         Cache::put("pagina-equipo:codigo:{$codigo}", [
@@ -95,6 +173,7 @@ class PaginaDelEquipo
             'puerto'     => $puerto,
             'ingreso'    => $ingreso,
             'marca'      => $marca,
+            'acs_id'     => (string) $equipo['id'],
             'usuario'    => match ($marca) {
                 'zte'    => self::administradorZte($d),
                 // La que deja el aprovisionamiento (adminisp en Netplay).
@@ -114,7 +193,8 @@ class PaginaDelEquipo
             'url'        => 'https://' . self::dominio() . '/__abrir?t=' . $codigo,
             'equipo'     => trim(($equipo['fabricante'] ?? '') . ' ' . ($equipo['modelo'] ?? '')),
             'ip'         => $ip,
-            'entra_solo' => $marca !== null,
+            // El Sagemcom abre en su pantalla de ingreso: su inicio de sesión todavía no se automatiza.
+            'entra_solo' => in_array($marca, ['zte', 'huawei'], true),
         ];
     }
 
@@ -148,6 +228,7 @@ class PaginaDelEquipo
         // cifrada—, que no pasa por el puente: se entra directo a la página principal o
         // al ingreso. Por el 8080 (el servidor ya va cifrado) el ingreso es la raíz.
         $inicio = match (true) {
+            ($datos['marca'] ?? null) === 'sagemcom' => $datos['ingreso'] ?? '/2.0/gui/',
             ($datos['marca'] ?? null) !== 'huawei' => '/',
             (bool) $ingreso                        => '/index.asp',
             default                                => $datos['ingreso'] ?? '/login.asp',
@@ -171,6 +252,10 @@ class PaginaDelEquipo
         }
 
         Cache::put("pagina-equipo:sesion:{$sesion}", $datos, self::SESION_DURA);
+
+        if (!empty($datos['acs_id'])) {
+            Cache::put("pagina-equipo:uso:{$datos['acs_id']}", now()->timestamp, self::SESION_DURA * 2);
+        }
 
         return [
             'ip'      => $datos['ip'],
@@ -334,6 +419,206 @@ class PaginaDelEquipo
         } catch (\Throwable) {
             return [[], null];
         }
+    }
+
+    /**
+     * Los ZTE F670L sólo dejan entrar a la página por la conexión «Gestion» (regla
+     * FWSC1 del control de servicios); por el PPPoE el puerto 80 está cerrado y el puente
+     * se quedaba esperando. Se agrega una regla para la conexión que tiene la IP del
+     * equipo, sólo desde la red del servidor. Los F680 de Claro ya la traen abierta.
+     */
+    private function abrirWanZte(GenieAcs $acs, string $id, string $ip): void
+    {
+        $red = (string) config('services.pagina_equipo.red_servidor', '10.200.200.0/24');
+        [$inicio, $fin] = self::extremosDeRed($red);
+        $reglas = 'InternetGatewayDevice.Firewall.X_ZTE-COM_ServiceControl.IPV4ServiceControl';
+
+        try {
+            $acs->tarea($id, ['name' => 'refreshObject', 'objectName' => 'InternetGatewayDevice.Firewall.X_ZTE-COM_ServiceControl'], 60);
+            $d = $acs->dispositivo($id) ?? [];
+        } catch (\Throwable) {
+            return;
+        }
+
+        if (AprovisionamientoDeOnt::v($d, "{$reglas}.1.Mode") === null) {
+            return;   // este firmware no publica el control de servicios: nada que abrir
+        }
+
+        // La conexión por la que se entra: la que tiene la IP a la que va el puente.
+        $conexion = null;
+        foreach (AprovisionamientoDeOnt::hijos($d, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice') as $g) {
+            foreach (['WANPPPConnection', 'WANIPConnection'] as $tipo) {
+                foreach (AprovisionamientoDeOnt::hijos($d, "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.{$g}.{$tipo}") as $i) {
+                    $ruta = "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.{$g}.{$tipo}.{$i}";
+                    if ((string) AprovisionamientoDeOnt::v($d, "{$ruta}.ExternalIPAddress") === $ip) {
+                        $conexion = $ruta;
+                    }
+                }
+            }
+        }
+
+        if (!$conexion) {
+            return;
+        }
+
+        foreach (AprovisionamientoDeOnt::hijos($d, $reglas) as $i) {
+            $tiene = (string) AprovisionamientoDeOnt::v($d, "{$reglas}.{$i}.Ingress") === $conexion
+                && str_contains((string) AprovisionamientoDeOnt::v($d, "{$reglas}.{$i}.ServiceType"), 'HTTP')
+                && (string) AprovisionamientoDeOnt::v($d, "{$reglas}.{$i}.Mode") === 'Accept'
+                && in_array(AprovisionamientoDeOnt::v($d, "{$reglas}.{$i}.Enable"), [true, 'true', 1, '1'], true);
+
+            if ($tiene) {
+                return;
+            }
+        }
+
+        $antes = AprovisionamientoDeOnt::hijos($d, $reglas);
+        $acs->tarea($id, ['name' => 'addObject', 'objectName' => $reglas], 60);
+        $acs->tarea($id, ['name' => 'refreshObject', 'objectName' => $reglas], 60);
+        $nueva = array_values(array_diff(AprovisionamientoDeOnt::hijos($acs->dispositivo($id) ?? [], $reglas), $antes))[0] ?? null;
+
+        if ($nueva === null) {
+            throw new \InvalidArgumentException('El ZTE no dejó agregar el acceso del servidor a su página: no se puede abrir.');
+        }
+
+        $b = "{$reglas}.{$nueva}";
+        $r = $acs->tarea($id, ['name' => 'setParameterValues', 'parameterValues' => [
+            ["{$b}.Name", 'Netvula puente', 'xsd:string'],
+            ["{$b}.Ingress", $conexion, 'xsd:string'],
+            ["{$b}.IPStart", $inicio, 'xsd:string'],
+            ["{$b}.IPEnd", $fin, 'xsd:string'],
+            ["{$b}.ServiceType", 'HTTP,HTTPS,PING', 'xsd:string'],
+            ["{$b}.Mode", 'Accept', 'xsd:string'],
+            ["{$b}.Enable", 'true', 'xsd:boolean'],
+        ]], 90);
+
+        if (!($r['hecha'] ?? false)) {
+            throw new \InvalidArgumentException('El ZTE no respondió al abrir su página por la WAN. Intente de nuevo en un momento.');
+        }
+    }
+
+    /**
+     * Sagemcom (TR-181, Fast 5670): cada usuario tiene su acceso remoto por servicio
+     * (Users.User.N.RemoteAccess.M: HTTP, HTTPS…) con WANRestriction. De fábrica está en
+     * ACCESS_DISABLE y la página no contesta por el PPPoE.
+     *
+     * Su lista HostRestriction es de IP BLOQUEADAS, no permitidas (probado en Prueba_TR,
+     * 19-10: con 0.0.0.0/0 nadie entra; con la red del servidor, justo el servidor quedaba
+     * afuera con XMO_ACCESS_RESTRICTION_ERR), así que no sirve para dejarla sólo al
+     * servidor. Se abre la WAN del usuario «admin» sólo mientras se usa el puente y la
+     * tarea pagina-equipo:cerrar la vuelve a cerrar tras media hora sin uso.
+     */
+    private function abrirWanSagemcom(GenieAcs $acs, string $id): void
+    {
+        try {
+            $acs->tarea($id, ['name' => 'refreshObject', 'objectName' => 'Device.Users'], 60);
+            $d = $acs->dispositivo($id) ?? [];
+        } catch (\Throwable) {
+            return;
+        }
+
+        $valores = self::accesoWanSagemcom($d, 'ACCESS_ENABLE');
+
+        if ($valores && !($acs->tarea($id, ['name' => 'setParameterValues', 'parameterValues' => $valores], 90)['hecha'] ?? false)) {
+            throw new \InvalidArgumentException('El Sagemcom no respondió al abrir su página por la WAN. Intente de nuevo en un momento.');
+        }
+
+        // Para cerrarla después (ver cerrarSagemcomSinUso).
+        $abiertos = Cache::get(self::SAGEMCOM_ABIERTOS, []);
+        $abiertos[$id] = $this->companyId;
+        Cache::forever(self::SAGEMCOM_ABIERTOS, $abiertos);
+        Cache::put("pagina-equipo:uso:{$id}", now()->timestamp, self::SESION_DURA * 2);
+    }
+
+    /**
+     * Los valores que dejan el acceso web por la WAN del usuario «admin» como $estado,
+     * sólo los que hacen falta cambiar. No usa HostRestriction: en este firmware bloquea
+     * (ver abrirWanSagemcom).
+     *
+     * @return list<array{0:string,1:string,2:string}>
+     */
+    private static function accesoWanSagemcom(array $d, string $estado): array
+    {
+        $admin = collect(AprovisionamientoDeOnt::hijos($d, 'Device.Users.User'))
+            ->first(fn ($u) => strtolower((string) AprovisionamientoDeOnt::v($d, "Device.Users.User.{$u}.Username")) === 'admin');
+
+        if ($admin === null) {
+            return [];
+        }
+
+        $valores = [];
+        foreach (AprovisionamientoDeOnt::hijos($d, "Device.Users.User.{$admin}.RemoteAccess") as $r) {
+            $b = "Device.Users.User.{$admin}.RemoteAccess.{$r}";
+            if (in_array((string) AprovisionamientoDeOnt::v($d, "{$b}.Service"), ['HTTP', 'HTTPS'], true)
+                && (string) AprovisionamientoDeOnt::v($d, "{$b}.WANRestriction") !== $estado) {
+                $valores[] = ["{$b}.WANRestriction", $estado, 'xsd:string'];
+            }
+        }
+
+        return $valores;
+    }
+
+    /**
+     * Cierra la página por la WAN de los Sagemcom que nadie usa por el puente hace media
+     * hora. La corre la tarea programada pagina-equipo:cerrar.
+     *
+     * @return int cuántos cerró
+     */
+    public static function cerrarSagemcomSinUso(): int
+    {
+        $abiertos = Cache::get(self::SAGEMCOM_ABIERTOS, []);
+        $cerrados = 0;
+
+        foreach ($abiertos as $id => $companyId) {
+            $uso = (int) Cache::get("pagina-equipo:uso:{$id}", 0);
+            if ($uso && now()->timestamp - $uso < self::SESION_DURA) {
+                continue;
+            }
+
+            try {
+                $acs = GenieAcs::deEmpresa((int) $companyId);
+                $acs->tarea($id, ['name' => 'refreshObject', 'objectName' => 'Device.Users'], 60);
+                $valores = self::accesoWanSagemcom($acs->dispositivo($id) ?? [], 'ACCESS_DISABLE');
+
+                if (!$valores || ($acs->tarea($id, ['name' => 'setParameterValues', 'parameterValues' => $valores], 90)['hecha'] ?? false)) {
+                    unset($abiertos[$id]);
+                    $cerrados++;
+                }
+            } catch (\Throwable) {
+                // Se reintenta en la próxima vuelta.
+            }
+        }
+
+        Cache::forever(self::SAGEMCOM_ABIERTOS, $abiertos);
+
+        return $cerrados;
+    }
+
+    /** La IP de la LAN en un equipo TR-181: la de la interfaz IP que no tiene NAT ni PPP. */
+    private static function ipLanTr181(array $d): ?string
+    {
+        foreach (AprovisionamientoDeOnt::hijos($d, 'Device.IP.Interface') as $i) {
+            $alias = strtoupper((string) AprovisionamientoDeOnt::v($d, "Device.IP.Interface.{$i}.Alias"));
+            if (!str_contains($alias, 'LAN') || str_contains($alias, 'GUEST')) {
+                continue;
+            }
+            $ip = (string) AprovisionamientoDeOnt::v($d, "Device.IP.Interface.{$i}.IPv4Address.1.IPAddress");
+            if (filter_var($ip, FILTER_VALIDATE_IP)) {
+                return $ip;
+            }
+        }
+
+        return null;
+    }
+
+    /** «10.200.200.0/24» → ['10.200.200.1', '10.200.200.254']. */
+    private static function extremosDeRed(string $red): array
+    {
+        [$base, $bits] = array_pad(explode('/', $red), 2, '24');
+        $mascara = -1 << (32 - (int) $bits);
+        $n = ip2long($base) & $mascara;
+
+        return [long2ip($n + 1), long2ip(($n | ~$mascara) - 1)];
     }
 
     /** «admin@claro» en firmware de Claro; «admin» en los demás. */

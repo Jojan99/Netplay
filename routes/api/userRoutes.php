@@ -38,6 +38,8 @@ Route::prefix('user')->group(function () {
         Route::post('{id}/router/aplicar-estado', [UserController::class, 'aplicarEstadoEnRouter'])->whereNumber('id');
         // Abrir la página web de la ONT del cliente por el puente de equipos.netvula.com.
         Route::post('{id}/equipo/pagina', [\App\Http\Controllers\PaginaDelEquipoController::class, 'abrir'])->whereNumber('id');
+        // Usuario y clave de administración del equipo, para no adivinarlos (queda en el historial).
+        Route::get('{id}/equipo/acceso', [\App\Http\Controllers\PaginaDelEquipoController::class, 'credenciales'])->whereNumber('id');
         // Trato especial: el descuento que se le aplica todos los meses.
         Route::post('{id}/descuento', [UserController::class, 'guardarDescuento'])->whereNumber('id');
     });

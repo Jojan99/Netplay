@@ -612,6 +612,7 @@ class AprovisionamientoDeOnt
         }
 
         $pedido = [];
+        $red = null;
 
         if ($cliente && $cliente['tipo'] === 'static' && $cliente['ip']) {
             $api = $yo->routerDelCliente($userId);
@@ -619,7 +620,16 @@ class AprovisionamientoDeOnt
             $pedido = ['gateway' => $red['gateway'] ?? null, 'mascara' => isset($red['bits']) ? "/{$red['bits']}" : null];
         }
 
+        // Sin puerto de servicio con la VLAN del cliente (ONT que sólo tiene el carril de
+        // gestión, o datos de la OLT incompletos) el reaplicar no hacía nada. Se busca en
+        // lo que sí se sabe, de lo más directo a lo más general.
+        $vlan = $vlan ?: $yo->vlanSinPuertoDeServicio($ont, $red, $vlanGestion);
+
         [$wan, $aviso] = $yo->wanDelCliente($cliente, $vlan ?: null, $pedido);
+
+        if (!$wan && !$vlan) {
+            $aviso = 'No se encontró la VLAN del cliente (ni en la OLT, ni en el equipo, ni en el router): cárguela en la ficha o revise el puerto de servicio en la OLT.';
+        }
 
         if (!$wan) {
             return $aviso ? ['texto' => "La ONT no se reconfiguró sola: {$aviso}", 'id' => null] : null;
@@ -844,6 +854,48 @@ class AprovisionamientoDeOnt
                 ? implode(':', str_split(strtoupper(str_replace('-', '', $mm[1])), 2))
                 : '',
         ];
+    }
+
+    /**
+     * La VLAN del cliente cuando su ONT no tiene puerto de servicio que la diga.
+     *
+     * 1. IP fija: la interfaz del MikroTik donde vive su IP («vlan100» → 100).
+     * 2. La conexión de internet que el equipo ya tiene configurada (TR-069), que no sea
+     *    la de gestión.
+     * 3. La más común entre los vecinos del mismo puerto PON.
+     *
+     * No se usa la VLAN por defecto de la OLT: en Netplay es la 200 de fábrica, la que
+     * el aprovisionamiento borra por ajena.
+     */
+    private function vlanSinPuertoDeServicio(object $ont, ?array $red, int $vlanGestion): ?int
+    {
+        if ($red && preg_match('/vlan[\s_-]*(\d{1,4})/i', (string) ($red['interfaz'] ?? ''), $m) && (int) $m[1] !== $vlanGestion) {
+            return (int) $m[1];
+        }
+
+        try {
+            $acs = GenieAcs::deEmpresa($this->companyId);
+            $d = $acs->dispositivos(['_deviceId._SerialNumber' => ['$in' => EquiposDelAcs::serialesPosibles((string) $ont->serial)]])[0] ?? null;
+
+            if ($d) {
+                $vlan = collect($this->conexiones($d))
+                    ->first(fn ($c) => $c['vlan'] && $c['vlan'] !== $vlanGestion && $c['vlan'] !== 200 && str_contains($c['servicios'], 'INTERNET'))['vlan'] ?? null;
+
+                if ($vlan) {
+                    return (int) $vlan;
+                }
+            }
+        } catch (\Throwable) {
+        }
+
+        $vecinos = DB::table('olt_onts')->where('olt_id', $ont->olt_id)->where('fsp', $ont->fsp)->whereNotNull('service_ports')->pluck('service_ports')
+            ->flatMap(fn ($sp) => collect(json_decode((string) $sp, true) ?: [])->pluck('vlan'))
+            ->map(fn ($v) => (int) $v)
+            ->filter(fn ($v) => $v && $v !== $vlanGestion)
+            ->countBy()
+            ->sortDesc();
+
+        return $vecinos->isNotEmpty() ? (int) $vecinos->keys()->first() : null;
     }
 
     /** @return array{id:int, nombre:string, nombres:string, apellidos:string, tipo:string, pppoe_usuario:?string, ip:?string}|null */
@@ -1765,6 +1817,12 @@ class AprovisionamientoDeOnt
         $wan ??= $a->datos['wan'];
         $titulo = 'Conexión a internet';
 
+        // Modelo TR-181 (raíz «Device.», p. ej. Sagemcom Fast 5670): la conexión es una
+        // cadena PPP → VLAN → enlace → fibra que ya trae armada de fábrica; se llena.
+        if (isset($d['Device']) && self::hijos($d, 'Device.PPP.Interface')) {
+            return $this->aplicarWanTr181($acs, $a, $d, $wan, $titulo);
+        }
+
         if (!$soportado) {
             return ['paso' => $titulo, 'ok' => false, 'omitido' => true,
                 'detalle' => 'En esta marca la conexión a internet todavía no se configura por TR-069: cárguela en el equipo (' . self::resumenWan($wan) . ').'];
@@ -1841,6 +1899,33 @@ class AprovisionamientoDeOnt
         $conexiones = $conexiones->reject(fn ($c) => in_array((string) $c['dispositivo'], $quitados, true));
         $nota = $borradas ? ' Se borraron las conexiones ajenas: ' . implode(', ', $borradas) . '.' : '';
 
+        // La de gestión que además dice INTERNET (ZTE F670L: «omci_ipv4_dhcp_1», INTERNET_TR069
+        // en la VLAN de gestión de la OLT) se queda con la ruta de salida y la casa no navega
+        // aunque el PPPoE esté conectado y responda ping (ROSA ICELA OCHOA, 17-10). No se borra:
+        // por ahí llega el TR-069. Se deja sólo como TR069.
+        $dialecto = self::dialectoWan($d);
+        $soloGestion = [];
+
+        if ($dialecto) {
+            foreach ($todas as $c) {
+                if ($c['vlan'] === (int) $wan['vlan'] || !str_contains($c['servicios'], 'INTERNET') || !str_contains($c['servicios'], 'TR069')) {
+                    continue;
+                }
+
+                $r = $this->alMomento($acs, $equipo, ['name' => 'setParameterValues', 'parameterValues' => [
+                    ["{$c['ruta']}.{$dialecto['servicios']}", 'TR069', 'xsd:string'],
+                ]]);
+
+                if ($r['hecha']) {
+                    $soloGestion[] = $c['nombre'];
+                }
+            }
+        }
+
+        if ($soloGestion) {
+            $nota .= ' Quedaron sólo para gestión (sin internet): ' . implode(', ', $soloGestion) . '.';
+        }
+
         // Una del mismo tipo recién creada en una vuelta anterior que no se
         // alcanzó a configurar (sin VLAN ni servicio) se usa en vez de crear otra.
         $existente = $conexiones->first(fn ($c) => $c['objeto'] === $objeto && $c['vlan'] === (int) $wan['vlan'])
@@ -1913,7 +1998,12 @@ class AprovisionamientoDeOnt
         $dialecto = self::dialectoWan($d) ?? ['vlan' => 'X_HW_VLAN', 'servicios' => 'X_HW_SERVICELIST', 'lanbind' => 'X_HW_LANBIND'];
         $valores = $this->valoresWan($a, $ruta, $wan, $servicios, $dialecto);
 
-        $r = $this->alMomento($acs, $equipo, ['name' => 'setParameterValues', 'parameterValues' => $valores]);
+        $r = $this->alMomento($acs, $equipo, ['name' => 'setParameterValues', 'parameterValues' => $valores], self::reportaCada($d));
+
+        if (!$r['hecha'] && ($r['encolada'] ?? false)) {
+            return ['paso' => $titulo, 'ok' => true,
+                'detalle' => "{$como}. El equipo no atiende avisos al momento: los datos se le cargan en su próximo reporte (reporta cada {$r['encolada']} min).{$nota}"];
+        }
 
         if (!$r['hecha']) {
             return ['paso' => $titulo, 'ok' => false, 'detalle' => "{$como}, pero no se le pudieron cargar los datos: {$r['motivo']}{$nota}",
@@ -2032,12 +2122,130 @@ class AprovisionamientoDeOnt
     }
 
     /**
+     * La conexión a internet en un equipo TR-181.
+     *
+     * De fábrica (Sagemcom Fast 5670, Prueba_TR 17-10) trae la cadena completa y apagada:
+     * PPP.Interface.1 «WAN» (usuario guest) sobre VLANTermination.1 «VLAN_DATA» (VLAN 200,
+     * Enable=false) sobre el enlace GPON_DATA; la de gestión es otra cadena (VLAN_MGMT) y no
+     * se toca. La de internet es la que tiene el NAT; se le pone usuario, clave y la VLAN
+     * del cliente, y se enciende.
+     */
+    private function aplicarWanTr181(GenieAcs $acs, Aprovisionamiento $a, array $d, array $wan, string $titulo): array
+    {
+        $equipo = (string) $a->acs_id;
+
+        if ($wan['tipo'] !== 'pppoe') {
+            return ['paso' => $titulo, 'ok' => false, 'omitido' => true,
+                'detalle' => 'En este equipo (TR-181) por ahora sólo se carga PPPoE: cargue la IP fija en el equipo (' . self::resumenWan($wan) . ').'];
+        }
+
+        foreach (['Device.PPP.Interface', 'Device.Ethernet.VLANTermination', 'Device.IP.Interface', 'Device.NAT.InterfaceSetting'] as $obj) {
+            try {
+                $acs->tarea($equipo, ['name' => 'refreshObject', 'objectName' => $obj]);
+            } catch (\Throwable) {
+            }
+        }
+        $d = $acs->dispositivo($equipo) ?? $d;
+
+        $limpiar = fn ($ruta) => rtrim(trim((string) $ruta), '.');
+        $capas = fn (string $ruta) => array_filter(array_map($limpiar, explode(',', (string) self::v($d, "{$ruta}.LowerLayers"))));
+        $vlanGestion = (int) (GestionRemota::where('company_id', $this->companyId)->value('vlan') ?: 0);
+
+        // La interfaz IP con NAT es la de internet; de ahí, su PPP.
+        $ppp = null;
+        foreach (self::hijos($d, 'Device.NAT.InterfaceSetting') as $i) {
+            $ip = $limpiar(self::v($d, "Device.NAT.InterfaceSetting.{$i}.Interface"));
+            if ($ip === '' || !in_array(self::v($d, "Device.NAT.InterfaceSetting.{$i}.Enable"), [true, 'true', 1, '1'], true)) {
+                continue;
+            }
+            $ppp = collect($capas($ip))->first(fn ($c) => str_starts_with($c, 'Device.PPP.Interface.'));
+            if ($ppp) {
+                break;
+            }
+        }
+
+        // Sin NAT legible: la primera PPP que no sea la de gestión.
+        $ppp ??= collect(self::hijos($d, 'Device.PPP.Interface'))
+            ->map(fn ($i) => "Device.PPP.Interface.{$i}")
+            ->first(function ($ruta) use ($d, $capas, $vlanGestion) {
+                $alias = strtoupper((string) self::v($d, "{$ruta}.Alias"));
+                $vlan = collect($capas($ruta))->first(fn ($c) => str_contains($c, 'VLANTermination'));
+                return !str_contains($alias, 'MGMT') && !str_contains($alias, 'MNGT')
+                    && !($vlan && $vlanGestion && (int) self::v($d, "{$vlan}.VLANID") === $vlanGestion);
+            });
+
+        $vlan = $ppp ? collect($capas($ppp))->first(fn ($c) => str_starts_with($c, 'Device.Ethernet.VLANTermination.')) : null;
+
+        if (!$ppp || !$vlan) {
+            return ['paso' => $titulo, 'ok' => false, 'reintentar' => 'Device.PPP.Interface',
+                'detalle' => 'No se pudo leer la conexión de internet del equipo (TR-181): se reintenta sin tocar nada.'];
+        }
+
+        $clave = (string) ($wan['clave_cifrada'] ?? (UserData::where('user_id', $a->user_id)->value('pppoe_password') ?? ''));
+        $clave = $clave !== '' ? self::descifrar($clave) : '';
+
+        $valores = [
+            ["{$vlan}.VLANID", (string) (int) $wan['vlan'], 'xsd:unsignedInt'],
+            ["{$vlan}.Enable", 'true', 'xsd:boolean'],
+            ["{$ppp}.Username", $wan['usuario'], 'xsd:string'],
+            ["{$ppp}.Enable", 'true', 'xsd:boolean'],
+        ];
+        if ($clave !== '') {
+            $valores[] = ["{$ppp}.Password", $clave, 'xsd:string'];
+        }
+
+        $r = $acs->tarea($equipo, ['name' => 'setParameterValues', 'parameterValues' => $valores]);
+
+        return $this->resultado($acs, $equipo, $r, $titulo,
+            'Se cargó la conexión: ' . self::resumenWan($wan) . ' (equipo TR-181)');
+    }
+
+    /** Cada cuántos minutos reporta el equipo, si es a menudo (≤ 30 min); null si no se sabe o es más. */
+    private static function reportaCada(array $d): ?int
+    {
+        $raiz = isset($d['Device']) ? 'Device' : 'InternetGatewayDevice';
+        $activo = self::v($d, "{$raiz}.ManagementServer.PeriodicInformEnable");
+        $cada = (int) self::v($d, "{$raiz}.ManagementServer.PeriodicInformInterval");
+
+        return in_array($activo, [true, 'true', 1, '1'], true) && $cada > 0 && $cada <= 1800
+            ? (int) ceil($cada / 60)
+            : null;
+    }
+
+    /**
      * Una tarea sobre las conexiones, hecha en el momento o sacada de la cola.
      *
-     * @return array{hecha:bool, rechazada:bool, motivo:string, instancia:mixed}
+     * Si el equipo reporta seguido ($reportaCadaMin, ver reportaCada) y no atiende el aviso
+     * al momento, la tarea se deja en la cola: la aplica en su próximo reporte, en minutos.
+     * Sin eso un Huawei con el TR-069 por su IP fija (el 8085 no contesta por ahí) nunca
+     * recibía un reaplicar aunque reportara cada 15 min (CARMEN URBANEJA, 19-10).
+     *
+     * @return array{hecha:bool, rechazada:bool, motivo:string, instancia:mixed, encolada?:int}
      */
-    private function alMomento(GenieAcs $acs, string $equipo, array $tarea): array
+    private function alMomento(GenieAcs $acs, string $equipo, array $tarea, ?int $reportaCadaMin = null): array
     {
+        if ($reportaCadaMin !== null) {
+            try {
+                $r = $acs->tarea($equipo, $tarea);
+            } catch (\Throwable $e) {
+                return ['hecha' => false, 'rechazada' => false, 'motivo' => 'el servidor TR-069 no respondió (' . mb_substr($e->getMessage(), 0, 80) . ').', 'instancia' => null];
+            }
+
+            if ($r['hecha'] ?? false) {
+                return ['hecha' => true, 'rechazada' => false, 'motivo' => '', 'instancia' => $r['instancia'] ?? null];
+            }
+
+            $falla = ($r['id'] ?? null) ? $acs->fallaDeTarea($equipo, (string) $r['id']) : null;
+
+            if ($falla) {
+                $acs->borrarTarea((string) $r['id']);
+
+                return ['hecha' => false, 'rechazada' => true, 'motivo' => "el equipo la rechazó ({$falla}).", 'instancia' => null];
+            }
+
+            return ['hecha' => false, 'rechazada' => false, 'motivo' => '', 'instancia' => null, 'encolada' => $reportaCadaMin];
+        }
+
         try {
             $r = $acs->tareaInmediata($equipo, $tarea);
         } catch (\Throwable $e) {
@@ -2317,6 +2525,33 @@ class AprovisionamientoDeOnt
     {
         $titulo = 'Cuenta de administración del equipo';
         $g = GestionRemota::where('company_id', $this->companyId)->first();
+
+        // TR-181 (Sagemcom Fast 5670): las cuentas son Device.Users.User.N. La de la página
+        // es «admin» y la página sólo la reconoce con ese nombre: renombrada a «adminisp» el
+        // equipo la aceptó, pero el ingreso decía «Información de acceso incorrectas»
+        // (Prueba_TR 19-10). Queda «admin» con la clave de la empresa.
+        if (isset($d['Device']) && self::hijos($d, 'Device.Users.User')) {
+            if (!$g?->onu_admin_usuario || !$g->onu_admin_clave) {
+                return ['paso' => $titulo, 'ok' => false, 'omitido' => true,
+                    'detalle' => 'La empresa no tiene configurada la cuenta de administración de las ONT (Gestión remota): no se cambió.'];
+            }
+
+            $nombres = array_filter([strtolower((string) $g->onu_admin_usuario), 'admin']);
+            $cuenta = collect(self::hijos($d, 'Device.Users.User'))
+                ->first(fn ($u) => in_array(strtolower((string) self::v($d, "Device.Users.User.{$u}.Username")), $nombres, true));
+
+            if ($cuenta === null) {
+                return ['paso' => $titulo, 'ok' => false, 'omitido' => true, 'detalle' => 'No se encontró la cuenta de administración del equipo: no se cambió.'];
+            }
+
+            $r = $acs->tarea((string) $a->acs_id, ['name' => 'setParameterValues', 'parameterValues' => [
+                ["Device.Users.User.{$cuenta}.Username", 'admin', 'xsd:string'],
+                ["Device.Users.User.{$cuenta}.Password", $g->onu_admin_clave, 'xsd:string'],
+                ["Device.Users.User.{$cuenta}.Enable", 'true', 'xsd:boolean'],
+            ]]);
+
+            return $this->resultado($acs, (string) $a->acs_id, $r, $titulo, 'Usuario admin (en Sagemcom la página sólo acepta ese nombre) con la clave de la empresa');
+        }
 
         // C-Data: la cuenta del proveedor (usuario fijo adminisp). Según el
         // firmware la publica como «X_CATV_» o como «X_CT-COM_»: con una sola

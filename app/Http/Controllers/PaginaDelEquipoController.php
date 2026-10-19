@@ -29,6 +29,18 @@ class PaginaDelEquipoController extends Controller
         }
     }
 
+    /** Usuario y clave de administración del equipo del cliente (sólo administradores). */
+    public function credenciales(int $id): object
+    {
+        try {
+            $r = (new PaginaDelEquipo((int) getSessionCompanyId()))->credenciales($id, (int) (getSessionUserId() ?? 0));
+
+            return standardApiReponse('Listo', $r, 0, JsonResponse::HTTP_OK);
+        } catch (\InvalidArgumentException $e) {
+            return standardApiReponse($e->getMessage(), null, 1, JsonResponse::HTTP_OK);
+        }
+    }
+
     public function entrar(Request $request): Response
     {
         if (!self::deNginx($request)) {

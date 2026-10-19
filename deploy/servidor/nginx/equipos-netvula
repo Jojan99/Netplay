@@ -1,0 +1,109 @@
+# Puente a la página web de las ONT de los clientes (ver PaginaDelEquipo en Laravel).
+#
+# Los ZTE con firmware de Claro sólo atienden si la petición dice ir a 192.168.1.1
+# y no dejan entrar al administrador desde la red local. Este puente reenvía al
+# equipo con el Host que espera. Cada petición la valida Laravel (auth_request):
+# sin la cookie de una sesión abierta desde la ficha del cliente no pasa nada, y el
+# destino sale de la plataforma, nunca del navegador.
+#
+# Va antes que el comodín *.netvula.com: la coincidencia exacta gana.
+
+# El equipo revisa también de dónde viene la petición: se le dice que de sí mismo.
+map $http_referer $equipo_referer {
+    ~^https?://[^/]+(?<ruta>/.*)?$ "http://$equipo_host$ruta";
+    default "";
+}
+map $http_origin $equipo_origin {
+    ""      "";
+    default "http://$equipo_host";
+}
+
+server {
+    server_name equipos.netvula.com;
+    listen 443 ssl;
+    ssl_certificate     /etc/ssl/cloudflare/netvula-origen.pem;
+    ssl_certificate_key /etc/ssl/cloudflare/netvula-origen.key;
+    include snippets/cloudflare-ip-real.conf;
+    if ($desde_cloudflare = 0) { return 403; }
+
+    access_log /var/log/nginx/equipos.access.log;
+    client_max_body_size 20M;
+
+    # Código de un solo uso → sesión del puente (y, en ZTE, sesión en el equipo).
+    location = /__abrir {
+        include snippets/pagina-equipo-laravel.conf;
+        fastcgi_param REQUEST_URI    /api/pagina-equipo/entrar?$args;
+        fastcgi_param QUERY_STRING   $args;
+        fastcgi_param REQUEST_METHOD GET;
+    }
+
+    location = /__validar {
+        internal;
+        include snippets/pagina-equipo-laravel.conf;
+        fastcgi_param REQUEST_URI    /api/pagina-equipo/validar;
+        fastcgi_param QUERY_STRING   "";
+        fastcgi_param REQUEST_METHOD GET;
+        fastcgi_pass_request_body off;
+        fastcgi_param CONTENT_LENGTH "";
+    }
+
+    location @sin_sesion {
+        include snippets/pagina-equipo-laravel.conf;
+        fastcgi_param REQUEST_URI    /api/pagina-equipo/sin-sesion;
+        fastcgi_param QUERY_STRING   "";
+        fastcgi_param REQUEST_METHOD GET;
+        fastcgi_pass_request_body off;
+        fastcgi_param CONTENT_LENGTH "";
+    }
+
+    # El equipo no contesta (apagado, sin internet o con la página cerrada por la WAN):
+    # un aviso en vez del «504» de Cloudflare.
+    location @sin_respuesta {
+        default_type text/html;
+        add_header Cache-Control "private, no-store" always;
+        # 200 y no 504: Cloudflare cambia un 502/504 del servidor por su propia página
+        # «Gateway time-out» y este aviso nunca se veía (Sagemcom, 19-10).
+        return 200 '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Página del equipo</title><body style="font-family:system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 16px;color:#222"><h2 style="font-weight:600">El equipo no responde</h2><p>La ONT no contestó a tiempo: puede estar apagada, sin conexión o con la página web cerrada hacia internet. Revise que esté en línea y vuelva a abrirla desde la ficha del cliente.</p></body>';
+    }
+
+    location / {
+        auth_request /__validar;
+        auth_request_set $equipo_destino $upstream_http_x_equipo_destino;
+        auth_request_set $equipo_host    $upstream_http_x_equipo_host;
+        auth_request_set $equipo_esquema $upstream_http_x_equipo_esquema;
+        error_page 401 = @sin_sesion;
+        error_page 502 504 = @sin_respuesta;
+
+        # http o https según el equipo (hay Huawei que sólo atienden cifrado por el 8080,
+        # con certificado propio: no se verifica, el destino ya lo validó Laravel).
+        proxy_pass $equipo_esquema://$equipo_destino;
+        proxy_ssl_verify off;
+        proxy_ssl_server_name off;
+        proxy_http_version 1.1;
+        proxy_set_header Host            $equipo_host;
+        proxy_set_header Referer         $equipo_referer;
+        proxy_set_header Origin          $equipo_origin;
+        proxy_set_header X-Forwarded-For "";
+        proxy_set_header X-Real-IP       "";
+        proxy_connect_timeout 8s;
+        proxy_read_timeout    60s;
+
+        # Si el equipo redirige a sí mismo, que siga dentro del puente.
+        proxy_redirect ~^https?://[^/]+(/.*)?$ $1;
+
+        # Nada de esto se guarda en Cloudflare ni en el navegador: la misma ruta
+        # es de un equipo distinto según la sesión.
+        proxy_hide_header Cache-Control;
+        proxy_hide_header Expires;
+        add_header Cache-Control "private, no-store" always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+    }
+}
+
+server {
+    listen 80;
+    server_name equipos.netvula.com;
+    include snippets/cloudflare-ip-real.conf;
+    if ($desde_cloudflare = 0) { return 403; }
+    location / { return 301 https://$host$request_uri; }
+}
