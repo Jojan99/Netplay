@@ -3,15 +3,21 @@
 use App\Http\Controllers\EmployeeController;
 use Illuminate\Support\Facades\Route;
 
+// Ubicación de los técnicos. Antes vivía bajo module:empleados, que el perfil TÉCNICO
+// no tiene: el celular mandaba la posición y recibía 403, así que el mapa mostraba
+// posiciones de hace meses. Cada usuario sólo actualiza la suya (updateMyLocation
+// busca el empleado del usuario autenticado); el mapa lo ve quien tenga el módulo
+// del mapa de técnicos o el de empleados. Van antes del grupo para ganarle a {id}.
+Route::prefix('employees')->middleware('jwt.verify')->group(function () {
+    Route::put('/my-location', [EmployeeController::class, 'updateMyLocation']);
+    Route::get('/technician-locations', [EmployeeController::class, 'getTechnicianLocations'])->middleware('module:technician-map,empleados');
+});
+
 Route::prefix('employees')->middleware(['jwt.verify', 'module:empleados'])->group(function () {
 
     // Rutas específicas primero (antes de {id})
     Route::get('/',              [EmployeeController::class, 'index']);
     Route::get('/available-staff', [EmployeeController::class, 'availableStaff']);
-    Route::get('/technician-locations', [EmployeeController::class, 'getTechnicianLocations']);
-    
-    // Ubicación — rutas estáticas ANTES de {id} para evitar conflicto
-    Route::put('/my-location',             [EmployeeController::class, 'updateMyLocation']);
 
     // Empleados CRUD con {id}
     Route::get('/{id}',          [EmployeeController::class, 'show']);
