@@ -168,6 +168,31 @@ class GestionPorInternet
             return false;
         }
 
+        // Se pregunta a la OLT, no al equipo: después de quitarla, el Huawei sigue
+        // mostrando su conexión de gestión vieja (OLT_C_TR069…, VLAN de gestión) y esto
+        // creía que la tenía. Cada madrugada «la quitaba» —no había nada— y lo reiniciaba:
+        // 8 equipos reiniciados casi todas las noches durante un mes (ANGIE_MONTALVO 26
+        // veces; 0/0/6:16, 0/0/3:100 y 0/0/3:115 sin gestión en la OLT, 20-10).
+        try {
+            $disp = app(OltTelnetDispatcher::class);
+            $config = (string) $disp->dispatch((int) $ont->olt_id, 'runCommand', ['command' => "display current-configuration ont {$ont->fsp} {$ont->ont_id}"]);
+            $puertos = (string) $disp->dispatch((int) $ont->olt_id, 'runCommand', ['command' => "display service-port port {$ont->fsp} ont {$ont->ont_id}"]);
+        } catch (\Throwable) {
+            Cache::put($marca, 1, now()->addMinutes(15));
+
+            return false;
+        }
+
+        $enLaOlt = str_contains($config, 'ont ipconfig')
+            || preg_match('/^\s*\d+\s+' . $vlanGestion . '\s+\w+\s+gpon\b/m', $puertos);
+
+        if (!$enLaOlt) {
+            // Nada que quitar: no se reinicia. Se vuelve a mirar en una semana.
+            Cache::put($marca, 1, now()->addDays(7));
+
+            return false;
+        }
+
         Cache::put($marca, 1, now()->addDay());
         $ip = (string) AprovisionamientoDeOnt::v($d, "{$internet['ruta']}.ExternalIPAddress");
 

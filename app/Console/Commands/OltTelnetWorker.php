@@ -447,7 +447,10 @@ class OltTelnetWorker extends Command
                                            // Igual que en OltTelnetDispatcher (conexión directa): sin esto
                                            // la opción de pisar conexiones ajenas no llegaba al driver.
                                            array_map('intval', (array) ($p['vlans_cliente'] ?? [])), (bool) ($p['pisar_ajenas'] ?? false),
-                                           (bool) ($p['aunque_tenga_tr069'] ?? false)) : null,
+                                           // solo_carril también: sin él, red:recuperar-gestion seguía
+                                           // haciendo «ont ipconfig» por el worker y la OLT les borraba
+                                           // internet en cada reinicio (ANGIE_MONTALVO, SILEIMI_CHARRIS, 20-10).
+                                           (bool) ($p['aunque_tenga_tr069'] ?? false), (bool) ($p['solo_carril'] ?? false)) : null,
             'perfilDeOnt'       => method_exists($this->driver, 'perfilDeOnt')
                                        ? $this->driver->perfilDeOnt((string) $p['fsp'], (int) $p['ont_id']) : null,
             'perfilesDeLinea'   => method_exists($this->driver, 'perfilesDeLinea')
