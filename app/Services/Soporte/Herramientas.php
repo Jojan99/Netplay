@@ -504,10 +504,46 @@ class Herramientas
             $datos['source'] = 'asistente';
         }
 
+        // Sin técnico el ticket no aparecía en el listado y nadie lo atendía: va al de
+        // menos tickets abiertos.
+        $tecnico = \App\Services\Tickets\AsignacionDeTecnico::menosCargado($companyId);
+        $datos['technical_id'] = $tecnico['id'] ?? null;
+
         $id = (int) DB::table('tickets')->insertGetId($datos);
         $caso->fill(['ticket_id' => $id])->save();
 
+        self::avisarTicket($companyId, $id, $caso, $cliente, $servicio, $prioridadId, $tecnico, $nota);
+
         return ['id' => $id, 'nuevo' => true];
+    }
+
+    /**
+     * El mismo aviso de WhatsApp que sale al crear un ticket desde el panel, diciendo que
+     * lo creó el asistente. Que falle no deshace el ticket.
+     */
+    private static function avisarTicket(int $companyId, int $id, SoporteCaso $caso, ?object $cliente, $servicio, $prioridadId, ?array $tecnico, string $nota): void
+    {
+        try {
+            $asistente = (string) (SoporteConfig::where('company_id', $companyId)->value('nombre_asistente') ?: 'el asistente');
+            $nombre = DB::table('user_data')->where('company_id', $companyId)->where('user_id', $caso->user_id)
+                ->selectRaw("TRIM(CONCAT(names, ' ', COALESCE(lastname, ''))) as n")->value('n');
+
+            \App\Services\Avisos\MensajeDeAviso::nuevo('Nuevo ticket de soporte', $companyId, '🔧')
+                ->dato('Ticket', "#{$id}")
+                ->dato('Creado por', "{$asistente}, el asistente por WhatsApp")
+                ->dato('Cliente', $nombre)
+                ->dato('Cédula', $cliente->dni ?? null)
+                ->telefono('Teléfono', $cliente->phone ?? $caso->telefono)
+                ->dato('Dirección', $cliente->address ?? null)
+                ->dato('Servicio', DB::table('ticket_type_services')->where('id', $servicio)->value('name'))
+                ->dato('Prioridad', DB::table('ticket_type_prioritys')->where('id', $prioridadId)->value('name'))
+                ->dato('Técnico', $tecnico['nombre'] ?? 'Sin asignar (no hay técnicos activos)')
+                ->fecha('Registrado', now())
+                ->bloque('Observación', $nota)
+                ->enviar('ticket_support');
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('[Soporte] No se pudo avisar el ticket del asistente', ['ticket' => $id, 'error' => $e->getMessage()]);
+        }
     }
 
     private function pasar(string $motivo): array

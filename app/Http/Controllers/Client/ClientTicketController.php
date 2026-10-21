@@ -95,16 +95,28 @@ class ClientTicketController extends Controller
 
         $user = JWTAuth::user();
 
+        // El listado de tickets exige técnico, servicio y prioridad: sin ellos el ticket
+        // quedaba guardado y nadie lo veía. Va al técnico con menos tickets abiertos.
+        $tecnico = \App\Services\Tickets\AsignacionDeTecnico::menosCargado((int) $user->company_id);
+        $servicio = DB::table('ticket_type_services')->whereIn('company_id', [$user->company_id, 0])->where('active', 1)
+            ->orderByRaw("CASE WHEN UPPER(name) LIKE 'SOPORTE%' THEN 0 WHEN UPPER(name) LIKE 'DA%' THEN 1 ELSE 2 END")->orderByDesc('company_id')->value('id');
+        $prioridad = DB::table('ticket_type_prioritys')->whereIn('company_id', [$user->company_id, 0])->where('active', 1)
+            ->orderByRaw("CASE WHEN UPPER(name) = 'MEDIA' THEN 0 ELSE 1 END")->orderByDesc('company_id')->value('id');
+
         // status_id = 1 → "Por hacer" (estado inicial)
         $ticketId = DB::table('tickets')->insertGetId([
-            'company_id'  => $user->company_id,
-            'user_id'     => $user->id,
-            'status_id'   => 1,
-            'category'    => $request->category,
-            'observation' => $request->description,
-            'source'      => 'client_portal',
-            'created_at'  => now(),
-            'updated_at'  => now(),
+            'company_id'   => $user->company_id,
+            'user_id'      => $user->id,
+            'status_id'    => 1,
+            'technical_id' => $tecnico['id'] ?? null,
+            'service_id'   => $servicio,
+            'priority_id'  => $prioridad,
+            'date'         => now()->toDateString(),
+            'category'     => $request->category,
+            'observation'  => $request->description,
+            'source'       => 'client_portal',
+            'created_at'   => now(),
+            'updated_at'   => now(),
         ]);
 
         // Diagnóstico de su conexión, en segundo plano, como novedad del ticket.
@@ -126,6 +138,7 @@ class ClientTicketController extends Controller
             ->dato('Dirección', $userData->address ?? null)
             ->dato('Categoría', self::CATEGORIAS[$request->category] ?? $request->category)
             ->dato('Origen', 'Portal del cliente')
+            ->dato('Técnico', $tecnico['nombre'] ?? 'Sin asignar (no hay técnicos activos)')
             ->fecha('Registrado', now())
             ->bloque('Descripción', $request->description)
             ->enviar('ticket_support');
