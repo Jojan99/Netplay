@@ -1,0 +1,1 @@
+{"weight": 10, "channel": "intervalo", "precondition": "DeviceID.Manufacturer = \"SKYWORTH\"", "events": {}, "configurations": [{"type": "provision", "name": "intervalo-skyworth", "args": null}]}

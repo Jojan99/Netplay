@@ -1820,7 +1820,13 @@ class AprovisionamientoDeOnt
         // Modelo TR-181 (raíz «Device.», p. ej. Sagemcom Fast 5670): la conexión es una
         // cadena PPP → VLAN → enlace → fibra que ya trae armada de fábrica; se llena.
         if (isset($d['Device']) && self::hijos($d, 'Device.PPP.Interface')) {
-            return $this->aplicarWanTr181($acs, $a, $d, $wan, $titulo);
+            return $this->conPingSkyworth($acs, $a, $d, $this->aplicarWanTr181($acs, $a, $d, $wan, $titulo));
+        }
+
+        // TR-181 sin PPP (Skyworth GN630V de Claro): la cadena de internet viene por DHCP
+        // y la PPP hay que crearla.
+        if (isset($d['Device'])) {
+            return $this->conPingSkyworth($acs, $a, $d, $this->crearWanTr181($acs, $a, $d, $wan, $titulo));
         }
 
         if (!$soportado) {
@@ -2130,6 +2136,163 @@ class AprovisionamientoDeOnt
      * se toca. La de internet es la que tiene el NAT; se le pone usuario, clave y la VLAN
      * del cliente, y se enciende.
      */
+    /**
+     * Skyworth de Claro: su firewall descarta el ping aunque X_SKYW_ACL.WanPing esté en
+     * true, y sin ping no hay monitoreo. Se apaga: probado en Prueba_TR (20-10), sin él
+     * sigue sin abrir ningún puerto TCP por la WAN (eso lo cierran las reglas de acceso
+     * X_SKYW_ACL, aparte) y la red de la casa queda detrás del NAT. No hace fallar el paso.
+     *
+     * @param array<string,mixed> $r el resultado de la conexión
+     */
+    private function conPingSkyworth(GenieAcs $acs, Aprovisionamiento $a, array $d, array $r): array
+    {
+        if (!($r['ok'] ?? false) || !str_contains(strtoupper((string) ($d['_deviceId']['_Manufacturer'] ?? '')), 'SKYWORTH')) {
+            return $r;
+        }
+
+        try {
+            $hecho = $acs->tarea((string) $a->acs_id, ['name' => 'setParameterValues', 'parameterValues' => [
+                ['Device.Services.X_SKYW_Firewall.Enable', 'false', 'xsd:boolean'],
+                ['Device.Services.X_SKYW_ACL.WanPing', 'true', 'xsd:boolean'],
+            ]])['hecha'] ?? false;
+        } catch (\Throwable) {
+            $hecho = false;
+        }
+
+        $r['detalle'] = rtrim((string) $r['detalle'], '.') . ($hecho
+            ? '. Se apagó el firewall del equipo para que responda ping (no abre puertos).'
+            : '. No se pudo apagar el firewall del equipo: puede no responder ping.');
+
+        return $r;
+    }
+
+    /**
+     * TR-181 sin ninguna PPP (Skyworth GN630V con firmware de Claro, Prueba_TR 19-10):
+     * trae la interfaz IP de internet por DHCP sobre IP.Interface → VLANTermination →
+     * Ethernet.Link → fibra. Se crea la PPP y se cuelga entre la IP y la VLAN.
+     *
+     * El orden importa: mientras la VLAN es la capa de la interfaz IP, el equipo no deja
+     * ponerla bajo la PPP («9003 Invalid arguments»). Primero la IP pasa a la PPP y
+     * después la PPP baja a la VLAN; ahí conecta.
+     */
+    private function crearWanTr181(GenieAcs $acs, Aprovisionamiento $a, array $d, array $wan, string $titulo): array
+    {
+        $equipo = (string) $a->acs_id;
+
+        foreach (['Device.PPP.Interface', 'Device.IP.Interface', 'Device.Ethernet.VLANTermination', 'Device.Ethernet.Link', 'Device.NAT.InterfaceSetting'] as $obj) {
+            try {
+                $acs->tarea($equipo, ['name' => 'refreshObject', 'objectName' => $obj]);
+            } catch (\Throwable) {
+            }
+        }
+        $d = $acs->dispositivo($equipo) ?? $d;
+
+        // Ya leída, puede que sí tenga PPP (no se había leído): va por el camino de siempre.
+        if (self::hijos($d, 'Device.PPP.Interface')) {
+            return $this->aplicarWanTr181($acs, $a, $d, $wan, $titulo);
+        }
+
+        if ($wan['tipo'] !== 'pppoe') {
+            return ['paso' => $titulo, 'ok' => false, 'omitido' => true,
+                'detalle' => 'En este equipo (TR-181) por ahora sólo se carga PPPoE: cargue la IP fija en el equipo (' . self::resumenWan($wan) . ').'];
+        }
+
+        $limpiar = fn ($ruta) => rtrim(trim((string) $ruta), '.');
+        $vlanGestion = (int) (GestionRemota::where('company_id', $this->companyId)->value('vlan') ?: 0);
+
+        // La interfaz IP de internet: con NAT, sobre una VLAN que no sea la de gestión; si
+        // el firmware dice el servicio (X_CLARO_ServiceList), la de INTERNET primero.
+        $conNat = collect(self::hijos($d, 'Device.NAT.InterfaceSetting'))
+            ->filter(fn ($i) => in_array(self::v($d, "Device.NAT.InterfaceSetting.{$i}.Enable"), [true, 'true', 1, '1'], true))
+            ->map(fn ($i) => $limpiar(self::v($d, "Device.NAT.InterfaceSetting.{$i}.Interface")))
+            ->all();
+
+        $candidatas = collect(self::hijos($d, 'Device.IP.Interface'))
+            ->map(fn ($i) => "Device.IP.Interface.{$i}")
+            ->filter(function ($ip) use ($d, $limpiar, $vlanGestion, $conNat) {
+                $vlan = $limpiar(self::v($d, "{$ip}.LowerLayers"));
+                return in_array($ip, $conNat, true)
+                    && str_starts_with($vlan, 'Device.Ethernet.VLANTermination.')
+                    && !($vlanGestion && (int) self::v($d, "{$vlan}.VLANID") === $vlanGestion)
+                    && !preg_match('/VOIP|IPTV|TR069|OTHER/i', (string) self::v($d, "{$ip}.X_CLARO_ServiceList"));
+            })
+            ->sortBy(fn ($ip) => str_contains(strtoupper((string) self::v($d, "{$ip}.X_CLARO_ServiceList")), 'INTERNET') ? 0 : 1);
+
+        $ip = $candidatas->first();
+        $vlan = $ip ? $limpiar(self::v($d, "{$ip}.LowerLayers")) : null;
+
+        // La de internet suelta (sin capa o colgando de una PPP que ya no existe): pasa si
+        // un intento quedó a medias o se borró la PPP; el equipo tampoco deja volver a
+        // ponerla directo sobre la VLAN. Se usa la de INTERNET y la VLAN que nadie ocupa.
+        if (!$ip) {
+            // Al quedar suelta el equipo también le borra el servicio (X_CLARO_ServiceList
+            // vacío): vale cualquiera con NAT que no sea de voz, TV, gestión u «otro».
+            $ip = collect(self::hijos($d, 'Device.IP.Interface'))
+                ->map(fn ($i) => "Device.IP.Interface.{$i}")
+                ->filter(fn ($r) => in_array($r, $conNat, true)
+                    && !preg_match('/VOIP|IPTV|TR069|OTHER/i', (string) self::v($d, "{$r}.X_CLARO_ServiceList"))
+                    && !str_starts_with($limpiar(self::v($d, "{$r}.LowerLayers")), 'Device.Ethernet.'))
+                ->sortBy(fn ($r) => str_contains(strtoupper((string) self::v($d, "{$r}.X_CLARO_ServiceList")), 'INTERNET') ? 0 : 1)
+                ->first();
+
+            $ocupadas = collect(self::hijos($d, 'Device.IP.Interface'))
+                ->map(fn ($i) => $limpiar(self::v($d, "Device.IP.Interface.{$i}.LowerLayers")))->all();
+
+            $vlan = $ip ? collect(self::hijos($d, 'Device.Ethernet.VLANTermination'))
+                ->map(fn ($i) => "Device.Ethernet.VLANTermination.{$i}")
+                ->first(fn ($v) => !in_array($v, $ocupadas, true)
+                    && !($vlanGestion && (int) self::v($d, "{$v}.VLANID") === $vlanGestion)
+                    && str_starts_with($limpiar(self::v($d, "{$v}.LowerLayers")), 'Device.Ethernet.Link.')) : null;
+        }
+
+        $enlace = $vlan ? $limpiar(self::v($d, "{$vlan}.LowerLayers")) : '';
+
+        if (!$ip || !$vlan) {
+            return ['paso' => $titulo, 'ok' => false, 'reintentar' => 'Device.IP.Interface',
+                'detalle' => 'No se encontró la conexión de internet del equipo (TR-181) para colgarle el PPPoE: se reintenta sin tocar nada.'];
+        }
+
+        $clave = (string) ($wan['clave_cifrada'] ?? (UserData::where('user_id', $a->user_id)->value('pppoe_password') ?? ''));
+        $clave = $clave !== '' ? self::descifrar($clave) : '';
+
+        $r = $this->alMomento($acs, $equipo, ['name' => 'addObject', 'objectName' => 'Device.PPP.Interface']);
+        if (!$r['hecha']) {
+            return ['paso' => $titulo, 'ok' => false, 'reintentar' => 'Device.PPP.Interface',
+                'detalle' => 'No se pudo crear la conexión PPPoE en el equipo: ' . ($r['motivo'] ?: 'no respondió.')];
+        }
+
+        // GenieACS no siempre devuelve la instancia: se lee la PPP que quedó.
+        $n = $r['instancia'];
+        if (!$n) {
+            try {
+                $acs->tarea($equipo, ['name' => 'refreshObject', 'objectName' => 'Device.PPP.Interface']);
+            } catch (\Throwable) {
+            }
+            $n = collect(self::hijos($acs->dispositivo($equipo) ?? [], 'Device.PPP.Interface'))->map(fn ($i) => (int) $i)->max();
+        }
+        $ppp = "Device.PPP.Interface.{$n}";
+
+        $valores = array_values(array_filter([
+            $enlace !== '' ? ["{$enlace}.Enable", 'true', 'xsd:boolean'] : null,
+            ["{$vlan}.VLANID", (string) (int) $wan['vlan'], 'xsd:unsignedInt'],
+            ["{$vlan}.Enable", 'true', 'xsd:boolean'],
+            ["{$ppp}.Username", $wan['usuario'], 'xsd:string'],
+            $clave !== '' ? ["{$ppp}.Password", $clave, 'xsd:string'] : null,
+            ["{$ppp}.IPCPEnable", 'true', 'xsd:boolean'],
+            ["{$ppp}.Enable", 'true', 'xsd:boolean'],
+        ]));
+
+        foreach ([$valores, [["{$ip}.LowerLayers", $ppp, 'xsd:string']], [["{$ppp}.LowerLayers", $vlan, 'xsd:string']]] as $paso) {
+            $r = $this->alMomento($acs, $equipo, ['name' => 'setParameterValues', 'parameterValues' => $paso]);
+            if (!$r['hecha']) {
+                return ['paso' => $titulo, 'ok' => false, 'reintentar' => 'Device.PPP.Interface',
+                    'detalle' => 'Se creó la PPPoE pero no se pudo terminar de armar la conexión: ' . ($r['motivo'] ?: 'el equipo no respondió.')];
+            }
+        }
+
+        return ['paso' => $titulo, 'ok' => true, 'detalle' => 'Se creó la conexión: ' . self::resumenWan($wan) . ' (equipo TR-181).'];
+    }
+
     private function aplicarWanTr181(GenieAcs $acs, Aprovisionamiento $a, array $d, array $wan, string $titulo): array
     {
         $equipo = (string) $a->acs_id;
@@ -2480,10 +2643,31 @@ class AprovisionamientoDeOnt
         $clave = (string) $a->wifi_clave;
         $titulo = 'WiFi';
 
-        $redes = array_values(array_filter(EquiposDelAcs::redesWifi($d), fn ($r) => $r['activo'] !== false));
+        $tr181 = isset($d['Device']);
+        // En TR-181 los SSID aparecen antes de leerse (Skyworth GN630V: 8 SSID, 4 sin nada):
+        // los que no tienen nombre leído no cuentan como redes encendidas.
+        $encendidas = fn (array $d) => array_values(array_filter(EquiposDelAcs::redesWifi($d),
+            fn ($r) => $r['activo'] !== false && (!$tr181 || ($r['ssid'] !== null && $r['activo'] === true))));
+        $redes = $encendidas($d);
+
+        // TR-181 con las redes sin leer: se leen antes de decir que no hay (el Skyworth
+        // de Prueba_TR salía «no informó redes WiFi» con dos encendidas).
+        if (!$redes && $tr181) {
+            $equipo = (string) $a->acs_id;
+            try {
+                $acs->tarea($equipo, ['name' => 'refreshObject', 'objectName' => 'Device.WiFi.SSID']);
+                $d = $acs->dispositivo($equipo) ?? $d;
+                foreach ($encendidas($d) as $red) {
+                    $acs->tarea($equipo, ['name' => 'refreshObject', 'objectName' => "Device.WiFi.AccessPoint.{$red['indice']}.Security"]);
+                }
+                $d = $acs->dispositivo($equipo) ?? $d;
+            } catch (\Throwable) {
+            }
+            $redes = $encendidas($d);
+        }
 
         if (!$redes) {
-            return ['paso' => $titulo, 'ok' => false, 'detalle' => 'El equipo no informó redes WiFi encendidas: no se cambió.', 'reintentar' => self::WLAN];
+            return ['paso' => $titulo, 'ok' => false, 'detalle' => 'El equipo no informó redes WiFi encendidas: no se cambió.', 'reintentar' => $tr181 ? 'Device.WiFi' : self::WLAN];
         }
 
         // El estándar WPA sólo admite ASCII imprimible en la contraseña. Una
@@ -2516,6 +2700,30 @@ class AprovisionamientoDeOnt
             return ['paso' => $titulo, 'ok' => false, 'detalle' => 'El equipo no deja cambiar la clave WiFi por TR-069.'];
         }
 
+        $bloqueadas = array_filter(array_column($valores, 0), fn ($ruta) => self::escribible($d, $ruta) === false);
+
+        if ($bloqueadas) {
+            $deFabrica = $redes[0]['clave'] ?? null;
+            $claveQueda = $deFabrica ? " La clave sigue siendo la de fábrica: {$deFabrica}." : '';
+
+            // Sagemcom de Tigo: la página sí deja cambiar el nombre (no la clave). Entra con
+            // la cuenta admin de la empresa, así que esa va primero (su paso viene después).
+            if (str_contains(strtoupper((string) ($d['_deviceId']['_Manufacturer'] ?? '')), 'SAGEMCOM')) {
+                $this->aplicarCuenta($acs, $a, $d, true);
+                $web = (new PaginaDelEquipo($this->companyId))
+                    ->nombreWifiSagemcom($acs, (string) $a->acs_id, $ssid, array_map(fn ($r) => (int) $r['indice'], $redes));
+
+                if ($web['ok']) {
+                    return ['paso' => $titulo, 'ok' => false, 'detalle' => "Nombre «{$ssid}» puesto por la página del equipo. "
+                        . 'La clave no se puede cambiar a distancia: el firmware del operador la bloquea.' . $claveQueda
+                        . ' Para la del aprovisionamiento, cámbiela en sitio (192.168.1.254).'];
+                }
+            }
+
+            return ['paso' => $titulo, 'ok' => false, 'detalle' => 'El firmware de este equipo (bloqueado por el operador) no deja cambiar el nombre ni la clave del WiFi por TR-069: '
+                . 'quedó la red de fábrica.' . $claveQueda . ' Cámbielos en sitio desde la página del equipo.'];
+        }
+
         $r = $acs->tarea((string) $a->acs_id, ['name' => 'setParameterValues', 'parameterValues' => $valores]);
 
         return $this->resultado($acs, (string) $a->acs_id, $r, $titulo, 'Redes ' . implode(' y ', $nombres) . ' con la clave del aprovisionamiento');
@@ -2525,6 +2733,18 @@ class AprovisionamientoDeOnt
     {
         $titulo = 'Cuenta de administración del equipo';
         $g = GestionRemota::where('company_id', $this->companyId)->first();
+
+        // En TR-181 las cuentas muchas veces no están leídas al llegar aquí: el Sagemcom de
+        // SMBS005C3459 salía «no se encontró la cuenta» y el Skyworth de Prueba_TR «en esta
+        // marca todavía no se cambia», los dos con la cuenta ahí (19-10).
+        if (isset($d['Device']) && !collect(self::hijos($d, 'Device.Users.User'))
+            ->contains(fn ($u) => self::v($d, "Device.Users.User.{$u}.Username") !== null)) {
+            try {
+                $acs->tarea((string) $a->acs_id, ['name' => 'refreshObject', 'objectName' => 'Device.Users']);
+                $d = $acs->dispositivo((string) $a->acs_id) ?? $d;
+            } catch (\Throwable) {
+            }
+        }
 
         // TR-181 (Sagemcom Fast 5670): las cuentas son Device.Users.User.N. La de la página
         // es «admin» y la página sólo la reconoce con ese nombre: renombrada a «adminisp» el
@@ -2539,6 +2759,33 @@ class AprovisionamientoDeOnt
             $nombres = array_filter([strtolower((string) $g->onu_admin_usuario), 'admin']);
             $cuenta = collect(self::hijos($d, 'Device.Users.User'))
                 ->first(fn ($u) => in_array(strtolower((string) self::v($d, "Device.Users.User.{$u}.Username")), $nombres, true));
+
+            // Firmware de Claro (Skyworth GN630V): las cuentas son «admin@XXXX», «claro@XXXX»
+            // y «Wifi@XXXX» (lo último del serial). Como en los ZTE de Claro, se les pone la
+            // clave de la empresa a admin@ y Wifi@ sin renombrarlas, y admin@ queda encendida.
+            if ($cuenta === null) {
+                $deClaro = collect(self::hijos($d, 'Device.Users.User'))
+                    ->mapWithKeys(fn ($u) => [$u => (string) self::v($d, "Device.Users.User.{$u}.Username")])
+                    ->filter(fn ($nombre) => preg_match('/^(admin|wifi)@/i', $nombre));
+
+                if ($deClaro->isNotEmpty()) {
+                    $clave = self::claveLarga((string) $g->onu_admin_clave);
+                    $valores = [];
+                    foreach ($deClaro as $u => $nombre) {
+                        $valores[] = ["Device.Users.User.{$u}.Password", $clave, 'xsd:string'];
+                        if (stripos($nombre, 'admin@') === 0) {
+                            $valores[] = ["Device.Users.User.{$u}.Enable", 'true', 'xsd:boolean'];
+                        }
+                    }
+
+                    $r = $acs->tarea((string) $a->acs_id, ['name' => 'setParameterValues', 'parameterValues' => $valores]);
+
+                    return $this->resultado($acs, (string) $a->acs_id, $r, $titulo,
+                        'Usuarios ' . $deClaro->values()->implode(' y ') . ' con la clave de la empresa'
+                        . ($clave !== $g->onu_admin_clave ? ' repetida hasta 8 caracteres, el mínimo de este firmware' : '')
+                        . ' (aquí no se puede cambiar el nombre del usuario)');
+                }
+            }
 
             if ($cuenta === null) {
                 return ['paso' => $titulo, 'ok' => false, 'omitido' => true, 'detalle' => 'No se encontró la cuenta de administración del equipo: no se cambió.'];
@@ -2598,6 +2845,37 @@ class AprovisionamientoDeOnt
             return $this->resultado($acs, (string) $a->acs_id, $r, $titulo,
                 'Usuario admin (en ZTE no se puede cambiar el usuario) con la clave de la empresa'
                 . ($basicos ? '; también ' . implode(' y ', $basicos) . ', para entrar desde la red local' : ''));
+        }
+
+        // ZTE sin cuenta interna (F6601P): las cuentas de la página son InternetGatewayDevice.User
+        // con el serial en el nombre («admin@AA809E», «Wifi@AA809E»). Se les pone la clave de la
+        // empresa directamente; antes se omitía y el equipo quedaba con la de la etiqueta
+        // (Prueba_TR, 19-10).
+        if (str_contains(strtoupper((string) ($d['_deviceId']['_Manufacturer'] ?? '')), 'ZTE')) {
+            if (!$g?->onu_admin_clave) {
+                return ['paso' => $titulo, 'ok' => false, 'omitido' => true,
+                    'detalle' => 'La empresa no tiene configurada la clave de administración de las ONT (Gestión remota): no se cambió.'];
+            }
+
+            try {
+                $acs->tarea((string) $a->acs_id, ['name' => 'refreshObject', 'objectName' => 'InternetGatewayDevice.User'], 60);
+                $d = $acs->dispositivo((string) $a->acs_id) ?? $d;
+            } catch (\Throwable) {
+            }
+
+            $cuentas = collect(self::hijos($d, 'InternetGatewayDevice.User'))
+                ->mapWithKeys(fn ($i) => [$i => (string) self::v($d, "InternetGatewayDevice.User.{$i}.Username")])
+                ->filter(fn ($u) => (bool) preg_match('/^(admin|wifi)(@|$)/i', $u));
+
+            if ($cuentas->isEmpty()) {
+                return ['paso' => $titulo, 'ok' => false, 'omitido' => true, 'detalle' => 'El equipo no informó sus cuentas de acceso web: no se cambió.'];
+            }
+
+            $r = $acs->tarea((string) $a->acs_id, ['name' => 'setParameterValues', 'parameterValues' => $cuentas
+                ->map(fn ($u, $i) => ["InternetGatewayDevice.User.{$i}.Password", $g->onu_admin_clave, 'xsd:string'])->values()->all()]);
+
+            return $this->resultado($acs, (string) $a->acs_id, $r, $titulo,
+                'Usuarios ' . $cuentas->implode(' y ') . ' con la clave de la empresa');
         }
 
         if (!$soportado) {
@@ -2939,6 +3217,33 @@ class AprovisionamientoDeOnt
         }
 
         return is_array($x) && array_key_exists('_value', $x) ? $x['_value'] : null;
+    }
+
+    /**
+     * La clave de la empresa para firmware que exige un mínimo de largo: el Skyworth de
+     * Claro rechaza «4dm1n» con «9003 Invalid arguments» y acepta «4dm1n4dm1n» (Prueba_TR,
+     * 19-10). Se repite hasta 8 caracteres para que siga siendo fácil de saber.
+     */
+    public static function claveLarga(string $clave): string
+    {
+        if ($clave === '' || strlen($clave) >= 8) {
+            return $clave;
+        }
+
+        return str_repeat($clave, (int) ceil(8 / strlen($clave)));
+    }
+
+    /**
+     * Si el equipo deja escribir el parámetro: false sólo cuando lo declaró de sólo lectura
+     * (null si no se sabe). GenieACS salta en silencio lo que no es escribible y da la tarea
+     * por hecha: el Sagemcom de Tigo (Fast5670_MIL) bloquea así el WiFi y salía «listo» con
+     * la red de fábrica (SMBS005C3459, 19-10).
+     */
+    public static function escribible(array $d, string $ruta): ?bool
+    {
+        $x = \Illuminate\Support\Arr::get($d, $ruta);
+
+        return is_array($x) && array_key_exists('_writable', $x) ? (bool) $x['_writable'] : null;
     }
 
     /** @return list<string> los números de instancia bajo un objeto */

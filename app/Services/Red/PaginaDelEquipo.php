@@ -89,8 +89,22 @@ class PaginaDelEquipo
                     $basico ? ['usuario' => $basico, 'nota' => 'En la casa del cliente (red local), con la misma clave.'] : null];
             })(),
             str_contains($fabricante, 'SAGEM') => ['admin', 'En Sagemcom la página sólo acepta el nombre «admin».', null],
+            // Firmware de Claro: admin@XXXX / Wifi@XXXX, con la clave alargada (ver claveLarga).
+            str_contains($fabricante, 'SKYWORTH') => (function () use ($d, $empresa) {
+                $nombres = collect(AprovisionamientoDeOnt::hijos($d, 'Device.Users.User'))
+                    ->map(fn ($u) => (string) AprovisionamientoDeOnt::v($d, "Device.Users.User.{$u}.Username"));
+                $admin = $nombres->first(fn ($u) => (bool) preg_match('/^admin@/i', $u));
+                $basico = $nombres->first(fn ($u) => (bool) preg_match('/^wifi@/i', $u));
+
+                return [$admin ?: $empresa, null,
+                    $basico ? ['usuario' => $basico, 'nota' => 'También entra con la misma clave.'] : null];
+            })(),
             default => [$empresa, null, null],
         };
+
+        $clave = str_contains($fabricante, 'SKYWORTH')
+            ? AprovisionamientoDeOnt::claveLarga((string) $g->onu_admin_clave)
+            : (string) $g->onu_admin_clave;
 
         DB::table('user_audit_logs')->insert([
             'user_id' => $userId, 'changed_by' => $operador, 'company_id' => $this->companyId,
@@ -102,7 +116,7 @@ class PaginaDelEquipo
         return [
             'equipo'  => trim(($equipo['fabricante'] ?? '') . ' ' . ($equipo['modelo'] ?? '')),
             'usuario' => $usuario,
-            'clave'   => (string) $g->onu_admin_clave,
+            'clave'   => $clave,
             'nota'    => $nota,
             'local'   => $local,
         ];
@@ -137,6 +151,17 @@ class PaginaDelEquipo
 
         $d = $acs->dispositivo((string) $equipo['id']) ?? [];
         $fabricante = strtoupper((string) ($d['_deviceId']['_Manufacturer'] ?? $equipo['fabricante'] ?? ''));
+        // Skyworth de Claro (GN630V): con X_SKYW_ACL.WanHTTPS el 443 abre por la WAN, pero
+        // rechaza todo saludo TLS (TLS 1.0 a 1.3, cualquier cifrado: «handshake failure»)
+        // y por HTTP no atiende (Prueba_TR, 19-10). Sólo se entra desde la casa.
+        if (str_contains($fabricante, 'SKYWORTH')) {
+            $lan = self::ipLanTr181($d) ?: '192.168.40.1';
+            $cred = $this->credenciales($userId, $operador);
+
+            throw new \InvalidArgumentException("Este Skyworth no deja abrir su página a distancia (su firmware lo bloquea). "
+                . "En la casa del cliente: https://{$lan} con el usuario {$cred['usuario']} y la clave de la ficha («Usuario y clave»).");
+        }
+
         $marca = match (true) {
             str_contains($fabricante, 'ZTE')    => 'zte',
             str_contains($fabricante, 'HUAWEI') => 'huawei',
@@ -161,6 +186,12 @@ class PaginaDelEquipo
             'sagemcom' => ['https', 443, '/2.0/gui/'],
             default    => ['http', 80, '/'],
         };
+
+        // Cada firmware revisa distinto a qué dirección dice ir la petición: los ZTE de
+        // Claro (F680) sólo aceptan la de la casa (192.168.1.1) y el ZTE F6601P sólo su
+        // propia IP; con la otra contestan «400 Bad Request» (Prueba_TR, 19-10). Se usa
+        // la que el equipo acepte.
+        $host = self::hostQueAcepta($esquema, $ip, $puerto, $ingreso, [$host, $ip]);
 
         $codigo = Str::random(48);
         Cache::put("pagina-equipo:codigo:{$codigo}", [
@@ -531,6 +562,82 @@ class PaginaDelEquipo
     }
 
     /**
+     * Cambia el nombre de las redes WiFi de un Sagemcom por su página (JSON-RPC «XMO»).
+     *
+     * El firmware de Tigo (Fast5670_MIL) tiene el WiFi en sólo lectura por TR-069, pero
+     * la página sí deja cambiar el nombre a «admin» (SMBS005C3459, 19-10). La clave no:
+     * a «admin» le esconde el campo. Se abre la página por la WAN sólo para esto, se
+     * verifica leyendo de vuelta y se cierra.
+     *
+     * @param list<int> $indices los SSID (TR-181) a cambiar; en XMO son el mismo uid
+     * @return array{ok:bool, detalle:string}
+     */
+    public function nombreWifiSagemcom(GenieAcs $acs, string $id, string $ssid, array $indices): array
+    {
+        $clave = (string) GestionRemota::where('company_id', $this->companyId)->value('onu_admin_clave');
+
+        if ($clave === '' || !$indices) {
+            return ['ok' => false, 'detalle' => 'sin clave de administración de la empresa'];
+        }
+
+        try {
+            $this->abrirWanSagemcom($acs, $id);
+            $acs->tarea($id, ['name' => 'refreshObject', 'objectName' => 'Device.PPP.Interface'], 60);
+            $d = $acs->dispositivo($id) ?? [];
+        } catch (\Throwable $e) {
+            return ['ok' => false, 'detalle' => 'no se pudo abrir la página del equipo'];
+        }
+
+        $ip = collect(AprovisionamientoDeOnt::hijos($d, 'Device.PPP.Interface'))
+            ->map(fn ($i) => (string) AprovisionamientoDeOnt::v($d, "Device.PPP.Interface.{$i}.IPCP.LocalIPAddress"))
+            ->first(fn ($v) => $v !== '' && $v !== '0.0.0.0');
+
+        try {
+            if (!$ip) {
+                return ['ok' => false, 'detalle' => 'el equipo no tiene IP de internet'];
+            }
+
+            $xmo = new XmoSagemcom("https://{$ip}", 'admin', $clave);
+
+            if (!$xmo->entrar()) {
+                return ['ok' => false, 'detalle' => 'la página no aceptó la cuenta admin de la empresa'];
+            }
+
+            foreach ($indices as $n) {
+                $xmo->poner("Device/WiFi/SSIDs/SSID[@uid='{$n}']/SSID", $ssid);
+            }
+
+            $quedo = collect($indices)->every(fn ($n) => $xmo->leer("Device/WiFi/SSIDs/SSID[@uid='{$n}']/SSID") === $ssid);
+            $xmo->salir();
+
+            return $quedo
+                ? ['ok' => true, 'detalle' => 'nombre cambiado por la página del equipo']
+                : ['ok' => false, 'detalle' => 'la página no guardó el nombre'];
+        } catch (\Throwable) {
+            return ['ok' => false, 'detalle' => 'la página del equipo no respondió'];
+        } finally {
+            $this->cerrarWanSagemcom($acs, $id);
+        }
+    }
+
+    /** Cierra en el acto la página por la WAN que abrió nombreWifiSagemcom. */
+    private function cerrarWanSagemcom(GenieAcs $acs, string $id): void
+    {
+        try {
+            $acs->tarea($id, ['name' => 'refreshObject', 'objectName' => 'Device.Users'], 60);
+            $valores = self::accesoWanSagemcom($acs->dispositivo($id) ?? [], 'ACCESS_DISABLE');
+
+            if (!$valores || ($acs->tarea($id, ['name' => 'setParameterValues', 'parameterValues' => $valores], 90)['hecha'] ?? false)) {
+                $abiertos = Cache::get(self::SAGEMCOM_ABIERTOS, []);
+                unset($abiertos[$id]);
+                Cache::forever(self::SAGEMCOM_ABIERTOS, $abiertos);
+            }
+        } catch (\Throwable) {
+            // Queda en la lista: la tarea pagina-equipo:cerrar lo cierra.
+        }
+    }
+
+    /**
      * Los valores que dejan el acceso web por la WAN del usuario «admin» como $estado,
      * sólo los que hacen falta cambiar. No usa HostRestriction: en este firmware bloquea
      * (ver abrirWanSagemcom).
@@ -609,6 +716,33 @@ class PaginaDelEquipo
         }
 
         return null;
+    }
+
+    /**
+     * La primera dirección (cabecera Host) con la que el equipo no contesta 400; si
+     * ninguna se puede probar, la primera de la lista.
+     *
+     * @param list<string> $candidatos
+     */
+    private static function hostQueAcepta(string $esquema, string $ip, int $puerto, string $ruta, array $candidatos): string
+    {
+        $candidatos = array_values(array_unique(array_filter($candidatos)));
+
+        foreach ($candidatos as $host) {
+            try {
+                $codigo = Http::timeout(6)->withoutVerifying()->withoutRedirecting()
+                    ->withHeaders(['Host' => $host, 'User-Agent' => 'Mozilla/5.0'])
+                    ->get("{$esquema}://{$ip}:{$puerto}{$ruta}")->status();
+            } catch (\Throwable) {
+                return $candidatos[0];   // el equipo no contesta: da igual cuál, el aviso será el mismo
+            }
+
+            if ($codigo !== 400) {
+                return $host;
+            }
+        }
+
+        return $candidatos[0];
     }
 
     /** «10.200.200.0/24» → ['10.200.200.1', '10.200.200.254']. */

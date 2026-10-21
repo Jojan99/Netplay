@@ -278,6 +278,13 @@ class DiagnosticoDeServicio
                 $ont['en_linea'] === true ? 'ONT en línea pero sin sesión PPPoE.' : 'Sin sesión PPPoE, y la OLT no se pudo consultar.',
                 ($ont['en_linea'] === true ? 'Su equipo está encendido y la fibra llega bien, pero no logra conectarse.' : 'Su equipo no está logrando conectarse.') . ' Apáguelo, espere un minuto y enciéndalo; si sigue igual lo revisa un técnico.'],
             $router['leido'] && $router['tipo'] === 'static' && !$router['arp'] => ['sin_ip', 'Sin entrada activa en el router.', 'Su equipo está encendido pero su conexión no está habilitada en nuestra red. Lo revisa un asesor.'],
+            // Sin ping pero con sesión en el router y reportando por TR-069: está en línea y
+            // es su firmware el que no contesta el ping (el Sagemcom de Tigo lo trae bloqueado
+            // y sin opción para activarlo; CAROLINA MERIÑO salía «no responde» navegando, 20-10).
+            $ping !== null && ($ping['ok'] ?? false) && $ping['recibidos'] === 0 && ($acs['reporta'] ?? false)
+                && $router['leido'] && ($router['tipo'] === 'pppoe' ? $router['sesion'] : $router['arp']) => ['red_bien',
+                'La red llega bien hasta el equipo: tiene sesión en el router y reporta por TR-069. No responde al ping porque su firmware lo bloquea, no por una falla.',
+                'Su servicio está llegando bien hasta su equipo. Si le falla en un aparato, suele ser la señal del WiFi: acérquese al equipo, o apáguelo y enciéndalo.'],
             $ping !== null && ($ping['ok'] ?? false) && $ping['recibidos'] === 0 => ['no_responde', 'La red llega pero el equipo no responde al ping.', 'Su equipo aparece conectado pero no está respondiendo. Apáguelo y enciéndalo; si no mejora, lo revisa un técnico.'],
             $ping !== null && ($ping['ok'] ?? false) && ($ping['perdida'] > 0 || ($ping['promedio_ms'] ?? 0) > 150) => ['inestable', 'Conexión inestable hasta el equipo (pérdida o demora en el ping).', 'Su conexión está llegando inestable. Vamos a revisarla.'],
             $ont['error'] || !$router['leido'] => ['incompleto', 'No se pudo revisar todo.', 'No pude revisar todo su servicio en este momento.'],
