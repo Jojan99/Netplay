@@ -53,15 +53,20 @@ class ResponderCobranza
             $desde = (int) DB::table('crm_messages')->where('conversation_id', $caso->conversation_id)
                 ->where('sender_type', '!=', 'customer')->max('id');
 
+            // Las notas de voz, a texto antes de leer: antes eran «un audio que no puedes escuchar».
+            (new \App\Services\Crm\TranscriptorDeAudios((int) $caso->company_id))->pendientesDe((int) $caso->conversation_id, $desde);
+
             $texto = DB::table('crm_messages')->where('conversation_id', $caso->conversation_id)
                 ->where('sender_type', 'customer')->where('id', '>', $desde)->orderBy('id')
-                ->get(['message_type', 'content'])
-                ->map(fn ($m) => $m->message_type === 'text'
+                ->get(['message_type', 'content', 'transcripcion'])
+                ->map(fn ($m) => $m->message_type === 'audio' && trim((string) $m->transcripcion) !== ''
+                    ? '(nota de voz) ' . trim((string) $m->transcripcion)
+                    : ($m->message_type === 'text'
                     ? trim((string) $m->content)
                     : '(envió ' . ([
                         'image' => 'una imagen, puede ser un comprobante de pago', 'audio' => 'un audio que no puedes escuchar',
                         'document' => 'un documento, puede ser un comprobante', 'sticker' => 'un sticker', 'video' => 'un video',
-                    ][$m->message_type] ?? 'un archivo') . ')' . (trim((string) $m->content) !== '' ? ' ' . trim((string) $m->content) : ''))
+                    ][$m->message_type] ?? 'un archivo') . ')' . (trim((string) $m->content) !== '' ? ' ' . trim((string) $m->content) : '')))
                 ->filter()->implode("\n");
 
             if ($texto === '') {

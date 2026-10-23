@@ -805,7 +805,9 @@ class MetaWhatsAppService
             ->value('message.created_at');
 
         return $lastCustomerMessage !== null
-            && \Carbon\Carbon::parse($lastCustomerMessage, 'UTC')->setTimezone('America/Bogota')->greaterThanOrEqualTo(now('America/Bogota')->subHours(24));
+            // La base guarda la hora de la aplicación (Bogotá), no UTC: leerla como UTC la envejecía
+            // cinco horas y la ventana se cerraba a las 19 h en vez de a las 24.
+            && \Carbon\Carbon::parse($lastCustomerMessage, config('app.timezone'))->greaterThanOrEqualTo(now()->subHours(24));
     }
 
     private function closedWindowResponse(): array

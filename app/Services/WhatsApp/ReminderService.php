@@ -348,6 +348,17 @@ class ReminderService
      */
     private function yaAvisado(int $companyId, string $evento, int $userId): bool
     {
+        // El registro de envíos manda: la memoria se borra (reinicio, caché limpiada) y el mismo
+        // cliente recibía el aviso dos veces el mismo día.
+        try {
+            if (\Illuminate\Support\Facades\DB::table('wa_avisos_enviados')->where('company_id', $companyId)->where('evento', $evento)
+                ->where('user_id', $userId)->where('enviado_en', '>=', now()->startOfDay())->exists()) {
+                return true;
+            }
+        } catch (\Throwable $e) {
+            // Sin la tabla, queda la memoria.
+        }
+
         try {
             return (bool) Cache::get($this->claveAviso($companyId, $evento, $userId));
         } catch (\Throwable $e) {

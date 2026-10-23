@@ -418,22 +418,15 @@ class AvisosAlGrupo
             return false;
         }
 
-        // true: aunque la empresa tenga apagado WhatsApp para clientes, las
-        // alertas internas igual tienen que salir.
-        $wa = new NetplayWhatsAppService($this->companyId, true);
+        // Aunque la empresa tenga apagado WhatsApp para clientes, las alertas internas igual
+        // tienen que salir; y si la línea principal está caída, por otra (LineasDeWhatsApp::interno).
         $alguno = false;
 
         foreach (array_keys($destinos) as $destino) {
-            try {
-                $wa->mensajeInformativo($destino, $texto);
+            if (\App\Services\WhatsApp\LineasDeWhatsApp::interno($this->companyId, (string) $destino, $texto)) {
                 $alguno = true;
-            } catch (\Throwable $e) {
-                Log::warning('[Alertas] No se pudo avisar al grupo', [
-                    'empresa' => $this->companyId,
-                    'evento'  => $evento,
-                    'destino' => $destino,
-                    'error'   => $e->getMessage(),
-                ]);
+            } else {
+                Log::warning('[Alertas] No se pudo avisar al grupo', ['empresa' => $this->companyId, 'evento' => $evento, 'destino' => $destino]);
             }
         }
 

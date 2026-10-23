@@ -512,6 +512,10 @@ class Herramientas
         $id = (int) DB::table('tickets')->insertGetId($datos);
         $caso->fill(['ticket_id' => $id])->save();
 
+        // Un cliente dentro de una falla masiva, o el que completa una racha de reportes de la
+        // misma OLT: el ticket queda atado a la falla y se cierra solo cuando se resuelva.
+        \App\Services\Red\FallasDeSector::alCrearTicket($companyId, $id);
+
         self::avisarTicket($companyId, $id, $caso, $cliente, $servicio, $prioridadId, $tecnico, $nota);
 
         return ['id' => $id, 'nuevo' => true];

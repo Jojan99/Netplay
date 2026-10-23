@@ -22,6 +22,9 @@ class NotificationRouterService
     /** Eventos de red: se listan y se configuran aquí, pero los manda AvisosAlGrupo. */
     public const EVENTOS_DE_RED = ['alerta_red', 'alerta_resumen'];
 
+    /** Los canales caídos los manda VigiaDeCanales por la línea de WhatsApp Web (es a un grupo). */
+    public const EVENTOS_DE_TV = ['alerta_tv'];
+
     /**
      * Manda el mensaje a cada destino activo del evento.
      * Nunca lanza: si WhatsApp falla, queda en el log y el flujo sigue.
@@ -45,6 +48,11 @@ class NotificationRouterService
 
                     $wa->mensajeInformativo($destino, $message);
                 } catch (Throwable $e) {
+                    // Línea principal caída: a un grupo del equipo se le puede escribir por otra.
+                    if (str_contains((string) $destino, '@g.us') && \App\Services\WhatsApp\LineasDeWhatsApp::interno($companyId, (string) $destino, $message)) {
+                        continue;
+                    }
+
                     Log::warning("[WA_ROUTE] Error enviando a {$destino}", [
                         'event'   => $eventType,
                         'company' => $companyId,
@@ -191,6 +199,14 @@ class NotificationRouterService
                 'solo_grupo' => false,
             ],
             [
+                'clave'      => 'instalacion_terminada',
+                'seccion'    => 'Clientes',
+                'titulo'     => 'Cliente instalado',
+                'icono'      => 'cliente',
+                'cuando'     => 'Cuando el técnico deja funcionando una instalación: quién instaló, el equipo y su serial, OLT, puerto, VLAN, conexión, WiFi y, si el plan lleva TV, el usuario, la clave y la lista de canales. Si no elige destino, va al mismo de «Cliente nuevo».',
+                'solo_grupo' => false,
+            ],
+            [
                 'clave'      => 'instalacion_creada',
                 'seccion'    => 'Clientes',
                 'titulo'     => 'Instalación agendada',
@@ -250,6 +266,16 @@ class NotificationRouterService
                 'titulo'     => 'Resumen de la mañana',
                 'icono'      => 'amanecer',
                 'cuando'     => 'Todos los días a las 07:30, lo que sigue abierto en la red antes de que los técnicos salgan a la calle.',
+                'solo_grupo' => true,
+            ],
+
+            // ── Televisión ───────────────────────────────────────────────────
+            [
+                'clave'      => 'alerta_tv',
+                'seccion'    => 'Televisión',
+                'titulo'     => 'Canales caídos',
+                'icono'      => 'alerta',
+                'cuando'     => 'Cuando un canal del panel de TV lleva 3 minutos sin señal, y cuando vuelve al aire.',
                 'solo_grupo' => true,
             ],
         ];

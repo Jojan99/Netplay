@@ -104,7 +104,8 @@ class WhatsAppWebhookController extends Controller
 
         $payload = $request->all();
 
-        Log::info('[Meta Webhook] Payload recibido', $payload);
+        // Sólo la forma, no el contenido: lo que escriben los clientes no va al registro.
+        Log::info('[Meta Webhook] Payload recibido', ['object' => $payload['object'] ?? null, 'entradas' => count($payload['entry'] ?? [])]);
 
         // Validar estructura básica de Meta
         if (($payload['object'] ?? null) !== 'whatsapp_business_account') {
@@ -230,6 +231,14 @@ class WhatsAppWebhookController extends Controller
                         $results[] = $result;
                     } catch (\Throwable $e) {
                         $databaseUnavailable = $databaseUnavailable || $this->isDatabaseUnavailable($e);
+
+                        // La marca de «ya visto» se puso antes de procesar: si falló, se quita para
+                        // que el reintento de Meta sí entre. Si alcanzó a guardarse, el índice único
+                        // de crm_messages evita que quede dos veces.
+                        if (!empty($message['id'])) {
+                            try { \Illuminate\Support\Facades\Cache::store('redis')->forget('meta:mensaje:' . $message['id']); } catch (\Throwable $x) { /* sin Redis */ }
+                        }
+
                         Log::error('[Meta Webhook] Error procesando mensaje', [
                             'message_id' => $message['id'] ?? null,
                             'error'      => $e->getMessage(),

@@ -47,9 +47,11 @@ class SendMessageUseCase implements SendMessageUseCaseInterface
             ];
     }
 
-    // Si el asistente de soporte llevaba esta conversación, se retira: desde
-    // aquí la atiende una persona.
-    \App\Services\Soporte\AgenteDeSoporte::retirar((int) $conversation->id);
+    // Desde aquí la atiende una persona: soporte se retira, el bot de la línea se pausa y el
+    // asistente de cobranza suelta el caso. Antes sólo se retiraba soporte y los otros dos
+    // seguían hablándole al cliente encima del asesor.
+    \App\Services\Crm\UnaPersonaAtiende::tomar((int) $conversation->company_id, (int) $conversation->id);
+    \App\Services\Crm\Reparto::presente((int) $conversation->company_id, (int) $agentId);
 
     // 🔥 AUTO-ASIGNACIÓN SI ES NEW
     if ($conversation->status === 'new') {
@@ -174,6 +176,16 @@ class SendMessageUseCase implements SendMessageUseCaseInterface
             default    => $whatsAppService->mensajeInformativo($conversation->phone, $content, $quotedArg),
         });
     } catch (\Throwable $e) {
+        // La línea está caída: el texto queda en la bandeja de salida y sale solo cuando vuelva.
+        // Antes quedaba «fallido» y había que acordarse de reenviarlo a mano.
+        if ($messageType === 'text' && ($conversation->provider ?? 'netplay') !== 'meta' && \App\Services\WhatsApp\BandejaDeSalida::esDeLaLinea($e->getMessage())) {
+            \App\Services\WhatsApp\BandejaDeSalida::encolar($conversation, (int) $message->id, $e->getMessage());
+            $this->conversationRepository->setMessageExternalId($message->id, null, 'pending');
+            broadcast(new \App\Events\MessageStatusEvent($conversation->id, $message->id, 'pending'));
+
+            return ['status' => 'queued', 'message' => 'La línea de WhatsApp está desconectada: el mensaje quedó en cola y sale solo apenas se reconecte.', 'message_id' => $message->id];
+        }
+
         \Illuminate\Support\Facades\Log::error('[CRM] No se pudo enviar el mensaje', [
             'conversation' => $conversation->id, 'message' => $message->id, 'error' => $e->getMessage(),
         ]);

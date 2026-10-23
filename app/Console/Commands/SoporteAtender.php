@@ -55,14 +55,19 @@ class SoporteAtender extends Command
             // Todo lo que escribió desde la última respuesta nuestra.
             $desde = (int) DB::table('crm_messages')->where('conversation_id', $caso->conversation_id)->where('sender_type', '!=', 'customer')->max('id');
 
+            // Las notas de voz, a texto antes de leer: antes eran «un audio que no puede escuchar».
+            (new \App\Services\Crm\TranscriptorDeAudios((int) $caso->company_id))->pendientesDe((int) $caso->conversation_id, $desde);
+
             $texto = DB::table('crm_messages')->where('conversation_id', $caso->conversation_id)->where('sender_type', 'customer')->where('id', '>', $desde)->orderBy('id')
-                ->get(['message_type', 'content'])
-                ->map(fn ($m) => $m->message_type === 'text'
+                ->get(['message_type', 'content', 'transcripcion'])
+                ->map(fn ($m) => $m->message_type === 'audio' && trim((string) $m->transcripcion) !== ''
+                    ? '(nota de voz) ' . trim((string) $m->transcripcion)
+                    : ($m->message_type === 'text'
                     ? trim((string) $m->content)
                     : '(envió ' . ([
                         'image' => 'una foto que usted no puede ver; puede ser de las luces del equipo', 'audio' => 'un audio que usted no puede escuchar: pídale que lo escriba',
                         'video' => 'un video que usted no puede ver', 'sticker' => 'un sticker', 'document' => 'un documento',
-                    ][$m->message_type] ?? 'un archivo') . ')' . (trim((string) $m->content) !== '' ? ' ' . trim((string) $m->content) : ''))
+                    ][$m->message_type] ?? 'un archivo') . ')' . (trim((string) $m->content) !== '' ? ' ' . trim((string) $m->content) : '')))
                 ->filter()->implode("\n");
 
             if ($texto === '') {

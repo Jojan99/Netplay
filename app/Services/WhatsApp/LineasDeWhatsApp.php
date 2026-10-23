@@ -98,6 +98,46 @@ class LineasDeWhatsApp
      * La línea de una instancia. Con $companyId se exige que sea de esa empresa:
      * una instancia ajena no puede quedar colgada de otra bandeja.
      */
+    /**
+     * Mensaje interno (a un grupo del equipo) con respaldo: si la línea principal falla —caída,
+     * sin sesión—, se prueba con las otras líneas activas y conectadas de la empresa. Un aviso
+     * de «se cayó la OLT» no puede perderse porque se cayó también la línea que lo manda. Para
+     * mensajes a clientes no se usa: contestarle desde otro número lo confunde.
+     *
+     * @return bool si alguna línea lo mandó
+     */
+    public static function interno(int $companyId, string $destino, string $texto): bool
+    {
+        $error = null;
+
+        try {
+            (new \App\Services\NetplayWhatsAppService($companyId, true))->mensajeInformativo($destino, $texto);
+
+            return true;
+        } catch (\Throwable $e) {
+            $error = $e->getMessage();
+        }
+
+        $principal = DB::table('companies')->where('id', $companyId)->value('wa_instance_id');
+        $otras = self::disponible() ? DB::table('wa_lineas')->where('company_id', $companyId)->where('activa', 1)->where('estado', 'connected')
+            ->where('instance_id', '<>', (string) $principal)->orderByDesc('principal')->pluck('instance_id') : collect();
+
+        foreach ($otras as $instancia) {
+            try {
+                (new \App\Services\NetplayWhatsAppService($companyId, true, (string) $instancia))->mensajeInformativo($destino, $texto);
+                Log::info('[Líneas WA] Aviso interno enviado por la línea de respaldo', ['empresa' => $companyId, 'instancia' => $instancia, 'error_principal' => $error]);
+
+                return true;
+            } catch (\Throwable $e) {
+                $error = $e->getMessage();
+            }
+        }
+
+        Log::warning('[Líneas WA] Ninguna línea pudo mandar el aviso interno', ['empresa' => $companyId, 'error' => $error]);
+
+        return false;
+    }
+
     public static function porInstancia(string $instanceId, ?int $companyId = null): ?object
     {
         if (!self::disponible()) return null;

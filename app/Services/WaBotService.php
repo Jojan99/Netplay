@@ -36,8 +36,24 @@ class WaBotService
      */
     public function handleIncomingMessage(array $payload, string $phoneNumberId): bool
     {
-        // Lo que el bot responde ya lo guarda él en el CRM (recordBotConversationMessage).
-        return \App\Services\Crm\SalidasDeMetaAlCrm::sinAnotar(fn () => $this->atenderMensaje($payload, $phoneNumberId));
+        // De a un mensaje por cliente: dos seguidos («1» y «2» rápido) leían la misma sesión y el
+        // flujo avanzaba dos pasos a la vez, o se pisaban. El segundo espera a que termine el primero.
+        $de = preg_replace('/\D/', '', (string) ($payload['from'] ?? ''));
+        $candado = $de !== '' ? \Illuminate\Support\Facades\Cache::lock("wabot:{$phoneNumberId}:{$de}", 30) : null;
+
+        try {
+            $candado?->block(15);
+        } catch (\Throwable $e) {
+            // No se consiguió en 15 s: se atiende igual; perder el mensaje es peor.
+            $candado = null;
+        }
+
+        try {
+            // Lo que el bot responde ya lo guarda él en el CRM (recordBotConversationMessage).
+            return \App\Services\Crm\SalidasDeMetaAlCrm::sinAnotar(fn () => $this->atenderMensaje($payload, $phoneNumberId));
+        } finally {
+            $candado?->release();
+        }
     }
 
     /**

@@ -394,6 +394,13 @@ Route::get('crm/media/m4a', [ConversationController::class, 'transcodeAudio'])->
 // ── FICHA DEL CLIENTE EN EL CHAT ─────────────────────────────────────────────
 Route::get('conversations/{conversationId}/customer-summary', [\App\Http\Controllers\Crm\CrmCustomerController::class, 'summary']);
 Route::get('conversations/{conversationId}/history', [\App\Http\Controllers\Crm\CrmCustomerController::class, 'history']);
+// No leídos compartidos: «marcar como no leído» queda para todos los asesores.
+Route::post('conversations/{conversationId}/no-leido', [ConversationController::class, 'marcarNoLeido']);
+Route::post('conversations/{conversationId}/leido', [ConversationController::class, 'marcarLeido']);
+// «Registrar como pago»: la foto del chat pasa a la auditoría de comprobantes.
+Route::post('conversations/{conversationId}/messages/{messageId}/comprobante', [\App\Http\Controllers\Crm\CrmCustomerController::class, 'registrarComprobante'])->middleware('module:finanzas,crm');
+// El copiloto del asesor: respuesta sugerida o resumen del chat (nunca manda nada solo).
+Route::post('conversations/{conversationId}/copiloto', [\App\Http\Controllers\Crm\CrmCustomerController::class, 'copiloto'])->middleware('throttle:30,1');
 Route::post('conversations/{conversationId}/send-invoice', [\App\Http\Controllers\Crm\CrmCustomerController::class, 'sendInvoice']);
 Route::post('conversations/{conversationId}/pay-link', [\App\Http\Controllers\Crm\CrmCustomerController::class, 'payLink']);
 Route::post('conversations/{conversationId}/tech-note', [\App\Http\Controllers\Crm\CrmCustomerController::class, 'techNote']);

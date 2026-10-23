@@ -30,8 +30,21 @@ class WaProxyController extends Controller
             return response()->json(['status' => 'error', 'message' => 'Sin credenciales WA'], 403);
         }
 
-        $url    = $this->waBase . '/' . ltrim($path, '/');
+        // «instances/../admin» pasaba el patrón de la ruta y curl lo resolvía hasta /admin del
+        // servicio. Nada de subir de carpeta, ni escrito ni codificado.
+        if (preg_match('#(^|/)\.{1,2}(/|$)|%2e|\\\\#i', rawurldecode($path)) || preg_match('#%2e|%2f#i', $path)) {
+            return response()->json(['status' => 'error', 'message' => 'Ruta no permitida'], 400);
+        }
+
         $method = strtoupper($request->method());
+
+        // Borrar, desconectar o reiniciar una línea deja a la empresa sin WhatsApp: eso es de quien
+        // administra las líneas (módulo «whatsapp» o el ADMIN), no de cualquiera con el CRM.
+        if (preg_match('#^instances/[^/]+(/(logout|restart|delete|reset))?$#i', $path) && ($method === 'DELETE' || preg_match('#/(logout|restart|delete|reset)$#i', $path)) && !$this->administraLineas()) {
+            return response()->json(['status' => 'error', 'message' => 'Su perfil no puede desconectar ni borrar líneas de WhatsApp.'], 403);
+        }
+
+        $url    = $this->waBase . '/' . ltrim($path, '/');
 
         // El proxy deja pasar a cualquiera con módulo de CRM o WhatsApp; activar o
         // desactivar la recepción de mensajes en el CRM es sólo de administradores.
@@ -93,5 +106,18 @@ class WaProxyController extends Controller
         return response($responseBody, $httpCode ?: 502, [
             'Content-Type' => $contentType,
         ]);
+    }
+
+    private function administraLineas(): bool
+    {
+        $user = \Tymon\JWTAuth\Facades\JWTAuth::user();
+        if (!$user) {
+            return false;
+        }
+
+        $perfil = \Illuminate\Support\Facades\DB::table('profiles')->where('id', $user->profile_id)->value('name');
+
+        return strtoupper((string) $perfil) === 'ADMIN'
+            || \Illuminate\Support\Facades\DB::table('profile_modules')->where('profile_id', $user->profile_id)->where('active', true)->where('module', 'whatsapp')->exists();
     }
 }

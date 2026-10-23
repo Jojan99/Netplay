@@ -33,6 +33,9 @@ public function inbox(
     Request $request,
     GetInboxConversationsUseCaseInterface $useCase
 ) {
+    // Tiene la bandeja abierta: está para recibir chats (Reparto).
+    \App\Services\Crm\Reparto::presente((int) getSessionCompanyId(), (int) getSessionUserId());
+
     $filters = $request->only([
         'status',
         'search',
@@ -61,6 +64,26 @@ public function inbox(
  * Las líneas de WhatsApp Web de la empresa, para el badge, el filtro de la
  * bandeja y el selector al iniciar un chat nuevo.
  */
+/**
+ * POST api/management/conversations/{id}/no-leido
+ * «Marcar como no leído»: queda con al menos uno pendiente, para todos los asesores.
+ */
+public function marcarNoLeido(int $conversationId): JsonResponse
+{
+    $hecho = DB::table('crm_conversations')->where('id', $conversationId)->where('company_id', getSessionCompanyId())
+        ->update(['sin_leer' => DB::raw('GREATEST(sin_leer, 1)')]);
+
+    return response()->json(['ok' => (bool) $hecho]);
+}
+
+/** POST api/management/conversations/{id}/leido — el asesor lo tiene abierto y le llegó un mensaje. */
+public function marcarLeido(int $conversationId): JsonResponse
+{
+    DB::table('crm_conversations')->where('id', $conversationId)->where('company_id', getSessionCompanyId())->update(['sin_leer' => 0]);
+
+    return response()->json(['ok' => true]);
+}
+
 public function lineas(): JsonResponse
 {
     return response()->json([
@@ -134,7 +157,9 @@ public function getMessages(
     GetConversationMessagesUseCaseInterface $useCase
 ): JsonResponse {
     try {
-        $result = $useCase->execute($conversationId);
+        // ?antes=ID: la tanda anterior a ese mensaje («Cargar mensajes anteriores»).
+        $antes = (int) request()->query('antes', 0) ?: null;
+        $result = $useCase->execute($conversationId, $antes);
 
         return response()->json(
             $result,
@@ -503,17 +528,36 @@ public function sendBroadcast(Request $request, ConversationRepositoryInterface 
         ->select(['id', 'phone', 'name'])
         ->get();
 
+    // Esto manda dentro de la misma petición: sirve para unos pocos. Para más, los envíos
+    // masivos (wa_campaigns) van por tandas, con pausas y reintentos, sin colgar la pantalla ni
+    // arriesgar que WhatsApp bloquee la línea por ráfaga.
+    if ($customers->count() > 30) {
+        return response()->json(['ok' => false, 'message' => 'Para más de 30 destinatarios use «Envíos masivos»: manda por tandas, con pausas, y no pone en riesgo la línea.'], 422);
+    }
+
+    @set_time_limit(120);
     $sent   = 0;
     $failed = 0;
     $wa     = new WhatsAppService($companyId);
 
-    foreach ($customers as $customer) {
+    foreach ($customers as $i => $customer) {
         try {
-            $wa->mensajeInformativo($customer->phone, $message);
+            $r = $wa->mensajeInformativo($customer->phone, $message);
+
+            // Una respuesta con success=false no es un envío: antes se contaba como enviado.
+            if (is_array($r) && ($r['success'] ?? true) === false) {
+                throw new \RuntimeException((string) ($r['error'] ?? 'WhatsApp no lo envió'));
+            }
+
             $sent++;
         } catch (\Throwable $e) {
             Log::warning('[Broadcast] Fallo envío', ['phone' => $customer->phone, 'err' => $e->getMessage()]);
             $failed++;
+        }
+
+        // Un respiro entre mensajes: varios seguidos, idénticos, es lo que WhatsApp castiga.
+        if ($i < $customers->count() - 1) {
+            usleep(1_200_000);
         }
     }
 
@@ -1043,6 +1087,8 @@ public function createTicketFromConversation(int $conversationId, Request $reque
     // Diagnóstico de la conexión del cliente, en segundo plano.
     if ($userId) {
         \App\Services\Tickets\DiagnosticoDeTicket::lanzar((int) $ticketId);
+        // Si el cliente está dentro de una falla masiva, el ticket queda atado a ella.
+        \App\Services\Red\FallasDeSector::alCrearTicket((int) getSessionCompanyId(), (int) $ticketId);
     }
 
     // Aviso al grupo de WhatsApp: ahora lo decide el agente. Antes salía

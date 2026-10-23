@@ -85,6 +85,27 @@ class PuertaIdentificacion
             return ['accion' => self::PASA];
         }
 
+        // Dos mensajes del mismo cliente al mismo tiempo leían y reescribían la lista de
+        // retenidos a la vez, y uno se perdía. De a uno por teléfono.
+        $candado = \Illuminate\Support\Facades\Cache::lock("puerta:{$companyId}:{$provider}:{$phone}", 20);
+
+        try {
+            $candado->block(8);
+        } catch (\Throwable $e) {
+            // Si no se consigue, se decide igual: perder el mensaje es peor que la carrera.
+            $candado = null;
+        }
+
+        try {
+            return $this->decidir($companyId, $provider, $phone, $texto, $payload, $tipo, $delFlujoDelBot, $ajustes);
+        } finally {
+            $candado?->release();
+        }
+    }
+
+    /** @return array{accion: string, dni?: ?string, user_id?: ?int, nombre?: ?string, retenidos?: array} */
+    private function decidir(int $companyId, string $provider, string $phone, ?string $texto, array $payload, ?string $tipo, bool $delFlujoDelBot, array $ajustes): array
+    {
         $registro = DB::table(self::TABLA)
             ->where('company_id', $companyId)
             ->where('provider', $provider)

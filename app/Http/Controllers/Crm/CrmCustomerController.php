@@ -153,6 +153,90 @@ class CrmCustomerController extends Controller
         ]]);
     }
 
+    /* ── POST conversations/{id}/messages/{messageId}/comprobante ───────── */
+    /**
+     * «Registrar como pago»: la foto o el PDF que mandó el cliente pasa a la auditoría de
+     * comprobantes a nombre del cliente del chat, por el mismo camino que usa el bot (lee monto,
+     * referencia y fecha; no duplica; busca la factura pendiente; si es confiable, lo aplica).
+     * Antes un comprobante que no pasaba por el bot había que bajarlo y subirlo a mano.
+     */
+    public function registrarComprobante(int $conversationId, int $messageId): JsonResponse
+    {
+        $conv = $this->conversation($conversationId);
+        if (!$conv || (int) $conv->company_id !== (int) getSessionCompanyId()) {
+            return response()->json(['ok' => false, 'error' => 'Conversación no encontrada'], 404);
+        }
+
+        $msg = DB::table('crm_messages')->where('id', $messageId)->where('conversation_id', $conversationId)->first();
+        if (!$msg || !in_array($msg->message_type, ['image', 'document'], true) || !$msg->media_url) {
+            return response()->json(['ok' => false, 'error' => 'Sólo una foto o un documento del chat se puede registrar como pago.'], 422);
+        }
+
+        $user = $this->ispUser($conv->phone, (int) $conv->company_id, $conv->vinculado_a_mano ? (int) $conv->vinculado_a_mano : null);
+
+        $r = app(\App\Services\Crm\ComprobanteWhatsAppWeb::class)->registrar([
+            'company_id'  => (int) $conv->company_id,
+            'phone'       => (string) $conv->phone,
+            'dni'         => $user->dni ?? null,
+            'media_url'   => $msg->media_url,
+            'caption'     => $msg->content,
+            'filename'    => $msg->original_name ?? null,
+            'wa_linea_id' => $conv->wa_linea_id ?? null,
+        ]);
+
+        if (empty($r['ok']) || empty($r['proof_id'])) {
+            return response()->json(['ok' => false, 'error' => $r['motivo'] === 'sin_archivo' ? 'No se pudo leer el archivo del chat.' : 'No se pudo registrar el comprobante.'], 422);
+        }
+
+        DB::table('crm_messages')->where('id', $msg->id)->update(['payment_proof_id' => $r['proof_id']]);
+        $p = \App\Models\PaymentProof::find($r['proof_id']);
+
+        return response()->json(['ok' => true, 'data' => [
+            'proof_id'   => (int) $r['proof_id'],
+            'repetido'   => ($r['motivo'] ?? null) === 'ya_registrado',
+            'aplicado'   => (bool) ($r['aplicado'] ?? false),
+            'cliente'    => $r['cliente'] ?? null,
+            'sin_titular' => (bool) ($r['sin_titular'] ?? false),
+            'estado'     => $p?->status,
+            'monto'      => $p?->detected_amount ?? $p?->reported_amount,
+            'referencia' => $p?->reference_number,
+            'fecha'      => $p?->payment_date ? substr((string) $p->payment_date, 0, 10) : null,
+            'dni'        => $user->dni ?? null,
+        ]]);
+    }
+
+    /* ── POST conversations/{id}/copiloto  { accion: sugerir|resumir } ── */
+    /**
+     * El copiloto del asesor: una respuesta redactada para revisar y mandar, o el resumen del
+     * chat en tres líneas. Nada sale solo: el texto vuelve a la caja del asesor.
+     */
+    public function copiloto(int $conversationId, Request $request): JsonResponse
+    {
+        $accion = $request->validate(['accion' => 'required|in:sugerir,resumir'])['accion'];
+        $conv = $this->conversation($conversationId);
+
+        if (!$conv || (int) $conv->company_id !== (int) getSessionCompanyId()) {
+            return response()->json(['ok' => false, 'error' => 'Conversación no encontrada'], 404);
+        }
+
+        if (!\App\Services\Crm\CopilotoDelChat::disponible((int) $conv->company_id)) {
+            return response()->json(['ok' => false, 'error' => 'La empresa no tiene inteligencia artificial conectada (se configura en Cobranza).'], 409);
+        }
+
+        $ficha = (array) ($this->summary($conversationId)->getData(true)['data'] ?? []);
+        $copiloto = new \App\Services\Crm\CopilotoDelChat((int) $conv->company_id);
+
+        try {
+            $texto = $accion === 'sugerir'
+                ? $copiloto->sugerir($conversationId, $ficha, DB::table('user_data')->where('user_id', getSessionUserId())->value('names'))
+                : $copiloto->resumir($conversationId, $ficha);
+        } catch (\RuntimeException $e) {
+            return response()->json(['ok' => false, 'error' => $e->getMessage()], 503);
+        }
+
+        return response()->json(['ok' => true, 'data' => ['texto' => $texto]]);
+    }
+
     /* ── GET conversations/{id}/history ──────────────────────────────── */
     public function history(int $conversationId): JsonResponse
     {

@@ -14,9 +14,9 @@ class GetConversationMessagesUseCase implements GetConversationMessagesUseCaseIn
         private ConversationRepositoryInterface $repository
     ) {}
 
-    public function execute(int $conversationId): array
+    public function execute(int $conversationId, ?int $antes = null): array
     {
-        $messages = $this->repository->getByConversation($conversationId);
+        $messages = $this->repository->getByConversation($conversationId, $antes);
 
      return [
     'message' => 'Messages retrieved successfully',

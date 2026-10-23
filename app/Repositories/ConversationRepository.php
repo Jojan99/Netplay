@@ -78,6 +78,7 @@ class ConversationRepository implements ConversationRepositoryInterface
                 'c.provider',
                 'c.assigned_user_id',
                 'c.created_at',
+                'c.sin_leer',
 
                 'cu.id as customer_id',
                 'cu.name as customer_name',
@@ -171,6 +172,8 @@ class ConversationRepository implements ConversationRepositoryInterface
                 'priority' => $row->priority,
                 'provider' => $row->provider,
                 'assigned_user_id' => $row->assigned_user_id ? (int)$row->assigned_user_id : null,
+                // Compartido entre asesores: lo que escribió el cliente desde que alguien abrió el chat.
+                'unread_count' => (int) ($row->sin_leer ?? 0),
 
                 // Línea de WhatsApp Web del chat. null en empresas de una sola
                 // línea y en Meta: el panel no muestra el badge en ese caso.
@@ -204,7 +207,10 @@ class ConversationRepository implements ConversationRepositoryInterface
         })->toArray();
     }
 
-    public function getByConversation(int $conversationId): array
+    /** Mensajes por tanda: los últimos LIMITE, o los anteriores al id «antes» (Cargar anteriores). */
+    public const MENSAJES_POR_TANDA = 200;
+
+    public function getByConversation(int $conversationId, ?int $antes = null): array
     {
         // 1️⃣ Obtener conversación
         $conversation = DB::table('crm_conversations as c')
@@ -228,6 +234,9 @@ class ConversationRepository implements ConversationRepositoryInterface
             throw new \Exception('Conversation not found');
         }
 
+        // Un asesor lo abrió: leído para todos.
+        DB::table('crm_conversations')->where('id', $conversationId)->where('sin_leer', '>', 0)->update(['sin_leer' => 0]);
+
         $botPaused = DB::table('wa_bot_pauses')
             ->where(['company_id' => $conversation->company_id, 'provider' => $conversation->provider ?: 'netplay', 'phone' => $conversation->phone])
             ->exists();
@@ -249,15 +258,21 @@ class ConversationRepository implements ConversationRepositoryInterface
 
         $messages = DB::table('crm_messages as m')
             ->leftJoin('crm_messages as q', 'q.id', '=', 'm.quoted_message_id')
+            ->leftJoin('payment_proofs as pp', 'pp.id', '=', 'm.payment_proof_id')
             ->where('m.conversation_id', $conversationId)
             ->where(fn($w) => $w->where('m.message_type', '!=', 'reaction')->orWhereNull('m.quoted_message_id'))
-            ->orderBy('m.created_at', 'asc')
-            ->orderBy('m.id', 'asc')
+            // Por tandas: un chat de 500 mensajes se pintaba entero al abrirlo. Ahora los últimos
+            // 200 y, si el asesor quiere, los anteriores.
+            ->when($antes, fn ($q) => $q->where('m.id', '<', $antes))
+            ->orderBy('m.created_at', 'desc')
+            ->orderBy('m.id', 'desc')
+            ->limit(self::MENSAJES_POR_TANDA + 1)
             ->select([
                 'm.id', 'm.sender_type', 'm.content', 'm.message_type', 'm.media_url', 'm.mime_type', 'm.created_at',
                 'm.status', 'm.is_note', 'm.is_forwarded', 'm.agent_signature', 'm.quoted_message_id',
                 'm.participant_name', 'm.participant_phone',
-                'm.deleted_at', 'm.deleted_by', 'm.edited_at',
+                'm.deleted_at', 'm.deleted_by', 'm.edited_at', 'm.transcripcion', 'm.payment_proof_id',
+                'pp.status as comprobante_estado',
                 'q.sender_type as q_sender', 'q.content as q_content', 'q.message_type as q_type', 'q.media_url as q_media',
             ])
             ->get()
@@ -283,6 +298,10 @@ class ConversationRepository implements ConversationRepositoryInterface
                     'edited'     => !empty($row->edited_at),
                     'participant_name'  => $row->participant_name ?? null,
                     'participant_phone' => $row->participant_phone ?? null,
+                    // Lo que dice la nota de voz (TranscriptorDeAudios), para leerla sin escucharla.
+                    'transcripcion' => $row->message_type === 'audio' ? ($row->transcripcion ?? null) : null,
+                    // Registrada como comprobante de pago desde el chat: con su estado en la auditoría.
+                    'comprobante' => $row->payment_proof_id ? ['id' => (int) $row->payment_proof_id, 'estado' => $row->comprobante_estado] : null,
                     'quoted' => $row->quoted_message_id ? [
                         'id' => (int) $row->quoted_message_id,
                         'sender_type' => $row->q_sender,
@@ -292,7 +311,11 @@ class ConversationRepository implements ConversationRepositoryInterface
                     ] : null,
                 ];
             })
-            ->toArray();
+            ->values();
+
+        // Uno de más dice si quedan anteriores; se devuelven en orden, del más viejo al más nuevo.
+        $hayAnteriores = $messages->count() > self::MENSAJES_POR_TANDA;
+        $messages = $messages->take(self::MENSAJES_POR_TANDA)->reverse()->values()->toArray();
 
 
         // Ventana de 24 h de Meta: sólo se puede responder libremente si el cliente escribió en las últimas 24 h
@@ -323,6 +346,7 @@ class ConversationRepository implements ConversationRepositoryInterface
                 'meta_window_until' => $metaWindowUntil,
             ],
             'data' => $messages,
+            'hay_anteriores' => $hayAnteriores,
             'error' => 0,
         ];
     }
@@ -527,8 +551,6 @@ Log::info('Intentando insertar cliente', [
             throw new \InvalidArgumentException('Datos incompletos para storeMessage');
         }
 
-        error_log(">>>>>>>>" . json_encode($data));
-
         // Estado y línea de la conversación en una sola consulta: la línea se
         // copia al mensaje para que el historial diga por qué número salió
         // aunque después la conversación se mueva.
@@ -557,8 +579,27 @@ Log::info('Intentando insertar cliente', [
         $message->participant_phone = $data['participant_phone'] ?? null;
         $message->participant_name  = $data['participant_name'] ?? null;
 
+        // La hora que trae el mensaje, si la trae (los que se sueltan de la puerta de
+        // identificación llegan con la suya); si no, la de ahora.
+        if (!empty($data['created_at'])) {
+            $message->created_at = $data['created_at'];
+        }
 
-        $message->save();
+        // El índice único (conversación, id de WhatsApp) frena el webhook que llega dos veces a la
+        // vez: el segundo recibe el mensaje que ya estaba, en vez de guardarlo repetido.
+        try {
+            $message->save();
+        } catch (\Illuminate\Database\QueryException $e) {
+            $ya = !empty($message->external_id) && ($e->errorInfo[1] ?? null) === 1062
+                ? CrmMessage::where('conversation_id', $message->conversation_id)->where('external_id', $message->external_id)->first()
+                : null;
+
+            if (!$ya) {
+                throw $e;
+            }
+
+            return $ya;
+        }
 
         // 🔄 estado automático
         $currentStatus = $conv->status ?? null;
@@ -574,11 +615,13 @@ if ($currentStatus === 'new' && $data['sender_type'] === 'agent') {
 }
 DB::table('crm_conversations')
     ->where('id', $data['conversation_id'])
-    ->update([
+    ->update(array_filter([
         'status'          => $newStatus,
         'last_message_at' => now(),
         'updated_at'      => now(),
-    ]);
+        // No leídos compartidos: el cliente suma; una persona que contesta los deja en cero.
+        'sin_leer'        => $data['sender_type'] === 'customer' ? DB::raw('LEAST(sin_leer + 1, 999)') : ($data['sender_type'] === 'agent' ? 0 : null),
+    ], fn ($v) => $v !== null));
         return $message;
     }
 

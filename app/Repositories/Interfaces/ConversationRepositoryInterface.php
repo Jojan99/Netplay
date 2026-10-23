@@ -16,7 +16,7 @@ interface ConversationRepositoryInterface
      * - agente asignado (id)
      */
     public function getInbox(array $filters = []): array;
-    public function getByConversation(int $conversationId): array;
+    public function getByConversation(int $conversationId, ?int $antes = null): array;
     public function getOrCreateConversationByPhone(string $phone, string $names, ?int $companyId = null, string $provider = 'netplay', ?int $lineaId = null): int;
 
     /** Conversación de un grupo de WhatsApp (solo WhatsApp Web; Meta no soporta grupos). */

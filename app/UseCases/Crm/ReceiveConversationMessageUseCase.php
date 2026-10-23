@@ -41,7 +41,7 @@ private function conversacionDelTelefono(int $companyId, string $telefono): ?int
 
     // Con y sin el 57: las fichas viejas lo guardaron de las dos formas y el
     // servicio manda el jid completo.
-    $formas = array_values(array_unique([$solo, ltrim($solo, '57'), '57' . ltrim($solo, '57')]));
+    $formas = array_values(array_unique([$solo, preg_replace('/^57/', '', $solo), '57' . preg_replace('/^57/', '', $solo)]));
 
     $cliente = DB::table('crm_customers')
         ->where('company_id', $companyId)
@@ -72,7 +72,8 @@ private function mensajePorExternalId(string $externalId, $companyId, array $col
 
 public function execute(array $payload): array
 {
-    Log::info('[Webhook recibido]', $payload);
+    // Sin el contenido: el registro no es lugar para guardar lo que escriben los clientes.
+    Log::info('[Webhook recibido]', ['event' => $payload['event'] ?? null, 'instancia' => $payload['instanceId'] ?? null, 'tipo' => $payload['data']['type'] ?? null]);
 
     // ─── Validar estructura del webhook ───
     if (empty($payload) || !isset($payload['event']) || !isset($payload['data'])) {
@@ -178,6 +179,7 @@ public function execute(array $payload): array
     if ($payload['event'] === 'bot.message') {
         $d = $payload['data'];
         $telefono = (string) ($d['phone'] ?? $d['jid'] ?? '');
+        $telefono = \App\Services\WhatsApp\Lids::telefono($telefono) ?? $telefono;
         $texto = trim((string) ($d['content'] ?? ''));
 
         if ($telefono === '' || $texto === '') {
@@ -272,6 +274,15 @@ public function execute(array $payload): array
      */
     $soloRegistrar = !$deAgente && (bool) ($data['soloRegistrar'] ?? false);
 
+    // Lo que quedó retenido en la puerta de identificación porque el cliente nunca dio la cédula
+    // (crm:soltar-retenidos): entra a la vista del asesor tal cual, con su hora de verdad y sin
+    // que nadie le conteste solo. Un «bienvenido» a quien escribió hace semanas no sirve.
+    $soltado = !$deAgente && !empty($payload['_soltado']);
+    $soloRegistrar = $soloRegistrar || $soltado;
+    $horaOriginal = $soltado && !empty($data['timestamp']) && is_numeric($data['timestamp'])
+        ? \Illuminate\Support\Carbon::createFromTimestamp((int) $data['timestamp'])
+        : null;
+
     Log::info('[Mensaje campos disponibles]', [
         'type'   => $data['type'] ?? null,
         'keys'   => array_keys($data),
@@ -281,6 +292,13 @@ public function execute(array $payload): array
     $phone = $data['phone'] ?? null;
     if (!$phone) {
         throw new \Exception('Invalid payload: phone');
+    }
+
+    // Un LID en vez del número (la copia de lo que sale por la línea casi siempre llega así):
+    // se cambia por el teléfono real si el servicio de WhatsApp lo conoce. Sin esto la
+    // respuesta caía en un chat aparte, «Cliente 88596786761837».
+    if (empty($data['isGroup']) && \App\Services\WhatsApp\Lids::pareceLid((string) $phone)) {
+        $phone = \App\Services\WhatsApp\Lids::telefono((string) $phone) ?? $phone;
     }
 
     // ─── Grupos ───
@@ -556,7 +574,8 @@ public function execute(array $payload): array
         case 'reaction':
             $content = trim((string)($data['content'] ?? $data['reaction'] ?? ''));
             if (!empty($data['reactionTo'])) {
-                $reactedId = DB::table('crm_messages')->where('external_id', $data['reactionTo'])->value('id');
+                // Dentro de la conversación: el mismo id de WhatsApp puede estar en otra empresa.
+                $reactedId = DB::table('crm_messages')->where('conversation_id', $conversationId)->where('external_id', $data['reactionTo'])->value('id');
             }
             break;
 
@@ -634,7 +653,7 @@ public function execute(array $payload): array
         // hilo se leería como si hablara una sola persona.
         'participant_phone' => $esGrupo ? ($data['participantPhone'] ?? null) : null,
         'participant_name'  => $esGrupo ? ($data['participantName'] ?? null) : null,
-        'created_at'      => now(),
+        'created_at'      => $horaOriginal ?? now(),
     ]);
 
     // Lo que dijo el bot, o lo que el cliente le contestó dentro de un flujo: queda guardado y
@@ -660,7 +679,8 @@ public function execute(array $payload): array
                     $caso->fill(['conversation_id' => $conversationId])->save();
                 }
 
-                \App\Jobs\ResponderCobranza::dispatchAfterResponse((int) $caso->id, (int) $message->id);
+                // En su propio proceso: la IA tarda y no puede ocupar el del webhook.
+                \App\Console\Commands\CobranzaResponder::lanzar((int) $caso->id, (int) $message->id);
 
                 broadcast(new NewMessageEvent($message, $conversationId));
                 broadcast(new InboxUpdatedEvent($conversationId, (string) DB::table('crm_conversations')->where('id', $conversationId)->value('status'), 'customer', $provider));
@@ -676,10 +696,8 @@ public function execute(array $payload): array
     // corresponde saludar, ni avisar que está fuera de horario, ni asignarla a
     // otro, ni dejar que el bot le hable encima al cliente.
     if ($deAgente) {
-        // Si el asistente de soporte llevaba esta conversación, se retira: ya hay una persona.
-        \App\Services\Soporte\AgenteDeSoporte::retirar((int) $conversationId);
-
-        $this->calmarAlBot((int) $companyId, (string) $phone, (string) ($provider ?? 'netplay'), $lineaId, $instanceId ?? null);
+        // Ya hay una persona: soporte se retira, el bot se pausa y cobranza suelta el caso.
+        \App\Services\Crm\UnaPersonaAtiende::tomar((int) $companyId, (int) $conversationId, (string) ($provider ?? 'netplay'), $lineaId, $instanceId ?? null);
 
         DB::table('crm_conversations')->where('id', $conversationId)
             ->where('status', 'new')
@@ -721,7 +739,11 @@ public function execute(array $payload): array
     }
 
     $settings = \App\Support\CrmSettings::for((int)$companyId);
-    $isFirst  = $this->repository->isFirstMessage($conversationId);
+    // Primer contacto: nadie del equipo (ni el bot) le ha escrito en este chat. Antes se miraba
+    // que hubiera exactamente un mensaje, y si llegaban dos juntos («hola» + «buenas») no salía
+    // la bienvenida. El candado evita mandarla dos veces en esa misma ráfaga.
+    $isFirst = !DB::table('crm_messages')->where('conversation_id', $conversationId)->where('sender_type', '!=', 'customer')->exists()
+        && \Illuminate\Support\Facades\Cache::add("crm:bienvenida:{$conversationId}", 1, now()->addDay());
 
     // ─── Asignación automática al agente con menos chats abiertos ───
     if ($settings['auto_assign']) {
@@ -732,8 +754,9 @@ public function execute(array $payload): array
 
     // ─── Fuera de horario: aviso automático (una vez cada 4 h por conversación) ───
     if ($settings['off_hours_enabled'] && !\App\Support\CrmSettings::isOpenNow($settings)) {
-        $recent = DB::table('crm_messages')->where('conversation_id', $conversationId)->where('sender_type', 'system')
-            ->where('created_at', '>=', now()->subHours(4))->exists();
+        // Una vez cada 4 h por conversación. Antes se saltaba si hubo CUALQUIER mensaje del sistema
+        // (los del bot también lo son), y quien hablaba con el bot nunca recibía el aviso.
+        $recent = !\Illuminate\Support\Facades\Cache::add("crm:fuera_de_horario:{$conversationId}", 1, now()->addHours(4));
         if (!$recent) {
             try {
                 $text = $settings['off_hours_message'] ?: \App\Support\CrmSettings::DEFAULT_OFF_HOURS;
@@ -790,66 +813,12 @@ public function execute(array $payload): array
 }
 
 /**
- * Calla al bot con ese número.
- *
- * Si una persona está contestando desde su teléfono, el bot no puede seguir
- * respondiendo por su cuenta: el cliente recibiría dos conversaciones a la vez.
- * Es la misma pausa que usa «pasar a un agente».
- */
-private function calmarAlBot(int $companyId, string $phone, string $provider, ?int $lineaId = null, ?string $instanceId = null): void
-{
-    try {
-        DB::table('wa_bot_pauses')->updateOrInsert(
-            ['company_id' => $companyId, 'provider' => $provider, 'phone' => $phone],
-            ['paused_at' => now(), 'updated_at' => now(), 'created_at' => now()],
-        );
-    } catch (\Throwable $e) {
-        Log::warning('[CRM] No se pudo pausar el bot', ['phone' => $phone, 'error' => $e->getMessage()]);
-    }
-
-    // Anotarlo en la base no alcanza: el bot de la línea propia corre en el
-    // servicio de Node y lee SU propia lista. Sin este aviso la pausa existía
-    // en la plataforma y el bot seguía contestando igual, que es como si no
-    // hubiera pausa.
-    if ($provider !== 'netplay') {
-        return;
-    }
-
-    try {
-        (new WhatsAppService(
-            $companyId,
-            false,
-            'netplay',
-            $instanceId ?: Lineas::instanciaDeConversacion($lineaId, $companyId),
-        ))->setBotPaused($phone, true);
-    } catch (\Throwable $e) {
-        Log::warning('[CRM] No se pudo avisarle al servicio de WhatsApp', ['phone' => $phone, 'error' => $e->getMessage()]);
-    }
-}
-
-/**
  * Reparte la conversación (si no tiene agente) al agente activo con menos chats abiertos.
  */
 private function autoAssign(int $conversationId, int $companyId): void
 {
-    $conv = DB::table('crm_conversations')->where('id', $conversationId)->first(['assigned_user_id', 'status']);
-    if (!$conv || $conv->assigned_user_id || $conv->status === 'closed') return;
-
-    $agent = DB::table('crm_agents as a')
-        ->where('a.active', 1)
-        ->where('a.company_id', $companyId)
-        ->leftJoin('crm_conversations as c', function ($j) { $j->on('c.assigned_user_id', '=', 'a.user_id')->whereIn('c.status', ['new', 'in_progress']); })
-        ->groupBy('a.user_id')
-        ->selectRaw('a.user_id, COUNT(c.id) as open_count')
-        ->orderBy('open_count')->orderByRaw('RAND()')
-        ->first();
-    if (!$agent) return;
-
-    DB::table('crm_conversations')->where('id', $conversationId)->update(['assigned_user_id' => $agent->user_id, 'updated_at' => now()]);
-    DB::table('crm_conversation_assignments')->insert([
-        'conversation_id' => $conversationId, 'from_user_id' => null, 'to_user_id' => $agent->user_id,
-        'reason' => 'auto_assign_inbound', 'created_at' => now(),
-    ]);
+    // A quien está en el panel y tiene cupo (Reparto); si no hay nadie, queda para el aviso de espera.
+    \App\Services\Crm\Reparto::asignar($conversationId, $companyId);
 }
 
 /* =====================================================
