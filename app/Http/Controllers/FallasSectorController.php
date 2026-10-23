@@ -67,8 +67,12 @@ class FallasSectorController extends Controller
                 $c = DB::table('fallas_sector_clientes')->where('falla_id', $f->id)
                     ->selectRaw('COUNT(*) total, SUM(avisado_inicio_en IS NOT NULL) inicio, SUM(avisado_fin_en IS NOT NULL) fin, SUM(error IS NOT NULL) errores')->first();
 
+                $tickets = DB::table('tickets')->where('company_id', $f->company_id)->where('falla_id', $f->id)
+                    ->selectRaw('COUNT(*) total, SUM(status_id <> 3) abiertos')->first();
+
                 return (array) $f + [
                     'sector'   => $servicio->nombreDelSector($f, true),
+                    'tickets'  => (int) $tickets->total, 'tickets_abiertos' => (int) $tickets->abiertos,
                     'afectados' => (int) $c->total, 'avisados_inicio' => (int) $c->inicio, 'avisados_fin' => (int) $c->fin, 'errores' => (int) $c->errores,
                 ];
             });
@@ -89,6 +93,8 @@ class FallasSectorController extends Controller
             'segundos_entre_mensajes' => 'required|integer|between:0,30',
             'silencio_desde' => $hora, 'silencio_hasta' => $hora,
             'mensaje_inicio' => 'nullable|string|max:1000', 'mensaje_fin' => 'nullable|string|max:1000',
+            'tickets_para_masiva' => 'sometimes|integer|between:2,100', 'minutos_ventana_tickets' => 'sometimes|integer|between:5,240',
+            'cerrar_tickets' => 'sometimes|boolean',
         ]);
 
         return response()->json(['error' => 0, 'message' => 'Configuración guardada.', 'data' => FallasDeSector::guardarConfig($this->empresa(), $datos)]);

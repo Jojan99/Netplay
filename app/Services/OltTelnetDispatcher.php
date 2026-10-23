@@ -125,9 +125,13 @@ class OltTelnetDispatcher
         // Los que mueven equipos y esperan a que vuelvan (y revierten si no)
         // tardan más: cortar la espera dejaba al panel diciendo "timeout"
         // mientras el worker seguía cambiando la ONT sin nadie mirando.
-        $timeout = in_array($method, ['darGestionAOnt', 'prepararGestionPorPerfil', 'prepararVlanDeGestion'], true)
-            ? 240
-            : self::RESULT_TIMEOUT;
+        // El alta responde antes que nginx (120 s): si se cortaba allá, el panel mostraba un error
+        // de puerta de enlace y no alcanzaba a anotar el alta para terminarla después.
+        $timeout = match (true) {
+            in_array($method, ['darGestionAOnt', 'prepararGestionPorPerfil', 'prepararVlanDeGestion'], true) => 240,
+            $method === 'registerONT' => 100,
+            default => self::RESULT_TIMEOUT,
+        };
 
         $result = Redis::blpop($resultKey, $timeout);
 

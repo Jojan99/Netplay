@@ -1048,6 +1048,9 @@ class AprovisionamientoDeOnt
                     (new self((int) $a->company_id))->trabajar($a);
                 } catch (\Throwable $e) {
                     Log::warning('[Aprovisionamiento] No se pudo avanzar', ['id' => $a->id, 'error' => $e->getMessage()]);
+                    // Lo que se iba a guardar y falló no queda a medias: si no, se guardaba el estado
+                    // nuevo («vencido») con el error de SQL como explicación.
+                    $a->estado = $a->getOriginal('estado');
                     $a->intentos++;
                     $a->detalle = mb_substr('Reintentando: ' . $e->getMessage(), 0, 250);
 
@@ -1099,6 +1102,144 @@ class AprovisionamientoDeOnt
      * aprovisionado que arrancó después de su aprovisionamiento se mira una vez
      * por arranque; si no tiene conexión de internet se le vuelve a poner.
      */
+    /**
+     * La salida por defecto del equipo no puede ser la conexión de gestión: por la VLAN de gestión
+     * no hay internet y el cliente se queda «a ratos» sin servicio. Pasa en ZTE con «ont ipconfig»:
+     * la OLT les crea omci_ipv4_dhcp_1 marcada INTERNET_TR069 y tras un reinicio se queda con la
+     * ruta (ROSA_ICELA_OCHOA, 21-10). Se pasa la salida a la conexión de internet conectada y la de
+     * gestión queda sólo para TR-069.
+     *
+     * @return string|null qué se corrigió, o null si no hacía falta o no se pudo
+     */
+    public static function corregirSalidaPorDefecto(GenieAcs $acs, string $id, array $d, int $companyId): ?string
+    {
+        if (!isset($d['InternetGatewayDevice'])) {
+            return null;
+        }
+
+        try {
+            $acs->tarea($id, ['name' => 'getParameterValues', 'parameterNames' => [self::RUTA_POR_DEFECTO]], 60);
+            $d = $acs->dispositivo($id) ?? $d;
+        } catch (\Throwable) {
+            return null;
+        }
+
+        $g = GestionRemota::where('company_id', $companyId)->first();
+        $vlanGestion = (int) ($g?->vlan ?: 0);
+        $redGestion = (string) ($g?->red ?? '');
+        $conexiones = (new self($companyId))->conexiones($d);
+        $servicios = (self::dialectoWan($d) ?? ['servicios' => 'X_HW_SERVICELIST'])['servicios'];
+
+        $esGestion = function (array $c) use ($d, $vlanGestion, $redGestion): bool {
+            $ip = (string) self::v($d, "{$c['ruta']}.ExternalIPAddress");
+            return ($vlanGestion && $c['vlan'] === $vlanGestion)
+                || str_starts_with(strtolower($c['nombre']), 'omci')
+                || ($redGestion !== '' && filter_var($ip, FILTER_VALIDATE_IP) && self::enRed($ip, $redGestion));
+        };
+
+        $actual = rtrim((string) self::v($d, self::RUTA_POR_DEFECTO), '.');
+        $salida = collect($conexiones)->first(fn ($c) => $c['ruta'] === $actual);
+
+        if (!$salida || !$esGestion($salida)) {
+            return null;
+        }
+
+        $internet = collect($conexiones)->first(fn ($c) => !$esGestion($c) && str_contains($c['servicios'], 'INTERNET')
+            && self::v($d, "{$c['ruta']}.ConnectionStatus") === 'Connected');
+
+        if (!$internet) {
+            return null;
+        }
+
+        $valores = [[self::RUTA_POR_DEFECTO, $internet['ruta'], 'xsd:string']];
+        if (str_contains($salida['servicios'], 'INTERNET')) {
+            $valores[] = ["{$salida['ruta']}.{$servicios}", 'TR069', 'xsd:string'];
+        }
+
+        $r = $acs->tareaInmediata($id, ['name' => 'setParameterValues', 'parameterValues' => $valores]);
+
+        return ($r['hecha'] ?? false)
+            ? "la salida a internet iba por la conexión de gestión ({$salida['nombre']}); pasó a {$internet['nombre']}."
+            : null;
+    }
+
+    /**
+     * El DNS que el equipo le da a la casa no puede ser el de la red de gestión. Skyworth (TR-181)
+     * deja el reenvío de DNS (Device.DNS.Relay.Forwarding) en el que le dio el DHCP de la conexión
+     * de gestión —10.30.0.1— y ahí no hay DNS de internet: los aparatos conectan, el ping a una IP
+     * responde, pero no abren páginas y el celular dice «sin acceso a internet» (Prueba_TR, 21-10).
+     * Se pasa al DNS que entregó el PPPoE conectado.
+     *
+     * @return string|null qué se corrigió, o null si no hacía falta o no se pudo
+     */
+    public static function corregirDnsDeLaCasa(GenieAcs $acs, string $id, array $d, int $companyId): ?string
+    {
+        if (!isset($d['Device'])) {
+            return null;
+        }
+
+        try {
+            // refreshObject: getParameterValues con una rama a medias («...Forwarding.») lo rechaza
+            // el ACS («Invalid parameter path») y deja una falla colgada en el equipo.
+            foreach (['Device.DNS.Relay.Forwarding', 'Device.PPP.Interface'] as $rama) {
+                $acs->tarea($id, ['name' => 'refreshObject', 'objectName' => $rama], 60);
+            }
+            $d = $acs->dispositivo($id) ?? $d;
+        } catch (\Throwable) {
+            return null;
+        }
+
+        $g = GestionRemota::where('company_id', $companyId)->first();
+        $redGestion = (string) ($g?->red ?? '');
+        $deGestion = fn (string $ip) => filter_var($ip, FILTER_VALIDATE_IP)
+            && (($redGestion !== '' && self::enRed($ip, $redGestion)) || ($g?->gateway && $ip === (string) $g->gateway));
+
+        // El PPPoE conectado, su DNS y la interfaz IP que cuelga de él.
+        $dns = null;
+        $interfaz = null;
+        foreach ((array) ($d['Device']['PPP']['Interface'] ?? []) as $n => $ppp) {
+            if (!ctype_digit((string) $n) || self::v($d, "Device.PPP.Interface.{$n}.ConnectionStatus") !== 'Connected') {
+                continue;
+            }
+            $dns = trim(explode(',', (string) self::v($d, "Device.PPP.Interface.{$n}.IPCP.DNSServers"))[0] ?? '') ?: null;
+            foreach ((array) ($d['Device']['IP']['Interface'] ?? []) as $i => $_) {
+                if (ctype_digit((string) $i) && rtrim((string) self::v($d, "Device.IP.Interface.{$i}.LowerLayers"), '.') === "Device.PPP.Interface.{$n}") {
+                    $interfaz = "Device.IP.Interface.{$i}";
+                }
+            }
+            break;
+        }
+
+        if (!$dns || !filter_var($dns, FILTER_VALIDATE_IP) || $deGestion($dns)) {
+            return null;
+        }
+
+        $valores = [];
+        $antes = [];
+        foreach ((array) ($d['Device']['DNS']['Relay']['Forwarding'] ?? []) as $n => $_) {
+            $ruta = "Device.DNS.Relay.Forwarding.{$n}";
+            $servidor = (string) self::v($d, "{$ruta}.DNSServer");
+            if (!ctype_digit((string) $n) || !$deGestion($servidor)) {
+                continue;
+            }
+            $antes[] = $servidor;
+            $valores[] = ["{$ruta}.DNSServer", $dns, 'xsd:string'];
+            if ($interfaz) {
+                $valores[] = ["{$ruta}.Interface", $interfaz, 'xsd:string'];
+            }
+        }
+
+        if (!$valores) {
+            return null;
+        }
+
+        $r = $acs->tareaInmediata($id, ['name' => 'setParameterValues', 'parameterValues' => $valores]);
+
+        return ($r['hecha'] ?? false)
+            ? 'el DNS de la casa apuntaba a la red de gestión (' . implode(', ', array_unique($antes)) . "); pasó al del PPPoE ({$dns})."
+            : null;
+    }
+
     public static function repararTrasReinicio(): int
     {
         if (!\Illuminate\Support\Facades\Cache::add('aprovisionamiento:reinicios', 1, 110)) {
@@ -1151,7 +1292,26 @@ class AprovisionamientoDeOnt
                 \Illuminate\Support\Facades\Cache::put($visto, 1, now()->addDays(2));
                 $d = $acs->dispositivo((string) $a->acs_id) ?? [];
 
-                if (self::gruposSinLeer($d) || collect((new self($companyId))->conexiones($d))->contains(fn ($c) => str_contains($c['servicios'], 'INTERNET'))) {
+                if (self::gruposSinLeer($d)) {
+                    continue;
+                }
+
+                // Volvió con internet: falta mirar que la salida por defecto no haya quedado en la
+                // conexión de gestión (ver corregirSalidaPorDefecto).
+                if (collect((new self($companyId))->conexiones($d))->contains(fn ($c) => str_contains($c['servicios'], 'INTERNET'))) {
+                    // Y que el DNS de la casa no haya quedado en el de la red de gestión (TR-181).
+                    $corregida = self::corregirSalidaPorDefecto($acs, (string) $a->acs_id, $d, $companyId)
+                        ?? self::corregirDnsDeLaCasa($acs, (string) $a->acs_id, $d, $companyId);
+                    if ($corregida) {
+                        \Illuminate\Support\Facades\DB::table('user_audit_logs')->insert([
+                            'user_id' => (int) $a->user_id, 'changed_by' => 0, 'company_id' => $companyId,
+                            'field_changed' => 'equipo', 'old_value' => null, 'new_value' => null,
+                            'description' => 'Corregido solo tras un reinicio: ' . $corregida,
+                            'created_at' => now(), 'updated_at' => now(),
+                        ]);
+                        Log::info('[Aprovisionamiento] Salida por defecto corregida', ['equipo' => $a->acs_id, 'cliente' => $a->user_id, 'detalle' => $corregida]);
+                        $reparados++;
+                    }
                     continue;
                 }
 
@@ -2148,6 +2308,14 @@ class AprovisionamientoDeOnt
     {
         if (!($r['ok'] ?? false) || !str_contains(strtoupper((string) ($d['_deviceId']['_Manufacturer'] ?? '')), 'SKYWORTH')) {
             return $r;
+        }
+
+        // Con la WAN puesta, el DNS de la casa tampoco puede quedar en el de la gestión.
+        try {
+            if ($dns = self::corregirDnsDeLaCasa($acs, (string) $a->acs_id, $d, $this->companyId)) {
+                $r['detalle'] = rtrim((string) $r['detalle'], '.') . '. Además, ' . $dns;
+            }
+        } catch (\Throwable) {
         }
 
         try {

@@ -63,13 +63,40 @@ class EquiposDelAcs
     /** El equipo del cliente, si el ACS tiene uno que se le pueda atribuir. */
     public function deCliente(int $userId): ?array
     {
-        foreach ($this->lista() as $fila) {
-            if (($fila['cliente']['user_id'] ?? null) === $userId) {
-                return $this->detalle($fila['id']);
+        $suyos = array_values(array_filter($this->lista(), fn ($f) => ($f['cliente']['user_id'] ?? null) === $userId));
+        if (!$suyos) {
+            return null;
+        }
+
+        // Un equipo del ACS que se aprovisionó para otra ONT de este cliente (la que tenía antes)
+        // no es el de hoy: al cambiarle la ONT, la ficha mostraba el WiFi y el serial del equipo
+        // anterior como si fueran del nuevo (22-10-2026). Se descarta solo con esa prueba: el
+        // serial del ACS no siempre se parece al de la OLT (C-Data guarda la MAC, algunos ZTE
+        // reportan otro número).
+        $actual = DB::table('olt_onts as o')->join('user_data as ud', 'ud.id', '=', 'o.user_data_id')
+            ->where('ud.user_id', $userId)->where('ud.company_id', $this->companyId)->value('o.serial');
+
+        if ($actual) {
+            $deHoy = array_map(fn ($x) => self::serial($x), self::serialesPosibles((string) $actual));
+            $anteriores = DB::table('aprovisionamientos')->where('company_id', $this->companyId)->where('user_id', $userId)
+                ->whereNotNull('acs_id')->get(['acs_id', 'serial'])
+                ->filter(fn ($x) => !array_intersect($deHoy, array_map(fn ($y) => self::serial($y), self::serialesPosibles((string) $x->serial))))
+                ->pluck('acs_id')->all();
+
+            $suyos = array_values(array_filter($suyos, fn ($f) => !in_array($f['id'], $anteriores, true)));
+            if (!$suyos) {
+                return null;
+            }
+
+            // Si alguno coincide con el serial de la ONT de hoy, ese primero.
+            foreach ($suyos as $fila) {
+                if (in_array(self::serial((string) ($fila['serial'] ?? '')), $deHoy, true)) {
+                    return $this->detalle($fila['id']);
+                }
             }
         }
 
-        return null;
+        return $this->detalle($suyos[0]['id']);
     }
 
     /**

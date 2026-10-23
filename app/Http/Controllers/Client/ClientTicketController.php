@@ -121,6 +121,8 @@ class ClientTicketController extends Controller
 
         // Diagnóstico de su conexión, en segundo plano, como novedad del ticket.
         \App\Services\Tickets\DiagnosticoDeTicket::lanzar($ticketId);
+        // Dentro de una falla masiva (o completando una racha de reportes), queda atado a ella.
+        \App\Services\Red\FallasDeSector::alCrearTicket((int) $user->company_id, (int) $ticketId);
 
         $ticket = DB::table('tickets as t')
             ->leftJoin('ticket_status as ts', 'ts.id', '=', 't.status_id')

@@ -49,7 +49,14 @@ class FallasDeSector
         'activo', 'modo', 'minimo_onts', 'porcentaje', 'minutos_revision', 'minutos_confirmacion', 'minutos_resolucion',
         'contar_cortes_de_luz', 'avisar_inicio', 'avisar_fin', 'avisar_grupo', 'incluir_suspendidos', 'wa_linea_id',
         'segundos_entre_mensajes', 'silencio_desde', 'silencio_hasta', 'mensaje_inicio', 'mensaje_fin',
+        'tickets_para_masiva', 'minutos_ventana_tickets', 'cerrar_tickets',
     ];
+
+    /** El «puerto» de una falla de la OLT entera: no responde, o una racha de tickets. */
+    public const TODA_LA_OLT = '*';
+
+    /** Por dónde entran los reportes de clientes: los que cuentan para una racha de tickets. */
+    private const FUENTES_DE_CLIENTES = ['asistente', 'client_portal', 'portal', 'cliente', 'whatsapp'];
 
     /** @var \Closure|null Para las pruebas: reemplaza el envío real por WhatsApp. */
     private ?\Closure $enviarCon;
@@ -74,6 +81,7 @@ class FallasDeSector
             'avisar_inicio' => 1, 'avisar_fin' => 1, 'avisar_grupo' => 1, 'incluir_suspendidos' => 0, 'wa_linea_id' => null,
             'segundos_entre_mensajes' => 3, 'silencio_desde' => null, 'silencio_hasta' => null,
             'mensaje_inicio' => null, 'mensaje_fin' => null, 'revisado_en' => null,
+            'tickets_para_masiva' => 4, 'minutos_ventana_tickets' => 30, 'cerrar_tickets' => 1,
         ];
 
         return $fila ? (object) array_merge((array) $base, (array) $fila) : $base;
@@ -119,16 +127,27 @@ class FallasDeSector
         DB::table('fallas_sector_config')->where('company_id', $this->companyId)->update(['revisado_en' => now()]);
 
         foreach (OltAdmin::where('company_id', $this->companyId)->get() as $olt) {
+            $noContesto = false;
+
             try {
                 $estados = $this->leer($olt, (bool) $cfg->contar_cortes_de_luz);
+                // Huawei y ZTE se leen en vivo: una lectura vacía es que la OLT no contestó. Las
+                // demás marcas leen la última medición guardada, y que esté vieja no dice nada de la OLT.
+                $noContesto = !$estados && in_array(strtolower((string) $olt->brand), ['huawei', 'zte'], true);
             } catch (\Throwable $e) {
                 Log::warning('[Fallas de sector] No se pudo leer la OLT', ['olt' => $olt->id, 'error' => $e->getMessage()]);
                 $estados = null;
+                $noContesto = true;
             }
 
-            // Sin lectura no se decide nada: ni abrir ni cerrar.
+            // Sin lectura no se decide nada puerto por puerto; pero una OLT que deja de
+            // responder es, ella sola, una falla masiva (22-10-2026: la OLT 5 no respondió de
+            // 13:03 a 13:25 y Kloe abrió un ticket por cliente sin que nada lo avisara).
             if ($estados === null || $estados === []) {
                 $this->lecturas[$olt->id] = ['olt' => $olt->name, 'error' => 'sin lectura'];
+                if ($noContesto) {
+                    $this->sinLectura($olt, $cfg);
+                }
                 continue;
             }
 
@@ -228,10 +247,21 @@ class FallasDeSector
         }
 
         // Un puerto que ya ni aparece en la lectura (se quitaron las ONT) no deja la falla abierta.
+        // La de toda la OLT (fsp «*») tampoco aparece: que la OLT conteste ya es que volvió, salvo
+        // la que abrieron los tickets, que espera a que esos clientes estén en línea.
         foreach ($abiertas as $fsp => $falla) {
-            if (!isset($porPuerto[$fsp])) {
-                $this->alVolver($falla, $cfg, 0, 0);
+            if (isset($porPuerto[$fsp])) {
+                continue;
             }
+
+            if ((string) $fsp === self::TODA_LA_OLT && ($falla->origen ?? '') === 'tickets' && !$this->volvieronLosDeLosTickets($falla, $estados)) {
+                if ($falla->volvio_en) {
+                    DB::table('fallas_sector')->where('id', $falla->id)->update(['volvio_en' => null, 'updated_at' => now()]);
+                }
+                continue;
+            }
+
+            $this->alVolver($falla, $cfg, 0, 0);
         }
     }
 
@@ -292,8 +322,10 @@ class FallasDeSector
 
         if ($cfg->avisar_grupo) {
             $afectados = DB::table('fallas_sector_clientes')->where('falla_id', $falla->id)->count();
-            $this->alGrupo("🔴 *Falla de sector* · " . $this->nombreDelSector($falla, true) . "\n"
-                . "{$falla->caidas} de {$falla->total} equipos caídos desde las " . \Carbon\Carbon::parse($falla->empezo_en)->format('g:i a') . ".\n"
+            $this->alGrupo("🔴 *Falla " . ($falla->fsp === self::TODA_LA_OLT ? 'masiva' : 'de sector') . "* · " . $this->nombreDelSector($falla, true) . "\n"
+                . ($falla->fsp === self::TODA_LA_OLT
+                    ? 'La OLT no responde desde las ' . \Carbon\Carbon::parse($falla->empezo_en)->format('g:i a') . ".\n"
+                    : "{$falla->caidas} de {$falla->total} equipos caídos desde las " . \Carbon\Carbon::parse($falla->empezo_en)->format('g:i a') . ".\n")
                 . ($automatico
                     ? ($cfg->avisar_inicio ? "Se les está avisando a {$afectados} clientes por WhatsApp." : 'El aviso a los clientes está apagado.')
                     : "Hay {$afectados} clientes afectados. Apruebe el aviso en *Red → Fallas de sector* (o descártela si es un mantenimiento)."));
@@ -329,9 +361,13 @@ class FallasDeSector
             'estado' => 'resuelta', 'resuelta_en' => now(), 'caidas' => 0, 'nota' => $nota ?? $falla->nota, 'updated_at' => now(),
         ]);
 
+        // Los tickets que abrieron los clientes por esta falla ya no tienen nada que atender.
+        $cerrados = $cfg->cerrar_tickets && $falla->estado !== 'detectada' ? self::cerrarTickets($this->companyId, $falla) : [];
+
         if ($cfg->avisar_grupo && $falla->estado !== 'detectada') {
             $duro = \Carbon\Carbon::parse($falla->empezo_en)->diffForHumans(now(), ['syntax' => \Carbon\CarbonInterface::DIFF_ABSOLUTE, 'parts' => 2]);
-            $this->alGrupo("🟢 *Falla de sector resuelta* · " . $this->nombreDelSector($falla, true) . "\nDuró {$duro}.");
+            $this->alGrupo("🟢 *Falla " . ($falla->fsp === self::TODA_LA_OLT ? 'masiva' : 'de sector') . " resuelta* · " . $this->nombreDelSector($falla, true) . "\nDuró {$duro}."
+                . ($cerrados ? "\nSe cerraron " . count($cerrados) . ' ticket' . (count($cerrados) === 1 ? '' : 's') . ' asociados: #' . implode(', #', $cerrados) . '.' : ''));
         }
     }
 
@@ -437,6 +473,10 @@ class FallasDeSector
     /** El nombre que la empresa le dio al puerto («Villa Katanga»), o «su zona». */
     public function nombreDelSector(object $falla, bool $paraElEquipo = false): string
     {
+        if ((string) $falla->fsp === self::TODA_LA_OLT) {
+            return $paraElEquipo ? 'toda la ' . (DB::table('olt_admins')->where('id', $falla->olt_id)->value('name') ?: 'OLT') : 'su zona';
+        }
+
         $nombre = DB::table('fallas_sector_nombres')->where('olt_id', $falla->olt_id)->where('fsp', $falla->fsp)->value('nombre');
 
         if (!$paraElEquipo) {
@@ -508,8 +548,208 @@ class FallasDeSector
     /** La falla abierta (confirmada) que tiene a este cliente sin servicio, si hay. */
     public static function delCliente(int $companyId, int $userId): ?object
     {
-        return DB::table('fallas_sector as f')->join('fallas_sector_clientes as c', 'c.falla_id', '=', 'f.id')
+        $falla = DB::table('fallas_sector as f')->join('fallas_sector_clientes as c', 'c.falla_id', '=', 'f.id')
             ->where('f.company_id', $companyId)->where('c.user_id', $userId)->whereIn('f.estado', ['por_aprobar', 'activa'])
             ->orderByDesc('f.id')->first(['f.*']);
+
+        if ($falla) {
+            return $falla;
+        }
+
+        // La de toda la OLT del cliente, aunque no esté anotado (la abrieron los tickets de otros).
+        $olts = self::oltsDelCliente($companyId, $userId);
+
+        return $olts ? DB::table('fallas_sector')->where('company_id', $companyId)->where('fsp', self::TODA_LA_OLT)
+            ->whereIn('olt_id', $olts)->whereIn('estado', ['por_aprobar', 'activa'])->orderByDesc('id')->first() : null;
+    }
+
+    /** @return list<int> */
+    private static function oltsDelCliente(int $companyId, int $userId): array
+    {
+        // olt_onts.user_data_id es el id de la ficha, no el de «users».
+        return DB::table('olt_onts as o')->join('user_data as ud', 'ud.id', '=', 'o.user_data_id')
+            ->where('ud.company_id', $companyId)->where('ud.user_id', $userId)->distinct()->pluck('o.olt_id')->map(fn ($v) => (int) $v)->all();
+    }
+
+    // ── Fallas masivas y tickets ─────────────────────────────────────────
+
+    /**
+     * Al crear un ticket: si el cliente está en una falla abierta, el ticket queda atado a
+     * ella. Si no, se mira si es el que completa una racha de reportes de la misma OLT (varios
+     * clientes distintos en pocos minutos): eso es una masiva y se abre, con todos atados.
+     *
+     * @return int|null el id de la falla a la que quedó atado
+     */
+    public static function alCrearTicket(int $companyId, int $ticketId): ?int
+    {
+        try {
+            $t = DB::table('tickets')->where('company_id', $companyId)->where('id', $ticketId)->first(['id', 'user_id', 'falla_id', 'status_id']);
+            $cfg = self::config($companyId);
+
+            if (!$t || !$t->user_id || $t->falla_id || (int) $t->status_id === 3 || !$cfg->activo) {
+                return null;
+            }
+
+            $falla = self::delCliente($companyId, (int) $t->user_id) ?? (new self($companyId))->masivaPorTickets((int) $t->user_id, $cfg);
+
+            if (!$falla) {
+                return null;
+            }
+
+            self::atar($companyId, $falla, [(int) $t->id]);
+
+            return (int) $falla->id;
+        } catch (\Throwable $e) {
+            Log::warning('[Fallas de sector] No se pudo revisar el ticket contra las fallas', ['ticket' => $ticketId, 'error' => $e->getMessage()]);
+
+            return null;
+        }
+    }
+
+    /** Abre la masiva de la OLT del cliente si hay racha de reportes; null si no la hay. */
+    private function masivaPorTickets(int $userId, object $cfg): ?object
+    {
+        foreach (self::oltsDelCliente($this->companyId, $userId) as $oltId) {
+            $recientes = DB::table('tickets as t')
+                ->join('user_data as ud', fn ($j) => $j->on('ud.user_id', '=', 't.user_id')->on('ud.company_id', '=', 't.company_id'))
+                ->join('olt_onts as o', 'o.user_data_id', '=', 'ud.id')
+                ->where('t.company_id', $this->companyId)->where('o.olt_id', $oltId)
+                ->whereIn('t.status_id', [1, 2])->whereNull('t.falla_id')->whereIn('t.source', self::FUENTES_DE_CLIENTES)
+                ->where('t.created_at', '>=', now()->subMinutes(max(5, (int) $cfg->minutos_ventana_tickets)))
+                ->distinct()->get(['t.id', 't.user_id', 't.created_at']);
+
+            if ($recientes->unique('user_id')->count() < max(2, (int) $cfg->tickets_para_masiva)) {
+                continue;
+            }
+
+            $automatico = $cfg->modo === 'automatico';
+            $total = DB::table('olt_onts')->where('olt_id', $oltId)->count();
+            $id = DB::table('fallas_sector')->insertGetId([
+                'company_id' => $this->companyId, 'olt_id' => $oltId, 'fsp' => self::TODA_LA_OLT, 'origen' => 'tickets',
+                'estado' => $automatico ? 'activa' : 'por_aprobar', 'caidas' => $recientes->unique('user_id')->count(), 'maximo_caidas' => $recientes->unique('user_id')->count(),
+                'total' => $total, 'empezo_en' => $recientes->min('created_at'), 'confirmada_en' => now(), 'aprobada_en' => $automatico ? now() : null,
+                'nota' => $recientes->unique('user_id')->count() . ' clientes reportaron estar sin servicio en ' . (int) $cfg->minutos_ventana_tickets . ' minutos.',
+                'created_at' => now(), 'updated_at' => now(),
+            ]);
+            $falla = DB::table('fallas_sector')->find($id);
+            self::atar($this->companyId, $falla, $recientes->pluck('id')->map(fn ($v) => (int) $v)->all());
+
+            if ($cfg->avisar_grupo) {
+                $this->alGrupo('🔴 *Falla masiva* · ' . $this->nombreDelSector($falla, true) . "\n"
+                    . $falla->nota . "\nTickets: #" . $recientes->pluck('id')->implode(', #') . ".\n"
+                    . 'Se cierran solos cuando la falla se resuelva.'
+                    . ($automatico ? '' : ' Apruebe el aviso a los clientes en *Red → Fallas por sector* (o descártela si no es una masiva).'));
+            }
+
+            return $falla;
+        }
+
+        return null;
+    }
+
+    /** Ata los tickets a la falla, con su nota, y anota a sus clientes como afectados. */
+    public static function atar(int $companyId, object $falla, array $ticketIds): void
+    {
+        $sector = (new self($companyId))->nombreDelSector($falla, true);
+
+        foreach (DB::table('tickets')->where('company_id', $companyId)->whereIn('id', $ticketIds)->whereNull('falla_id')->get(['id', 'user_id', 'technical_id']) as $t) {
+            DB::table('tickets')->where('id', $t->id)->update(['falla_id' => $falla->id, 'updated_at' => now()]);
+            self::nota($companyId, $t, "🔴 Asociado a la falla masiva #{$falla->id} ({$sector}). Se cierra solo cuando la falla se resuelva.");
+
+            DB::table('fallas_sector_clientes')->insertOrIgnore([
+                'falla_id' => $falla->id, 'user_id' => $t->user_id,
+                'telefono' => DB::table('user_data')->where('company_id', $companyId)->where('user_id', $t->user_id)->value('phone'),
+                'ont' => null, 'created_at' => now(), 'updated_at' => now(),
+            ]);
+        }
+    }
+
+    /** Cierra los tickets abiertos de la falla. @return list<int> los que se cerraron */
+    public static function cerrarTickets(int $companyId, object $falla): array
+    {
+        $sector = (new self($companyId))->nombreDelSector($falla, true);
+        $cerrados = [];
+
+        foreach (DB::table('tickets')->where('company_id', $companyId)->where('falla_id', $falla->id)->whereIn('status_id', [1, 2])->get(['id', 'user_id', 'technical_id']) as $t) {
+            DB::table('tickets')->where('id', $t->id)->update(['status_id' => 3, 'finished_at' => now(), 'closed_at' => now(), 'updated_at' => now()]);
+            self::nota($companyId, $t, "✅ Cierre: se resolvió la falla masiva #{$falla->id} ({$sector}). Cerrado automáticamente.");
+            $cerrados[] = (int) $t->id;
+        }
+
+        return $cerrados;
+    }
+
+    private static function nota(int $companyId, object $ticket, string $texto): void
+    {
+        // La nota pide un autor: el técnico del ticket o, si no tiene, un administrador de la empresa.
+        $autor = $ticket->technical_id ?: DB::table('users as u')->join('profiles as p', 'p.id', '=', 'u.profile_id')
+            ->where('u.company_id', $companyId)->whereRaw('UPPER(p.name) = ?', ['ADMIN'])->orderBy('u.id')->value('u.id');
+
+        if (!$autor) {
+            return;
+        }
+
+        DB::table('ticket_notes')->insert([
+            'ticket_id' => $ticket->id, 'company_id' => $companyId, 'user_id' => $autor, 'note' => $texto,
+            'photos' => null, 'audio_path' => null, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+    }
+
+    /** La OLT no contestó: si dura, es una falla de toda la OLT. */
+    private function sinLectura(OltAdmin $olt, object $cfg): void
+    {
+        $total = DB::table('olt_onts')->where('olt_id', $olt->id)->count();
+
+        if ($total < max(1, (int) $cfg->minimo_onts)) {
+            return;
+        }
+
+        $falla = DB::table('fallas_sector')->where('company_id', $this->companyId)->where('olt_id', $olt->id)
+            ->where('fsp', self::TODA_LA_OLT)->whereIn('estado', self::ABIERTAS)->first();
+
+        if (!$falla) {
+            $id = DB::table('fallas_sector')->insertGetId([
+                'company_id' => $this->companyId, 'olt_id' => $olt->id, 'fsp' => self::TODA_LA_OLT, 'origen' => 'olt', 'estado' => 'detectada',
+                'caidas' => $total, 'maximo_caidas' => $total, 'total' => $total, 'empezo_en' => now(),
+                'nota' => 'La OLT no responde.', 'created_at' => now(), 'updated_at' => now(),
+            ]);
+            $falla = DB::table('fallas_sector')->find($id);
+
+            // Afectados: todos los clientes de la OLT (los que se avisan si la falla se aprueba).
+            foreach (DB::table('olt_onts as o')->join('user_data as ud', 'ud.id', '=', 'o.user_data_id')->where('o.olt_id', $olt->id)
+                ->where('ud.active', 1)->when(!$cfg->incluir_suspendidos, fn ($q) => $q->where('ud.status_internet_id', 1))
+                ->get(['ud.user_id', 'ud.phone', 'o.fsp', 'o.ont_id'])->chunk(200) as $lote) {
+                DB::table('fallas_sector_clientes')->insertOrIgnore($lote->map(fn ($c) => [
+                    'falla_id' => $id, 'user_id' => $c->user_id, 'telefono' => $c->phone, 'ont' => "{$c->fsp}:{$c->ont_id}",
+                    'created_at' => now(), 'updated_at' => now(),
+                ])->values()->all());
+            }
+        } elseif ($falla->volvio_en) {
+            DB::table('fallas_sector')->where('id', $falla->id)->update(['volvio_en' => null, 'updated_at' => now()]);
+            $falla = DB::table('fallas_sector')->find($falla->id);
+        }
+
+        $this->confirmarSiDura($falla, $cfg);
+    }
+
+    /** ¿Ya están en línea los equipos de los clientes de los tickets, y no llegan reportes nuevos? */
+    private function volvieronLosDeLosTickets(object $falla, array $estados): bool
+    {
+        if (DB::table('tickets')->where('falla_id', $falla->id)->where('created_at', '>=', now()->subMinutes(15))->exists()) {
+            return false;
+        }
+
+        $onts = DB::table('tickets as t')
+            ->join('user_data as ud', fn ($j) => $j->on('ud.user_id', '=', 't.user_id')->on('ud.company_id', '=', 't.company_id'))
+            ->join('olt_onts as o', 'o.user_data_id', '=', 'ud.id')
+            ->where('t.falla_id', $falla->id)->where('o.olt_id', $falla->olt_id)->get(['o.fsp', 'o.ont_id']);
+
+        foreach ($onts as $o) {
+            if (($estados["{$o->fsp}:{$o->ont_id}"]['cuenta'] ?? false) === true) {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

@@ -97,8 +97,10 @@ class DiagnosticoDeServicio
         } elseif ($falla = \App\Services\Red\FallasDeSector::delCliente($this->companyId, $this->userId)) {
             // La del módulo de fallas de sector: ya se le avisó (o se le va a avisar) por WhatsApp.
             $r['corte'] = 'Falla de sector desde las ' . \Carbon\Carbon::parse($falla->empezo_en)->format('g:i a');
-            $r['lineas'][] = "FALLA GENERAL abierta en su sector: {$falla->caidas} de {$falla->total} equipos caídos en el puerto {$falla->fsp} desde las "
-                . \Carbon\Carbon::parse($falla->empezo_en)->format('g:i a') . '. Se le avisa por WhatsApp cuando vuelva.';
+            $r['lineas'][] = ($falla->fsp === \App\Services\Red\FallasDeSector::TODA_LA_OLT
+                    ? 'FALLA MASIVA abierta en toda su zona desde las ' . \Carbon\Carbon::parse($falla->empezo_en)->format('g:i a') . ': muchos clientes están sin servicio y el equipo técnico ya la está atendiendo'
+                    : "FALLA GENERAL abierta en su sector: {$falla->caidas} de {$falla->total} equipos caídos en el puerto {$falla->fsp} desde las " . \Carbon\Carbon::parse($falla->empezo_en)->format('g:i a'))
+                . '. Se le avisa por WhatsApp cuando vuelva.';
         }
 
         try {
@@ -127,11 +129,11 @@ class DiagnosticoDeServicio
                 . ($r['voltaje'] !== null && ($r['voltaje'] < 3.1 || $r['voltaje'] > 3.6) ? " · voltaje fuera de rango ({$r['voltaje']} V)" : '');
 
             if ($r['ultima_caida'] && now()->diffInHours($r['ultima_caida']) < 24) {
-                $r['lineas'][] = 'Su última caída fue ' . \Carbon\Carbon::parse($r['ultima_caida'])->diffForHumans() . ': ' . ($vivo['causa_texto'] ?? 'causa no informada') . '.';
+                $r['lineas'][] = 'Su última caída fue ' . self::hace($r['ultima_caida']) . ': ' . ($vivo['causa_texto'] ?? 'causa no informada') . '.';
             }
         } else {
             $porque = ['energia' => 'se quedó SIN ENERGÍA (el equipo avisó antes de apagarse)', 'fibra' => 'PERDIÓ LA SEÑAL DE FIBRA', 'reinicio' => 'se está reiniciando', 'desactivada' => 'está desactivada en la OLT'][$r['causa']] ?? 'no informó la causa';
-            $r['lineas'][] = "ONT FUERA DE LÍNEA · {$porque}" . ($r['ultima_caida'] ? ' · desde ' . \Carbon\Carbon::parse($r['ultima_caida'])->diffForHumans() : '') . '.';
+            $r['lineas'][] = "ONT FUERA DE LÍNEA · {$porque}" . ($r['ultima_caida'] ? ' · desde ' . self::hace($r['ultima_caida']) : '') . '.';
         }
 
         return $r;
@@ -290,5 +292,15 @@ class DiagnosticoDeServicio
             $ont['error'] || !$router['leido'] => ['incompleto', 'No se pudo revisar todo.', 'No pude revisar todo su servicio en este momento.'],
             default => ['red_bien', 'La red llega bien hasta el equipo: el problema es del WiFi o de un aparato del cliente.', 'Su servicio está llegando bien hasta su equipo. Si le falla en un aparato, suele ser la señal del WiFi: acérquese al equipo, o apáguelo y enciéndalo.'],
         };
+    }
+
+    /**
+     * «hace 25 minutos», en español. El reloj de la OLT puede ir adelantado: una hora en el futuro
+     * salía «29 minutes from now» (ROSA_ICELA, 21-10); se toma como «hace un momento».
+     */
+    private static function hace(string $fecha): string
+    {
+        $f = \Carbon\Carbon::parse($fecha)->locale('es');
+        return $f->isFuture() ? 'hace un momento' : $f->diffForHumans();
     }
 }

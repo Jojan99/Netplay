@@ -71,6 +71,8 @@ class TicketRepository implements TicketRepositoryInterface
         // Diagnóstico de la conexión del cliente, en segundo plano.
         if ($ticket->user_id) {
             \App\Services\Tickets\DiagnosticoDeTicket::lanzar((int) $ticket->id);
+            // Si el cliente está dentro de una falla masiva, el ticket queda atado a ella.
+            \App\Services\Red\FallasDeSector::alCrearTicket((int) $ticket->company_id, (int) $ticket->id);
         }
 
         return $ticket->id;
@@ -134,6 +136,7 @@ class TicketRepository implements TicketRepositoryInterface
             'tickets.finished_at',
             'tickets.closed_at',
             'tickets.reopened_count',
+            'tickets.source',
             'tickets.technical_id',
             'tickets.user_id',
             'user_data_tech.names as tech_names',
@@ -570,7 +573,27 @@ class TicketRepository implements TicketRepositoryInterface
             ->limit(10)
             ->get();
 
+        // Lo que se mira primero (21-10-2026): cuántos abiertos llevan más de 3 días, cuántos
+        // abrió el asistente en el último mes y cuánto se tarda en cerrar (mediana del mes).
+        $abiertos = Ticket::where('company_id', $companyId)->whereIn('status_id', [1, 2]);
+        $viejos = (clone $abiertos)->where('created_at', '<', now()->subDays(3))->count();
+        $masViejo = (clone $abiertos)->min('created_at');
+        $ultimos30 = Ticket::where('company_id', $companyId)->where('created_at', '>=', now()->subDays(30));
+        $delAsistente = (clone $ultimos30)->where('source', 'asistente')->count();
+        $creados30 = (clone $ultimos30)->count();
+        $minutos = Ticket::where('company_id', $companyId)->where('status_id', 3)
+            ->whereRaw('COALESCE(finished_at, closed_at) >= ?', [now()->startOfMonth()])
+            ->selectRaw('TIMESTAMPDIFF(MINUTE, created_at, COALESCE(finished_at, closed_at)) as m')
+            ->pluck('m')->filter(fn ($m) => $m !== null && $m >= 0)->sort()->values();
+        $mediana = $minutos->count() ? $minutos[intdiv($minutos->count() - 1, 2)] : null;
+
         return [
+            'viejos'           => $viejos,
+            'mas_viejo'        => $masViejo,
+            'del_asistente_30' => $delAsistente,
+            'creados_30'       => $creados30,
+            'cerrados_mes'     => $minutos->count(),
+            'mediana_horas'    => $mediana !== null ? round($mediana / 60, 1) : null,
             'total'           => $total,
             'pending'         => $pending,
             'in_progress'     => $inProgress,

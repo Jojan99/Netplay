@@ -46,8 +46,9 @@ class RevisorDeRed
         // Lo que ya no aparece, se cierra: la alerta vive mientras el problema.
         $cerradas = Alerta::where('company_id', $this->companyId)
             ->abiertas()
-            // Las de inventario no son de esta revisión: las abre y las cierra AvisosDeInventario.
-            ->where('tipo', '!=', 'inventario')
+            // Las de inventario y las de canales no son de esta revisión: las abren y las cierran
+            // AvisosDeInventario y VigiaDeCanales.
+            ->whereNotIn('tipo', ['inventario', 'canal'])
             ->when($vistas, fn ($q) => $q->whereNotIn('clave', $vistas))
             ->update(['cerrada_en' => now()]);
 

@@ -803,6 +803,8 @@ class OltAdminUseCase
                 'sp_index'     => $spIndex,
             ]);
 
+            \App\Services\Olt\AltasPendientes::olvidar($oltId, (string) $data['serial']);
+
             $result = $this->dispatcher->dispatch($oltId, 'registerONT', [
                 'fsp'             => $data['fsp'],
                 'serial'          => $data['serial'],
@@ -814,209 +816,231 @@ class OltAdminUseCase
                 'onu_type'        => $data['onu_type'] ?? null,
             ]);
 
-            // El driver puede decir qué número usó (ZTE: el 2, por ONU).
-            if (!empty($result['service_port_index'])) {
-                $spIndex = (int) $result['service_port_index'];
-            }
-
-            // Un alta son varios pasos contra la OLT y cualquiera puede
-            // fallar por su cuenta. Se informa uno por uno: si se corta a
-            // mitad, hay que poder ver qué quedó hecho para no repetirlo todo
-            // ni dejar al cliente conectado sin navegar.
-            $pasos = [[
-                'paso'    => "Autorizar la ONT en {$data['fsp']}",
-                'ok'      => (bool) $result['success'],
-                'detalle' => $result['success']
-                    ? 'ONT ID ' . $result['ont_id']
-                    : ($result['message'] ?: 'la OLT no dio detalle'),
-            ]];
-
-            if ($result['success']) {
-                Cache::forget("olt:{$oltId}:unauth_onts");
-
-                $ontId     = (int) $result['ont_id'];
-                $spCreated = $result['service_port_created'] ?? false;
-
-                if ($vlan !== null && !empty($result['vlan_paso'])) {
-                    // Equipos sin service-port (C-Data EPON): el driver dice qué
-                    // verificó. El mensaje de Huawei ("sin esto el cliente
-                    // conecta pero no navega") no aplica y confundía.
-                    $pasos[] = [
-                        'paso'    => $result['vlan_paso']['titulo'],
-                        'ok'      => (bool) $result['vlan_paso']['ok'],
-                        'detalle' => $result['vlan_paso']['detalle'],
-                    ];
-                } elseif ($vlan !== null) {
-                    $pasos[] = [
-                        'paso'    => "Crear el service-port (VLAN {$vlan})",
-                        'ok'      => (bool) $spCreated,
-                        'detalle' => $spCreated
-                            ? "índice {$spIndex}"
-                            : (!empty($result['service_port_error'])
-                                ? 'la OLT respondió: ' . $result['service_port_error']
-                                : 'sin esto el cliente conecta pero no navega'),
-                    ];
-                } else {
-                    $pasos[] = [
-                        'paso'    => 'Crear el service-port',
-                        'ok'      => false,
-                        'omitido' => true,
-                        'detalle' => 'no se eligió VLAN, así que no se creó',
-                    ];
-                }
-
-                // El service-port es el camino de datos. Sin él la ONT
-                // autentica y prende, pero no navega —y si no navega nunca va
-                // a aparecer en el TR-069—, así que aprovisionar encima de un
-                // service-port fallido es tirar el tiempo: falla la WAN, falla
-                // el WiFi y falla la gestión, y el técnico se queda mirando
-                // tres errores cuya causa es uno solo.
-                //
-                // Se reintenta una vez. completarServicePort ya sabe hacerlo
-                // bien: mira si quedó a medio crear en la OLT y toma un índice
-                // nuevo en vez de insistir con el que falló.
-                if ($vlan !== null && !$spCreated && empty($result['vlan_paso'])) {
-                    try {
-                        $reintento = $this->completarServicePort($oltId, [
-                            'fsp'     => $data['fsp'],
-                            'ont_id'  => $ontId,
-                            'vlan'    => $vlan,
-                        ]);
-
-                        $spCreated = ($reintento['status'] ?? 1) === 0;
-
-                        if ($spCreated && !empty($reintento['data']['service_port'])) {
-                            $spIndex = (int) $reintento['data']['service_port'];
-                        }
-
-                        $pasos[] = [
-                            'paso'    => 'Reintentar el service-port',
-                            'ok'      => $spCreated,
-                            'detalle' => $reintento['message'] ?? null,
-                        ];
-                    } catch (\Throwable $e) {
-                        \Log::warning('[OLT] Falló el reintento del service-port', [
-                            'olt' => $oltId, 'fsp' => $data['fsp'], 'ont' => $ontId, 'error' => $e->getMessage(),
-                        ]);
-
-                        $pasos[] = [
-                            'paso'    => 'Reintentar el service-port',
-                            'ok'      => false,
-                            'detalle' => $e->getMessage(),
-                        ];
-                    }
-                }
-
-                if (!empty($data['user_data_id'])) {
-                    $pasos[] = [
-                        'paso'    => 'Vincular el cliente',
-                        'ok'      => true,
-                        'detalle' => null,
-                    ];
-                }
-
-                OltOnt::updateOrCreate(
-                    ['olt_id' => $oltId, 'fsp' => $data['fsp'], 'ont_id' => $ontId],
-                    [
-                        'serial'        => $data['serial'],
-                        'description'   => $desc,
-                        // El cliente queda vinculado desde el alta: así se sabe
-                        // qué puerto lo atiende sin tener que asignarlo aparte.
-                        //
-                        // Lo que llega es el id de «users» (así lo manda la lista de
-                        // clientes y lo valida OltOntRequest); la columna guarda el de la
-                        // ficha «user_data». Escribirlo tal cual dejaba la ONT a nombre
-                        // del cliente cuya ficha tenía ese número: se autorizaba a una
-                        // persona y aparecía otra.
-                        'user_data_id'  => !empty($data['user_data_id'])
-                            ? \Illuminate\Support\Facades\DB::table('user_data')->where('user_id', (int) $data['user_data_id'])->value('id')
-                            : null,
-                        'status'        => 'offline',
-                        // En equipos sin service-port (C-Data EPON) el paso de
-                        // VLAN sólo verifica el puerto PON: no hay índice que
-                        // guardar, y guardarlo inventaba un service-port que
-                        // aparecía en la lista y se intentaba borrar después.
-                        'service_ports' => ($spCreated && $vlan !== null && $spIndex !== null && empty($result['vlan_paso']))
-                                            ? [['index' => $spIndex, 'vlan' => $vlan]]
-                                            : [],
-                        'synced_at'     => now(),
-                    ]
-                );
-
-                Cache::forget("olt:{$oltId}:all_service_ports");
-
-                // Acceso remoto: si la empresa lo tiene activado, el equipo
-                // nuevo entra solo al TR-069. Hacerlo aquí evita que alguien
-                // tenga que acordarse de habilitarlo equipo por equipo.
-                $gestion = $this->darGestionRemota($oltId, $data['fsp'], $ontId);
-
-                if ($gestion) {
-                    $pasos[] = $gestion;
-                }
-
-                // Con el camino de datos sin hacer no se aprovisiona: se
-                // deja dicho qué falta, para arreglar eso y reaplicar.
-                $caminoDeDatos = $vlan === null || $spCreated || !empty($result['vlan_paso']);
-
-                // Aprovisionamiento: WAN, WiFi y cuenta del equipo cuando
-                // aparezca en el TR-069, si la empresa lo tiene encendido.
-                if (!$caminoDeDatos) {
-                    $pasos[] = [
-                        'paso'    => 'Aprovisionamiento del equipo',
-                        'ok'      => false,
-                        'omitido' => true,
-                        'detalle' => 'No se programó: sin service-port el equipo no navega, '
-                                   . 'y sin navegar no llega al TR-069. Cree el service-port y reaplique.',
-                    ];
-                }
-
-                try {
-
-                    // Trasladada a otro puerto: sólo se le reaplica la conexión
-                    // (y la MAC con IP fija); su WiFi y su cuenta quedan como están.
-                    $companyDeLaOlt = (int) (OltAdmin::find($oltId)?->company_id ?: 0);
-                    $aprovisionamiento = null;
-
-                    if ($caminoDeDatos) {
-                    $aprovisionamiento = !empty($data['_trasladada']) && !empty($data['user_data_id'])
-                        ? (($re = \App\Services\Red\AprovisionamientoDeOnt::reaplicarConexion($companyDeLaOlt, (int) $data['user_data_id']))
-                            ? ['paso' => 'Conexión del cliente', 'ok' => (bool) $re['id'], 'omitido' => !$re['id'], 'detalle' => $re['texto'], 'aprovisionamiento' => $re['id']] : null)
-                        : \App\Services\Red\AprovisionamientoDeOnt::programar(
-                            $oltId, $data['fsp'], $ontId, (string) ($data['serial'] ?? ''),
-                            isset($data['user_data_id']) ? (int) $data['user_data_id'] : null,
-                            $vlan, (array) ($data['aprovisionar'] ?? [])
-                        );
-                    }
-
-                    if ($aprovisionamiento) {
-                        $pasos[] = $aprovisionamiento;
-                    }
-                } catch (\Throwable $e) {
-                    \Log::warning('[Aprovisionamiento] No se pudo programar', ['olt' => $oltId, 'fsp' => $data['fsp'], 'ont' => $ontId, 'error' => $e->getMessage()]);
-                    $pasos[] = ['paso' => 'Aprovisionamiento del equipo', 'ok' => false, 'detalle' => 'No se pudo programar: ' . $e->getMessage()];
-                }
-            }
-
-            // Cuando falla se muestra lo que dijo la OLT: "Error al registrar
-            // ONT" no le sirve a nadie para saber qué pasó.
-            $msg = $result['success']
-                ? "ONT autorizada en {$data['fsp']} · ONT ID {$result['ont_id']}"
-                    . (!empty($result['vlan_paso'])
-                        ? ($result['vlan_paso']['ok'] ? " · VLAN {$vlan} verificada en el puerto" : " · falta la VLAN {$vlan} en el puerto")
-                        : (($result['service_port_created'] ?? false) ? " · service-port {$spIndex} creado" : ''))
-                : (stripos((string) $result['message'], 'System is busy') !== false
-                    ? 'La OLT está ocupada en este momento (suele ser porque está guardando la configuración). Pruebe de nuevo en unos segundos.'
-                    : 'La OLT no autorizó la ONT: ' . ($result['message'] ?: 'sin detalle'));
-
-            return [
-                'status'  => $result['success'] ? 0 : 1,
-                'message' => $msg,
-                'data'    => $result + ['pasos' => $pasos, 'fsp' => $data['fsp']],
-            ];
+            return $this->trasAutorizar($oltId, $data, $result, $vlan, $spIndex, $desc);
         } catch (\Throwable $e) {
             \Log::error('OLT registerONT error', ['olt_id' => $oltId, 'error' => $e->getMessage()]);
+
+            // La OLT tardó más que la espera, pero el worker sigue y casi siempre termina el
+            // alta: la ONT quedaba autorizada sin cliente, sin acceso remoto y sin aprovisionar,
+            // y el operador creía que había fallado. Se anota y se termina sola al aparecer.
+            if (isset($vlan, $desc) && str_contains($e->getMessage(), 'Timeout')) {
+                \App\Services\Olt\AltasPendientes::anotar($oltId, $data, $vlan, $spIndex ?? null, $desc);
+
+                return ['status' => 1, 'message' => 'La OLT está tardando en responder y el alta sigue en curso. '
+                    . 'Cuando la OLT la termine, el sistema vincula la ONT ' . (!empty($data['user_data_id']) ? 'al cliente ' : '')
+                    . 'y la aprovisiona solo, en unos minutos. No la autorice de nuevo.', 'data' => ['pendiente' => true]];
+            }
+
             return ['status' => 1, 'message' => 'Error registrando ONT: ' . $e->getMessage(), 'data' => null];
         }
+    }
+
+    /**
+     * Lo que sigue a la autorización en la OLT: guardar la ONT con su cliente, el service-port,
+     * el acceso remoto y el aprovisionamiento. Aparte del alta porque también lo usa
+     * AltasPendientes, cuando la OLT tardó más que la espera y terminó el alta sin nadie mirando.
+     */
+    public function trasAutorizar(int $oltId, array $data, array $result, ?int $vlan, ?int $spIndex, string $desc): array
+    {
+        // El driver puede decir qué número usó (ZTE: el 2, por ONU).
+        if (!empty($result['service_port_index'])) {
+            $spIndex = (int) $result['service_port_index'];
+        }
+
+        // Un alta son varios pasos contra la OLT y cualquiera puede
+        // fallar por su cuenta. Se informa uno por uno: si se corta a
+        // mitad, hay que poder ver qué quedó hecho para no repetirlo todo
+        // ni dejar al cliente conectado sin navegar.
+        $pasos = [[
+            'paso'    => "Autorizar la ONT en {$data['fsp']}",
+            'ok'      => (bool) $result['success'],
+            'detalle' => $result['success']
+                ? 'ONT ID ' . $result['ont_id']
+                : ($result['message'] ?: 'la OLT no dio detalle'),
+        ]];
+
+        if ($result['success']) {
+            Cache::forget("olt:{$oltId}:unauth_onts");
+
+            $ontId     = (int) $result['ont_id'];
+            $spCreated = $result['service_port_created'] ?? false;
+
+            if ($vlan !== null && !empty($result['vlan_paso'])) {
+                // Equipos sin service-port (C-Data EPON): el driver dice qué
+                // verificó. El mensaje de Huawei ("sin esto el cliente
+                // conecta pero no navega") no aplica y confundía.
+                $pasos[] = [
+                    'paso'    => $result['vlan_paso']['titulo'],
+                    'ok'      => (bool) $result['vlan_paso']['ok'],
+                    'detalle' => $result['vlan_paso']['detalle'],
+                ];
+            } elseif ($vlan !== null) {
+                $pasos[] = [
+                    'paso'    => "Crear el service-port (VLAN {$vlan})",
+                    'ok'      => (bool) $spCreated,
+                    'detalle' => $spCreated
+                        ? "índice {$spIndex}"
+                        : (!empty($result['service_port_error'])
+                            ? 'la OLT respondió: ' . $result['service_port_error']
+                            : 'sin esto el cliente conecta pero no navega'),
+                ];
+            } else {
+                $pasos[] = [
+                    'paso'    => 'Crear el service-port',
+                    'ok'      => false,
+                    'omitido' => true,
+                    'detalle' => 'no se eligió VLAN, así que no se creó',
+                ];
+            }
+
+            // El service-port es el camino de datos. Sin él la ONT
+            // autentica y prende, pero no navega —y si no navega nunca va
+            // a aparecer en el TR-069—, así que aprovisionar encima de un
+            // service-port fallido es tirar el tiempo: falla la WAN, falla
+            // el WiFi y falla la gestión, y el técnico se queda mirando
+            // tres errores cuya causa es uno solo.
+            //
+            // Se reintenta una vez. completarServicePort ya sabe hacerlo
+            // bien: mira si quedó a medio crear en la OLT y toma un índice
+            // nuevo en vez de insistir con el que falló.
+            if ($vlan !== null && !$spCreated && empty($result['vlan_paso'])) {
+                try {
+                    $reintento = $this->completarServicePort($oltId, [
+                        'fsp'     => $data['fsp'],
+                        'ont_id'  => $ontId,
+                        'vlan'    => $vlan,
+                    ]);
+
+                    $spCreated = ($reintento['status'] ?? 1) === 0;
+
+                    if ($spCreated && !empty($reintento['data']['service_port'])) {
+                        $spIndex = (int) $reintento['data']['service_port'];
+                    }
+
+                    $pasos[] = [
+                        'paso'    => 'Reintentar el service-port',
+                        'ok'      => $spCreated,
+                        'detalle' => $reintento['message'] ?? null,
+                    ];
+                } catch (\Throwable $e) {
+                    \Log::warning('[OLT] Falló el reintento del service-port', [
+                        'olt' => $oltId, 'fsp' => $data['fsp'], 'ont' => $ontId, 'error' => $e->getMessage(),
+                    ]);
+
+                    $pasos[] = [
+                        'paso'    => 'Reintentar el service-port',
+                        'ok'      => false,
+                        'detalle' => $e->getMessage(),
+                    ];
+                }
+            }
+
+            if (!empty($data['user_data_id'])) {
+                $pasos[] = [
+                    'paso'    => 'Vincular el cliente',
+                    'ok'      => true,
+                    'detalle' => null,
+                ];
+            }
+
+            OltOnt::updateOrCreate(
+                ['olt_id' => $oltId, 'fsp' => $data['fsp'], 'ont_id' => $ontId],
+                [
+                    'serial'        => $data['serial'],
+                    'description'   => $desc,
+                    // El cliente queda vinculado desde el alta: así se sabe
+                    // qué puerto lo atiende sin tener que asignarlo aparte.
+                    //
+                    // Lo que llega es el id de «users» (así lo manda la lista de
+                    // clientes y lo valida OltOntRequest); la columna guarda el de la
+                    // ficha «user_data». Escribirlo tal cual dejaba la ONT a nombre
+                    // del cliente cuya ficha tenía ese número: se autorizaba a una
+                    // persona y aparecía otra.
+                    'user_data_id'  => !empty($data['user_data_id'])
+                        ? \Illuminate\Support\Facades\DB::table('user_data')->where('user_id', (int) $data['user_data_id'])->value('id')
+                        : null,
+                    'status'        => 'offline',
+                    // En equipos sin service-port (C-Data EPON) el paso de
+                    // VLAN sólo verifica el puerto PON: no hay índice que
+                    // guardar, y guardarlo inventaba un service-port que
+                    // aparecía en la lista y se intentaba borrar después.
+                    'service_ports' => ($spCreated && $vlan !== null && $spIndex !== null && empty($result['vlan_paso']))
+                                        ? [['index' => $spIndex, 'vlan' => $vlan]]
+                                        : [],
+                    'synced_at'     => now(),
+                ]
+            );
+
+            Cache::forget("olt:{$oltId}:all_service_ports");
+
+            // Acceso remoto: si la empresa lo tiene activado, el equipo
+            // nuevo entra solo al TR-069. Hacerlo aquí evita que alguien
+            // tenga que acordarse de habilitarlo equipo por equipo.
+            $gestion = $this->darGestionRemota($oltId, $data['fsp'], $ontId);
+
+            if ($gestion) {
+                $pasos[] = $gestion;
+            }
+
+            // Con el camino de datos sin hacer no se aprovisiona: se
+            // deja dicho qué falta, para arreglar eso y reaplicar.
+            $caminoDeDatos = $vlan === null || $spCreated || !empty($result['vlan_paso']);
+
+            // Aprovisionamiento: WAN, WiFi y cuenta del equipo cuando
+            // aparezca en el TR-069, si la empresa lo tiene encendido.
+            if (!$caminoDeDatos) {
+                $pasos[] = [
+                    'paso'    => 'Aprovisionamiento del equipo',
+                    'ok'      => false,
+                    'omitido' => true,
+                    'detalle' => 'No se programó: sin service-port el equipo no navega, '
+                               . 'y sin navegar no llega al TR-069. Cree el service-port y reaplique.',
+                ];
+            }
+
+            try {
+
+                // Trasladada a otro puerto: sólo se le reaplica la conexión
+                // (y la MAC con IP fija); su WiFi y su cuenta quedan como están.
+                $companyDeLaOlt = (int) (OltAdmin::find($oltId)?->company_id ?: 0);
+                $aprovisionamiento = null;
+
+                if ($caminoDeDatos) {
+                $aprovisionamiento = !empty($data['_trasladada']) && !empty($data['user_data_id'])
+                    ? (($re = \App\Services\Red\AprovisionamientoDeOnt::reaplicarConexion($companyDeLaOlt, (int) $data['user_data_id']))
+                        ? ['paso' => 'Conexión del cliente', 'ok' => (bool) $re['id'], 'omitido' => !$re['id'], 'detalle' => $re['texto'], 'aprovisionamiento' => $re['id']] : null)
+                    : \App\Services\Red\AprovisionamientoDeOnt::programar(
+                        $oltId, $data['fsp'], $ontId, (string) ($data['serial'] ?? ''),
+                        isset($data['user_data_id']) ? (int) $data['user_data_id'] : null,
+                        $vlan, (array) ($data['aprovisionar'] ?? [])
+                    );
+                }
+
+                if ($aprovisionamiento) {
+                    $pasos[] = $aprovisionamiento;
+                }
+            } catch (\Throwable $e) {
+                \Log::warning('[Aprovisionamiento] No se pudo programar', ['olt' => $oltId, 'fsp' => $data['fsp'], 'ont' => $ontId, 'error' => $e->getMessage()]);
+                $pasos[] = ['paso' => 'Aprovisionamiento del equipo', 'ok' => false, 'detalle' => 'No se pudo programar: ' . $e->getMessage()];
+            }
+        }
+
+        // Cuando falla se muestra lo que dijo la OLT: "Error al registrar
+        // ONT" no le sirve a nadie para saber qué pasó.
+        $msg = $result['success']
+            ? "ONT autorizada en {$data['fsp']} · ONT ID {$result['ont_id']}"
+                . (!empty($result['vlan_paso'])
+                    ? ($result['vlan_paso']['ok'] ? " · VLAN {$vlan} verificada en el puerto" : " · falta la VLAN {$vlan} en el puerto")
+                    : (($result['service_port_created'] ?? false) ? " · service-port {$spIndex} creado" : ''))
+            : (stripos((string) $result['message'], 'System is busy') !== false
+                ? 'La OLT está ocupada en este momento (suele ser porque está guardando la configuración). Pruebe de nuevo en unos segundos.'
+                : 'La OLT no autorizó la ONT: ' . ($result['message'] ?: 'sin detalle'));
+
+        return [
+            'status'  => $result['success'] ? 0 : 1,
+            'message' => $msg,
+            'data'    => $result + ['pasos' => $pasos, 'fsp' => $data['fsp']],
+        ];
     }
 
     public function cliCommand(int $oltId, string $command): array
@@ -2024,6 +2048,9 @@ class OltAdminUseCase
                 'user_id'   => (int) $c->user_id,
                 'ficha_id'  => (int) $c->id,
                 'nombre'    => trim($c->names . ' ' . $c->lastname),
+                // Para mostrar el nombre de WiFi que pondrá el aprovisionamiento (prefijo_APELLIDO).
+                'apellidos' => trim((string) $c->lastname),
+                'nombres'   => trim((string) $c->names),
                 'dni'       => $c->dni,
                 'direccion' => $c->address,
                 'plan'      => $c->plan_name,
