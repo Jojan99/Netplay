@@ -740,7 +740,8 @@ class CompanyController extends Controller
 
         return standardApiReponse('OK', [
             'routes'      => $routes,
-            'eventos'     => NotificationRouterService::catalogo(),
+            // Sin panel de TV, el aviso de canales caídos no aparece.
+            'eventos'     => array_values(array_filter(NotificationRouterService::catalogo(), fn ($e) => $e['clave'] !== 'alerta_tv' || \App\Models\TvPanel::activa((int) getSessionCompanyId()))),
             'event_types' => NotificationRouterService::eventLabels(),
             'linea'       => [
                 'conectada'   => (bool) ($company->wa_instance_id && $company->wa_api_key),
@@ -891,8 +892,8 @@ class CompanyController extends Controller
             ->texto();
 
         try {
-            if (in_array($route->event_type, NotificationRouterService::EVENTOS_DE_RED, true)) {
-                // Las de red salen forzadas, como las de verdad.
+            if (in_array($route->event_type, [...NotificationRouterService::EVENTOS_DE_RED, ...NotificationRouterService::EVENTOS_DE_TV], true)) {
+                // Las de red y las de canales salen forzadas, como las de verdad.
                 $ok = (new \App\Services\Alertas\AvisosAlGrupo($companyId))->enviarA($route->destination, $texto);
             } else {
                 (new \App\Services\WhatsAppService($companyId, false, 'netplay'))
@@ -927,8 +928,8 @@ class CompanyController extends Controller
                 : ['error' => 'Ese grupo no tiene un identificador válido.'];
         }
 
-        if (in_array($evento, NotificationRouterService::EVENTOS_DE_RED, true)) {
-            return ['error' => 'Las alertas de red van a un grupo de WhatsApp, no a un número suelto.'];
+        if (in_array($evento, [...NotificationRouterService::EVENTOS_DE_RED, ...NotificationRouterService::EVENTOS_DE_TV], true)) {
+            return ['error' => 'Estas alertas van a un grupo de WhatsApp, no a un número suelto.'];
         }
 
         $digitos = preg_replace('/\D/', '', str_replace('@s.whatsapp.net', '', $texto));
@@ -1093,6 +1094,7 @@ class CompanyController extends Controller
             ->where('profile_id', $user->profile_id)
             ->where('active', true)
             ->pluck('module');
+        $modules = \App\Models\TvPanel::filtrarModulos((int) $user->company_id, $modules);
 
         return standardApiReponse('OK', $modules, false, JsonResponse::HTTP_OK);
     }
@@ -1113,7 +1115,7 @@ class CompanyController extends Controller
             return standardApiReponse('Perfil no encontrado', null, true, JsonResponse::HTTP_NOT_FOUND);
         }
 
-        $catalog = \App\Support\Modules::flat();
+        $catalog = \App\Models\TvPanel::filtrarModulos((int) getSessionCompanyId(), \App\Support\Modules::flat());
         $all = array_column($catalog, 'module');
 
         $active = \Illuminate\Support\Facades\DB::table('profile_modules')
@@ -1161,6 +1163,10 @@ class CompanyController extends Controller
             'whatsapp',
             'technician-map',
         ];
+        // Televisión solo existe para la empresa con panel conectado.
+        if (\App\Models\TvPanel::activa((int) getSessionCompanyId())) {
+            $all[] = 'television';
+        }
 
         foreach ($all as $module) {
             \Illuminate\Support\Facades\DB::table('profile_modules')->upsert(

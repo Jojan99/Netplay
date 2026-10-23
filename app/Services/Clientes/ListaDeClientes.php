@@ -33,6 +33,18 @@ class ListaDeClientes
     private const PAGO_SUSPENDIDO = "(internet_status.name <> 'ACTIVE' AND COALESCE(user_data.no_reactivar_auto, 0) = 0 AND ("
         . self::AL_DIA . ' OR ' . self::CON_PAGO . '))';
 
+    /** Lo que falta pagar de una factura: el mismo saldo que usa Cartera. */
+    private const SALDO = 'GREATEST(0, df.price_total - COALESCE(df.price_discount, 0) - COALESCE(df.price_abone, 0))';
+    private const PENDIENTE = 'df.cab_id = cab_facturations.id AND df.paid = 0 AND df.anulada_en IS NULL AND df.abone <> 1';
+    private const DEUDA = 'SELECT COALESCE(SUM(' . self::SALDO . '), 0) FROM det_facturations df WHERE ' . self::PENDIENTE;
+    private const FACTURAS_PENDIENTES = 'SELECT COUNT(*) FROM det_facturations df WHERE ' . self::PENDIENTE;
+
+    /**
+     * Días después de la fecha de la factura en que un pago cuenta «a tiempo». La plataforma no
+     * guarda una fecha límite por factura; 10 días es el plazo con el que se cobra en la práctica.
+     */
+    private const DIAS_A_TIEMPO = 10;
+
     public function pagina(array $filtros): array
     {
         $base = $this->base(trim((string) ($filtros['q'] ?? '')), (int) ($filtros['cliente_id'] ?? 0));
@@ -97,12 +109,26 @@ class ListaDeClientes
             DB::raw('COALESCE(cab_facturations.billing_electronic, 0) AS billing_electronic'),
             // Por qué está en «Pagó y sigue suspendido»: al día se reactiva ya; con
             // comprobante, primero hay que aprobarlo en la auditoría.
-            DB::raw('(' . self::AL_DIA . ') AS al_dia')
+            DB::raw('(' . self::AL_DIA . ') AS al_dia'),
+            // Cuánto debe y en cuántas facturas: lo que la fila muestra a la derecha del nombre.
+            DB::raw('(' . self::DEUDA . ') AS deuda'),
+            DB::raw('(' . self::FACTURAS_PENDIENTES . ') AS facturas_pendientes'),
+            // Lo que llena la fila con la ficha cerrada: plan con su valor, equipo, último pago y tickets.
+            'internet_plans.monthly_price',
+            DB::raw('(SELECT MAX(df.paid_at) FROM det_facturations df WHERE df.cab_id = cab_facturations.id AND df.paid = 1 AND df.anulada_en IS NULL) AS ultimo_pago'),
+            DB::raw("(SELECT o.status FROM olt_onts o WHERE o.user_data_id = user_data.id ORDER BY o.updated_at DESC LIMIT 1) AS ont_estado"),
+            DB::raw("(SELECT o.fsp FROM olt_onts o WHERE o.user_data_id = user_data.id ORDER BY o.updated_at DESC LIMIT 1) AS ont_puerto"),
+            DB::raw('(SELECT COUNT(*) FROM tickets t WHERE t.user_id = users.id AND t.company_id = users.company_id AND t.status_id IN (1, 2)) AS tickets_abiertos')
         )
             // Los más recientes primero: el cliente recién creado queda a la vista.
             ->orderByDesc('users.id')
             ->forPage($pagina, $porPagina)
             ->get();
+
+        $pagos = $this->pagosRecientes($items->pluck('id_cab')->filter()->map(fn ($c) => (int) $c)->all());
+        foreach ($items as $item) {
+            $item->pagos = $pagos[(int) $item->id_cab] ?? self::mesesVacios();
+        }
 
         return [
             'items'     => $items,
@@ -112,6 +138,68 @@ class ListaDeClientes
             'last_page' => $ultima,
             'conteos'   => $conteos,
         ];
+    }
+
+    /**
+     * Cómo pagó cada cliente los últimos 6 meses (el más viejo primero), en una sola consulta para
+     * toda la página: «a_tiempo», «tarde», «debe» (vencida sin pagar), «por_pagar» (aún en plazo)
+     * o «sin» (no hubo factura ese mes).
+     *
+     * @param  list<int>  $cabs
+     * @return array<int, list<array{mes:string, estado:string}>>
+     */
+    private function pagosRecientes(array $cabs): array
+    {
+        if (!$cabs) {
+            return [];
+        }
+
+        $desde = now()->startOfMonth()->subMonths(5);
+        $filas = DB::table('det_facturations')
+            ->whereIn('cab_id', $cabs)
+            ->whereNull('anulada_en')
+            ->where('date_facturation', '>=', $desde->toDateString())
+            ->get(['cab_id', 'date_facturation', 'paid', 'paid_at', 'abone']);
+
+        $porCab = [];
+        foreach ($filas as $f) {
+            $fecha = \Carbon\Carbon::parse($f->date_facturation);
+            $limite = $fecha->copy()->addDays(self::DIAS_A_TIEMPO)->endOfDay();
+            $pagada = (int) $f->paid === 1 || (int) $f->abone === 1;
+
+            $estado = match (true) {
+                $pagada && (!$f->paid_at || \Carbon\Carbon::parse($f->paid_at)->lte($limite)) => 'a_tiempo',
+                $pagada => 'tarde',
+                now()->gt($limite) => 'debe',
+                default => 'por_pagar',
+            };
+
+            // Si un mes tiene varias facturas, manda la peor.
+            $mes = $fecha->format('Y-m');
+            $orden = ['sin' => 0, 'a_tiempo' => 1, 'por_pagar' => 2, 'tarde' => 3, 'debe' => 4];
+            $actual = $porCab[(int) $f->cab_id][$mes] ?? 'sin';
+            if ($orden[$estado] > $orden[$actual]) {
+                $porCab[(int) $f->cab_id][$mes] = $estado;
+            }
+        }
+
+        $resultado = [];
+        foreach ($cabs as $cab) {
+            $resultado[$cab] = array_map(fn ($m) => ['mes' => $m['mes'], 'estado' => $porCab[$cab][$m['mes']] ?? 'sin'], self::mesesVacios());
+        }
+
+        return $resultado;
+    }
+
+    /** @return list<array{mes:string, estado:string}> los últimos 6 meses sin datos */
+    private static function mesesVacios(): array
+    {
+        $meses = [];
+        for ($i = 5; $i >= 0; $i--) {
+            $meses[] = ['mes' => now()->startOfMonth()->subMonths($i)->format('Y-m'), 'estado' => 'sin'];
+        }
+
+        return $meses;
     }
 
     /** Clientes activos de la empresa de la sesión, con la búsqueda aplicada. */

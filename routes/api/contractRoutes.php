@@ -52,6 +52,7 @@ Route::prefix('contracts')->middleware(['jwt.verify', 'module:contratos'])->grou
     // Envío de link
     Route::post('/send-email/{clientContractId}',       [ContractController::class, 'sendEmail']);
     Route::post('/send-whatsapp/{clientContractId}',    [ContractController::class, 'sendWhatsApp']);
+    Route::get('/canales-whatsapp',                     [ContractController::class, 'canalesWhatsApp']);
 
     // Documentos de identidad
     Route::post('/client-contract/{clientContractId}/documents', [ContractController::class, 'uploadDocument']);

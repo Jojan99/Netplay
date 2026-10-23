@@ -19,6 +19,7 @@ Route::prefix('installations')->middleware('module:installations')->group(functi
     Route::post('/{id}/confirm', [InstallationOrderController::class, 'confirm']);
     Route::post('/{id}/start', [InstallationOrderController::class, 'start']);
     Route::post('/{id}/complete', [InstallationOrderController::class, 'complete']);
+    Route::post('/{id}/cierre', [InstallationOrderController::class, 'cierre'])->whereNumber('id');
     // Lo que hace el técnico en la calle: elegir el equipo y dejar todo listo.
     Route::get('/{id}/equipos',      [InstallationOrderController::class, 'equiposDisponibles']);
     Route::post('/{id}/provisionar', [InstallationOrderController::class, 'provisionar']);
@@ -50,3 +51,7 @@ Route::prefix('installations')->middleware('module:installations')->group(functi
         Route::get('/{id}/commission', [InstallationOrderController::class, 'calculateCommission']);
     });
 });
+
+// Quién le instaló el equipo al cliente: lo muestra la ficha (la ve quien atiende clientes).
+Route::get('installations/del-cliente/{userId}', [InstallationOrderController::class, 'delCliente'])
+    ->whereNumber('userId')->middleware('module:usuario,installations');

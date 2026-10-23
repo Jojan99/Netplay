@@ -118,7 +118,10 @@ class UserRepository implements UserRepositoryInterface
             'pppoe_user'         => $data['pppoe_user'] ?? null,
             'pppoe_password'     => $data['pppoe_password'] ?? null,
             'pppoe_profile'      => $data['pppoe_profile'] ?? null,
-        ] + \App\Support\DatosDelCliente::columnas(array_intersect_key($data->all(), \App\Support\DatosDelCliente::reglas())));
+        ] + \App\Support\DatosDelCliente::conUbicacion(
+            \App\Support\DatosDelCliente::columnas(array_intersect_key($data->all(), \App\Support\DatosDelCliente::reglas())),
+            $data['address'], (int) $companyId
+        ));
     }
 
     /**
@@ -168,6 +171,11 @@ class UserRepository implements UserRepositoryInterface
                     'created_at'    => now(),
                     'updated_at'    => now(),
                 ]);
+
+                // Pasó a un plan con TV: se le crea la línea (si ya tiene, no se toca).
+                $empresaTv = (int) getSessionCompanyId();
+                $clienteTv = (int) $userId;
+                dispatch(fn () => \App\Services\Tv\LineasDeTv::alGuardarCliente($empresaTv, $clienteTv))->afterResponse();
             }
 
             // Audit log for billing group change

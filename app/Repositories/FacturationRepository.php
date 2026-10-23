@@ -349,7 +349,7 @@ class FacturationRepository implements FacturationRepositoryInterface
      * que terminaba de pagar desaparecía de la pantalla y no había manera de
      * abrir su historial de facturas desde aquí.
      */
-    public function getClientsPaginated(?string $search, int $page, int $perPage, bool $incluirAlDia = false): object
+    public function getClientsPaginated(?string $search, int $page, int $perPage, bool $incluirAlDia = false, ?int $mora = null): object
     {
         $companyId = getSessionCompanyId();
 
@@ -375,10 +375,19 @@ class FacturationRepository implements FacturationRepositoryInterface
             });
         }
 
+        // Filtro por meses de mora (1, 2, o 3 = tres o más): se aplica al grupo de cada cliente.
+        $conMora = function ($q) use ($mora) {
+            if ($mora === 1 || $mora === 2) {
+                $q->havingRaw('COUNT(dt.id) = ?', [$mora]);
+            } elseif ($mora !== null && $mora >= 3) {
+                $q->havingRaw('COUNT(dt.id) >= 3');
+            }
+        };
+
         // Cuenta pares (user_id, cab_id) para que coincida con los items agrupados
-        $total = (clone $base)
-            ->selectRaw('COUNT(DISTINCT us.user_id, cb.id) as cnt')
-            ->value('cnt') ?? 0;
+        $total = $mora
+            ? DB::query()->fromSub(tap((clone $base)->select('us.user_id', 'cb.id')->groupBy('us.user_id', 'cb.id'), $conMora), 'g')->count()
+            : ((clone $base)->selectRaw('COUNT(DISTINCT us.user_id, cb.id) as cnt')->value('cnt') ?? 0);
 
         $items = (clone $base)
             ->select([
@@ -386,9 +395,13 @@ class FacturationRepository implements FacturationRepositoryInterface
                 'cb.id as cab_id', 'cb.date_init_facturation',
                 DB::raw('COALESCE(SUM(dt.price_total - dt.price_discount - dt.price_abone), 0) as total_pending'),
                 DB::raw('COUNT(dt.id) as months_pending'),
+                // Cuándo pagó por última vez y si prometió una fecha: lo que se mira antes de cobrar.
+                DB::raw('(SELECT MAX(d2.paid_at) FROM det_facturations d2 WHERE d2.cab_id = cb.id AND d2.paid = 1) as ultimo_pago'),
+                DB::raw("(SELECT MIN(pc.commitment_date) FROM payment_commitments pc WHERE pc.cab_id = cb.id AND pc.status = 'pending') as compromiso"),
             ])
             ->groupBy('us.user_id','us.names','us.lastname','us.dni','us.phone','us.email','us.address',
                       'cb.id','cb.date_init_facturation')
+            ->tap($conMora)
             ->orderByDesc('total_pending')
             ->offset(($page - 1) * $perPage)
             ->limit($perPage)
@@ -411,6 +424,16 @@ class FacturationRepository implements FacturationRepositoryInterface
             ->selectRaw('SUM(g.months = 1) as m1, SUM(g.months = 2) as m2, SUM(g.months >= 3) as m3, SUM(g.pending) as total_debt')
             ->first();
 
+        // Lo que entró este mes (facturas marcadas pagadas desde el 1.º).
+        $recaudo = DB::table('det_facturations as dt')
+            ->join('cab_facturations as cb', 'cb.id', '=', 'dt.cab_id')
+            ->join('users', 'users.id', '=', 'cb.user_id')
+            ->where('users.company_id', $companyId)
+            ->where('dt.paid', 1)->where('dt.paid_at', '>=', now()->startOfMonth())
+            ->selectRaw('COUNT(*) as n, COALESCE(SUM(dt.price_total - dt.price_discount), 0) as total')->first();
+
+        $compromisos = DB::table('payment_commitments')->where('company_id', $companyId)->where('status', 'pending')->count();
+
         return (object)[
             'items'        => $items,
             'total'        => (int) $total,
@@ -422,6 +445,9 @@ class FacturationRepository implements FacturationRepositoryInterface
                 'm2'         => (int) ($summary->m2 ?? 0),
                 'm3'         => (int) ($summary->m3 ?? 0),
                 'total_debt' => (float) ($summary->total_debt ?? 0),
+                'recaudado_mes' => (float) ($recaudo->total ?? 0),
+                'pagos_mes'     => (int) ($recaudo->n ?? 0),
+                'compromisos'   => $compromisos,
             ],
         ];
     }

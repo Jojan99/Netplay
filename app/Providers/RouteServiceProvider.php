@@ -56,6 +56,8 @@ class RouteServiceProvider extends ServiceProvider
                     require base_path('routes/api/managementRouterRoutes.php');
                     require base_path('routes/api/egresosRoutes.php');
                     require base_path('routes/api/carteraRoutes.php');
+                    require base_path('routes/api/pagosRoutes.php');
+                    require base_path('routes/api/tvRoutes.php');
                     require base_path('routes/api/cobranzaRoutes.php');
                     require base_path('routes/api/conciliacionPagosRoutes.php');
                     require base_path('routes/api/atajosRoutes.php');
@@ -87,6 +89,22 @@ class RouteServiceProvider extends ServiceProvider
                 ->prefix('api')
                 ->group(function () {
                     require base_path('routes/api/paymentGatewayRoutes.php');
+                });
+
+            // Televisión: previas y señal en vivo. Sin JWT porque el <img> y el reproductor no
+            // mandan la sesión; van con enlaces firmados que vencen solos.
+            Route::middleware('api', 'fuera.consola')
+                ->prefix('api')
+                ->group(function () {
+                    require base_path('routes/api/tvPublicRoutes.php');
+                });
+
+            // El celular como lector del computador: lo del computador con JWT, lo del celular
+            // sólo con el token del QR.
+            Route::middleware('api', 'fuera.consola')
+                ->prefix('api')
+                ->group(function () {
+                    require base_path('routes/api/escanerRoutes.php');
                 });
 
             // Contratos: sign-token es público (sin JWT), el resto usa jwt.verify interno

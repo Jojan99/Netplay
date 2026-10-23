@@ -42,6 +42,9 @@ Route::prefix('user')->group(function () {
         Route::get('{id}/equipo/acceso', [\App\Http\Controllers\PaginaDelEquipoController::class, 'credenciales'])->whereNumber('id');
         // Trato especial: el descuento que se le aplica todos los meses.
         Route::post('{id}/descuento', [UserController::class, 'guardarDescuento'])->whereNumber('id');
+        // Contactos adicionales del cliente (quién paga, respaldo, autorizado).
+        Route::post('{id}/contactos', [\App\Http\Controllers\FichaContratoController::class, 'guardarContacto'])->whereNumber('id');
+        Route::delete('{id}/contactos/{contacto}', [\App\Http\Controllers\FichaContratoController::class, 'borrarContacto'])->whereNumber('id')->whereNumber('contacto');
     });
 
     // Admin y contador: consultar clientes y generar PDF
@@ -55,6 +58,8 @@ Route::prefix('user')->group(function () {
         Route::get('getTotalClientRegisterMonth', [UserController::class, 'getTotalClientRegisterMonth']);
         Route::get('getTrazaFacture', [UserController::class, 'getTrazaFacture']);
         Route::get('auditLog/{user_id}', [UserController::class, 'getAuditLog']);
+        // Pestaña «Contrato» de la ficha: contratos, documentos, comodato y contactos.
+        Route::get('{id}/contrato', [\App\Http\Controllers\FichaContratoController::class, 'show'])->whereNumber('id');
         Route::get('exportUsers', [UserController::class, 'exportUsers']);
     });
 });

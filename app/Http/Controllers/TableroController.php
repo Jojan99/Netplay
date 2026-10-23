@@ -24,10 +24,14 @@ class TableroController extends Controller
     public const PANELES = [
         'resolver', 'vivo', 'plata', 'mora', 'metodos', 'deudores', 'cobranza',
         'salud', 'borde', 'equipos', 'tickets', 'clientes', 'novedades',
+        'compromisos', 'red', 'hoy-clientes', 'tv-bodega',
     ];
 
     /** El tablero de fábrica, para quien todavía no armó el suyo. */
-    public const DE_FABRICA = ['resolver', 'plata', 'salud', 'vivo', 'deudores', 'tickets', 'novedades'];
+    public const DE_FABRICA = [
+        'resolver', 'plata', 'deudores', 'metodos', 'compromisos',
+        'red', 'tickets', 'hoy-clientes', 'tv-bodega', 'vivo', 'novedades',
+    ];
 
     /** Cuántos paneles puede tener un tablero. */
     private const MAXIMO = 20;

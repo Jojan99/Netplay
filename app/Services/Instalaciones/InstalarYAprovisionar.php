@@ -119,10 +119,13 @@ class InstalarYAprovisionar
         $anotar('Equipo asignado al cliente', true);
 
         // ── 4. Descontar del inventario ─────────────────────────────────────
+        // La unidad guarda al cliente por su id de «users» (cliente_user_id), como la leen la
+        // bodega y la ficha del contrato. Con el de «user_data» quedaba sin nombre en la bodega.
+        $usuarioDelCliente = (int) DB::table('user_data')->where('id', $userId)->value('user_id');
         $inv = EquipoDelInventario::descontar(
             (int) $orden->company_id,
             $serial,
-            $userId,
+            $usuarioDelCliente ?: $userId,
             (int) $orden->id,
             $equipo['inventory_id'] ?? null,
             $tecnicoId,
@@ -134,6 +137,23 @@ class InstalarYAprovisionar
             // No frena la instalación: el cliente ya tiene línea y la
             // diferencia de stock se arregla desde la oficina.
             $avisos[] = $inv['detalle'];
+        }
+
+        // ── 4b. Televisión, si el plan la lleva ─────────────────────────────
+        // La línea del XUI se crea aquí, con el cliente instalado: así el técnico y el grupo de
+        // instalaciones reciben la URL de una vez. Si el panel no responde, queda pendiente y se
+        // reintenta sola; la instalación sigue.
+        $tv = $usuarioDelCliente ? \App\Services\Tv\LineasDeTv::paraLaInstalacion((int) $orden->company_id, $usuarioDelCliente) : null;
+        if ($tv) {
+            $linea = $tv['linea'];
+            $anotar(
+                $tv['error'] ? 'Línea de TV pendiente' : 'Línea de TV lista',
+                !$tv['error'],
+                $tv['error'] ? 'El panel de TV no respondió; se crea sola en unos minutos' : 'Usuario ' . $linea?->usuario,
+            );
+            if ($tv['error']) {
+                $avisos[] = 'La línea de TV no se pudo crear todavía: ' . $tv['error'];
+            }
         }
 
         // ── 5. Aprovisionar, si la empresa lo tiene encendido ───────────────
@@ -187,6 +207,8 @@ class InstalarYAprovisionar
             'inventory_id'         => $inv['inventory_id'],
             'aprovisionamiento_id' => $aprovisionamiento['aprovisionamiento'] ?? null,
             'provisioned_at'       => now(),
+            // Quién la dejó funcionando: el técnico en la calle (o quien la aprovisionó por él).
+            'provisioned_by'       => $tecnicoId,
             'provision_detalle'    => ['pasos' => $pasos, 'avisos' => $avisos, 'cambios' => $real['cambios']],
             'finished_at'          => $orden->finished_at ?: now(),
         ])->save();
@@ -203,6 +225,11 @@ class InstalarYAprovisionar
                 'cliente_nuevo'      => $cliente['nuevo'],
                 'ont'                => ['fsp' => $equipo['fsp'], 'ont_id' => $ontId, 'serial' => $serial],
                 'aprovisionamiento'  => $aprovisionamiento['aprovisionamiento'] ?? null,
+                'tv_linea_id'        => isset($tv['linea']) ? $tv['linea']->id : null,
+                // Para que el técnico deje la TV configurada en la casa antes de irse.
+                'tv'                 => !empty($tv['linea']) && empty($tv['error']) ? [
+                    'usuario' => $tv['linea']->usuario, 'clave' => $tv['linea']->clave,
+                ] + (\App\Services\Tv\LineasDeTv::deLaEmpresa((int) $orden->company_id)?->urls($tv['linea']) ?? []) : null,
             ],
         ];
     }

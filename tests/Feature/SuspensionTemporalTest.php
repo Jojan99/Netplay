@@ -39,8 +39,10 @@ class SuspensionTemporalTest extends TestCase
         $this->empresa->forceFill(['name' => 'Empresa de pruebas', 'slug' => 'pruebas-' . uniqid(), 'invoice_prefix' => 'PR'])->save();
         // El grupo del cliente es el id del horario (llave foránea) y el proceso de facturación
         // lo compara con el número de grupo: aquí coinciden, como en Netplay.
-        $horario = DB::table('company_billing_schedules')->insertGetId(['company_id' => $this->empresa->id, 'grupo' => 0, 'billing_day' => 15, 'billing_hour' => 1, 'active' => 1, 'created_at' => now(), 'updated_at' => now()]);
-        DB::table('company_billing_schedules')->where('id', $horario)->update(['grupo' => $horario]);
+        // Con id explícito: el contador de la tabla sigue subiendo aunque cada prueba se deshaga,
+        // y al pasar de 255 ya no cabía en «grupo» (tinyint).
+        $horario = (int) DB::table('company_billing_schedules')->max('id') + 1;
+        DB::table('company_billing_schedules')->insert(['id' => $horario, 'company_id' => $this->empresa->id, 'grupo' => $horario, 'billing_day' => 15, 'billing_hour' => 1, 'active' => 1, 'created_at' => now(), 'updated_at' => now()]);
         $this->grupo = $horario;
 
         $plan = DB::table('internet_plans')->insertGetId(['company_id' => $this->empresa->id, 'plan_name' => 'Plan', 'description' => 'Plan', 'download_speed' => '10', 'upload_speed' => '10', 'monthly_price' => 60000]);

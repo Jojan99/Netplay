@@ -12,6 +12,7 @@ class ClientContract extends Model
         'company_id',
         'contract_id',
         'user_id',
+        'fecha_instalacion',
         'status',
         'token',
         'sent_at',

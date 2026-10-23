@@ -235,6 +235,8 @@ class FacturationController extends Controller
             // Con «al_dia=1» entran también los clientes sin deuda, para poder
             // abrir su historial de facturas desde la misma pantalla.
             $request->boolean('al_dia'),
+            // «mora=1|2|3»: sólo los que deben una, dos, o tres o más facturas.
+            $request->filled('mora') ? (int) $request->query('mora') : null,
         );
         return standardApiReponse('OK', $data, 0, JsonResponse::HTTP_OK);
     }

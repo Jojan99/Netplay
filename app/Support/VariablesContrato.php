@@ -29,6 +29,10 @@ class VariablesContrato
             self::v('{{telefono}}', 'Teléfono', 'Cliente', 'Celular de contacto.', '3001234567'),
             self::v('{{email}}', 'Correo', 'Cliente', 'Correo electrónico del cliente.', 'juan@ejemplo.com'),
             self::v('{{direccion}}', 'Dirección', 'Cliente', 'Dirección donde se presta el servicio.', 'Calle 123 # 45-67'),
+            self::v('{{barrio}}', 'Barrio', 'Cliente', 'El barrio cargado en la ficha del cliente.', 'Nuevo Horizonte'),
+            self::v('{{municipio}}', 'Municipio', 'Cliente', 'La ciudad o municipio del cliente.', 'Soledad'),
+            self::v('{{barrio_municipio}}', 'Barrio / municipio', 'Cliente', 'Los dos juntos, para la casilla «Barrio / Municipio».', 'Nuevo Horizonte / Soledad'),
+            self::v('{{estrato}}', 'Estrato', 'Cliente', 'El estrato de la vivienda.', '1'),
 
             // ── Fecha ─────────────────────────────────────────────────────
             self::v('{{fecha}}', 'Fecha', 'Fecha', 'Fecha del día en que el cliente abre o firma el contrato.', '17/09/2026'),
@@ -36,6 +40,10 @@ class VariablesContrato
             self::v('{{dia}}', 'Día', 'Fecha', 'Solo el día, para los contratos que lo piden en casillas separadas.', '17'),
             self::v('{{mes}}', 'Mes', 'Fecha', 'Solo el mes.', '09'),
             self::v('{{anio}}', 'Año', 'Fecha', 'Solo el año.', '2026'),
+            self::v('{{fecha_instalacion}}', 'Fecha de instalación', 'Fecha', 'El día de la instalación: el de su orden terminada o, si no tiene, el de su alta. Desde ahí cuenta la vigencia.', '12/03/2024'),
+            self::v('{{dia_instalacion}}', 'Día de instalación', 'Fecha', 'Solo el día de la instalación.', '12'),
+            self::v('{{mes_instalacion}}', 'Mes de instalación', 'Fecha', 'Solo el mes de la instalación.', '03'),
+            self::v('{{anio_instalacion}}', 'Año de instalación', 'Fecha', 'Solo el año de la instalación.', '2024'),
 
             // ── Plan y valores ────────────────────────────────────────────
             self::v('{{plan_nombre}}', 'Nombre del plan', 'Plan y valores', 'Plan de internet asignado al cliente.', 'INTERNET 200MB'),

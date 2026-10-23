@@ -74,8 +74,9 @@ h2{font-size:17px;margin-bottom:6px}
 .lista-pasos span{color:var(--texto-2);display:block;font-size:12.5px}
 
 /* ── Botones ────────────────────────────────────────────────────────── */
-.acciones{position:sticky;bottom:0;background:linear-gradient(to top,var(--fondo) 62%,transparent);
-  padding:14px 0 max(14px,env(safe-area-inset-bottom));display:flex;gap:9px;z-index:10}
+.acciones{position:sticky;bottom:0;background:var(--fondo);border-top:1px solid var(--linea);
+  padding:12px 0 max(12px,env(safe-area-inset-bottom));display:flex;flex-wrap:wrap;gap:9px;z-index:10;margin-top:12px}
+.acciones--lectura .acepto{flex:1 1 100%;margin:0}
 .btn{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:50px;padding:0 18px;
   border-radius:12px;font-size:15.5px;font-weight:700;transition:transform .12s ease,opacity .15s ease,background .15s}
 .btn:active{transform:scale(.985)}
@@ -102,7 +103,7 @@ h2{font-size:17px;margin-bottom:6px}
 .leido{height:4px;border-radius:99px;background:var(--linea-2);overflow:hidden;margin-bottom:-4px;position:relative;z-index:2}
 .leido i{display:block;height:100%;width:0;background:var(--marca);transition:width .12s linear}
 .papel{background:var(--papel);color:var(--papel-texto);border:1px solid var(--linea);border-radius:var(--radio);
-  box-shadow:var(--sombra);padding:20px 18px;max-height:56vh;overflow-y:auto;overscroll-behavior:contain;
+  box-shadow:var(--sombra);padding:20px 18px;max-height:max(300px,calc(100dvh - 330px));overflow-y:auto;overscroll-behavior:contain;
   font-family:Georgia,'Times New Roman',serif;line-height:1.72;text-align:justify;hyphens:auto;
   font-size:15px;-webkit-overflow-scrolling:touch}
 .papel[data-zoom="1"]{font-size:17px}
@@ -123,7 +124,7 @@ h2{font-size:17px;margin-bottom:6px}
 .papel .dato--vacio{background:transparent;border-bottom:1.5px solid #9aa0b4}
 .fin-doc{text-align:center;color:var(--texto-2);font-size:12.5px;padding:14px 0 2px}
 /* Hojas del PDF: se ven como el papel, porque son el papel */
-.hojas{max-height:62vh;overflow:auto;overscroll-behavior:contain;border-radius:var(--radio);
+.hojas{max-height:max(300px,calc(100dvh - 330px));overflow:auto;overscroll-behavior:contain;border-radius:var(--radio);
   background:var(--sup-2);border:1px solid var(--linea);padding:10px;
   touch-action:pan-x pan-y pinch-zoom;-webkit-overflow-scrolling:touch}
 .hojas-carril{width:calc(100% * var(--zoom,1));margin:0 auto;display:grid;gap:12px}
@@ -329,12 +330,13 @@ h2{font-size:17px;margin-bottom:6px}
       <p class="fin-doc">— Fin del contrato —</p>
     </article>
 
-    <label class="acepto bloqueada" id="acepto-caja">
-      <input type="checkbox" id="acepto" disabled>
-      <span id="acepto-txt">Desplácese hasta el final del contrato para continuar.</span>
-    </label>
-
-    <div class="acciones">
+    {{-- La casilla va en la barra fija de abajo: debajo del visor quedaba tapada por la barra
+         y el cliente no la encontraba (21-10). --}}
+    <div class="acciones acciones--lectura">
+      <label class="acepto bloqueada" id="acepto-caja">
+        <input type="checkbox" id="acepto" disabled>
+        <span id="acepto-txt">Desplácese hasta el final del contrato para continuar.</span>
+      </label>
       <button type="button" class="btn btn-2" data-ir="anterior">Atrás</button>
       <button type="button" class="btn btn-1" id="btn-leido" data-ir="siguiente" disabled>Continuar</button>
     </div>

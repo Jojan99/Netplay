@@ -25,6 +25,55 @@ class DatosDelCliente
         'NIT' => 'NIT',
     ];
 
+    /**
+     * Barrios que se reconocen dentro de la dirección, en el orden en que se prueban (el más
+     * específico primero: «altos de horizonte» antes que «horizonte»). Los clientes escriben
+     * el barrio pegado a la dirección y con mil variantes; aquí se lleva a un solo nombre.
+     */
+    public const BARRIOS = [
+        '/altos\s+de(l)?\s+horizonte/u'                                        => 'Altos de Horizonte',
+        '/horizonte/u'                                                          => 'Nuevo Horizonte',
+        '/villas?\s+(las\s+)?moras.{0,12}(\b2\b|\bii\b|\bll\b|e2|etapa\s*2|2\s*etapa)/u' => 'Villa Las Moras 2',
+        '/villas?\s+(las\s+)?moras/u'                                          => 'Villa Las Moras',
+        '/r[ií]o\s*verde/u'                                                   => 'Río Verde',
+        '/manantial/u'                                                          => 'Manantial',
+    ];
+
+    /** El barrio que se lee en la dirección, o null si no nombra ninguno conocido. */
+    public static function barrioDeDireccion(?string $direccion): ?string
+    {
+        // Algunas direcciones llegaron con la codificación dañada («rã­o»): se arregla antes de buscar.
+        $texto = mb_strtolower((string) $direccion);
+        $texto = str_replace(['ã­', 'ã³', 'ã¡', 'ã©', 'ãº'], ['í', 'ó', 'á', 'é', 'ú'], $texto);
+
+        foreach (self::BARRIOS as $patron => $barrio) {
+            if (preg_match($patron, $texto)) {
+                return $barrio;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Completa barrio y estrato de un cliente nuevo que llegó sin ellos: el barrio, el que nombre
+     * su dirección o, si no nombra ninguno, la ciudad de la empresa; el estrato, el que más se
+     * repite entre sus clientes. Lo que sí vino no se toca.
+     *
+     * @param  array<string,mixed> $columnas
+     * @return array<string,mixed>
+     */
+    public static function conUbicacion(array $columnas, ?string $direccion, int $companyId): array
+    {
+        if (empty($columnas['barrio']) || empty($columnas['estrato'])) {
+            $base = self::porDefecto($companyId);
+            $columnas['barrio']  = ($columnas['barrio'] ?? null) ?: (self::barrioDeDireccion($direccion) ?: $base['ciudad']);
+            $columnas['estrato'] = ($columnas['estrato'] ?? null) ?: $base['estrato'];
+        }
+
+        return $columnas;
+    }
+
     /** Las reglas de validación de estos campos, para el alta y para la ficha. */
     public static function reglas(): array
     {
@@ -47,7 +96,7 @@ class DatosDelCliente
      * Sale de los ajustes de factura electrónica; si no están, de lo que más se repite entre
      * sus clientes. Un ISP de barrio tiene a casi todos en el mismo municipio.
      *
-     * @return array{ciudad:?string, departamento:?string, municipio:?string, pais:string, prefijo_telefono:string}
+     * @return array{ciudad:?string, departamento:?string, municipio:?string, pais:string, prefijo_telefono:string, estrato:?int}
      */
     public static function porDefecto(int $companyId): array
     {
@@ -66,6 +115,7 @@ class DatosDelCliente
             'municipio'        => ($config?->ajuste('municipio') ?: $comun('fiscal_municipio')) ?: null,
             'pais'             => $comun('pais') ?: 'Colombia',
             'prefijo_telefono' => $comun('prefijo_telefono') ?: '57',
+            'estrato'          => $comun('estrato') ? (int) $comun('estrato') : null,
         ];
     }
 

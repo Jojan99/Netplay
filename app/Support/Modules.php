@@ -20,6 +20,8 @@ class Modules
             'contratos'       => ['label' => 'Contratos',           'description' => 'Contratos y plantilla de firma.'],
             'installations'   => ['label' => 'Instalaciones',       'description' => 'Órdenes de instalación y su agenda.'],
             'transfers'       => ['label' => 'Traslados',           'description' => 'Traslados de servicio entre direcciones.'],
+            // Solo aparece si la empresa tiene conectado su panel de TV (TvPanel::activa).
+            'television'      => ['label' => 'Televisión',          'description' => 'Canales, líneas de TV de los clientes y avisos de canales caídos.'],
         ],
         'Soporte' => [
             'created-ticket'  => ['label' => 'Crear tickets',       'description' => 'Registrar tickets de soporte.'],

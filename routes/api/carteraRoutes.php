@@ -8,4 +8,6 @@ Route::prefix('cartera')->middleware('role:admin,contador')->group(function () {
     Route::get('resumen', [CarteraController::class, 'resumen']);
     Route::get('deudores', [CarteraController::class, 'deudores']);
     Route::get('mora', [CarteraController::class, 'mora']);
+    Route::get('compromisos', [CarteraController::class, 'compromisos']);
+    Route::post('{userId}/recordar', [CarteraController::class, 'recordar'])->whereNumber('userId');
 });

@@ -37,7 +37,8 @@ class ClientContractUseCase implements ClientContractUseCaseInterface
             $data = $this->contractRepository->assignToClient(
                 $request->input('contract_id'),
                 $request->input('user_id'),
-                (bool) $request->input('require_documents', false)
+                (bool) $request->input('require_documents', false),
+                $request->input('fecha_instalacion') ?: null
             );
         } catch (QueryException $e) {
             return ['message' => 'Error al asignar contrato: ' . $e->getMessage(), 'status' => 1, 'data' => ApiResponseConstants::DATA_NULL];
@@ -173,6 +174,8 @@ class ClientContractUseCase implements ClientContractUseCaseInterface
         $plazo = $plazo && $plazo > 0 ? $plazo : 12;
         $ud = DB::table('user_data')->where('user_id', $userId)->first();
         $now = now();
+        $guardada = DB::table('client_contracts')->where('id', $clientContractId)->value('fecha_instalacion');
+        $instalada = $guardada ? \Carbon\Carbon::parse($guardada) : \App\Services\Contratos\FechaDeInstalacion::de($userId);
 
         // Datos del plan de internet
         $plan = null;
@@ -217,6 +220,11 @@ class ClientContractUseCase implements ClientContractUseCaseInterface
             '{{telefono}}'        => $ud->phone     ?? '',
             '{{email}}'           => $ud->email     ?? '',
             '{{direccion}}'       => $ud->address   ?? '',
+            '{{barrio}}'          => $ud->barrio    ?? '',
+            '{{municipio}}'       => $ud->ciudad    ?? '',
+            // Si el barrio es la misma ciudad (no se supo cuál era), no se repite.
+            '{{barrio_municipio}}' => implode(' / ', array_unique(array_filter([$ud->barrio ?? null, $ud->ciudad ?? null]))),
+            '{{estrato}}'         => isset($ud->estrato) ? (string) $ud->estrato : '',
             '{{fecha}}'           => $now->format('d/m/Y'),
             '{{fecha_hora}}'      => $now->format('d/m/Y H:i'),
             '{{contrato_id}}'     => (string) $clientContractId,
@@ -225,6 +233,12 @@ class ClientContractUseCase implements ClientContractUseCaseInterface
             '{{dia}}'             => $now->format('d'),
             '{{mes}}'             => $now->format('m'),
             '{{anio}}'            => $now->format('Y'),
+
+            // ── Instalación: desde ahí cuenta la vigencia ─────────
+            '{{fecha_instalacion}}' => $instalada?->format('d/m/Y') ?? '',
+            '{{dia_instalacion}}'   => $instalada?->format('d') ?? '',
+            '{{mes_instalacion}}'   => $instalada?->format('m') ?? '',
+            '{{anio_instalacion}}'  => $instalada?->format('Y') ?? '',
 
             // ── Plan de internet ─────────────────────────────────
             '{{plan_nombre}}'     => $plan->plan_name ?? '',

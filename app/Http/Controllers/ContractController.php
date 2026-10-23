@@ -468,6 +468,48 @@ class ContractController extends Controller
         }
     }
 
+    /**
+     * Por dónde se puede mandar el contrato: las líneas de WhatsApp Web conectadas y la línea
+     * oficial de Meta (si la empresa la tiene y la plantilla del contrato está aprobada).
+     */
+    public function canalesWhatsApp(): JsonResponse
+    {
+        $empresa = (int) getSessionCompanyId();
+        $lineas = \Illuminate\Support\Facades\DB::table('wa_lineas')->where('company_id', $empresa)
+            ->where('activa', 1)->where('estado', 'connected')
+            ->orderByDesc('principal')->orderBy('id')
+            ->get(['id', 'nombre', 'telefono', 'principal']);
+
+        $meta = ['disponible' => false, 'motivo' => 'La empresa no tiene la línea oficial de Meta.'];
+        $c = \App\Models\Company::find($empresa);
+        if ($c && $c->wa_access_token && $c->wa_business_id) {
+            $b = \App\Models\WaTemplateBinding::where('company_id', $empresa)->where('event', 'contrato_firma')->first();
+            $nombre = $b?->template_name ?: 'netplay_contrato_firma';
+            $consultar = function () use ($c, $nombre) {
+                try {
+                    $r = \Illuminate\Support\Facades\Http::withToken($c->wa_access_token)->timeout(15)
+                        ->get("https://graph.facebook.com/v21.0/{$c->wa_business_id}/message_templates", ['name' => $nombre, 'fields' => 'name,status']);
+                    return collect($r->json('data') ?? [])->firstWhere('name', $nombre)['status'] ?? null;
+                } catch (\Throwable) {
+                    return null;
+                }
+            };
+            // Si el caché no se deja escribir (archivos que dejó otro usuario), se consulta igual:
+            // que eso no deje sin poder enviar el contrato.
+            try {
+                $estado = \Illuminate\Support\Facades\Cache::remember("meta:plantilla-estado:{$empresa}:{$nombre}", 600, $consultar);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('[ContratoCanales] Caché no disponible: ' . $e->getMessage());
+                $estado = $consultar();
+            }
+            $meta = $estado === 'APPROVED'
+                ? ['disponible' => true, 'motivo' => null, 'plantilla' => $nombre]
+                : ['disponible' => false, 'motivo' => $estado ? "Meta todavía no aprueba la plantilla del contrato ({$estado})." : 'No se encontró la plantilla del contrato en Meta.'];
+        }
+
+        return response()->json(['status' => 0, 'data' => ['web' => $lineas, 'meta' => $meta]]);
+    }
+
     public function sendWhatsApp(int $clientContractId, Request $request, ContractRepositoryInterface $repo): JsonResponse
     {
         try {
@@ -499,9 +541,44 @@ class ContractController extends Controller
 
             $message = "Hola 👋, le compartimos el link para firmar su contrato *{$cc->contract->title}*:\n\n{$signUrl}\n\nAbra el link desde su teléfono para completar su firma.";
 
-            // Usar company_id del contrato para garantizar credenciales correctas
-            $wa = new WhatsAppService($cc->company_id);
-            $waResponse = $wa->mensajeInformativo($phone, $message);
+            // Por cuál WhatsApp sale: una línea de WhatsApp Web (la que se eligió) o la línea
+            // oficial de Meta. Meta solo deja texto libre dentro de las 24 h de la última
+            // respuesta del cliente; por eso allí va la plantilla aprobada «contrato_firma», con
+            // su botón «Firmar contrato» al enlace de este contrato.
+            $canal = $request->input('canal', 'web') === 'meta' ? 'meta' : 'web';
+            if ($canal === 'meta') {
+                $b = \App\Models\WaTemplateBinding::where('company_id', $cc->company_id)->where('event', 'contrato_firma')->first();
+                $plantilla = $b?->template_name ?: 'netplay_contrato_firma';
+                $idioma = $b?->language ?: 'es';
+                $cliente = trim((string) \Illuminate\Support\Facades\DB::table('user_data')->where('user_id', $cc->user_id)->value('names')) ?: 'cliente';
+                $empresa = (string) (\Illuminate\Support\Facades\DB::table('companies')->where('id', $cc->company_id)->value('name') ?: 'su proveedor de internet');
+                $para = strlen($phone) === 10 ? '57' . $phone : $phone;
+                $wa = new WhatsAppService($cc->company_id, false, 'meta');
+                $waResponse = $wa->sendTemplate($para, $plantilla, [$cliente, (string) $cc->contract->title, $empresa], $idioma, [0 => $cc->token]);
+            } else {
+                $linea = \Illuminate\Support\Facades\DB::table('wa_lineas')->where('company_id', $cc->company_id)
+                    ->where('id', (int) $request->input('linea'))->first();
+                if (!$linea) {
+                    return response()->json(['status' => 1, 'message' => 'Elija por cuál línea de WhatsApp Web se envía.']);
+                }
+                $wa = new WhatsAppService($cc->company_id, false, 'netplay', (string) $linea->instance_id);
+                $waResponse = $wa->mensajeInformativo($phone, $message);
+
+                // Con «adjuntar PDF» va también el documento: el firmado si ya lo firmó, o el
+                // contrato con sus datos para que lo lea antes. Meta no deja mandar archivos
+                // sueltos fuera de las 24 h, por eso sólo por WhatsApp Web.
+                if ($request->boolean('pdf') && !isset($waResponse['error']) && ($waResponse['success'] ?? true) !== false) {
+                    $pdf = $this->contenidoDelPdf($cc->id);
+                    if ($pdf === null) {
+                        return response()->json(['status' => 1, 'message' => 'Se envió el enlace, pero no se pudo armar el PDF para adjuntarlo.']);
+                    }
+                    $nombre = 'Contrato ' . trim($cc->contract->title) . ($cc->status === 'signed' ? ' (firmado)' : '') . '.pdf';
+                    $docResponse = $wa->sendDocumentData($phone, base64_encode($pdf), $nombre, $cc->status === 'signed' ? 'Su contrato firmado.' : 'Su contrato, para que lo lea antes de firmar.');
+                    if (isset($docResponse['error']) || ($docResponse['success'] ?? true) === false) {
+                        return response()->json(['status' => 1, 'message' => 'Se envió el enlace, pero el PDF no salió: ' . ($docResponse['message'] ?? $docResponse['error'] ?? 'error de la API')]);
+                    }
+                }
+            }
 
             \Illuminate\Support\Facades\Log::info('[ContractSendWA] Respuesta WA', [
                 'client_contract_id' => $clientContractId,
@@ -519,11 +596,11 @@ class ContractController extends Controller
                 ]);
             }
 
-            $this->registrarEnvio($cc, 'whatsapp');
+            $this->registrarEnvio($cc, $canal === 'meta' ? 'whatsapp_meta' : 'whatsapp');
 
             return response()->json([
                 'status'   => 0,
-                'message'  => 'Mensaje enviado por WhatsApp.',
+                'message'  => $canal === 'meta' ? 'Enviado por WhatsApp oficial (Meta).' : 'Mensaje enviado por WhatsApp Web.',
                 'data'     => $this->seguimientoDe($cc),
                 'wa_debug' => $waResponse,
             ]);
@@ -540,6 +617,17 @@ class ContractController extends Controller
                 'message' => 'Error al enviar WhatsApp: ' . $e->getMessage(),
             ]);
         }
+    }
+
+    /** El PDF del contrato tal como se descarga: el firmado, o el de la plantilla con sus datos. */
+    private function contenidoDelPdf(int $clientContractId): ?string
+    {
+        $r = app(ClientContractUseCaseInterface::class)->generatePdf($clientContractId);
+        if ($r instanceof \Symfony\Component\HttpFoundation\BinaryFileResponse) {
+            return file_get_contents($r->getFile()->getPathname()) ?: null;
+        }
+
+        return $r instanceof \Symfony\Component\HttpFoundation\Response ? ($r->getContent() ?: null) : null;
     }
 
     public function clientContractById(int $clientContractId, ClientContractUseCaseInterface $uc): JsonResponse

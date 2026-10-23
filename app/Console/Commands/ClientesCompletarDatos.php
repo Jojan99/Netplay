@@ -17,6 +17,9 @@ use Illuminate\Support\Facades\DB;
  *    dígitos (las cédulas colombianas nuevas); los demás quedan en la lista «por revisar»,
  *    porque un número de siete u ocho dígitos puede ser una cédula vieja o un documento
  *    venezolano, y eso no se puede saber sin preguntar.
+ *  - Barrio: el que nombre la dirección (Nuevo Horizonte, Villa Las Moras…); si no nombra
+ *    ninguno, el de --barrio (por defecto, la ciudad de la empresa).
+ *  - Estrato: el de --estrato, a quien no lo tiene.
  */
 class ClientesCompletarDatos extends Command
 {
@@ -24,6 +27,8 @@ class ClientesCompletarDatos extends Command
         {--ciudad= : Ciudad para quien no la tiene}
         {--departamento= : Departamento para quien no lo tiene}
         {--municipio= : Código DANE del municipio (5 dígitos)}
+        {--barrio= : Barrio para quien no lo tiene y su dirección no nombra ninguno}
+        {--estrato= : Estrato para quien no lo tiene (1 a 6)}
         {--aplicar : Escribir los cambios (sin esto, sólo simula)}';
 
     protected $description = 'Completa ciudad, departamento y tipo de documento de los clientes existentes';
@@ -47,6 +52,13 @@ class ClientesCompletarDatos extends Command
 
             return self::FAILURE;
         }
+        $barrioPorDefecto = $this->option('barrio') ?: $ubicacion['ciudad'];
+        $estrato = $this->option('estrato') !== null ? (int) $this->option('estrato') : null;
+        if ($estrato !== null && ($estrato < 1 || $estrato > 6)) {
+            $this->error('El estrato va de 1 a 6.');
+
+            return self::FAILURE;
+        }
         if ($ubicacion['fiscal_municipio'] && !preg_match('/^\d{5}$/', (string) $ubicacion['fiscal_municipio'])) {
             $this->error('El código del municipio debe tener cinco dígitos.');
 
@@ -58,10 +70,11 @@ class ClientesCompletarDatos extends Command
         $clientes = DB::table('user_data as u')->join('users as us', 'us.id', '=', 'u.user_id')
             ->where('us.company_id', $empresa)
             ->whereNotIn('us.profile_id', fn ($q) => $q->select('id')->from('profiles')->where('company_id', $empresa)->whereIn('name', ['ADMIN', 'TECNICO', 'CONTADOR']))
-            ->get(['u.id', 'u.user_id', 'u.names', 'u.lastname', 'u.dni', 'u.phone', 'u.active', 'u.fiscal_tipo_documento', 'u.ciudad', 'u.departamento', 'u.fiscal_municipio', 'u.pais', 'u.prefijo_telefono']);
+            ->get(['u.id', 'u.user_id', 'u.names', 'u.lastname', 'u.dni', 'u.phone', 'u.active', 'u.fiscal_tipo_documento', 'u.ciudad', 'u.departamento', 'u.fiscal_municipio', 'u.pais', 'u.prefijo_telefono', 'u.address', 'u.barrio', 'u.estrato']);
 
-        $cuenta = ['ubicacion' => 0, 'tipo_de_alegra' => 0, 'tipo_por_numero' => 0, 'por_revisar' => 0];
+        $cuenta = ['barrio' => 0, 'estrato' => 0, 'ubicacion' => 0, 'tipo_de_alegra' => 0, 'tipo_por_numero' => 0, 'por_revisar' => 0];
         $porTipo = [];
+        $porBarrio = [];
         $revisar = [];
         $respaldo = [];
 
@@ -80,8 +93,18 @@ class ClientesCompletarDatos extends Command
                 $cambios['prefijo_telefono'] = substr($digitos, 0, 2);
             }
 
-            if (array_diff_key($cambios, ['fiscal_tipo_documento' => 1])) {
+            if (array_diff_key($cambios, ['fiscal_tipo_documento' => 1, 'barrio' => 1, 'estrato' => 1])) {
                 $cuenta['ubicacion']++;
+            }
+
+            if ($c->barrio === null || trim($c->barrio) === '') {
+                $cambios['barrio'] = DatosDelCliente::barrioDeDireccion($c->address) ?: $barrioPorDefecto;
+                $porBarrio[$cambios['barrio']] = ($porBarrio[$cambios['barrio']] ?? 0) + 1;
+                $cuenta['barrio']++;
+            }
+            if ($estrato !== null && !$c->estrato) {
+                $cambios['estrato'] = $estrato;
+                $cuenta['estrato']++;
             }
 
             if (!$c->fiscal_tipo_documento) {
@@ -123,6 +146,8 @@ class ClientesCompletarDatos extends Command
         $this->line('Tipo de documento tomado de su contacto en Alegra: ' . $cuenta['tipo_de_alegra']);
         $this->line('Tipo «cédula» por tener diez dígitos (no están en Alegra): ' . $cuenta['tipo_por_numero']);
         $this->line('Por tipo: ' . json_encode($porTipo));
+        $this->line('Barrio completado: ' . $cuenta['barrio'] . ' · ' . json_encode($porBarrio, JSON_UNESCAPED_UNICODE));
+        $this->line('Estrato completado: ' . $cuenta['estrato'] . ($estrato !== null ? ' (estrato ' . $estrato . ')' : ' (no se pidió --estrato)'));
         $this->line('Clientes vigentes que quedan POR REVISAR a mano: ' . $cuenta['por_revisar']);
 
         $carpeta = storage_path('app/datos-de-clientes');

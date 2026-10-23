@@ -63,7 +63,7 @@ class InstallationOrder extends Model
         'ont_id',
         'inventory_id',
         'aprovisionamiento_id',
-        'provisioned_at',
+        'provisioned_at', 'provisioned_by',
         'provision_detalle',
     ];
 

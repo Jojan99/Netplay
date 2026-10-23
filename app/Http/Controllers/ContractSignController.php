@@ -191,7 +191,10 @@ class ContractSignController extends Controller
 
         return response()->file($hojas[$pagina], [
             'Content-Type'  => 'image/png',
-            'Cache-Control' => 'private, max-age=3600',
+            // Sin guardarla una hora: si cambian los datos del cliente (barrio, estrato…), quien
+            // ya abrió el enlace seguía viendo la hoja vieja. Con no-cache el navegador pregunta
+            // y, si no cambió, el servidor responde «igual» sin volver a mandarla.
+            'Cache-Control' => 'private, no-cache',
         ]);
     }
 

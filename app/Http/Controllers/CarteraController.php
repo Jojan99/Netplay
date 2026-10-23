@@ -29,6 +29,175 @@ class CarteraController extends Controller
     /** Filas por lista de deudores. */
     private const MAXIMO_FILAS = 200;
 
+    /** Un recordatorio por cliente cada tantas horas: más seguido es acoso, no cobranza. */
+    private const HORAS_ENTRE_RECORDATORIOS = 20;
+
+    /**
+     * POST api/cartera/{userId}/recordar
+     *
+     * Le recuerda al cliente por WhatsApp lo que debe, con un enlace para pagar si la empresa
+     * tiene pasarela. Queda en su historial, que es donde se mira si ya se le escribió.
+     */
+    public function recordar(int $userId): JsonResponse
+    {
+        $empresa = (int) getSessionCompanyId();
+        $cliente = DB::table('user_data as u')->join('users', 'users.id', '=', 'u.user_id')
+            ->where('u.user_id', $userId)->where('users.company_id', $empresa)
+            ->first(['u.user_id', 'u.names', 'u.phone']);
+
+        if (!$cliente) {
+            return response()->json(['status' => 1, 'message' => 'Cliente no encontrado.'], 404);
+        }
+
+        $deuda = DB::table('det_facturations as d')->join('cab_facturations as c', 'c.id', '=', 'd.cab_id')
+            ->where('c.user_id', $userId)->where('d.paid', 0)->whereNull('d.anulada_en')
+            ->selectRaw('COUNT(*) as n, COALESCE(SUM(' . self::SALDO . '), 0) as total')->first();
+
+        if (!$deuda || (float) $deuda->total <= 0) {
+            return response()->json(['status' => 1, 'message' => 'Este cliente no debe nada.']);
+        }
+
+        $telefono = preg_replace('/\D/', '', (string) $cliente->phone);
+        if (strlen($telefono) < 10) {
+            return response()->json(['status' => 1, 'message' => 'El cliente no tiene un WhatsApp válido en su ficha.']);
+        }
+
+        $reciente = DB::table('user_audit_logs')->where('user_id', $userId)
+            ->where('description', 'like', 'Recordatorio de pago por WhatsApp%')
+            ->where('created_at', '>=', now()->subHours(self::HORAS_ENTRE_RECORDATORIOS))->exists();
+        if ($reciente) {
+            return response()->json(['status' => 1, 'message' => 'Ya se le recordó en las últimas ' . self::HORAS_ENTRE_RECORDATORIOS . ' horas.']);
+        }
+
+        $company = \App\Models\Company::find($empresa);
+        $enlace = null;
+        if ($company && $company->pg_active && $company->pg_gateway) {
+            try {
+                $links = app(\App\Services\PaymentGateways\PaymentLinkService::class);
+                $enlace = $links->publicUrl($links->create($company, $userId, null, 'cartera'));
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('[Cartera] No se pudo crear el enlace de pago', ['user' => $userId, 'error' => $e->getMessage()]);
+            }
+        }
+
+        $nombre = trim(explode(' ', trim((string) $cliente->names))[0] ?? '') ?: 'cliente';
+        $n = (int) $deuda->n;
+        $mensaje = "Hola {$nombre} 👋, te recordamos que tienes {$n} " . ($n === 1 ? 'factura pendiente' : 'facturas pendientes')
+            . ' por $ ' . number_format((float) $deuda->total, 0, ',', '.') . ' con ' . ($company->name ?? 'tu proveedor de internet') . '.'
+            . ($enlace ? "\n\nPuedes pagar aquí:\n{$enlace}" : '')
+            . "\n\nSi ya pagaste, envíanos el comprobante por este chat. ¡Gracias!";
+
+        try {
+            $r = (new \App\Services\WhatsAppService($empresa))->mensajeInformativo(strlen($telefono) === 10 ? '57' . $telefono : $telefono, $mensaje);
+        } catch (\Throwable $e) {
+            return response()->json(['status' => 1, 'message' => 'No se pudo enviar: ' . $e->getMessage()]);
+        }
+        if (isset($r['error']) || ($r['success'] ?? true) === false) {
+            return response()->json(['status' => 1, 'message' => 'WhatsApp respondió con error: ' . ($r['message'] ?? $r['error'] ?? 'sin detalle')]);
+        }
+
+        DB::table('user_audit_logs')->insert([
+            'user_id' => $userId, 'changed_by' => (int) optional(auth()->user())->id, 'company_id' => $empresa,
+            'field_changed' => 'datos_generales', 'old_value' => null, 'new_value' => null,
+            'description' => 'Recordatorio de pago por WhatsApp: ' . $n . ' factura(s), $ ' . number_format((float) $deuda->total, 0, ',', '.') . ($enlace ? ' · con enlace de pago' : ''),
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        return response()->json(['status' => 0, 'message' => 'Recordatorio enviado' . ($enlace ? ' con enlace de pago.' : '.')]);
+    }
+
+    /**
+     * GET api/cartera/compromisos?estado=vigentes|vencidos|incumplidos|cumplidos|todos
+     *
+     * Los compromisos de pago de toda la empresa: quién prometió pagar, cuánto, para cuándo, si
+     * ya pagó lo que prometió y si se le cortó al incumplir. Antes sólo se veían de a uno, dentro
+     * de la cartera de cada cliente.
+     */
+    public function compromisos(Request $request): JsonResponse
+    {
+        $empresa = (int) getSessionCompanyId();
+        $hoy = now()->startOfDay();
+        $estado = (string) $request->query('estado', 'vigentes');
+
+        $q = DB::table('payment_commitments as pc')
+            ->leftJoin('user_data as u', 'u.user_id', '=', 'pc.user_id')
+            ->leftJoin('user_data as quien', 'quien.user_id', '=', 'pc.created_by')
+            ->where('pc.company_id', $empresa);
+
+        match ($estado) {
+            'vencidos'    => $q->where('pc.status', 'pending')->whereDate('pc.commitment_date', '<', $hoy),
+            'incumplidos' => $q->where('pc.status', 'broken'),
+            'cumplidos'   => $q->where('pc.status', 'fulfilled'),
+            'cancelados'  => $q->where('pc.status', 'cancelled'),
+            'todos'       => $q,
+            default       => $q->where('pc.status', 'pending'),
+        };
+
+        if ($request->filled('q')) {
+            $t = '%' . trim((string) $request->query('q')) . '%';
+            $q->where(fn ($w) => $w->where('u.names', 'like', $t)->orWhere('u.lastname', 'like', $t)->orWhere('u.dni', 'like', $t)->orWhere('u.phone', 'like', $t));
+        }
+
+        $filas = $q->orderByRaw("pc.status = 'pending' DESC")
+            ->orderByRaw("CASE WHEN pc.status = 'pending' THEN pc.commitment_date END ASC")
+            ->orderByDesc('pc.commitment_date')
+            ->limit(300)
+            ->get(['pc.id', 'pc.user_id', 'pc.cab_id', 'pc.commitment_date', 'pc.amount_committed', 'pc.notes', 'pc.auto_suspend', 'pc.status',
+                'pc.fulfilled_at', 'pc.suspended_at', 'pc.created_at', 'u.names', 'u.lastname', 'u.dni', 'u.phone', 'u.status_internet_id',
+                DB::raw("TRIM(CONCAT(COALESCE(quien.names,''),' ',COALESCE(quien.lastname,''))) as creo")]);
+
+        // Las facturas de cada compromiso: cuántas, y cuánto falta de ellas hoy.
+        $facturas = DB::table('payment_commitment_invoices as pci')
+            ->join('det_facturations as d', 'd.id', '=', 'pci.det_facturation_id')
+            ->whereIn('pci.commitment_id', $filas->pluck('id'))
+            ->groupBy('pci.commitment_id')
+            ->get(['pci.commitment_id', DB::raw('COUNT(*) as n'), DB::raw('SUM(d.paid = 1) as pagadas'),
+                DB::raw('SUM(CASE WHEN d.paid = 0 AND d.anulada_en IS NULL THEN ' . self::SALDO . ' ELSE 0 END) as falta')])
+            ->keyBy('commitment_id');
+
+        $deudas = DB::table('det_facturations as d')->join('cab_facturations as c', 'c.id', '=', 'd.cab_id')
+            ->whereIn('c.user_id', $filas->pluck('user_id')->unique())->where('d.paid', 0)->whereNull('d.anulada_en')
+            ->groupBy('c.user_id')->get(['c.user_id', DB::raw('SUM(' . self::SALDO . ') as deuda')])->pluck('deuda', 'user_id');
+
+        $items = $filas->map(function ($f) use ($facturas, $deudas, $hoy) {
+            $fac = $facturas->get($f->id);
+            $dias = $hoy->diffInDays(\Carbon\Carbon::parse($f->commitment_date)->startOfDay(), false);
+
+            return [
+                'id' => $f->id, 'user_id' => $f->user_id, 'cab_id' => $f->cab_id,
+                'cliente' => trim(($f->names ?? '') . ' ' . ($f->lastname ?? '')) ?: 'Sin nombre', 'dni' => $f->dni, 'telefono' => $f->phone,
+                'fecha' => $f->commitment_date, 'dias' => (int) $dias, 'monto' => (float) $f->amount_committed,
+                'estado' => $f->status, 'nota' => $f->notes, 'corta_si_incumple' => (bool) $f->auto_suspend,
+                'cumplido_en' => $f->fulfilled_at, 'cortado_en' => $f->suspended_at, 'creado_en' => $f->created_at, 'creo' => trim((string) $f->creo) ?: null,
+                'facturas' => (int) ($fac->n ?? 0), 'facturas_pagadas' => (int) ($fac->pagadas ?? 0), 'falta' => (float) ($fac->falta ?? 0),
+                'deuda_total' => (float) ($deudas[$f->user_id] ?? 0),
+                'suspendido' => (int) $f->status_internet_id === 2,
+            ];
+        });
+
+        $conteo = DB::table('payment_commitments')->where('company_id', $empresa)->selectRaw("
+            SUM(status = 'pending') as vigentes,
+            SUM(status = 'pending' AND DATE(commitment_date) < CURDATE()) as vencidos,
+            SUM(status = 'pending' AND DATE(commitment_date) BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)) as esta_semana,
+            SUM(status = 'pending' AND DATE(commitment_date) = CURDATE()) as hoy,
+            SUM(status = 'broken') as incumplidos,
+            SUM(status = 'fulfilled') as cumplidos,
+            SUM(status = 'cancelled') as cancelados,
+            SUM(CASE WHEN status = 'pending' THEN amount_committed ELSE 0 END) as prometido")->first();
+
+        $cerrados = (int) $conteo->incumplidos + (int) $conteo->cumplidos;
+
+        return response()->json(['status' => 0, 'data' => [
+            'items' => $items,
+            'resumen' => [
+                'vigentes' => (int) $conteo->vigentes, 'vencidos' => (int) $conteo->vencidos, 'esta_semana' => (int) $conteo->esta_semana, 'hoy' => (int) $conteo->hoy,
+                'incumplidos' => (int) $conteo->incumplidos, 'cumplidos' => (int) $conteo->cumplidos, 'cancelados' => (int) $conteo->cancelados,
+                'prometido' => (float) $conteo->prometido,
+                'cumplimiento' => $cerrados ? round(100 * (int) $conteo->cumplidos / $cerrados) : null,
+            ],
+        ]]);
+    }
+
     /** GET api/cartera/resumen */
     public function resumen(): JsonResponse
     {

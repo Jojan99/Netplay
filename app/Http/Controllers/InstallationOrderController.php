@@ -82,6 +82,7 @@ class InstallationOrderController extends Controller
 
     public function store(Request $request)
     {
+        $this->sinTildesEnElWifi($request);
         $validated = $request->validate([
             'client_name' => 'required|string|max:255',
             'client_firstname' => 'nullable|string|max:255',
@@ -110,9 +111,10 @@ class InstallationOrderController extends Controller
             'srv_profile_id' => 'nullable|integer|min:0',
             'onu_type' => 'nullable|string|max:60',
             // La ñ y las tildes las rechaza el equipo, y el SSID y la clave se
-            // mandan juntos: uno malo hace fallar los dos.
-            'wifi_ssid' => 'nullable|string|max:32|regex:/^[A-Za-z0-9\-_. ]+$/',
-            'wifi_password' => 'nullable|string|min:8|max:63|regex:/^[A-Za-z0-9\-_.@#$%&*+=!?():,]+$/',
+            // mandan juntos: uno malo hace fallar los dos. Por eso llegan ya
+            // limpias (sinTildesEnElWifi): «Peña» queda «Pena».
+            'wifi_ssid' => ['nullable', 'string', 'max:32', new \App\Rules\NombreWifi()],
+            'wifi_password' => ['nullable', 'string', 'min:8', 'max:63', 'regex:' . \App\Services\Red\AprovisionamientoDeOnt::patronWifi()],
             'scheduled_date' => 'required|date',
             'scheduled_time' => 'required',
             'installation_cost' => 'nullable|numeric|min:0',
@@ -167,7 +169,9 @@ class InstallationOrderController extends Controller
         $installation = InstallationOrder::where('company_id', getSessionCompanyId())
             ->with(['client', 'plan', 'paymentMethod', 'creator', 'assignee', 'logs'])
             ->findOrFail($id);
-        
+
+        $installation->setAttribute('tv', $this->tvDeLaOrden($installation));
+
         return response()->json($installation);
     }
 
@@ -175,7 +179,8 @@ class InstallationOrderController extends Controller
     {
         $installation = InstallationOrder::where('company_id', getSessionCompanyId())
             ->findOrFail($id);
-        
+
+        $this->sinTildesEnElWifi($request);
         $validated = $request->validate([
             'client_name' => 'sometimes|string|max:255',
             'client_firstname' => 'nullable|string|max:255',
@@ -204,9 +209,10 @@ class InstallationOrderController extends Controller
             'srv_profile_id' => 'nullable|integer|min:0',
             'onu_type' => 'nullable|string|max:60',
             // La ñ y las tildes las rechaza el equipo, y el SSID y la clave se
-            // mandan juntos: uno malo hace fallar los dos.
-            'wifi_ssid' => 'nullable|string|max:32|regex:/^[A-Za-z0-9\-_. ]+$/',
-            'wifi_password' => 'nullable|string|min:8|max:63|regex:/^[A-Za-z0-9\-_.@#$%&*+=!?():,]+$/',
+            // mandan juntos: uno malo hace fallar los dos. Por eso llegan ya
+            // limpias (sinTildesEnElWifi): «Peña» queda «Pena».
+            'wifi_ssid' => ['nullable', 'string', 'max:32', new \App\Rules\NombreWifi()],
+            'wifi_password' => ['nullable', 'string', 'min:8', 'max:63', 'regex:' . \App\Services\Red\AprovisionamientoDeOnt::patronWifi()],
             'scheduled_date' => 'sometimes|date',
             'scheduled_time' => 'sometimes',
             'installation_cost' => 'nullable|numeric|min:0',
@@ -299,6 +305,23 @@ class InstallationOrderController extends Controller
             'message' => 'Instalación iniciada',
             'data' => $installation->fresh()
         ]);
+    }
+
+    /**
+     * POST installations/{id}/cierre — la nota del trabajo de una orden que ya quedó instalada
+     * (instalar la cierra sola). Es lo que antes pedía «Completar».
+     */
+    public function cierre(Request $request, int $id)
+    {
+        $orden = InstallationOrder::where('company_id', getSessionCompanyId())->findOrFail($id);
+        $d = $request->validate(['technical_notes' => 'nullable|string|max:2000']);
+
+        if (trim((string) ($d['technical_notes'] ?? '')) !== '') {
+            $orden->update(['technical_notes' => trim($d['technical_notes'])]);
+            InstallationLog::create(['installation_id' => $id, 'action' => 'nota', 'description' => 'Nota del técnico al cerrar', 'notes' => trim($d['technical_notes']), 'created_by' => Auth::id()]);
+        }
+
+        return response()->json(['message' => 'Instalación cerrada', 'data' => $orden->fresh()]);
     }
 
     public function complete(Request $request, $id)
@@ -554,6 +577,38 @@ class InstallationOrderController extends Controller
     }
 
     /**
+     * GET /api/installations/del-cliente/{userId} — quién le instaló el equipo al cliente y cuándo.
+     *
+     * Para la ficha: lo dice la última orden aprovisionada; si el cliente se instaló sin orden,
+     * la unidad del inventario que quedó en su casa (también guarda al técnico).
+     */
+    public function delCliente(int $userId)
+    {
+        $empresa = (int) getSessionCompanyId();
+        $userDataId = DB::table('user_data')->where('company_id', $empresa)->where('user_id', $userId)->value('id');
+
+        $orden = $userDataId ? InstallationOrder::where('company_id', $empresa)->where('user_data_id', $userDataId)
+            ->where('status', 'completed')->orderByDesc('provisioned_at')->orderByDesc('id')->first() : null;
+        $unidad = DB::table('inventory_units as n')->join('inventories as i', 'i.id', '=', 'n.inventory_id')
+            ->where('n.company_id', $empresa)->where('n.cliente_user_id', $userId)->where('n.estado', 'instalada')
+            ->orderByDesc('n.instalada_en')->first(['n.serial', 'n.tecnico_id', 'n.instalada_en', 'n.installation_order_id', 'i.name as equipo']);
+
+        if (!$orden && !$unidad) {
+            return response()->json(['status' => 'success', 'data' => null]);
+        }
+
+        $tecnicoId = $orden?->provisioned_by ?? $unidad?->tecnico_id;
+
+        return response()->json(['status' => 'success', 'data' => [
+            'orden_id' => $orden?->id ?? $unidad?->installation_order_id,
+            'tecnico'  => \App\Services\Instalaciones\AvisoDeInstalacion::tecnico($tecnicoId ? (int) $tecnicoId : null),
+            'fecha'    => $orden?->provisioned_at ?? $orden?->finished_at ?? $unidad?->instalada_en,
+            'equipo'   => $unidad?->equipo,
+            'serial'   => $orden?->ont_serial ?? $unidad?->serial,
+        ]]);
+    }
+
+    /**
      * Las VLAN del router por donde puede salir el cliente.
      *
      * Si el router no contesta se devuelve vacío y el técnico escribe el número
@@ -619,7 +674,26 @@ class InstallationOrderController extends Controller
             'line_profile_id' => 'nullable|integer|min:0',
             'srv_profile_id'  => 'nullable|integer|min:0',
             'onu_type'        => 'nullable|string|max:60',
+            // El GPS del celular del técnico, para ubicar la casa en el mapa de la red: instalar
+            // ya cierra la orden, así que se toma aquí y no en «Completar», que casi no se usa.
+            'lat'       => 'nullable|numeric|between:-90,90|required_with:lng',
+            'lng'       => 'nullable|numeric|between:-180,180|required_with:lat',
+            'precision' => 'nullable|numeric|min:0',
         ]);
+
+        // Abrir «Instalar el equipo» ya es empezar: no hace falta tocar «Iniciar» antes.
+        if (in_array($orden->status, ['pending', 'confirmed'], true) && !$orden->started_at) {
+            $orden->forceFill(['started_at' => now()])->save();
+        }
+        $gps = array_intersect_key($datos, array_flip(['lat', 'lng', 'precision']));
+        $datos = array_diff_key($datos, $gps);
+
+        // Por dónde entra (OLT, VLAN, perfiles) lo decide la oficina: el técnico lo ve pero no lo
+        // cambia. Si llega igual desde un técnico, se usa lo que trae la orden.
+        $perfil = strtoupper((string) DB::table('profiles')->where('id', getSessionUserProfileId())->value('name'));
+        if ($perfil === 'TECNICO') {
+            $datos = array_diff_key($datos, array_flip(['olt_id', 'vlan', 'line_profile_id', 'srv_profile_id', 'onu_type']));
+        }
 
         if ($practica) {
             $r = \App\Services\Instalaciones\InstalarYAprovisionar::practica($orden, $datos, getSessionUserId());
@@ -632,6 +706,29 @@ class InstallationOrderController extends Controller
         }
 
         $r = \App\Services\Instalaciones\InstalarYAprovisionar::hacer($orden, $datos, getSessionUserId());
+
+        if ($r['ok']) {
+            try {
+                $ubicacion = \App\Services\Red\UbicacionAlInstalar::registrar(
+                    $orden->fresh(),
+                    isset($gps['lat']) ? (float) $gps['lat'] : null,
+                    isset($gps['lng']) ? (float) $gps['lng'] : null,
+                    isset($gps['precision']) ? (float) $gps['precision'] : null,
+                );
+                InstallationLog::create(['installation_id' => $id, 'action' => 'ubicacion', 'description' => $ubicacion['detalle'], 'created_by' => Auth::id()]);
+                $r['pasos'][] = ['paso' => 'Casa en el mapa', 'ok' => (bool) ($ubicacion['ubicado'] ?? false), 'detalle' => $ubicacion['detalle'] ?? null];
+            } catch (\Throwable $e) {
+                \Log::error('[Instalación] No se pudo ubicar al cliente en el mapa', ['orden' => $id, 'error' => $e->getMessage()]);
+            }
+
+            // Al grupo de instalaciones: quién instaló, el equipo, la red, el WiFi y la TV.
+            \App\Services\Instalaciones\AvisoDeInstalacion::enviar(
+                $orden->fresh(),
+                isset($gps['lat']) ? (float) $gps['lat'] : null,
+                isset($gps['lng']) ? (float) $gps['lng'] : null,
+                $r['data']['tv_linea_id'] ?? null,
+            );
+        }
 
         return response()->json([
             'status'  => $r['ok'] ? 'success' : 'error',
@@ -1015,5 +1112,57 @@ class InstallationOrderController extends Controller
                 'error' => $e->getMessage(),
             ]);
         }
+    }
+
+    /**
+     * El nombre y la clave del WiFi, sin tildes y con la ñ como n: el equipo los rechaza y
+     * se corrigen solos en vez de devolver un error («Peña» → «Pena», «Ñ» → «N»).
+     */
+    private function sinTildesEnElWifi(Request $request): void
+    {
+        foreach (['wifi_ssid', 'wifi_password'] as $campo) {
+            $valor = $request->input($campo);
+
+            if (is_string($valor) && $valor !== '') {
+                $request->merge([$campo => \App\Support\SinTildes::de($valor)]);
+            }
+        }
+    }
+
+    /**
+     * La televisión de la orden, para el detalle: si el plan la incluye y, ya instalada, la
+     * línea del cliente con su URL M3U. La línea no se crea con la orden sino al instalar (el
+     * cliente todavía no existe): antes de eso se dice cuándo va a aparecer.
+     *
+     * @return array<string,mixed>|null null si la empresa no tiene TV o el plan no la incluye
+     */
+    private function tvDeLaOrden(InstallationOrder $orden): ?array
+    {
+        $empresa = (int) $orden->company_id;
+        $tv = \App\Services\Tv\LineasDeTv::deLaEmpresa($empresa);
+        $incluida = $orden->internet_plan_id
+            ? (bool) DB::table('internet_plans')->where('id', $orden->internet_plan_id)->value('tv_incluida')
+            : false;
+
+        if (!$tv) {
+            return null;
+        }
+
+        // installation_orders.user_data_id es la ficha (user_data.id); la línea va por users.id.
+        $userId = $orden->user_data_id ? DB::table('user_data')->where('id', $orden->user_data_id)->value('user_id') : null;
+        $linea = $userId ? \App\Models\TvLinea::where('company_id', $empresa)->where('user_id', $userId)
+            ->where('estado', '!=', 'retirada')->orderByDesc('id')->first() : null;
+
+        if (!$linea && !$incluida) {
+            return null;
+        }
+
+        return [
+            'incluida' => $incluida,
+            'linea'    => $linea ? ['usuario' => $linea->usuario, 'clave' => $linea->clave, 'estado' => $linea->estado] + $tv->urls($linea) : null,
+            'cuando'   => $linea ? null : ($orden->status === 'completed'
+                ? 'La instalación ya se cerró pero la línea no está: revise Televisión › Líneas (puede que el panel no haya respondido).'
+                : 'Se crea cuando el técnico toque «Instalar el equipo»: ahí el cliente queda dado de alta y la URL le llega al grupo de instalaciones.'),
+        ];
     }
 }

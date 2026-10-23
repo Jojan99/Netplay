@@ -203,6 +203,7 @@ class SignInController extends Controller
             ->where('active', 1)
             ->pluck('module')
             ->toArray();
+        $modules = \App\Models\TvPanel::filtrarModulos((int) $authenticatedUser->company_id, $modules);
 
         $employee = \App\Models\Employee::where('user_id', $authenticatedUser->id)
             ->where('company_id', $authenticatedUser->company_id)

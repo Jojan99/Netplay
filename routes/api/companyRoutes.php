@@ -36,6 +36,8 @@ Route::prefix('company')->group(function () {
     Route::get('notificaciones',        [\App\Http\Controllers\NotificacionController::class, 'index']);
     Route::post('notificaciones/vistas', [\App\Http\Controllers\NotificacionController::class, 'vistas']);
     // El tablero de inicio que armó cada usuario: qué paneles y en qué orden.
+    // Las cifras sueltas del Inicio (altas, compromisos, comprobantes, bodega, TV), según el perfil.
+    Route::get('inicio', [\App\Http\Controllers\InicioController::class, 'resumen']);
     Route::get('tablero',    [\App\Http\Controllers\TableroController::class, 'ver']);
     Route::put('tablero',    [\App\Http\Controllers\TableroController::class, 'guardar']);
     Route::delete('tablero', [\App\Http\Controllers\TableroController::class, 'olvidar']);

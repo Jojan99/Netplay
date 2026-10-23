@@ -41,6 +41,10 @@ class Kernel extends ConsoleKernel
         // Resumen de la mañana al grupo de WhatsApp de los técnicos: lo que
         // sigue abierto, antes de que salgan a la calle.
         $schedule->command('alertas:resumen')->dailyAt('07:30')->user('www-data');
+        // Televisión: los canales caídos al grupo a los pocos minutos; las líneas con el panel y la cartera.
+        $schedule->command('tv:canales')->everyTwoMinutes()->user('www-data')->withoutOverlapping(10);
+        $schedule->command('tv:lineas')->everyTenMinutes()->user('www-data')->withoutOverlapping(30);
+        $schedule->command('tv:previas')->everyThreeMinutes()->user('www-data')->withoutOverlapping(10);
 
         // Saca del servidor TR-069 los equipos falsos que dejan los escáneres:
         // el puerto tiene que estar abierto para las ONT y lo encuentran solos.
@@ -57,6 +61,10 @@ class Kernel extends ConsoleKernel
         // pasada, un equipo lento dejaba a los demás esperando. En segundo plano
         // para no demorar al resto de las tareas programadas.
         $schedule->command('aprovisionamiento:trabajar')->everyMinute()->user('www-data')->runInBackground();
+
+        // Altas de ONT que la OLT terminó después de que el panel dejó de esperar (la C-Data
+        // tarda): se vinculan al cliente y se aprovisionan solas al aparecer en la OLT.
+        $schedule->command('olt:completar-altas')->everyMinute()->user('www-data')->withoutOverlapping(10)->runInBackground();
 
         // Cobranza inteligente: detecta deudores, cierra lo pagado y, en el
         // horario de cada empresa, el asistente escribe y recuerda.
@@ -129,27 +137,50 @@ class Kernel extends ConsoleKernel
         // El estado de las líneas sólo se refrescaba al abrir la pantalla de la
         // empresa, así que el panel mostraba caídas líneas que estaban
         // conectadas y enviando.
+        // Cada dos minutos: una línea caída se avisa al grupo (wa_lineas_eventos).
         $schedule->command('wa:sincronizar-lineas')
-            ->everyFiveMinutes()
+            ->everyTwoMinutes()
             ->user('www-data')
             ->withoutOverlapping(10)
             ->runInBackground();
 
         $schedule->command('wa:cerrar-sesiones-inactivas')
             ->everyMinute()
-            ->user('www-data');
+            ->user('www-data')
+            ->withoutOverlapping(5);
+
+        // Los chats sin nada pendiente se cierran solos (48 h si contestó el equipo, 7 días si no).
+        $schedule->command('crm:cerrar-inactivas')
+            ->hourly()
+            ->user('www-data')
+            ->withoutOverlapping(30)
+            ->runInBackground()
+            ->appendOutputTo(storage_path('logs/wa-tareas.log'));
+
+        // Quien no dio la cédula en diez minutos pasa al asesor sin identificar: antes sus
+        // mensajes quedaban retenidos para siempre (55 clientes el 22-10-2026).
+        $schedule->command('crm:soltar-retenidos')
+            ->everyFiveMinutes()
+            ->user('www-data')
+            ->withoutOverlapping(10)
+            ->runInBackground()
+            ->appendOutputTo(storage_path('logs/wa-tareas.log'));
 
         // Despacha por tandas los envíos masivos en curso. Cada minuto para que
         // un envío grande avance sin que nadie tenga que esperar en pantalla.
+        // Sin solaparse: una tanda que tardaba más de un minuto volvía a mandar a los mismos.
         $schedule->command('wa:enviar-campanas')
             ->everyMinute()
-            ->user('www-data');
+            ->user('www-data')
+            ->withoutOverlapping(30)
+            ->appendOutputTo(storage_path('logs/wa-tareas.log'));
 
         // Recordatorios de pago y avisos de suspensión. Una vez al día: cuándo
         // le toca a cada cliente lo decide la configuración de cada empresa.
         $schedule->command('wa:avisos')
             ->dailyAt('09:00')
-            ->user('www-data');
+            ->user('www-data')
+            ->appendOutputTo(storage_path('logs/wa-tareas.log'));
 
         // Factura electrónica (DIAN): emite lo cobrado por las empresas que lo tienen en automático,
         // reintenta lo que quedó a medias y saca las notas crédito de lo revertido o anulado.

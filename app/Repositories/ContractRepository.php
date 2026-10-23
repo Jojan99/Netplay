@@ -68,12 +68,14 @@ class ContractRepository implements ContractRepositoryInterface
         return $contract->delete();
     }
 
-    public function assignToClient(int $contractId, int $userId, bool $requireDocuments = false): mixed
+    public function assignToClient(int $contractId, int $userId, bool $requireDocuments = false, ?string $fechaInstalacion = null): mixed
     {
         return ClientContract::create([
             'company_id'         => getSessionCompanyId(),
             'contract_id'        => $contractId,
             'user_id'            => $userId,
+            // Desde ahí cuenta la vigencia: la que se pidió o la de su instalación (orden terminada o alta).
+            'fecha_instalacion'  => $fechaInstalacion ?: \App\Services\Contratos\FechaDeInstalacion::de($userId)?->toDateString(),
             'status'             => 'pending',
             'token'              => bin2hex(random_bytes(32)),
             'require_documents'  => $requireDocuments,

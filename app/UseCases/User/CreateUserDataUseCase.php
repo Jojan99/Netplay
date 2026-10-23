@@ -163,6 +163,30 @@ class CreateUserDataUseCase implements CreateUserDataUseCaseInterface
                         $fecha = (clone $today)->setDate($today->format('Y'), $today->format('m'), $dia)->format('Y-m-d');
                         $this->FacturationRepositoryInterface->createCabFacturation($user['id'], $data['group'], $fecha);
                     }
+
+                    // «Activar contrato» en el registro: se le asigna de una vez, con hoy como día
+                    // de instalación; queda pendiente de firma para enviarlo desde Contratos.
+                    if (filter_var($data['activar_contrato'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+                        $empresa = (int) getSessionCompanyId();
+                        $plantilla = (int) ($data['contrato_id'] ?? 0)
+                            ?: (int) DB::table('contracts')->where('company_id', $empresa)->where('active', 1)->orderBy('id')->value('id');
+                        if ($plantilla && DB::table('contracts')->where('id', $plantilla)->where('company_id', $empresa)->exists()) {
+                            \App\Models\ClientContract::create([
+                                'company_id'        => $empresa,
+                                'contract_id'       => $plantilla,
+                                'user_id'           => (int) $user['id'],
+                                'fecha_instalacion' => now()->toDateString(),
+                                'status'            => 'pending',
+                                'token'             => bin2hex(random_bytes(32)),
+                                'require_documents' => true,
+                            ]);
+                        }
+                    }
+
+                    // Si el plan lleva TV, la línea se crea después de responder: el alta no espera al panel.
+                    $empresaTv = (int) getSessionCompanyId();
+                    $clienteTv = (int) $user['id'];
+                    dispatch(fn () => \App\Services\Tv\LineasDeTv::alGuardarCliente($empresaTv, $clienteTv))->afterResponse();
                 } else {
                     return ['message' => 'Error creating user', 'data' => 9, 'status' => 1];
                 }

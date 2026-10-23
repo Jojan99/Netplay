@@ -174,7 +174,10 @@ class CheckPaymentCommitmentsCommand extends Command
 
             DB::table('user_audit_logs')->insert([
                 'user_id'       => $user->id,
-                'changed_by'    => null,
+                // Sin persona detrás: 0 es «el sistema». Con null la columna no lo acepta, y el
+                // error llegaba después de cortar en el router: el cliente quedaba suspendido y el
+                // compromiso decía «no se pudo suspender», sin fecha ni rastro en su historial.
+                'changed_by'    => 0,
                 'company_id'    => $commitment->company_id,
                 'field_changed' => 'estado_internet',
                 'old_value'     => 'ACTIVE',
