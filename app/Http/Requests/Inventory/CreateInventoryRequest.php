@@ -34,7 +34,16 @@ class CreateInventoryRequest extends FormRequest
                     ->where('company_id', $companyId)
                     ->whereNull('deleted_at'),
             ],
-            'code'        => 'nullable|string|max:50',
+            // El código del ítem es la referencia del equipo (ZXHNF680): uno por empresa.
+            'code'        => [
+                'nullable',
+                'string',
+                'max:50',
+                Rule::unique('inventories')
+                    ->where('company_id', $companyId)
+                    ->whereNull('deleted_at'),
+            ],
+            'marca'       => 'nullable|string|max:80',
             'barcode'     => 'nullable|string|max:80',
             'usa_serial'  => 'nullable|boolean',
             'quantity'    => 'nullable|numeric|min:0',
@@ -51,6 +60,7 @@ class CreateInventoryRequest extends FormRequest
         return [
             'category_id.exists' => 'La categoría seleccionada no existe o no pertenece a su empresa.',
             'sku.unique'         => 'El SKU ya está registrado en su inventario.',
+            'code.unique'        => 'Ya hay un ítem con ese código.',
         ];
     }
 }

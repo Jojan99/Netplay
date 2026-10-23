@@ -26,6 +26,8 @@ class CreateInventoryCategoryRequest extends FormRequest
                     ->whereNull('deleted_at'),
             ],
             'description' => 'nullable|string|max:255',
+            // ONT y TV box se registran por serial; conectores y RJ45 por cantidad.
+            'usa_serial'  => 'nullable|boolean',
         ];
     }
 

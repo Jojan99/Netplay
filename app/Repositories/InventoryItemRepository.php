@@ -62,8 +62,11 @@ class InventoryItemRepository implements InventoryItemRepositoryInterface
             'description'  => $data['description'] ?? null,
             'sku'          => $data['sku'] ?? null,
             'code'         => $data['code'] ?? null,
+            // La referencia del equipo es su código: la usan el aprovisionamiento y las entradas.
+            'referencia'   => $data['code'] ?? null,
+            'marca'        => $data['marca'] ?? null,
             'barcode'      => $data['barcode'] ?? null,
-            'usa_serial'   => !empty($data['usa_serial']),
+            'usa_serial'   => !empty($data['usa_serial']) || $this->tipoUsaSerial($companyId, $data['category_id'] ?? null),
             'quantity'     => 0,
             'stock_min'    => $data['stock_min'] ?? 0,
             'stock_max'    => $data['stock_max'] ?? null,
@@ -83,7 +86,7 @@ class InventoryItemRepository implements InventoryItemRepositoryInterface
 
         // Sólo lo que llegó en la petición. Con «?? el valor anterior» no se podía vaciar un
         // campo: quitar la categoría o borrar el máximo dejaba todo como estaba.
-        $campos = ['category_id', 'name', 'description', 'sku', 'code', 'barcode', 'usa_serial', 'stock_min', 'stock_max', 'unit_price', 'unit', 'location'];
+        $campos = ['category_id', 'name', 'marca', 'description', 'sku', 'code', 'barcode', 'usa_serial', 'stock_min', 'stock_max', 'unit_price', 'unit', 'location'];
         $cambios = array_intersect_key($data, array_flip($campos));
 
         if (array_key_exists('name', $cambios) && trim((string) $cambios['name']) === '') {
@@ -98,6 +101,10 @@ class InventoryItemRepository implements InventoryItemRepositoryInterface
         if (array_key_exists('usa_serial', $cambios)) {
             // Un ítem con equipos registrados no puede dejar de llevarse por serial.
             $cambios['usa_serial'] = !empty($cambios['usa_serial']) || \Illuminate\Support\Facades\DB::table('inventory_units')->where('inventory_id', $item->id)->exists();
+        }
+
+        if (array_key_exists('code', $cambios)) {
+            $cambios['referencia'] = $cambios['code'];
         }
 
         $item->update($cambios);
@@ -131,5 +138,12 @@ class InventoryItemRepository implements InventoryItemRepositoryInterface
             ->distinct()
             ->pluck('location')
             ->toArray();
+    }
+
+    /** El tipo de equipo (categoría) dice si se lleva por serial: ONT y TV Box sí, conectores no. */
+    private function tipoUsaSerial(int $companyId, mixed $categoryId): bool
+    {
+        return $categoryId && (bool) \Illuminate\Support\Facades\DB::table('inventory_categories')
+            ->where('company_id', $companyId)->where('id', $categoryId)->value('usa_serial');
     }
 }

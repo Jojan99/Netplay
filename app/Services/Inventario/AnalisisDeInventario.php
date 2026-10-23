@@ -54,7 +54,7 @@ class AnalisisDeInventario
 
         foreach (DB::table('inventories as i')->leftJoin('inventory_categories as c', 'c.id', '=', 'i.category_id')
             ->where('i.company_id', $this->companyId)->whereNull('i.deleted_at')->orderBy('i.name')
-            ->get(['i.id', 'i.name', 'i.sku', 'i.barcode', 'i.quantity', 'i.stock_min', 'i.stock_max', 'i.unit', 'i.unit_price', 'i.average_cost', 'i.usa_serial', 'i.location', 'i.created_at', 'c.name as categoria']) as $i) {
+            ->get(['i.id', 'i.name', 'i.sku', 'i.barcode', 'i.quantity', 'i.stock_min', 'i.stock_max', 'i.unit', 'i.unit_price', 'i.average_cost', 'i.usa_serial', 'i.location', 'i.created_at', 'i.category_id', 'i.marca', 'i.referencia', 'i.code', 'c.name as categoria']) as $i) {
             $m = $consumo[$i->id] ?? null;
             // Las instalaciones hechas con equipo que ya tenía el técnico no salen otra vez de bodega.
             $gastado = max(0, (float) ($m->sale ?? 0) - (float) ($m->vuelve ?? 0));
@@ -79,7 +79,7 @@ class AnalisisDeInventario
             $pedir = in_array($estado, ['agotado', 'bajo', 'por_agotarse'], true) ? max(0, (int) ceil($objetivo - $bodega)) : 0;
 
             $filas[] = [
-                'id' => (int) $i->id, 'nombre' => $i->name, 'categoria' => $i->categoria, 'unidad' => $i->unit, 'usa_serial' => (bool) $i->usa_serial,
+                'id' => (int) $i->id, 'nombre' => $i->name, 'categoria' => $i->categoria, 'category_id' => $i->category_id ? (int) $i->category_id : null, 'marca' => $i->marca, 'referencia' => $i->referencia, 'codigo' => $i->code ?: $i->referencia, 'costo' => (float) ($i->average_cost ?: $i->unit_price), 'unidad' => $i->unit, 'usa_serial' => (bool) $i->usa_serial,
                 'en_bodega' => $bodega, 'con_tecnicos' => $enCalle, 'danadas' => (int) ($danadas[$i->id] ?? 0),
                 'minimo' => $minimo, 'maximo' => $i->stock_max !== null ? (float) $i->stock_max : null,
                 'consumo_30d' => round($gastado, 2), 'instaladas_30d' => (float) ($m->instaladas ?? 0),
@@ -214,6 +214,23 @@ class AnalisisDeInventario
             'tecnicos_con_material' => count($tecnicos),
             'equipos_con_tecnicos' => array_sum(array_column($tecnicos, 'equipos_total')),
             'equipos_viejos' => array_sum(array_column($tecnicos, 'equipos_viejos')),
+        ] + $this->enCasasDeClientes();
+    }
+
+    /**
+     * Las ONT que están en casas de clientes (en comodato: son de la empresa) y las que hay que
+     * recoger porque el cliente se retiró. Salen de la OLT, porque muchas no pasaron por la bodega.
+     */
+    private function enCasasDeClientes(): array
+    {
+        $base = DB::table('olt_onts as o')
+            ->join('olt_admins as a', 'a.id', '=', 'o.olt_id')
+            ->join('user_data as ud', 'ud.id', '=', 'o.user_data_id')
+            ->where('a.company_id', $this->companyId);
+
+        return [
+            'en_clientes' => (clone $base)->where('ud.active', 1)->count(),
+            'por_recoger' => (clone $base)->where('ud.active', 0)->count(),
         ];
     }
 }

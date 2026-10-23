@@ -42,6 +42,7 @@ Route::prefix('inventory')->middleware('module:inventory')->group(function () {
     Route::get('tecnicos',        [InventarioController::class, 'tecnicos']);
     Route::get('unidades',        [InventarioController::class, 'unidades']);
     Route::post('entradas',       [InventarioController::class, 'entrada']);
+    Route::post('entradas/lote',  [InventarioController::class, 'entradaLote']);
     Route::post('salidas',        [InventarioController::class, 'salida']);
     Route::post('ajustes',        [InventarioController::class, 'ajuste']);
     Route::post('entregas',       [InventarioController::class, 'entregar']);

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Services\Inventario\AnalisisDeInventario;
 use App\Services\Inventario\AsistenteDeInventario;
 use App\Services\Inventario\Bodega;
+use App\Support\Serial;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -39,10 +40,12 @@ class InventarioController extends Controller
     }
 
     /** Ejecuta una operación de Bodega y traduce sus errores de negocio en un mensaje. */
-    private function operar(string $mensajeOk, callable $fn): JsonResponse
+    private function operar(string $mensajeOk, callable $fn, ?callable $mensaje = null): JsonResponse
     {
         try {
-            return $this->bien($mensajeOk, $fn(new Bodega($this->empresa())));
+            $data = $fn(new Bodega($this->empresa()));
+
+            return $this->bien($mensaje ? $mensaje($data) : $mensajeOk, $data);
         } catch (\DomainException $e) {
             return $this->mal($e->getMessage());
         } catch (\Throwable $e) {
@@ -117,7 +120,7 @@ class InventarioController extends Controller
             ->when($r->query('inventory_id'), fn ($x, $id) => $x->where('n.inventory_id', (int) $id))
             ->when($r->query('estado'), fn ($x, $e) => $x->where('n.estado', $e))
             ->when($r->query('tecnico_id'), fn ($x, $id) => $x->where('n.tecnico_id', (int) $id))
-            ->when($t !== '', fn ($x) => $x->where(fn ($y) => $y->where('n.serial', 'like', "%{$t}%")->orWhere('n.serial_canonico', 'like', '%' . \App\Support\Serial::canonico($t) . '%')));
+            ->when($t !== '', fn ($x) => $x->where(fn ($y) => $y->where('n.serial', 'like', "%{$t}%")->orWhere('n.serial_canonico', 'like', '%' . Serial::canonico($t) . '%')));
 
         $total = (clone $q)->count();
         $filas = $q->orderByDesc('n.updated_at')->forPage(max(1, (int) $r->query('pagina', 1)), 30)->get([
@@ -149,6 +152,49 @@ class InventarioController extends Controller
         $d = $r->validate($this->reglas(['precio' => 'nullable|numeric|min:0', 'referencia' => 'nullable|string|max:120']));
 
         return $this->operar('Entrada registrada.', fn (Bodega $b) => $b->entrada((int) $d['inventory_id'], (float) ($d['cantidad'] ?? 0), (float) ($d['precio'] ?? 0), $d['seriales'] ?? [], $d['referencia'] ?? null, $d['nota'] ?? null, $this->usuario()));
+    }
+
+    /**
+     * POST api/inventory/entradas/lote {lineas: [{inventory_id, cantidad?, seriales?[], precio?}], nota?}
+     *
+     * Una entrada con varios ítems (5 ONT ZTE y 1 TV Box): todos entran o ninguno, con la misma
+     * referencia de entrada para encontrarlos juntos en el historial.
+     */
+    public function entradaLote(Request $r): JsonResponse
+    {
+        $empresa = $this->empresa();
+        $d = $r->validate([
+            'lineas'                => 'required|array|min:1|max:50',
+            'lineas.*.inventory_id' => ['required', 'integer', \Illuminate\Validation\Rule::exists('inventories', 'id')->where('company_id', $empresa)->whereNull('deleted_at')],
+            'lineas.*.cantidad'     => 'nullable|numeric|min:0.01|max:1000000',
+            'lineas.*.seriales'     => 'nullable|array|max:500',
+            'lineas.*.seriales.*'   => 'string|max:80',
+            'lineas.*.precio'       => 'nullable|numeric|min:0',
+            'nota'                  => 'nullable|string|max:200',
+        ]);
+
+        // Un mismo serial dos veces en la entrada (en el mismo ítem o en otro) se ataja aquí.
+        $todos = collect($d['lineas'])->flatMap(fn ($l) => array_map(fn ($s) => Serial::canonico(trim($s)), $l['seriales'] ?? []))->filter();
+        $repetidos = $todos->duplicates()->unique()->values();
+        if ($repetidos->isNotEmpty()) {
+            return $this->mal('Ese serial está dos veces en la entrada: ' . $repetidos->take(4)->implode(', ') . '.', 422);
+        }
+
+        $referencia = 'ENT-' . now()->format('ymd-His');
+
+        return $this->operar('', function (Bodega $b) use ($d, $referencia) {
+            $hechas = DB::transaction(fn () => array_map(fn ($l) => $b->entrada(
+                (int) $l['inventory_id'], (float) ($l['cantidad'] ?? 0), (float) ($l['precio'] ?? 0),
+                $l['seriales'] ?? [], $referencia, $d['nota'] ?? null, $this->usuario()
+            ), $d['lineas']));
+            $equipos = array_sum(array_column($hechas, 'unidades'));
+            $unidades = array_sum(array_map(fn ($h) => $h['unidades'] ? 0 : $h['cantidad'], $hechas));
+
+            return ['referencia' => $referencia, 'lineas' => count($hechas), 'equipos' => $equipos, 'unidades' => $unidades];
+        }, fn ($data) => 'Entrada ' . $data['referencia'] . ': ' . implode(' y ', array_filter([
+            $data['equipos'] ? $data['equipos'] . ($data['equipos'] === 1 ? ' equipo' : ' equipos') : null,
+            $data['unidades'] ? (+$data['unidades']) . ' unidades' : null,
+        ])) . '.');
     }
 
     /** POST api/inventory/salidas — sale y se gasta (venta, pérdida, baja). */

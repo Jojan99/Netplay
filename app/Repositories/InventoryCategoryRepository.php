@@ -27,6 +27,8 @@ class InventoryCategoryRepository implements InventoryCategoryRepositoryInterfac
             'company_id'  => $companyId,
             'name'        => $data['name'],
             'description' => $data['description'] ?? null,
+            // ONT y TV box por serial; conectores y RJ45 por cantidad.
+            'usa_serial'  => array_key_exists('usa_serial', $data) ? (bool) $data['usa_serial'] : true,
         ]);
     }
 
@@ -39,6 +41,7 @@ class InventoryCategoryRepository implements InventoryCategoryRepositoryInterfac
         $category->update([
             'name'        => $data['name'] ?? $category->name,
             'description' => $data['description'] ?? $category->description,
+            'usa_serial'  => array_key_exists('usa_serial', $data) ? (bool) $data['usa_serial'] : $category->usa_serial,
         ]);
         return $category->fresh();
     }

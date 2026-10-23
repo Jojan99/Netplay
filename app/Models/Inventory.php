@@ -18,6 +18,8 @@ class Inventory extends Model
         'company_id',
         'category_id',
         'name',
+        'marca',
+        'referencia',
         'description',
         'sku',
         'code',

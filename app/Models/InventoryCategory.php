@@ -17,6 +17,7 @@ class InventoryCategory extends Model
         'company_id',
         'name',
         'description',
+        'usa_serial',
     ];
 
     protected $casts = [

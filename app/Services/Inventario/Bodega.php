@@ -405,6 +405,19 @@ class Bodega
         try {
             return DB::transaction(function () use ($limpio, $serial, $ordenId, $clienteUserId, $tecnicoId, $inventoryId) {
                 $unidad = DB::table('inventory_units')->where('company_id', $this->companyId)->where('serial_canonico', Serial::canonico($limpio))->lockForUpdate()->first();
+                $deFabrica = null;
+
+                // El serial que lee la OLT es el GPON (ZTEGD1C6F1E8); en la entrada a veces se
+                // escanea el de fábrica de la etiqueta (ZTE0QHBNCV03579) y no cruzan nunca. Si el
+                // técnico tiene ONT de esa marca cargadas con serial de fábrica, una de ellas es
+                // ésta: se toma, queda con su GPON y el de fábrica en la nota (22-10-2026).
+                if (!$unidad && $tecnicoId && ($deFabrica = $this->unidadDeFabricaDelTecnico($tecnicoId, $limpio))) {
+                    DB::table('inventory_units')->where('id', $deFabrica->id)->update([
+                        'serial' => $limpio, 'serial_canonico' => Serial::canonico($limpio), 'updated_at' => now(),
+                        'nota' => trim(($deFabrica->nota ? $deFabrica->nota . ' · ' : '') . "Serial de fábrica {$deFabrica->serial}; se instaló con el GPON {$limpio}"),
+                    ]);
+                    $unidad = DB::table('inventory_units')->where('id', $deFabrica->id)->first();
+                }
 
                 if ($unidad && $unidad->estado === 'instalada') {
                     return ['ok' => true, 'detalle' => "El serial {$limpio} ya figuraba como instalado.", 'inventory_id' => (int) $unidad->inventory_id];
@@ -412,7 +425,7 @@ class Bodega
 
                 $item = $unidad
                     ? $this->item((int) $unidad->inventory_id, true)
-                    : ($inventoryId ? $this->item($inventoryId, true) : $this->unicoDeOnt());
+                    : ($inventoryId ? $this->item($inventoryId, true) : $this->unicoDeOnt($limpio));
 
                 if (!$item) {
                     return ['ok' => false, 'detalle' => "El serial {$limpio} no está en el inventario. El equipo quedó instalado igual; revise la existencia desde la oficina.", 'inventory_id' => null];
@@ -451,7 +464,8 @@ class Bodega
 
                 $this->avisarSiQuedoBajo($item, $queda);
 
-                return ['ok' => true, 'detalle' => "«{$item->name}», serial {$limpio}, salió de {$deDonde}. Quedan " . $this->n($queda) . ' en bodega.', 'inventory_id' => (int) $item->id];
+                return ['ok' => true, 'detalle' => "«{$item->name}», serial {$limpio}, salió de {$deDonde}. Quedan " . $this->n($queda) . ' en bodega.'
+                    . ($deFabrica ? " En el inventario figuraba con el serial de fábrica {$deFabrica->serial}: quedó corregido al GPON." : ''), 'inventory_id' => (int) $item->id];
             });
         } catch (\Throwable $e) {
             Log::warning('[Inventario] No se pudo descontar la instalación', ['serial' => $serial, 'orden' => $ordenId, 'error' => $e->getMessage()]);
@@ -461,11 +475,63 @@ class Bodega
     }
 
     /** El único renglón de ONT con existencia; con varios no se adivina. */
-    private function unicoDeOnt(): ?object
+    private function unicoDeOnt(?string $serial = null): ?object
     {
         $onts = self::renglonesDeOnt($this->companyId);
 
+        // La marca del serial (ZTEG… → ZTE) descarta los renglones que dicen ser de otra marca: una
+        // Huawei instalada no se descuenta de «ONT ZTE…». Los que no nombran marca siguen en juego;
+        // si aun así quedan varios, el que la nombra gana.
+        if ($marca = self::marcaDelSerial($serial)) {
+            $otras = array_diff(['ZTE', 'HUAWEI', 'FIBERHOME', 'CDATA', 'NOKIA', 'TP-LINK', 'SKYWORTH'], [$marca]);
+            $onts = array_values(array_filter($onts, function ($o) use ($otras) {
+                foreach ($otras as $otra) {
+                    if (stripos((string) $o['name'], $otra) !== false) return false;
+                }
+                return true;
+            }));
+
+            if (count($onts) > 1) {
+                $suyas = array_values(array_filter($onts, fn ($o) => stripos((string) $o['name'], $marca) !== false));
+                $onts = $suyas ?: $onts;
+            }
+        }
+
         return count($onts) === 1 ? DB::table('inventories')->where('id', $onts[0]['id'])->lockForUpdate()->first() : null;
+    }
+
+    /** Los cuatro primeros caracteres del serial GPON dicen la marca. */
+    public static function marcaDelSerial(?string $serial): ?string
+    {
+        $prefijo = substr(Serial::canonico((string) $serial), 0, 4);
+
+        return ['ZTEG' => 'ZTE', 'HWTC' => 'HUAWEI', 'FHTT' => 'FIBERHOME', 'CDTC' => 'CDATA', 'ALCL' => 'NOKIA', 'TPLG' => 'TP-LINK', 'SKYW' => 'SKYWORTH'][$prefijo] ?? null;
+    }
+
+    /**
+     * Una ONT que el técnico tiene en su poder, de la marca del serial instalado, cargada con un
+     * serial que no es GPON (el de fábrica de la etiqueta). La más vieja primero. Si la marca no
+     * se sabe, sólo cuando todas las candidatas son del mismo renglón.
+     */
+    private function unidadDeFabricaDelTecnico(int $tecnicoId, string $serial): ?object
+    {
+        $candidatas = DB::table('inventory_units as u')->join('inventories as i', 'i.id', '=', 'u.inventory_id')
+            ->where('u.company_id', $this->companyId)->where('u.estado', 'tecnico')->where('u.tecnico_id', $tecnicoId)
+            ->whereNull('i.deleted_at')->whereRaw("i.name REGEXP '(^|[^[:alpha:]])(ONT|ONU)([^[:alpha:]]|$)'")
+            ->orderBy('u.entregada_en')->orderBy('u.id')->lockForUpdate()
+            ->get(['u.*', 'i.name as renglon'])
+            ->reject(fn ($u) => (bool) preg_match('/^[A-Z]{4}[0-9A-F]{8}$/', (string) $u->serial_canonico))
+            ->values();
+
+        $marca = self::marcaDelSerial($serial);
+
+        if ($marca) {
+            $candidatas = $candidatas->filter(fn ($u) => stripos((string) $u->renglon, $marca) !== false || stripos((string) $u->serial, $marca) === 0)->values();
+        } elseif ($candidatas->pluck('inventory_id')->unique()->count() > 1) {
+            return null;
+        }
+
+        return $candidatas->first();
     }
 
     /**

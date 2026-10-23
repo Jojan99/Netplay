@@ -36,7 +36,16 @@ class UpdateInventoryRequest extends FormRequest
                     ->whereNull('deleted_at')
                     ->ignore($itemId),
             ],
-            'code'        => 'nullable|string|max:50',
+            'code'        => [
+                'nullable',
+                'string',
+                'max:50',
+                Rule::unique('inventories')
+                    ->where('company_id', $companyId)
+                    ->whereNull('deleted_at')
+                    ->ignore($itemId),
+            ],
+            'marca'       => 'nullable|string|max:80',
             'barcode'     => 'nullable|string|max:80',
             'usa_serial'  => 'nullable|boolean',
             'quantity'    => 'nullable|numeric|min:0',
@@ -53,6 +62,7 @@ class UpdateInventoryRequest extends FormRequest
         return [
             'category_id.exists' => 'La categoría seleccionada no existe o no pertenece a su empresa.',
             'sku.unique'         => 'El SKU ya está registrado en su inventario.',
+            'code.unique'        => 'Ya hay un ítem con ese código.',
         ];
     }
 }
